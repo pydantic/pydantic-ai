@@ -13,7 +13,7 @@ Agentic Workflow.
 |---|---|
 | Let another model choose the main agent's model from a named menu | `ModelRouter` |
 | Resume, continue, or fork a run from saved history; audit tool side effects after a crash | `StepPersistence` |
-| Store a whole `Conversation` between runs, each message once, in SQLite, Postgres, or MongoDB | `pydantic_ai_harness.conversation_store`: `SqliteConversationStore`, `PostgresConversationStore`, `MongoConversationStore` (see [StepPersistence](#steppersistence)) |
+| Store a whole `Conversation` between runs, each message once, in SQLite, Postgres, or MongoDB | `pydantic_ai_harness.conversation_store`: `SqliteConversationStore`, `PostgresConversationStore`, `MongoConversationStore` (see [Conversation stores](#conversation-stores)) |
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
@@ -162,23 +162,6 @@ File, SQLite, Mongo, and Postgres stores move `BinaryContent` and any text part 
 `MediaStore` (disk, same DB, same Mongo client, or same pool by default). Pass `media_store=None` to keep them
 inline, or `media_store=S3MediaStore(...)` from `pydantic_ai_harness.media`.
 
-Conversation stores:
-
-- `SqliteConversationStore`, `PostgresConversationStore`, and `MongoConversationStore`, in
-  `pydantic_ai_harness.conversation_store` and with the same connection arguments as the matching step store, implement core's
-  `pydantic_ai.conversation_store.ConversationStore`. Use them to keep a conversation between runs:
-  `conversation = await store.load(id) or Conversation(conversation_id=id)`, run with
-  `conversation=conversation`, then `await store.save(result.conversation)`.
-- `save` raises `ConversationConflict` when the conversation was saved by someone else since it was loaded
-  (it checks `Conversation.revision`, which `load` sets and a run carries through). Load it again, and run the
-  turn again only if repeating its tool calls is safe.
-  `save` advances that revision on the conversation it's given, so keep that object to save again.
-- `list_conversations(scope=..., limit=...)` lists the most recently saved first.
-- `fork(conversation_id, at=...)` starts a new conversation sharing the kept history. `delete` also removes
-  the entries no other conversation's history or branches use on SQLite and Postgres; MongoDB keeps them.
-- The browser-oriented store Pax uses is `step_persistence.conversations.SqliteSessionStore`, formerly
-  `SqliteConversationStore` there.
-
 Reading back:
 
 - `continue_run(store, run_id=...)` / `fork_run(...)` return `list[ModelMessage]` from the latest
@@ -232,6 +215,30 @@ Gotchas:
   alongside a durability capability. Pass `id=` only for a second instance.
 - Spec form: `{'StepPersistence': {'backend': 'memory' | 'file' | 'sqlite', 'directory': ..., 'database':
   ..., 'max_snapshots_per_run': ...}}`. Any other `backend` raises `ValueError`. Mongo is Python-only.
+
+## Conversation stores
+
+`pydantic_ai_harness.conversation_store` stores whole conversations between runs, not run checkpoints. Each
+store takes the same connection arguments as the matching step store and can share its database.
+
+| Store | Connection |
+| --- | --- |
+| `SqliteConversationStore` | `database=` path or `connection=` |
+| `PostgresConversationStore` | asyncpg-compatible `pool` |
+| `MongoConversationStore` | `client=` or `db_url=`, plus `database=`; needs `[mongodb]` |
+
+- They implement core's `pydantic_ai.conversation_store.ConversationStore`. Use them to keep a conversation between runs:
+  `conversation = await store.load(id) or Conversation(conversation_id=id)`, run with
+  `conversation=conversation`, then `await store.save(result.conversation)`.
+- `save` raises `ConversationConflict` when the conversation was saved by someone else since it was loaded
+  (it checks `Conversation.revision`, which `load` sets and a run carries through). Load it again, and run the
+  turn again only if repeating its tool calls is safe.
+  `save` advances that revision on the conversation it's given, so keep that object to save again.
+- `list_conversations(scope=..., limit=...)` lists the most recently saved first.
+- `fork(conversation_id, at=...)` starts a new conversation sharing the kept history. `delete` also removes
+  the entries no other conversation's history or branches use on SQLite and Postgres; MongoDB keeps them.
+- The browser-oriented store Pax uses is `step_persistence.conversations.SqliteSessionStore`, formerly
+  `SqliteConversationStore` there.
 
 ## Harness capabilities under core durable execution
 

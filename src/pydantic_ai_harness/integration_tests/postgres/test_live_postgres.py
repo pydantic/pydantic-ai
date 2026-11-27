@@ -1819,3 +1819,15 @@ async def test_conversation_store_shares_a_prefix_with_the_step_store() -> None:
         await conversations.delete(conversation.conversation_id)
 
         assert await steps.latest_snapshot(run_id='r1') == snapshot
+
+
+async def test_conversation_store_a_role_without_create_uses_existing_tables() -> None:
+    """Postgres checks `CREATE` on the schema before `IF NOT EXISTS`, so the store skips DDL when the tables exist."""
+    async with live_tables() as (pool, prefix):
+        await PostgresConversationStore(pool, table=prefix, media_store=None).load('setup')
+        tables = [f'{prefix}_conv_{name}' for name in ('messages', 'entries', 'records', 'branches')]
+        async with _writer_pool(pool, prefix, *tables) as writer_pool:
+            store = PostgresConversationStore(writer_pool, table=prefix, media_store=None)
+            conversation = Conversation(messages=_user_messages())
+            await store.save(conversation)
+            assert await store.load(conversation.conversation_id) == conversation

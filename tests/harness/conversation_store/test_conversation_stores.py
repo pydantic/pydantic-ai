@@ -175,6 +175,18 @@ async def test_postgres_store_creates_its_schema_once_under_concurrent_first_use
     pool.close()
 
 
+async def test_postgres_store_on_existing_tables_issues_no_ddl() -> None:
+    """Postgres checks `CREATE` on the schema before `IF NOT EXISTS`, so a role without it needs no DDL."""
+    pool = SqlitePool()
+    await PostgresConversationStore(pool, media_store=None).read_record('unknown')
+    pool.statements.clear()
+
+    await PostgresConversationStore(pool, media_store=None).read_record('unknown')
+
+    assert not any(statement.startswith(('CREATE', 'SELECT pg_advisory')) for statement in pool.statements)
+    pool.close()
+
+
 async def test_concurrent_saves_on_a_caller_connection_take_turns() -> None:
     """Saves share the connection with the media they store first, so neither runs inside another's savepoint."""
     with closing(sqlite3.connect(':memory:', check_same_thread=False, isolation_level=None)) as connection:
