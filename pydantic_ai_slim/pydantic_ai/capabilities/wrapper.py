@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 from pydantic import ValidationError
 
@@ -264,6 +264,16 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # What the wrapped capability enqueues may reach `RunContext.enqueue` through the wrapper, so the wrapper
         # carries the lower of its own authority and the wrapped one's: wrapping never raises a capability's authority.
         return _lower_authority(super()._effective_authority, self.wrapped._effective_authority)
+
+    def with_authority(self, authority: Authority) -> Self:
+        """Return a copy whose wrapped capability and its descendants carry no more than `authority`."""
+        lowered = super().with_authority(authority)
+        new_wrapped = self.wrapped.with_authority(authority)
+        if new_wrapped is self.wrapped:
+            return lowered
+        new_self = replace_no_init(lowered, wrapped=new_wrapped)
+        new_self.__readopt_wrapped_identity()
+        return new_self
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = self.wrapped._keep_authority(self.wrapped.for_agent(agent))
