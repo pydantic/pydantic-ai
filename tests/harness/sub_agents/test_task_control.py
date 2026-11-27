@@ -1123,9 +1123,9 @@ class TestSubAgentsTaskControl:
 
     async def test_a_vetoed_task_does_not_use_a_max_calls_slot(self) -> None:
         @dataclass
-        class Policy(AbstractCapability[Any]):
+        class Policy(AbstractCapability[None]):
             @on_event(TaskAssignedEvent)
-            async def assigned(self, ctx: RunContext[Any], event: TaskAssignedEvent) -> None:
+            async def assigned(self, ctx: RunContext[None], event: TaskAssignedEvent) -> None:
                 if event.prompt == 'Forbidden.':
                     event.veto('not allowed')
 
