@@ -19,7 +19,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.capabilities.conformance import Calls, CapabilityBuilder
+from pydantic_ai.capabilities.conformance import CALLS, SCENARIO_RUNS, Calls, CapabilityBuilder
 from pydantic_ai.durable_exec import BaseDurabilityCapability, conformance
 from pydantic_ai.durable_exec.conformance import (
     ANSWER,
@@ -186,6 +186,16 @@ def test_the_defaults_pin_nothing_and_count_nothing() -> None:
     assert suite.marks('case') == ()
     assert suite.model_request_unit('case') is None
     assert suite._run_breaks('case', _script(), None, EngineRun('', ANSWER, ['model']), Counter()) == []  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_suite_runs_the_public_cases_and_scenarios_by_default() -> None:
+    """A suite that doesn't set `cases` or `scenarios` runs every public case and scenario, so it can't run nothing.
+
+    It reads the suite's class attributes, with no provider exchange to record, so it isn't a VCR test.
+    """
+    assert DurableEngineSuite.cases is CALLS
+    assert DurableEngineSuite.scenarios is SCENARIO_RUNS
+    assert CALLS and SCENARIO_RUNS
 
 
 async def test_a_replayed_recovery_must_be_the_same_and_repeat_no_request() -> None:
