@@ -262,6 +262,22 @@ The module also exports the session types (`ACPSession`, `ACPSessionConfig`, `Mc
 
 Source: [`pydantic_ai_harness/experimental/acp/`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/experimental/acp/).
 
+## API reference
+
+::: pydantic_ai_harness.experimental.acp.run_acp_stdio
+
+::: pydantic_ai_harness.experimental.acp.run_acp_stdio_sync
+
+::: pydantic_ai_harness.experimental.acp.PydanticAIACPAgent
+
+::: pydantic_ai_harness.experimental.acp.ACPSession
+
+::: pydantic_ai_harness.experimental.acp.ACPSessionConfig
+
+::: pydantic_ai_harness.experimental.acp.ACPFileSystemToolset
+
+::: pydantic_ai_harness.experimental.acp.ACPTerminalToolset
+
 ## Further reading
 
 - [Agent Client Protocol](https://agentclientprotocol.com) -- protocol specification
