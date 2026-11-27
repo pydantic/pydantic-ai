@@ -34,9 +34,10 @@ with try_import() as openai_available:
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as mcp_available:
+    from fastmcp.client.transports import StdioTransport
     from mcp import types as mcp_types
 
-    from pydantic_ai.mcp import _build_sampling_handler, _SamplingRunContextHolder  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.mcp import MCPToolset, _build_sampling_handler  # pyright: ignore[reportPrivateUsage]
 
 
 def _reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -210,7 +211,7 @@ async def test_mcp_sampling_stays_silent_about_the_servers_stop_sequences(server
         unsupported_settings = frozenset({'timeout', 'stop_sequences'})
 
     model = StopIgnoringModel(_reply, model_name='ignoring', settings={'timeout': 5, 'stop_sequences': ['END']})
-    handler = _build_sampling_handler(model, _SamplingRunContextHolder())
+    handler = _build_sampling_handler(MCPToolset(StdioTransport(command='python', args=[])), model)
     # Built from the camelCase wire keys, which both MCP SDK generations validate.
     params = mcp_types.CreateMessageRequestParams.model_validate(
         {
