@@ -63,7 +63,7 @@ to print only the final answer.
 |--------|-------------|
 | `prompt` | AI prompt for one-shot mode (positional). If omitted, starts interactive mode. |
 | `-m`, `--model` | Model to use in `provider:model` format (e.g., `{{ openai:medium }}`) |
-| `-a`, `--agent` | Custom agent in `module:variable` format |
+| `-a`, `--agent` | Custom agent: a `module:variable` path or a YAML/JSON [agent spec](agent-spec.md) file |
 | `-t`, `--code-theme` | Syntax highlighting theme (`dark`, `light`, or [pygments theme](https://pygments.org/styles/)) |
 | `--no-stream` | Disable streaming from the model |
 | `--mcp-config` | Path to [MCP servers configuration file](mcp/client.md#loading-mcp-toolsets-from-configuration) (JSON, using the same `mcpServers` shape as Claude Desktop, Claude Code, and Cursor) |
@@ -121,10 +121,16 @@ Then run:
 clai --agent custom_agent:agent "What's the weather today?"
 ```
 
-The format must be `module:variable` where:
+The value is either `module:variable`, where:
 
 - `module` is the importable Python module path
 - `variable` is the name of the Agent instance in that module
+
+or the path to a YAML or JSON [agent spec](agent-spec.md) file (ending in `.yaml`, `.yml` or `.json`), which is loaded with [`Agent.from_file()`][pydantic_ai.agent.Agent.from_file]:
+
+```bash
+clai --agent agent.yml "What's the weather today?"
+```
 
 Additionally, you can directly launch CLI mode from an `Agent` instance using `Agent.to_cli_sync()`:
 
@@ -223,7 +229,7 @@ clai web --agent my_module:my_agent -i 'Always respond in Spanish'
 
 | Option | Description |
 |--------|-------------|
-| `--agent`, `-a` | Agent to serve in [`module:variable` format](#custom-agents) |
+| `--agent`, `-a` | Agent to serve: a [`module:variable` path or a YAML/JSON agent spec file](#custom-agents) |
 | `--model`, `-m` | Models to list as options in the UI (repeatable) |
 | `--tool`, `-t` | [Native tool](native-tools.md)s to list as options in the UI (repeatable). See [available tools](web.md#native-tool-support). |
 | `--instructions`, `-i` | System instructions. When `--agent` is specified, these are additional to the agent's existing instructions. |
