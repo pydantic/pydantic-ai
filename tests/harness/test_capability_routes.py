@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from itertools import groupby
 from pathlib import Path
-from typing import Literal, get_args
+from typing import Literal, cast, get_args
 
 import anyio
 import pytest
@@ -31,10 +31,13 @@ from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTool
 from pydantic_ai.messages import (
     CapabilityPart,
     CapabilitySource,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    OperatorSource,
+    OperatorText,
     TextPart,
     ToolCallPart,
     ToolResultAttachment,
@@ -105,14 +108,29 @@ _WRAPS: dict[Route, Callable[[str, ToolArgs, AgentInfo], ToolCall]] = {
 """How a route that dispatches calls itself makes one, given what the model is offered."""
 
 
+PAYLOAD = 'the page says hello'
+"""What every probe's calls put in the history, which each route must deliver unchanged."""
+
+
 def fetch_page() -> ToolReturn:
     """Fetch a page, with what it says beside the return value."""
-    return ToolReturn(return_value='ok', content='the page says hello')
+    return ToolReturn(return_value='ok', content=PAYLOAD)
 
 
 def fetch_and_note(ctx: RunContext[None]) -> str:
     """Fetch a page, and note what it says for the next request."""
-    ctx.enqueue('the page says hello')
+    ctx.enqueue(PAYLOAD)
+    return 'ok'
+
+
+@dataclass(kw_only=True)
+class _ReminderPart(InstructionCapabilityPart, namespace='test_capability_routes', name='reminder'):
+    """A reminder for the next request only."""
+
+
+def fetch_and_remind(ctx: RunContext[None]) -> str:
+    """Fetch a page, and remind the model of what it says for the next request only."""
+    ctx.enqueue(_ReminderPart(content=OperatorText(PAYLOAD), source=OperatorSource(), scope='request'))
     return 'ok'
 
 
@@ -121,9 +139,15 @@ PROBES: dict[str, Calls] = {
         (('fetch_page', {}),), lambda _: Capability[None](id='plugin', tools=[fetch_page])
     ),
     'probe:enqueued': Calls((('fetch_and_note', {}),), lambda _: Capability[None](id='plugin', tools=[fetch_and_note])),
+    'probe:request_scoped': Calls(
+        (('fetch_and_remind', {}),),
+        lambda _: Capability[None](id='plugin', tools=[fetch_and_remind]),
+        moves_cache_prefix='a request-scoped reminder is gone from the request after the one it was for',
+    ),
 }
 """Capabilities built only here, whose calls put more than their return value in the history, so every route has a
-part to compare while few cases' calls do: one returns `ToolReturn.content`, the other calls `ctx.enqueue`."""
+part to compare while few cases' calls do: one returns `ToolReturn.content`, one calls `ctx.enqueue` with text, and one
+enqueues a request-scoped system prompt. What they put there is fixed, so their routes are also compared on content."""
 
 _ISSUE = 'https://github.com/pydantic/pydantic-ai/issues/'
 _PLAN_IN_CARRIER = (
@@ -151,13 +175,31 @@ class Seen:
     authority: str | None = None
     frame: tuple[str, str | None] | None = None
     """A capability part's voice and tag."""
+    scope: str | None = None
+    """How long the model sees a capability part: a route mustn't turn a request-scoped part into a lasting one."""
+    content: object = None
+    """What a capability part tells the model, compared only for the probes, whose content is fixed."""
 
 
-def _seen(part: object) -> Seen:
+def _said(content: object) -> object:
+    """`content` as the model reads it: one item alone reads the same as that item."""
+    if isinstance(content, list | tuple):
+        items = tuple(cast(Sequence[object], content))
+        return items[0] if len(items) == 1 else items
+    return content
+
+
+def _seen(part: object, *, with_content: bool) -> Seen:
     if not isinstance(part, CapabilityPart):
         return Seen(type(part).__name__)
     return Seen(
-        part.kind, part.source, part.capability_id, part.source.authority, (part.rendering.voice, part.rendering.tag)
+        part.kind,
+        part.source,
+        part.capability_id,
+        part.source.authority,
+        (part.rendering.voice, part.rendering.tag),
+        part.scope,
+        _said(part.model_content()) if with_content else None,
     )
 
 
@@ -165,35 +207,61 @@ _CARRIERS = (ToolReturnPart, BackgroundToolResultPart)
 """Parts that carry what a call returned, which each route wraps its own way."""
 
 
-def _attachments_seen(attachments: Sequence[ToolResultAttachment]) -> Iterator[Seen]:
+def _attachments_seen(attachments: Sequence[ToolResultAttachment], *, with_content: bool) -> Iterator[Seen]:
     """What the model sees of a tool result's attachments, which are always data.
 
     Each run of items one producer made reaches the model as one framed part: content its capability would enqueue at
     `'none'` when a capability contributed the tool, and the tool's content, behind a note naming it, otherwise.
     """
-    for (tool_call_id, tool_name, capability_id), _ in groupby(
+    for (tool_call_id, tool_name, capability_id), group in groupby(
         attachments, key=lambda attachment: (attachment.tool_call_id, attachment.tool_name, attachment.capability_id)
     ):
+        items = [attachment.content for attachment in group]
+        content = _said(items) if with_content else None
         if capability_id is None:
             source = ToolResultSource(tool_name=tool_name, tool_call_id=tool_call_id)
-            yield Seen('pydantic_ai.tool_content', source, None, source.authority, ('data', 'tool_content'))
+            yield Seen(
+                'pydantic_ai.tool_content',
+                source,
+                None,
+                source.authority,
+                ('data', 'tool_content'),
+                'conversation',
+                content,
+            )
         else:
             source = CapabilitySource(capability_id, authority='none')
-            yield Seen('pydantic_ai.capability_content', source, capability_id, 'none', ('data', 'capability_content'))
+            yield Seen(
+                'pydantic_ai.capability_content',
+                source,
+                capability_id,
+                'none',
+                ('data', 'capability_content'),
+                'conversation',
+                content,
+            )
 
 
-def _parts_seen(part: object) -> Iterator[Seen]:
+def _parts_seen(part: object, *, with_content: bool) -> Iterator[Seen]:
     """What the model sees of `part`: a carrier's attachments, or the part."""
     if isinstance(part, ToolReturnPart):
-        yield from _attachments_seen(part.attachments)
+        yield from _attachments_seen(part.attachments, with_content=with_content)
     elif not isinstance(part, _CARRIERS):
-        yield _seen(part)
+        yield _seen(part, with_content=with_content)
 
 
-def typed_history(messages: Sequence[ModelMessage]) -> list[Seen]:
-    """What the model sees of each part the calls put in the history, besides the prompt and what each call returned."""
+def typed_history(messages: Sequence[ModelMessage], *, with_content: bool = False) -> list[Seen]:
+    """What the model sees of each part the calls put in the history, besides the prompt and what each call returned.
+
+    `with_content` compares what each capability part says too, for calls whose content doesn't vary between runs.
+    """
     requests = [message for message in messages if isinstance(message, ModelRequest)]
-    return [seen for request in requests[1:] for part in request.parts for seen in _parts_seen(part)]
+    return [
+        seen
+        for request in requests[1:]
+        for part in request.parts
+        for seen in _parts_seen(part, with_content=with_content)
+    ]
 
 
 @dataclass
@@ -383,7 +451,9 @@ async def _assert_same(name: str, route: Route, directory: Path, kernel: IPython
     native = await _native(calls, directory / 'native')
     assert native.ran, 'the calls ran no tool'
     routed = await _through(route, calls, directory / route, kernel)
-    expected, actual = typed_history(native.messages), typed_history(routed.messages)
+    with_content = name in PROBES
+    expected = typed_history(native.messages, with_content=with_content)
+    actual = typed_history(routed.messages, with_content=with_content)
     if route == 'background_tools':
         # Background tasks run concurrently, so they end, and report, in any order.
         native.ran.sort()
@@ -430,10 +500,12 @@ def test_every_known_entry_names_a_case_and_route() -> None:
 
 
 async def test_the_native_route_attributes_the_probes(tmp_path: Path) -> None:
-    """The baseline the probes' routes are compared with: framed data, which `plugin` wrote at `'none'`."""
+    """The baseline the probes' routes are compared with: `plugin`'s content at `'none'`, as written."""
     for name, calls in PROBES.items():
-        [seen] = typed_history((await _native(calls, tmp_path / name)).messages)
-        assert (seen.source, seen.frame) == (
-            CapabilitySource('plugin', authority='none'),
-            ('data', 'capability_content'),
-        )
+        [seen] = typed_history((await _native(calls, tmp_path / name)).messages, with_content=True)
+        assert seen.content == PAYLOAD
+        assert seen.scope == ('request' if name == 'probe:request_scoped' else 'conversation')
+        assert seen.source == CapabilitySource('plugin', authority='none')
+        # A reminder keeps its instruction voice, rendered with a note that it has no authority; the others are data.
+        expected_frame = ('instruction', None) if name == 'probe:request_scoped' else ('data', 'capability_content')
+        assert seen.frame == expected_frame
