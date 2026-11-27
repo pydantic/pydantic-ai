@@ -859,9 +859,11 @@ class _ContinuationStreamedResponse(StreamedResponse):
 
         The composite normally resolves the whole `suspended → … → complete` chain, so mid-run it's
         `'complete'` once the loop exits, `'interrupted'` if cancelled, and `'incomplete'` while a
-        segment is still in flight. The one case it *does* surface `'suspended'` is a **detach**: the
-        consumer stopped iterating and the stream was torn down via `aclose()` — not `cancel()` — while
-        the current/last segment is itself a still-pending suspended job. The server-side job survives
+        segment is still in flight, or once the last segment reports that it ended without its provider's
+        terminal event.
+        The one case it *does* surface `'suspended'` is a **detach**: the consumer stopped iterating and
+        the stream was torn down via `aclose()` — not `cancel()` — while the current/last segment is
+        itself a still-pending suspended job. The server-side job survives
         (detach doesn't cancel it), so recording `'suspended'` makes the run resumable later, matching
         the non-streaming path where a persisted suspended response can be resumed. A real `cancel()`
         (`_cancelled`) also cancels the server-side job, so it stays `'interrupted'` and non-resumable.
@@ -870,7 +872,13 @@ class _ContinuationStreamedResponse(StreamedResponse):
 
         state: ModelResponseState
         if self._finished:
-            state = 'suspended' if self._ended_pending else 'complete'
+            if self._ended_pending:
+                state = 'suspended'
+            elif snapshot is not None and snapshot.state == 'incomplete':
+                # The last segment ended without its provider's terminal event, as the base `get()` reports it.
+                state = 'incomplete'
+            else:
+                state = 'complete'
         elif self._cancelled:
             # A real `cancel()` tore down the server-side job too, so this is not resumable.
             state = 'interrupted'
@@ -921,7 +929,7 @@ class _ContinuationStreamedResponse(StreamedResponse):
         # Record that the consumer stopped and the stream was torn down without cancelling. `get()`
         # reads this to report a still-pending suspended job as resumable `'suspended'` rather than a
         # live `'incomplete'` snapshot; `_finished`/`_cancelled` take precedence, so this is a no-op
-        # after a fully-drained (`'complete'`) or cancelled (`'interrupted'`) stream.
+        # after a fully-drained or cancelled (`'interrupted'`) stream.
         self._detached = True
         await self.release_primed_segment()
         if self._segment_stream is not None:
