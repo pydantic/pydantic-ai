@@ -242,7 +242,7 @@ _(This example is complete, it can be run "as is")_
 
 ### Streaming All Events
 
-Like `agent.run_stream()`, [`agent.run()`][pydantic_ai.agent.AbstractAgent.run_stream] takes an optional `event_stream_handler`
+Like `agent.run_stream()`, [`agent.run()`][pydantic_ai.agent.AbstractAgent.run] takes an optional `event_stream_handler`
 argument that lets you stream all events from the model's streaming response and the agent's execution of tools.
 Unlike `run_stream()`, it always runs the agent graph to completion even if text was received ahead of tool calls that looked like it could've been the final result.
 During a realtime session, an event stream handler can also receive realtime-only [`RealtimeSessionEvent`][pydantic_ai.messages.RealtimeSessionEvent] members.

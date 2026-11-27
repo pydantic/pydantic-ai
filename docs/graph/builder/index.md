@@ -23,13 +23,13 @@ This API is designed for advanced workflows where you want declarative control o
 The graph builder API is included with `pydantic-graph`:
 
 ```bash
-pip install pydantic-graph
+pip/uv-add pydantic-graph
 ```
 
 Or as part of `pydantic-ai`:
 
 ```bash
-pip install pydantic-ai
+pip/uv-add pydantic-ai
 ```
 
 ## Quick Start
