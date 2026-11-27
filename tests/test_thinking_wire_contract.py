@@ -32,6 +32,8 @@ with try_import() as cerebras_imports:
     from pydantic_ai.providers.cerebras import CerebrasProvider
 
 with try_import() as google_imports:
+    from google.genai.types import ThinkingLevel as GoogleThinkingLevel
+
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
@@ -61,6 +63,12 @@ _PROVIDER_SKIP_MARKS: dict[str, pytest.MarkDecorator] = {
     'deepinfra': pytest.mark.skipif(not openai_imports(), reason='openai not installed'),
     'openai': pytest.mark.skipif(not openai_imports(), reason='openai not installed'),
 }
+
+
+# google-genai's `ThinkingLevel` enum lists `XHIGH` from 3.3; earlier releases warn and send the value anyway.
+_GOOGLE_XHIGH_WARNING = (
+    None if google_imports() and 'XHIGH' in GoogleThinkingLevel.__members__ else 'XHIGH is not a valid ThinkingLevel'
+)
 
 
 @dataclass(frozen=True)
@@ -422,8 +430,7 @@ CASES = [
         model_name='gemini-4-hydrogen',
         thinking='xhigh',
         present={'generationConfig.thinkingConfig.thinking_level': 'XHIGH'},
-        # `google-genai`'s `ThinkingLevel` enum doesn't list `XHIGH` yet; it warns and sends the value.
-        expect_warning='XHIGH is not a valid ThinkingLevel',
+        expect_warning=_GOOGLE_XHIGH_WARNING,
         match_body=True,
     ),
     WireCase(
@@ -432,7 +439,7 @@ CASES = [
         model_name='gemini-4-neon',
         thinking='xhigh',
         present={'generationConfig.thinkingConfig.thinking_level': 'XHIGH'},
-        expect_warning='XHIGH is not a valid ThinkingLevel',
+        expect_warning=_GOOGLE_XHIGH_WARNING,
         match_body=True,
     ),
     # Gemma 4 on the Gemini API takes only `MINIMAL` and `HIGH`, and 400s on any `thinking_budget` or other level.

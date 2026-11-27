@@ -67,7 +67,17 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, IsInt, IsStr, RequestCapture, TestEnv, gave_up_on, google_user_agents, try_import
+from .conftest import (
+    IsDatetime,
+    IsInt,
+    IsStr,
+    RequestCapture,
+    TestEnv,
+    gave_up_on,
+    google_genai_merges_user_agent_spellings,
+    google_user_agents,
+    try_import,
+)
 
 pytestmark = [
     pytest.mark.usefixtures('allow_model_requests'),
@@ -1148,10 +1158,12 @@ async def test_google_image_generation_extra_headers_user_agent_replaces_user_bu
 ):
     """A user-agent in `extra_headers` replaces the one the user set on their own client, in any spelling.
 
-    A client given `User-Agent` sends google-genai's lowercase `user-agent` beside it, which no per-request header
-    can remove, so the caller's value goes on both. Without google-genai's label in front, h11 rejects the
-    surrounding whitespace, so it's stripped.
+    Before google-genai 3.4, a client given `User-Agent` sends google-genai's lowercase `user-agent` beside it, which
+    no per-request header can remove, so the caller's value goes on both. Without google-genai's label in front, h11
+    rejects the surrounding whitespace, so it's stripped.
     """
+    if client_header == 'User-Agent' and google_genai_merges_user_agent_spellings():
+        expected = ['google-genai per-request-app']
     requests: list[httpx2.Request] = []
 
     def handle_request(request: httpx2.Request) -> httpx2.Response:

@@ -89,7 +89,14 @@ from pydantic_ai.settings import ToolOrOutput
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai.usage import RequestUsage
 
-from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part, try_import
+from ..conftest import (
+    IsDatetime,
+    IsSameStr,
+    IsStr,
+    google_genai_merges_user_agent_spellings,
+    legacy_retry_prompt_part,
+    try_import,
+)
 from .test_session import FakeRealtimeModel, make_tool_manager
 
 with try_import() as imports_successful:
@@ -831,12 +838,14 @@ async def test_connect_serializes_shared_client_header_mutations(monkeypatch: py
 
 
 async def test_connect_sends_one_user_agent_for_a_user_built_client(monkeypatch: pytest.MonkeyPatch) -> None:
-    # google-genai adds its own label under a lowercase `user-agent`, so a client the user builds with
+    # Before 3.4, google-genai adds its own label under a lowercase `user-agent`, so a client the user builds with
     # `User-Agent` holds both keys, and `websockets` rejects the pair at the Live handshake.
     client = Client(api_key='test-key', http_options=genai_types.HttpOptions(headers={'User-Agent': 'my-app'}))
     headers = client._api_client._http_options.headers  # pyright: ignore[reportPrivateUsage]
     assert headers is not None
-    assert [key for key in headers if key.lower() == 'user-agent'] == ['User-Agent', 'user-agent']
+    assert [key for key in headers if key.lower() == 'user-agent'] == (
+        ['user-agent'] if google_genai_merges_user_agent_spellings() else ['User-Agent', 'user-agent']
+    )
     original_headers = headers.copy()
     handshake_headers: list[dict[str, str]] = []
 
@@ -4437,6 +4446,7 @@ async def test_proactive_audio_uses_a_caller_client_already_on_v1alpha(monkeypat
 
 async def test_proactive_audio_on_a_caller_client_says_how_to_fix_it(monkeypatch: pytest.MonkeyPatch) -> None:
     """A client the caller built can't be rebuilt on `v1alpha`, so the session is refused before dialing."""
+    monkeypatch.delenv('GOOGLE_GENAI_API_VERSION', raising=False)
     client = Client(api_key='k')
     model = GoogleRealtimeModel('gemini-2.5-flash-native-audio-latest', provider=GoogleProvider(client=client))
     captured = _proactive_capture(monkeypatch)
@@ -4445,7 +4455,9 @@ async def test_proactive_audio_on_a_caller_client_says_how_to_fix_it(monkeypatch
             pass  # pragma: no cover
 
     message = str(exc_info.value)
-    assert 'needs a client on the `v1alpha` API version, but this one is on `v1beta`' in message
+    # The SDK's own default: `v1beta` on google-genai 2, `v1` on 3, which the provider leaves as the caller built it.
+    api_version = client._api_client._http_options.api_version  # pyright: ignore[reportPrivateUsage]
+    assert f'needs a client on the `v1alpha` API version, but this one is on `{api_version}`' in message
     assert "types.HttpOptions(api_version='v1alpha')" in message
     assert captured == {}
 

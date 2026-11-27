@@ -62,6 +62,16 @@ agent = Agent(model)
 ...
 ```
 
+#### API version
+
+`GoogleProvider` sends Gemini API requests to the `v1beta` API version, the `google-genai` 2 default.
+With `google-genai` 3, set the `GOOGLE_GENAI_API_VERSION` environment variable to use another version. A client you
+pass as `GoogleProvider(client=...)` keeps its own version. From `google-genai` 3 that defaults to `v1`, which serves
+neither [context caching](#context-caching-google_cached_content) nor the [Live API](../realtime/gemini.md), nor the
+`-latest` model aliases and some preview models, as the
+[3.0.0 release notes](https://github.com/googleapis/python-genai/releases/tag/v3.0.0) say. So build such a client with
+`HttpOptions(api_version='v1beta')`.
+
 ### Google Cloud (Enterprise)
 
 See [Google Cloud](google-cloud.md) for Gemini and Claude access, authentication, and Model Garden setup.
@@ -359,8 +369,8 @@ A user-agent you send in `extra_headers`, in any spelling, replaces Pydantic AI'
 [`GoogleImageGenerationModel`][pydantic_ai.images.google.GoogleImageGenerationModel] requests. `google-genai` puts its
 own label in front of it, so it goes out as one `user-agent: google-genai-sdk/… gl-python/… <your value>` header. It
 also replaces a user-agent set on a client you pass. If that client spells the header other than `user-agent`, as in
-`HttpOptions(headers={'User-Agent': ...})`, `google-genai` keeps its own lowercase `user-agent` beside it, so your value
-goes out on both lines.
+`HttpOptions(headers={'User-Agent': ...})`, `google-genai` earlier than 3.4 keeps its own lowercase `user-agent` beside
+it, so your value goes out on both lines.
 
 The Google providers also accept a legacy `httpx.AsyncClient` during Pydantic AI v2, but emit a deprecation warning. Use `httpx2.AsyncClient` for new code; legacy HTTPX client support will be removed in Pydantic AI v3.
 
@@ -577,8 +587,8 @@ levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.g
 `gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen`, and `gemini-4-neon` on the Gemini API, support the
 `low`, `medium` and `high` levels, so `thinking=False` and `'minimal'` resolve to `low`. `gemini-4-hydrogen` and, on
 the Gemini API, `gemini-4-neon` also support `xhigh`, their deepest reasoning, which `thinking='xhigh'` and `'max'`
-select; on models without it, they resolve to `high`. On Google Cloud, `gemini-4-neon` keeps the default levels. The
-`google-genai` SDK's `ThinkingLevel` enum doesn't list `XHIGH` yet, so the SDK warns
+select; on models without it, they resolve to `high`. On Google Cloud, `gemini-4-neon` keeps the default levels.
+`google-genai` earlier than 3.3 doesn't list `XHIGH` in its `ThinkingLevel` enum, so the SDK warns
 `XHIGH is not a valid ThinkingLevel` and sends the level anyway.
 
 On Google Cloud, `gemini-4-argon` rejects a `thinking_budget` in `google_thinking_config` with a 400 error: use

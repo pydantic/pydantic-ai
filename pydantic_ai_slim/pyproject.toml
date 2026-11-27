@@ -89,10 +89,8 @@ cohere = ["cohere>=5.20.6,<8; platform_system != 'Emscripten'"]
 # Below that, `GoogleModel` would still need 2.30.0, the first release that continues a `generateContent` long
 # decode past the per-request output cap (`automatic_continuation`) and reports the first request's prompt size
 # (`initial_prompt_token_count`).
-# `<3` until we migrate: 3.0.0 moves the Gemini API default from `v1beta` to `v1`, which `GoogleProvider` does not
-# pin, and its `types.py` has an invalid `\/` escape whose `SyntaxWarning` fails any import under `-W error`.
-# https://github.com/googleapis/python-genai/releases/tag/v3.0.0
-google = ["google-genai>=2.34.0,<3"]
+# 2.x stays allowed because `google-adk` and `google-cloud-aiplatform` still require `google-genai<3`.
+google = ["google-genai>=2.34.0,<4"]
 # `anthropic>=1` is built on `httpx2` and drops legacy HTTPX entirely; it also removes
 # `temperature`/`top_p`/`top_k` from `messages.create()`, which the model sends via `extra_body`.
 anthropic = ["anthropic>=1.15.0,<3"]

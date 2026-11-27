@@ -49,12 +49,20 @@ async def _run(agent: Agent[None, str], stream: bool) -> tuple[str, ModelRespons
     return run_result.output, run_result.response
 
 
+# google-genai lists these in `FinishReason` from 3.0 or 3.3; an earlier release warns as it parses one.
+_NOT_IN_OLDER_SDK = pytest.mark.filterwarnings('ignore:.* is not a valid FinishReason')
+
+
 @pytest.mark.parametrize(
     ('raw_finish_reason', 'finish_reason'),
     [
         ('TOO_MANY_TOOL_CALLS', 'error'),
         ('IMAGE_RECITATION', 'content_filter'),
         ('IMAGE_OTHER', None),
+        pytest.param('MALFORMED_RESPONSE', 'error', marks=_NOT_IN_OLDER_SDK),
+        pytest.param('MISSING_THOUGHT_SIGNATURE', 'error', marks=_NOT_IN_OLDER_SDK),
+        pytest.param('ESCALATION', 'content_filter', marks=_NOT_IN_OLDER_SDK),
+        pytest.param('PUP_LIMITED_DISABLED', 'content_filter', marks=_NOT_IN_OLDER_SDK),
     ],
 )
 @pytest.mark.parametrize('stream', [False, True])

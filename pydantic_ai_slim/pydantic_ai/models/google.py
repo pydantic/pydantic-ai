@@ -224,7 +224,13 @@ _FINISH_REASON_MAP: dict[str, FinishReason | None] = {
     GoogleFinishReason.NO_IMAGE.value: 'error',
     GoogleFinishReason.IMAGE_RECITATION.value: 'content_filter',
     GoogleFinishReason.IMAGE_OTHER.value: None,
+    # Keyed by string: google-genai lists `MALFORMED_RESPONSE` from 3.0 and the rest from 3.3. Per the SDK, only Google
+    # Cloud sends `MODEL_ARMOR`, and only the Gemini API the last three.
     'MODEL_ARMOR': 'content_filter',
+    'MALFORMED_RESPONSE': 'error',
+    'MISSING_THOUGHT_SIGNATURE': 'error',
+    'ESCALATION': 'content_filter',
+    'PUP_LIMITED_DISABLED': 'content_filter',
 }
 
 _GOOGLE_IMAGE_SIZE = Literal['512', '1K', '2K', '4K']
@@ -545,8 +551,9 @@ def _move_caller_user_agent(headers: dict[str, str], client_headers: Mapping[str
 
     The SDK merges per-request headers into the client's by exact name, and adds its label only to a lowercase
     `user-agent`. So the caller's value, with several spellings joined into one, goes under `user-agent`, the one
-    line on a client that has no other spelling, and under each other spelling the client has. aiohttp folds those
-    into the last one, the SDK's `user-agent`.
+    line on a client that has no other spelling, and under each other spelling the client has (only before
+    google-genai 3.4, which folds every spelling into `user-agent`). aiohttp folds those into the last one, the SDK's
+    `user-agent`.
 
     The value is stripped because h11 rejects surrounding whitespace, and only the `user-agent` line gets the SDK's
     label in front of it. An empty value sends the client's `user-agent` without our label instead, because the SDK

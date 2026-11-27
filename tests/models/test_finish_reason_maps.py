@@ -127,6 +127,19 @@ class Case:
         return f'checked against {self.source}'
 
 
+_GOOGLE_STRING_KEYED_FINISH_REASONS: dict[str, Exempt] = {
+    'MODEL_ARMOR': Exempt(
+        'Vertex AI returns it when Model Armor blocks a prompt, as '
+        '`test_google_model_armor_prompt_template_text_gets_blocked` records; google-genai lists it from 3.3.'
+    ),
+    **dict.fromkeys(
+        ('MALFORMED_RESPONSE', 'MISSING_THOUGHT_SIGNATURE', 'ESCALATION', 'PUP_LIMITED_DISABLED'),
+        Exempt(
+            'google-genai lists it from 3.0 or 3.3, and the map keys it by its string so an earlier release maps it.'
+        ),
+    ),
+}
+"""`_FINISH_REASON_MAP` keys an older google-genai's `FinishReason` doesn't list; exempt only while it doesn't."""
 _PENDING = Exempt('A pending status: the response has no finish reason yet, and `response_status_to_state` carries it.')
 _OPENAI_STYLE = Exempt(
     'The chat-completion API types `finish_reason` as `str` and returns OpenAI-style values, as the '
@@ -157,10 +170,9 @@ MAPS: dict[str, Case | Exempt] = {
         sdk_values=lambda: (member.value for member in GoogleFinishReason),
         map_items=lambda: google_map.items(),
         unlisted={
-            'MODEL_ARMOR': Exempt(
-                'Vertex AI returns it when Model Armor blocks a prompt, as '
-                '`test_google_model_armor_prompt_template_text_gets_blocked` records, but the SDK enum lacks it.'
-            ),
+            value: exempt
+            for value, exempt in _GOOGLE_STRING_KEYED_FINISH_REASONS.items()
+            if google_available() and value not in {member.value for member in GoogleFinishReason}
         },
         marks=requires(google_available, 'google-genai'),
     ),

@@ -39,8 +39,8 @@ def thinking_effort_to_level(thinking: ThinkingEffort) -> GoogleThinkingLevel:
         'low': 'LOW',
         'medium': 'MEDIUM',
         'high': 'HIGH',
-        # Models whose level set lacks `XHIGH` snap these to `HIGH`. `google-genai`'s `ThinkingLevel` doesn't list
-        # `XHIGH` yet, so the SDK warns `XHIGH is not a valid ThinkingLevel` and sends it anyway.
+        # Models whose level set lacks `XHIGH` snap these to `HIGH`. `google-genai`'s `ThinkingLevel` lists `XHIGH`
+        # from 3.3; earlier releases warn `XHIGH is not a valid ThinkingLevel` and send it anyway.
         'xhigh': 'XHIGH',
         'max': 'XHIGH',
     }
