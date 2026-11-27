@@ -186,7 +186,7 @@ from ._computer import (
     map_computer_result,
     stored_computer_call,
 )
-from ._deepseek_web_tools import RESPONSES_WEB_TOOL_KEY, web_tool_param, web_tool_parts, web_tool_replay, web_tool_usage
+from ._deepseek_web_tools import replayable_web_results, web_tool_param, web_tool_parts, web_tool_replay, web_tool_usage
 from ._errors import (
     check_azure_content_filter,
     is_azure,
@@ -3096,15 +3096,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             response_start=len(context.openai_messages),
         )
         if self.profile.get('openai_deepseek_web_tools', False):
-            # Streaming returns can complete in a different order from the calls.
-            response_context.deepseek_web_items = {
-                (part.tool_name, part.tool_call_id): part
+            response_context.deepseek_web_items = replayable_web_results(
+                part
                 for part in message.parts
-                if isinstance(part, NativeToolReturnPart)
-                and self.accepts_stateless_artifacts(message, part)
-                and RESPONSES_WEB_TOOL_KEY in (part.provider_details or {})
-                and isinstance(part.content, dict)
-            }
+                if isinstance(part, NativeToolReturnPart) and self.accepts_stateless_artifacts(message, part)
+            )
         response_parts: Sequence[ModelResponsePart] = message.parts
         if not self.profile.get('openai_responses_supports_interleaved_function_calls', True):
             response_parts = group_settled_portable_function_calls(

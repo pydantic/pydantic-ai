@@ -145,6 +145,12 @@ async def test_deepseek_web_fetch_history(
                 assert 'Thinking before reading' not in thinking_filtered_history
                 assert 'Thinking after reading' not in thinking_filtered_history
                 assert 'recorded-page-signature' in thinking_filtered_history
+            # Keeping only the tool parts still restores the signed page on its assistant turn.
+            original_parts = response.parts
+            response.parts = [call, result_part]
+            await Agent(model).run('Continue.', message_history=history)
+            assert 'recorded-page-signature' in json.dumps(requests[-1]['messages'])
+            response.parts = original_parts
             assert is_str_dict(call.args) and is_str_dict(result_part.content)
             url = call.args.pop('url')
             await Agent(model).run('Continue.', message_history=history)

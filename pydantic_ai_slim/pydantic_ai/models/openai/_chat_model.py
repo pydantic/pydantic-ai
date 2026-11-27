@@ -129,14 +129,12 @@ from ._chat_completions import (
 )
 from ._chat_streaming import OpenAIStreamedResponse
 from ._citations import map_chat_content
+from ._deepseek_chat_streaming import DeepSeekChatStreamedResponse
 from ._deepseek_web_tools import (
-    CHAT_STEP_KEY,
-    CHAT_STEPS_KEY,
-    ChatWebStep,
-    chat_web_step_metadata,
-    chat_web_steps,
+    chat_web_parts,
     chat_web_tool_param,
     check_chat_web_error,
+    replay_chat_web_steps,
     web_tool_usage,
 )
 from ._errors import check_azure_content_filter, is_azure, map_api_errors
@@ -830,32 +828,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _map_reasoning_and_web_steps(
         self, message: chat.ChatCompletionMessage, provider_details: dict[str, Any]
     ) -> list[ModelResponsePart]:
-        if not self.profile.get('openai_deepseek_web_tools', False):
-            return list(self._process_thinking(message) or ())
         items: list[ModelResponsePart] = []
-        message_extras = message.model_extra or {}
-        if raw_steps := message_extras.get('server_tool_calls'):
-            steps = chat_web_steps.validate_python(raw_steps)
-            provider_details[CHAT_STEPS_KEY] = chat_web_step_metadata(steps)
-            for step in steps:
-                items.extend(self._deepseek_step_parts(step))
-        if thinking_parts := self._process_thinking(message):
-            items.extend(thinking_parts)
-        return items
-
-    def _deepseek_step_parts(self, step: ChatWebStep) -> list[ModelResponsePart]:
-        items: list[ModelResponsePart] = []
-        if step.reasoning_content:
-            items.append(
-                ThinkingPart(
-                    id='reasoning_content',
-                    content=step.reasoning_content,
-                    provider_name=self.system,
-                    provider_details={CHAT_STEP_KEY: step.index},
-                )
-            )
-        items.extend(call.call_part(self.system) for call in step.calls)
-        items.extend(call.return_part(self.system) for call in step.calls)
+        if self.profile.get('openai_deepseek_web_tools', False):
+            items.extend(chat_web_parts(message, self.system, provider_details))
+        items.extend(self._process_thinking(message) or ())
         return items
 
     def _fill_missing_finish_reason(self, response: chat.ChatCompletion) -> bool:
@@ -974,6 +950,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         This method may be overridden by subclasses of `OpenAIChatModel` to provide their own `StreamedResponse` type.
         """
+        if self.profile.get('openai_deepseek_web_tools', False):
+            return DeepSeekChatStreamedResponse
         return OpenAIStreamedResponse
 
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
@@ -1303,66 +1281,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         param = self._MapModelResponseContext(self).map_assistant_message(message)
         if self.profile.get('openai_deepseek_web_tools', False) and self.accepts_stateless_artifacts(message):
-            details = message.provider_details or {}
-            if wire_steps := details.get(CHAT_STEPS_KEY):
-                param = self._replay_deepseek_web_steps(message, param, wire_steps)
+            return replay_chat_web_steps(
+                message.provider_details,
+                param,
+                (part for part in message.parts if self.accepts_stateless_artifacts(message, part)),
+                include_thinking=message.finish_reason != 'content_filter'
+                and self.profile.get('openai_chat_send_back_thinking_parts', 'auto') in ('auto', 'field'),
+            )
         return param
-
-    def _replay_deepseek_web_steps(
-        self,
-        message: ModelResponse,
-        param: chat.ChatCompletionAssistantMessageParam | None,
-        wire_steps: object,
-    ) -> chat.ChatCompletionAssistantMessageParam | None:
-        calls, results, thinking_by_step = self._retained_deepseek_parts(message)
-        steps: list[ChatWebStep] = []
-        for step in chat_web_steps.validate_python(wire_steps):
-            # A history processor may edit a part while retaining its ID. Only replay intact tool calls.
-            step.calls = [
-                call
-                for call in step.calls
-                if (calls.get((call.id, call.tool_name)), results.get((call.id, call.tool_name)))
-                == (call.action, call.result_content())
-            ]
-            if not step.calls:
-                continue
-            if step.reasoning_content is not None:
-                step.reasoning_content = ''.join(thinking_by_step.get(step.index, ()))
-            steps.append(step)
-        if steps:
-            param = param or chat.ChatCompletionAssistantMessageParam(role='assistant', content=None)
-        if param is not None:
-            # The SDK message type lacks these DeepSeek extensions.
-            wire = cast(dict[str, object], param)
-            if steps:
-                wire['server_tool_calls'] = chat_web_steps.dump_python(steps, mode='json', exclude_unset=True)
-            wire.pop('reasoning_content', None)
-            if final_thinking := thinking_by_step.get(None):
-                wire['reasoning_content'] = ''.join(final_thinking)
-        return param
-
-    def _retained_deepseek_parts(
-        self, message: ModelResponse
-    ) -> tuple[dict[tuple[str, str], object], dict[tuple[str, str], object], dict[int | None, list[str]]]:
-        calls: dict[tuple[str, str], object] = {}
-        returns: dict[tuple[str, str], object] = {}
-        thinking_by_step: dict[int | None, list[str]] = {}
-        for part in message.parts:
-            if not self.accepts_stateless_artifacts(message, part):
-                continue
-            if isinstance(part, NativeToolCallPart):
-                calls[(part.tool_call_id, part.tool_name)] = part.args_as_dict()
-            elif isinstance(part, NativeToolReturnPart):
-                returns[(part.tool_call_id, part.tool_name)] = part.content
-            elif (
-                isinstance(part, ThinkingPart)
-                and message.finish_reason != 'content_filter'
-                and self.profile.get('openai_chat_send_back_thinking_parts', 'auto') in ('auto', 'field')
-            ):
-                # DeepSeek clears step reasoning from the terminal content-filter response.
-                index = (part.provider_details or {}).get(CHAT_STEP_KEY)
-                thinking_by_step.setdefault(index, []).append(part.content)
-        return calls, returns, thinking_by_step
 
     def _map_carried_thinking(self, message: ModelResponse) -> chat.ChatCompletionUserMessageParam | None:
         """Build the user message that carries this `ModelResponse`'s reasoning ahead of its assistant message.

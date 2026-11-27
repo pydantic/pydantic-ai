@@ -1,18 +1,19 @@
-"""DeepSeek Flash's extensions to the Responses web tool protocol."""
+"""DeepSeek Flash web tool declarations, response parts, and signed history for Chat and Responses."""
 
 from __future__ import annotations
 
-from typing import Literal, cast
+from collections.abc import Iterable
+from typing import Any, Literal, cast
 
 from openai.types import chat, responses
 from pydantic import BaseModel, JsonValue, TypeAdapter
 
 from ..._utils import is_str_dict
-from ...messages import NativeToolCallPart, NativeToolReturnPart
+from ...messages import ModelResponsePart, NativeToolCallPart, NativeToolReturnPart, ThinkingPart
 from ...native_tools import WebFetchTool, WebSearchTool
 from ._errors import response_error
 
-RESPONSES_WEB_TOOL_KEY = 'deepseek_responses_web_tool'
+_RESPONSES_WEB_TOOL_KEY = 'deepseek_responses_web_tool'
 CHAT_STEPS_KEY = 'deepseek_server_tool_calls'
 CHAT_STEP_KEY = 'deepseek_reasoning_step'
 
@@ -82,14 +83,23 @@ def web_tool_parts(
             outcome='failed' if parsed.status == 'failed' else 'success',
             provider_name=provider_name,
             provider_details={
-                RESPONSES_WEB_TOOL_KEY: parsed.model_dump(include={'kind', 'signature'}, exclude_unset=True)
+                _RESPONSES_WEB_TOOL_KEY: parsed.model_dump(include={'kind', 'signature'}, exclude_unset=True)
             },
         ),
     )
 
 
+def replayable_web_results(parts: Iterable[NativeToolReturnPart]) -> dict[tuple[str, str], NativeToolReturnPart]:
+    # A streamed return can complete out of order. Match it to the call when rebuilding the request.
+    return {
+        (part.tool_name, part.tool_call_id): part
+        for part in parts
+        if _RESPONSES_WEB_TOOL_KEY in (part.provider_details or {}) and isinstance(part.content, dict)
+    }
+
+
 def web_tool_replay(call: NativeToolCallPart, result: NativeToolReturnPart) -> responses.ResponseInputItemParam:
-    metadata = (result.provider_details or {})[RESPONSES_WEB_TOOL_KEY]
+    metadata = (result.provider_details or {})[_RESPONSES_WEB_TOOL_KEY]
     assert is_str_dict(result.content)
     content = result.content
     action = call.args_as_dict()
@@ -148,6 +158,21 @@ class ChatWebStep(BaseModel):
     reasoning_content: str | None = None
     calls: list[ChatWebCall]
 
+    def parts(self, provider: str) -> list[ModelResponsePart]:
+        items: list[ModelResponsePart] = []
+        if self.reasoning_content:
+            items.append(
+                ThinkingPart(
+                    id='reasoning_content',
+                    content=self.reasoning_content,
+                    provider_name=provider,
+                    provider_details={CHAT_STEP_KEY: self.index},
+                )
+            )
+        items.extend(call.call_part(provider) for call in self.calls)
+        items.extend(call.return_part(provider) for call in self.calls)
+        return items
+
 
 class ChatWebEvent(BaseModel):
     type: Literal['step_reasoning_done', 'call_started', 'call_completed']
@@ -180,3 +205,70 @@ def check_chat_web_error(raw: object, model: str, *, in_stream: bool) -> None:
             raise response_error(model, None, message, in_stream=in_stream)
         case _:
             return
+
+
+def chat_web_parts(
+    message: chat.ChatCompletionMessage, provider: str, details: dict[str, Any]
+) -> list[ModelResponsePart]:
+    parts: list[ModelResponsePart] = []
+    if raw_steps := (message.model_extra or {}).get('server_tool_calls'):
+        steps = chat_web_steps.validate_python(raw_steps)
+        details[CHAT_STEPS_KEY] = chat_web_step_metadata(steps)
+        for step in steps:
+            parts.extend(step.parts(provider))
+    return parts
+
+
+def replay_chat_web_steps(
+    provider_details: dict[str, Any] | None,
+    param: chat.ChatCompletionAssistantMessageParam | None,
+    parts: Iterable[ModelResponsePart],
+    *,
+    include_thinking: bool,
+) -> chat.ChatCompletionAssistantMessageParam | None:
+    if not (wire_steps := (provider_details or {}).get(CHAT_STEPS_KEY)):
+        return param
+    calls, results, thinking_by_step = _retained_chat_parts(parts, include_thinking)
+    steps: list[ChatWebStep] = []
+    for step in chat_web_steps.validate_python(wire_steps):
+        # A history processor may edit a part while retaining its ID. Only replay intact tool calls.
+        step.calls = [
+            call
+            for call in step.calls
+            if (calls.get((call.id, call.tool_name)), results.get((call.id, call.tool_name)))
+            == (call.action, call.result_content())
+        ]
+        if not step.calls:
+            continue
+        if step.reasoning_content is not None:
+            step.reasoning_content = ''.join(thinking_by_step.get(step.index, ()))
+        steps.append(step)
+    if param is None:
+        if not steps:
+            return None
+        param = chat.ChatCompletionAssistantMessageParam(role='assistant', content=None)
+    # The SDK message type lacks these DeepSeek extensions.
+    wire = cast(dict[str, object], param)
+    if steps:
+        wire['server_tool_calls'] = chat_web_steps.dump_python(steps, mode='json', exclude_unset=True)
+    wire.pop('reasoning_content', None)
+    if final_thinking := thinking_by_step.get(None):
+        wire['reasoning_content'] = ''.join(final_thinking)
+    return param
+
+
+def _retained_chat_parts(
+    parts: Iterable[ModelResponsePart], include_thinking: bool
+) -> tuple[dict[tuple[str, str], object], dict[tuple[str, str], object], dict[int | None, list[str]]]:
+    calls: dict[tuple[str, str], object] = {}
+    returns: dict[tuple[str, str], object] = {}
+    thinking_by_step: dict[int | None, list[str]] = {}
+    for part in parts:
+        if isinstance(part, NativeToolCallPart):
+            calls[(part.tool_call_id, part.tool_name)] = part.args_as_dict()
+        elif isinstance(part, NativeToolReturnPart):
+            returns[(part.tool_call_id, part.tool_name)] = part.content
+        elif isinstance(part, ThinkingPart) and include_thinking:
+            index = (part.provider_details or {}).get(CHAT_STEP_KEY)
+            thinking_by_step.setdefault(index, []).append(part.content)
+    return calls, returns, thinking_by_step
