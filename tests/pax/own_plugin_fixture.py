@@ -26,3 +26,11 @@ class Scanner(AbstractCapability[object]):
 
     def get_toolset(self) -> FunctionToolset[object]:
         return FunctionToolset([port_scan, whois])
+
+
+@dataclass
+class Unbound(AbstractCapability[object]):
+    """A capability that can't build its toolset before `for_agent` binds it, failing other than by `assert`."""
+
+    def get_toolset(self) -> FunctionToolset[object]:
+        raise RuntimeError('no client until bound to an agent')

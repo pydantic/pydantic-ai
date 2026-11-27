@@ -290,8 +290,8 @@ completion. Copilot requests use your saved login through the lazy provider reso
 Once plugins have loaded, the terminal prints one line for each loaded plugin Pax
 doesn't ship, naming the tools it gives the model, such as
 `Plugin scanner: tools port_scan, whois`. A plugin whose tools aren't known before a
-run, such as an MCP server's, is described by what it adds instead, such as
-`1 capability`. `-p` and `--web` don't print it.
+run, such as an MCP server's or a prefixed toolset's, is described by what it adds
+instead, such as `1 capability`. `-p` and `--web` don't print it.
 
 `pax --minimal` loads only the `coder`, `ask_user`, and `persistence` plugins,
 whatever else is enabled, saved, or declared by the project. It saves nothing:

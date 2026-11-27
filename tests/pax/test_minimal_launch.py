@@ -16,7 +16,7 @@ from prompt_toolkit.output import DummyOutput
 from rich.console import Console
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AgentCapability, Capability
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Capability
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, FunctionToolset
 from pydantic_ai_harness.peers import InMemoryPeerNetwork, Peers
@@ -27,7 +27,7 @@ from pydantic_ai_pax.config.builtins import DEFAULT_PLUGINS, MINIMAL_PLUGINS
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins import Plugin, PluginHost, load_plugin
 from pydantic_ai_pax.plugins.process_plugins import ProcessPlugins
-from tests.pax.own_plugin_fixture import port_scan, whois
+from tests.pax.own_plugin_fixture import Unbound, port_scan, whois
 
 SCANNER = PluginSettings(id='scanner', factory='tests.pax.own_plugin_fixture:Scanner')
 ASK_USER = PluginSettings(id='ask_user', factory='pydantic_ai_pax.builtin_plugins.ask_user_menu')
@@ -74,14 +74,24 @@ def test_tool_names_are_the_function_tools_known_before_a_run() -> None:
     assert load_plugin(_Mixed, host).tool_names() == ['port_scan', 'whois']
 
 
-class _Peered(Plugin):
-    def get_capabilities(self) -> list[AgentCapability[None]]:
-        return [Peers(network=InMemoryPeerNetwork()), Capability(tools=[port_scan])]
+@pytest.mark.parametrize(
+    'unknown',
+    [
+        pytest.param(Peers(network=InMemoryPeerNetwork()), id='toolset-built-once-bound'),
+        pytest.param(Unbound(), id='get-toolset-raises'),
+        pytest.param(Capability(toolsets=[FunctionToolset([whois]).prefixed('lookup')]), id='prefixed'),
+        pytest.param(Capability(toolsets=[FunctionToolset([whois]).renamed({'domain_info': 'whois'})]), id='renamed'),
+    ],
+)
+def test_tool_names_are_unknown_when_a_capability_cannot_tell_them_before_a_run(
+    unknown: AbstractCapability[None],
+) -> None:
+    class _Unknown(Plugin):
+        def get_capabilities(self) -> list[AgentCapability[None]]:
+            return [unknown, Capability(tools=[port_scan])]
 
-
-def test_tool_names_skip_a_capability_that_builds_its_toolset_once_bound_to_an_agent() -> None:
-    host: PluginHost[None] = PluginHost(name='peered', console=Console(file=io.StringIO()), settings={})
-    assert load_plugin(_Peered, host).tool_names() == ['port_scan']
+    host: PluginHost[None] = PluginHost(name='unknown', console=Console(file=io.StringIO()), settings={})
+    assert load_plugin(_Unknown, host).tool_names() is None
 
 
 class TestOwnPlugins:
@@ -89,9 +99,11 @@ class TestOwnPlugins:
         store = SettingsStore(tmp_path / 'config.db')
         store.save_plugin(SCANNER)
         store.save_plugin(PluginSettings(id='bare', factory='pydantic_ai.capabilities:Capability'))
+        store.save_plugin(PluginSettings(id='unbound', factory='tests.pax.own_plugin_fixture:Unbound'))
         text = await _start(store)
         assert 'Plugin scanner: tools port_scan, whois\n' in text
         assert 'Plugin bare: 1 capability\n' in text
+        assert 'Plugin unbound: 1 capability\n' in text, 'a failing `get_toolset` never fails the launch'
         assert 'Plugin ask_user' not in text, 'a built-in is not named'
 
     async def test_a_built_in_with_saved_settings_is_still_not_named(self, tmp_path: Path) -> None:
@@ -123,7 +135,7 @@ class TestMinimal:
         before, _, after = text.partition('Enabled scanner.')
         assert 'Plugin scanner' not in before, 'held off, so not loaded or named'
         assert 'scanner: tests.pax.own_plugin_fixture:Scanner (disabled)' in before
-        assert 'scanner: tests.pax.own_plugin_fixture:Scanner (disabled)' not in after
+        assert 'scanner: tests.pax.own_plugin_fixture:Scanner (enabled, loaded)' in after
         assert [saved.enabled for saved in store.plugins()] == [True]
 
     async def test_a_plugin_enabled_meanwhile_stays_loaded_after_reload(
@@ -138,8 +150,8 @@ class TestMinimal:
         text = await _start(
             store, keys='/plugins enable scanner\r/reload\r/plugins list\r', only_plugins=frozenset({'ask_user'})
         )
-        _, _, after = text.partition('Enabled scanner.')
-        assert 'scanner: tests.pax.own_plugin_fixture:Scanner (disabled)' not in after
+        _, _, after = text.partition('Pax reloaded.')
+        assert 'scanner: tests.pax.own_plugin_fixture:Scanner (enabled, loaded)' in after
 
     def test_minimal_names_the_coding_tools_ask_user_and_sessions(self) -> None:
         shipped = {plugin.id for plugin in DEFAULT_PLUGINS}

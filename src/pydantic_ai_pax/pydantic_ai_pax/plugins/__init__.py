@@ -1,5 +1,6 @@
 """The declarative plugin API: subclass `Plugin` and override what it contributes, as with `AbstractCapability`."""
 
+import logging
 import re
 import warnings
 from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Mapping, Sequence
@@ -25,7 +26,7 @@ from pydantic_ai.messages import BinaryContent, ModelMessage
 from pydantic_ai.models import Model
 from pydantic_ai.providers import infer_provider_class
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
+from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.step_persistence import StepStore
 from pydantic_ai_harness.step_persistence.conversations import ConversationOrder, ConversationSummary, SavedConversation
@@ -41,6 +42,7 @@ from pydantic_ai_pax.ui.rendering.status import Status, StatusSegment
 DepsT = DefaultTypeVar('DepsT', default=None)
 ModelT = TypeVar('ModelT', bound=BaseModel)
 ResultT = TypeVar('ResultT')
+_LOGGER = logging.getLogger(__name__)
 _SAVED_SETTINGS = TypeAdapter(dict[str, JsonValue])
 
 SessionEndReason = Literal['exit', 'eof', 'error']
@@ -1494,32 +1496,43 @@ class LoadedPlugin(Generic[DepsT]):
         parts = [f'{count} {one if count == 1 else many}' for count, one, many in counts if count]
         return ', '.join(parts) or 'nothing yet'
 
-    def tool_names(self) -> list[str]:
-        """The function tools its capabilities declare, by their functions' names, without running anything.
+    def tool_names(self) -> list[str] | None:
+        """The function tools its capabilities declare, by the names the model sees, without running anything.
 
-        An MCP server's tools, and a toolset or capability built per run, aren't known before a run.
+        An MCP server's tools, and a toolset or capability built per run, aren't known before a run. `None` when
+        the names can't be told: a capability whose `get_toolset` fails before `for_agent` binds it, such as
+        `Peers` over an in-memory network, or a wrapper toolset, such as `prefixed()`, that can rename its tools.
         """
-        names: list[str] = []
-
-        def toolset(found: AbstractToolset[DepsT]) -> None:
-            if isinstance(found, FunctionToolset):
-                names.extend(name for name in found.tools if name not in names)
-
-        def capability(found: AbstractCapability[DepsT]) -> None:
-            try:
-                declared = found.get_toolset()
-            except AssertionError:
-                # One that builds its toolset once `for_agent` binds it, such as `Peers` over an in-memory network.
-                return
-            # A toolset function builds its toolset per run, so its tools aren't known yet.
-            if declared is not None and not callable(declared):
-                declared.apply(toolset)
-
+        capabilities: list[AbstractCapability[DepsT]] = []
         for contributed in self.capabilities:
-            # Likewise a capability function.
+            # A capability function builds its capability per run, so its tools aren't known yet.
             if not callable(contributed):
-                contributed.apply(capability)
-        return names
+                contributed.apply(capabilities.append)
+        names: list[str] = []
+        return names if all(_declared_tool_names(found, names) for found in capabilities) else None
+
+
+def _declared_tool_names(capability: AbstractCapability[DepsT], names: list[str]) -> bool:
+    """Add the function tools `capability` declares to `names`; `False` if they can't be told before a run."""
+    try:
+        declared = capability.get_toolset()
+    except Exception:
+        # Only informational, so a capability that can't answer before `for_agent` never fails a launch.
+        _LOGGER.debug('Could not list the tools of %r before a run', capability, exc_info=True)
+        return False
+    # A toolset function builds its toolset per run, so its tools aren't known yet.
+    return declared is None or callable(declared) or _toolset_tool_names(declared, names)
+
+
+def _toolset_tool_names(toolset: AbstractToolset[DepsT], names: list[str]) -> bool:
+    """Add `toolset`'s function tools to `names`; `False` under a wrapper, which can rename them."""
+    if isinstance(toolset, CombinedToolset):
+        return all(_toolset_tool_names(member, names) for member in toolset.toolsets)
+    if isinstance(toolset, WrapperToolset):
+        return False
+    if isinstance(toolset, FunctionToolset):
+        names.extend(name for name in toolset.tools if name not in names)
+    return True
 
 
 def collect(plugin: Plugin[BaseModel, DepsT]) -> LoadedPlugin[DepsT]:
