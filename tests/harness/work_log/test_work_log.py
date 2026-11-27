@@ -111,6 +111,11 @@ def _returned(messages: Sequence[ModelMessage], tool_call_id: str) -> object:
     return content
 
 
+def _name(log_id: str) -> str:
+    """The name a persistent store keeps `log_id`'s log under."""
+    return hashlib.sha256(log_id.encode()).hexdigest()
+
+
 async def _call_tools(
     store: WorkLogStore, *calls: tuple[str, dict[str, object]], capabilities: Sequence[AbstractCapability[None]] = ()
 ) -> list[object]:
@@ -991,14 +996,14 @@ class TestWorkLogStores:
             (2, 'result'),
             (3, 'line\u2028separated'),
         ]
-        assert (tmp_path / 'logs' / 'log.jsonl').read_text().count('\n') == 3
-        assert reopened.locate('log') == str(tmp_path / 'logs' / 'log.jsonl')
+        assert (tmp_path / 'logs' / f'{_name("log")}.jsonl').read_text().count('\n') == 3
+        assert reopened.locate('log') == str(tmp_path / 'logs' / f'{_name("log")}.jsonl')
         assert await reopened.read('missing') == []
 
     async def test_file_store_drops_a_write_a_crash_cut_short(self, tmp_path: Path) -> None:
         store = FileWorkLogStore(tmp_path)
         await store.append('log', _record('k1'))
-        path = tmp_path / 'log.jsonl'
+        path = tmp_path / f'{_name("log")}.jsonl'
         # Cut inside a UTF-8 sequence, as a crash can leave it.
         path.write_bytes(path.read_bytes() + '{"seq": 2, "content": "\u00e9'.encode()[:-1])
 
@@ -1008,25 +1013,25 @@ class TestWorkLogStores:
         assert await reopened.append('log', _record('k2')) == 2
         assert [entry['key'] for entry in await FileWorkLogStore(tmp_path).read('log')] == ['k1', 'k2']
 
-    @pytest.mark.parametrize('log_id', ['.', '..', 'a/b', 'x' * 129, 'sha256-abc'])
-    async def test_file_store_hashes_an_unsafe_log_id(self, tmp_path: Path, log_id: str) -> None:
+    @pytest.mark.parametrize('log_id', ['log', '.', '..', 'a/b', 'x' * 129])
+    async def test_file_store_names_a_log_by_its_id_digest(self, tmp_path: Path, log_id: str) -> None:
         store = FileWorkLogStore(tmp_path)
 
         await store.append(log_id, _record('k1'))
 
-        name = f'sha256-{hashlib.sha256(log_id.encode()).hexdigest()}.jsonl'
-        assert store.locate(log_id) == str(tmp_path / name)
-        assert [path.name for path in tmp_path.iterdir()] == [name]
+        assert store.locate(log_id) == str(tmp_path / f'{_name(log_id)}.jsonl')
+        assert [path.name for path in tmp_path.iterdir()] == [f'{_name(log_id)}.jsonl']
 
-    async def test_file_store_keeps_an_id_apart_from_the_name_of_a_hashed_one(self, tmp_path: Path) -> None:
+    async def test_file_store_keeps_apart_ids_a_file_system_could_conflate(self, tmp_path: Path) -> None:
+        """Names that differ only in case, or by a trailing dot, are one file on some file systems."""
         store = FileWorkLogStore(tmp_path)
-        hashed_name = f'sha256-{hashlib.sha256(b"tenant:alice").hexdigest()}'
+        ids = ['Alice', 'alice', 'alice.', _name('tenant:alice'), 'tenant:alice']
 
-        await store.append('tenant:alice', _record('k1', 'alice'))
-        await store.append(hashed_name, _record('k1', 'mallory'))
+        for log_id in ids:
+            await store.append(log_id, _record('k1', log_id))
 
-        assert [entry['content'] for entry in await FileWorkLogStore(tmp_path).read('tenant:alice')] == ['alice']
-        assert len(list(tmp_path.iterdir())) == 2
+        reopened = FileWorkLogStore(tmp_path)
+        assert [[entry['content'] for entry in await reopened.read(log_id)] for log_id in ids] == [[i] for i in ids]
 
     @pytest.mark.skipif(not hasattr(os, 'geteuid'), reason='POSIX ownership check')
     async def test_file_store_keeps_its_directory_owner_only(self, tmp_path: Path) -> None:
@@ -1036,7 +1041,7 @@ class TestWorkLogStores:
         finally:
             os.umask(old_umask)
         assert oct((tmp_path / 'new').stat().st_mode & 0o777) == '0o700'
-        assert oct((tmp_path / 'new' / 'log.jsonl').stat().st_mode & 0o777) == '0o600'
+        assert oct((tmp_path / 'new' / f'{_name("log")}.jsonl').stat().st_mode & 0o777) == '0o600'
 
         existing = tmp_path / 'existing'
         existing.mkdir()
@@ -1096,10 +1101,10 @@ class TestWorkLogStores:
 
         await agent.run('Paris?', conversation_id=_CONVERSATION)
 
-        directory = tmp_path / '.pydantic-ai-harness' / 'work-log' / _CONVERSATION
+        directory = tmp_path / '.pydantic-ai-harness' / 'work-log' / _name(_CONVERSATION)
         assert len(list(directory.iterdir())) == 2
         assert (tmp_path / '.pydantic-ai-harness' / '.gitignore').read_text() == '*\n'
-        assert store.locate(_CONVERSATION) == '.pydantic-ai-harness/work-log/conv/'
+        assert store.locate(_CONVERSATION) == f'.pydantic-ai-harness/work-log/{_name(_CONVERSATION)}/'
         cold = WorkspaceWorkLogStore().bind(Workspace(LocalWorkspaceBackend(tmp_path)))
         entries = await cold.read(_CONVERSATION)
         assert [entry['content'] for entry in entries] == ['sunny in Paris', 'done']
@@ -1113,7 +1118,7 @@ class TestWorkLogStores:
 
         assert [await store.append(workspace, 'log', _record(key)) for key in ('k1', 'k2', 'k1')] == [1, 2, 1]
 
-        directory = tmp_path / '.pydantic-ai-harness' / 'work-log' / 'log'
+        directory = tmp_path / '.pydantic-ai-harness' / 'work-log' / _name('log')
         assert sorted(path.name for path in directory.iterdir()) == [
             f'00000001-{hashlib.sha256(b"k1").hexdigest()[:16]}.json',
             f'00000002-{hashlib.sha256(b"k2").hexdigest()[:16]}.json',
@@ -1132,7 +1137,9 @@ class TestWorkLogStores:
 
         await agent.run('Paris?', conversation_id=_CONVERSATION)
 
-        assert len(list((tmp_path / 'logs' / '.pydantic-ai-harness' / 'work-log' / _CONVERSATION).iterdir())) == 2
+        assert (
+            len(list((tmp_path / 'logs' / '.pydantic-ai-harness' / 'work-log' / _name(_CONVERSATION)).iterdir())) == 2
+        )
         # The agent's tools reach only the run's workspace, so a reset notice names no handle for this log.
         assert store.locate(_CONVERSATION) is None
 
@@ -1148,27 +1155,29 @@ class TestWorkLogStores:
         elsewhere.mkdir()
         logs = tmp_path / '.pydantic-ai-harness' / 'work-log'
         logs.mkdir(parents=True)
-        (logs / 'linked').symlink_to(elsewhere)
+        (logs / _name('linked')).symlink_to(elsewhere)
 
         with pytest.raises(WorkspaceError, match='is a symlink'):
             await WorkspaceWorkLogStore().append(workspace, 'linked', _record('k1'))
 
         store = WorkspaceWorkLogStore()
         await store.append(workspace, 'log', _record('k1'))
-        (logs / 'log' / f'00000002-{hashlib.sha256(b"k2").hexdigest()[:16]}.json').symlink_to(elsewhere / 'target.json')
+        (logs / _name('log') / f'00000002-{hashlib.sha256(b"k2").hexdigest()[:16]}.json').symlink_to(
+            elsewhere / 'target.json'
+        )
         with pytest.raises(WorkspaceError, match='is a symlink'):
             await store.append(workspace, 'log', _record('k2'))
         assert not (elsewhere / 'target.json').exists()
 
-        (logs / 'log' / f'00000002-{hashlib.sha256(b"k2").hexdigest()[:16]}.json').unlink()
+        (logs / _name('log') / f'00000002-{hashlib.sha256(b"k2").hexdigest()[:16]}.json').unlink()
         await store.append(workspace, 'other', _record('k1'))
-        (other_entry,) = (logs / 'other').glob('*.json')
-        (logs / 'log' / f'00000003-{"0" * 16}.json').symlink_to(other_entry)
+        (other_entry,) = (logs / _name('other')).glob('*.json')
+        (logs / _name('log') / f'00000003-{"0" * 16}.json').symlink_to(other_entry)
         with pytest.raises(WorkspaceError, match=r'00000003-0{16}\.json` in the workspace is a symlink'):
             await store.read(workspace, 'log')
-        (logs / 'log' / f'00000003-{"0" * 16}.json').unlink()
+        (logs / _name('log') / f'00000003-{"0" * 16}.json').unlink()
 
-        (logs / 'log').rename(tmp_path / 'moved')
-        (logs / 'log').symlink_to(tmp_path / 'moved')
+        (logs / _name('log')).rename(tmp_path / 'moved')
+        (logs / _name('log')).symlink_to(tmp_path / 'moved')
         with pytest.raises(WorkspaceError, match='is a symlink'):
             await store.read(workspace, 'log')

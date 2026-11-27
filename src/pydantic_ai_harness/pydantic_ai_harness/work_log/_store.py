@@ -99,20 +99,13 @@ class WorkLogStore(Protocol):
         ...  # pragma: no cover
 
 
-_SAFE_LOG_ID = re.compile(r'[A-Za-z0-9._-]{1,128}')
-_HASHED_PREFIX = 'sha256-'
-
-
 def file_name(log_id: str) -> str:
-    """The file or directory name a persistent store keeps `log_id`'s log under.
+    """The file or directory name a persistent store keeps `log_id`'s log under: its SHA-256 hex digest.
 
-    `log_id` itself when it is safe as one path segment, not made only of dots and not starting with
-    `sha256-`, else `sha256-` and its SHA-256 hex digest. No id can name a path outside the store
-    directory, and no two ids share a name.
+    Never the id itself, so no id can name a path outside the store directory, and no two ids share a
+    name, even on a file system that ignores case or drops a trailing dot.
     """
-    if _SAFE_LOG_ID.fullmatch(log_id) and log_id.strip('.') and not log_id.startswith(_HASHED_PREFIX):
-        return log_id
-    return _HASHED_PREFIX + hashlib.sha256(log_id.encode()).hexdigest()
+    return hashlib.sha256(log_id.encode()).hexdigest()
 
 
 @dataclass

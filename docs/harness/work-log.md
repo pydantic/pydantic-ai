@@ -104,7 +104,7 @@ The value is trusted as given. UI adapters set it from client input, so in a mul
 | `FileWorkLogStore(directory)` | One JSONL file per conversation, `<directory>/<log>.jsonl`, on the machine running the agent | The file's absolute path |
 | `WorkspaceWorkLogStore(workspace=None)` | One file per entry under `.pydantic-ai-harness/work-log/<log>/` in the run's workspace | That directory, relative to the working directory; none with `workspace=` |
 
-`<log>` is the conversation ID when it is 1 to 128 letters, digits, `.`, `_` or `-` and not only dots and not starting with `sha256-`; otherwise it is `sha256-` and the ID's SHA-256 hex digest. No ID can name a path outside the store's directory, and no two IDs share a log.
+`<log>` is the conversation ID's SHA-256 hex digest, never the ID itself, so no ID can name a path outside the store's directory, and no two IDs share a log, even on a file system that ignores case.
 
 - **In memory.** The log grows for as long as the process runs, so a long-lived server should call `discard` when a conversation ends. Two `WorkLog(InMemoryWorkLogStore())`s are one log stated twice (see [Two of them](#two-of-them)). A reset notice names no handle for it: the agent reaches the log only through the tools.
 - **File.** The directory is created on the first write, readable by its owner only (`0700`), and each file `0600`; an existing directory is made owner-only, and one that is a symlink or that another user owns is refused. The process reads a log's file once, the first time it touches that log, to learn which entries it already holds. A reset notice names the file's absolute path.
