@@ -376,12 +376,14 @@ class Instrumentation(AbstractCapability[Any]):
         # ctx.messages/ctx.metadata may be stale because the run state is mutated during execution.
         if result is not None:
             message_history = result.all_messages()
+            new_messages = result.new_messages()
             metadata = result.metadata
         else:
             # On error, use the last messages seen during model requests.
             message_history = self._last_messages or ctx.messages
+            new_messages = None
             metadata = ctx.metadata
-        span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata))
+        span.set_attributes(self._run_span_end_attributes(ctx, message_history, new_messages, metadata))
         # One O(history) pass per run: turn any silent staleness the per-request
         # fragment cache may have recorded into a loud signal. Skipped when the run
         # errored: with warnings configured as errors, warning in the `finally`
@@ -396,11 +398,15 @@ class Instrumentation(AbstractCapability[Any]):
         self,
         ctx: RunContext[Any],
         message_history: list[ModelMessage],
+        new_messages: list[ModelMessage] | None,
         metadata: dict[str, Any] | None,
     ) -> dict[str, str | int | float | bool]:
-        """Compute the end-of-run span attributes."""
+        """Compute the end-of-run span attributes.
+
+        `new_messages` is the messages a successful run added, which end `message_history`, or `None`
+        when the run failed.
+        """
         settings = self.settings
-        new_message_index = self._new_message_index
 
         last_instructions = get_instructions(message_history, self._last_model_request_parameters)
         mcp_url_ids = (
@@ -412,15 +418,23 @@ class Instrumentation(AbstractCapability[Any]):
                 )
             )
         )
+        history_ids = mcp_telemetry_history_ids(message_history, mcp_url_ids)
+        otel_messages = settings.messages_to_otel_messages(list(message_history), mcp_url_ids=history_ids)
         attrs: dict[str, Any] = {
-            'pydantic_ai.all_messages': safe_to_json(
-                settings.messages_to_otel_messages(
-                    list(message_history), mcp_url_ids=mcp_telemetry_history_ids(message_history, mcp_url_ids)
-                )
-            ).decode(),
+            'pydantic_ai.all_messages': safe_to_json(otel_messages).decode(),
             **settings.system_instructions_attributes(last_instructions),
         }
 
+        if new_messages is None:
+            # A failed run keeps the boundary counted when it started, in `ModelMessage`s rather than
+            # `pydantic_ai.all_messages` entries, so it can be off: https://github.com/pydantic/pydantic-ai/issues/14963
+            new_message_index = self._new_message_index
+        else:
+            # Counted in `pydantic_ai.all_messages` entries, not `ModelMessage`s: a request makes one entry
+            # per role, so a system prompt and a user prompt make two.
+            new_message_index = len(otel_messages) - len(
+                settings.messages_to_otel_messages(list(new_messages), mcp_url_ids=history_ids)
+            )
         if new_message_index > 0:
             attrs['pydantic_ai.new_message_index'] = new_message_index
 

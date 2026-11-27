@@ -358,6 +358,8 @@ Version 6 is opt-in: it changes the role of messages you already receive, so pas
 
 Agent run spans carry the agent name under both `agent_name` and `gen_ai.agent.name` at every version, so a dashboard keyed on either name keeps working when you change versions.
 
+An agent run span records the run's conversation under `pydantic_ai.all_messages`, and `pydantic_ai.new_message_index` marks where the run's own messages start in it: for a run that completes, `all_messages[new_message_index:]` is its [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] in the same format. The index counts `pydantic_ai.all_messages` entries, not [`ModelMessage`][pydantic_ai.messages.ModelMessage]s: a request becomes one entry per role, so a system prompt and a user prompt are two. The attribute is left out when the index would be 0. For a run that fails, the index can be off; this existing limitation is tracked in [#14963](https://github.com/pydantic/pydantic-ai/issues/14963).
+
 #### Version 2 (deprecated)
 
 Uses the newer OpenTelemetry GenAI spec and stores messages in the following attributes:
