@@ -871,7 +871,15 @@ vacuously. An exemption says why the tools can't run offline; one whose reason s
 case still to be backfilled, which `test_pending_calls_backfill` counts.
 """
 
-DURABLE_DBOS = Contract('durable_dbos', applies=lambda _, case: case.calls is not None)
+DURABLE_DBOS = Contract(
+    'durable_dbos',
+    applies=lambda _, case: case.calls is not None,
+    exempt={
+        'BrowserUse': Exempt(
+            f"its browser agent's model requests don't run in DBOS steps, so recovery sends them again: {_ISSUES}14885"
+        ),
+    },
+)
 """D1: in a DBOS workflow, a case's calls record the steps its `durable_steps.dbos` lists, and re-executing the
 workflow from after its last step, as recovering a committed run does, makes none of their requests again.
 

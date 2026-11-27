@@ -36,7 +36,12 @@ P = ParamSpec('P')
 T = TypeVar('T')
 
 UNPROMPTED_REQUEST = 'model.unprompted_request'
-"""What `REQUESTS` counts a request without `PROMPT` under: a nested run's, or one after compaction dropped it."""
+"""What `REQUESTS` counts a request without `PROMPT` under: a nested run's, or one after compaction dropped it.
+
+The `n`th such request of a run, from the second on, is counted under `f'{UNPROMPTED_REQUEST}.{n}'`: a nested run's
+requests can't be told apart by content (`BrowserUse`'s browser agent sends one identical request per step), so each
+one a run makes gets a key of its own, and a recovery that makes them again counts keys the first run didn't.
+"""
 
 
 def one_call_per_response(made: tuple[ToolCall, ...]) -> FunctionModel:
@@ -51,7 +56,8 @@ def one_call_per_response(made: tuple[ToolCall, ...]) -> FunctionModel:
         del info
         step = sum(isinstance(message, ModelResponse) for message in messages)
         if not any(isinstance(part, UserPromptPart) and part.content == PROMPT for part in messages[0].parts):
-            REQUESTS[UNPROMPTED_REQUEST] += 1
+            made_before = sum(key.startswith(UNPROMPTED_REQUEST) for key in REQUESTS)
+            REQUESTS[f'{UNPROMPTED_REQUEST}.{made_before + 1}' if made_before else UNPROMPTED_REQUEST] += 1
             return ModelResponse(parts=[TextPart('done')])
         if step >= len(made):
             return ModelResponse(parts=[TextPart('done')])
