@@ -17,7 +17,7 @@ from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict, TypeIs
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperToolset
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, tool_call_span
 from pydantic_ai.durable_exec._base import BaseDurabilityCapability
 from pydantic_ai.durable_exec._capability_operation import durable_operation_dispatch
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UsageLimitExceeded, UserError
@@ -31,7 +31,6 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserContent,
 )
-from pydantic_ai.telemetry import current_span
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
 from pydantic_ai.tools import AgentDepsT, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
@@ -734,7 +733,7 @@ class RunCodeExecution:
 
     def record_outcome(self, ctx: RunContext[object]) -> None:
         """Put how this call ended (budget, error kind, limit) on its `execute_tool` span."""
-        span = current_span(ctx)
+        span = tool_call_span(ctx)
         span.set_attribute('code_mode.budget_exhausted', self.budget_exhausted)
         if self.failure is None:
             return

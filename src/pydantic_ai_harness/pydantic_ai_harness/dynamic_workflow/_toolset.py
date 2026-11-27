@@ -25,7 +25,7 @@ from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability, tool_call_span
 from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature, _is_python_identifier  # pyright: ignore[reportPrivateUsage]
@@ -39,7 +39,6 @@ from pydantic_ai.messages import (
     post_compaction_window,
 )
 from pydantic_ai.models import Model
-from pydantic_ai.telemetry import current_span
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai.usage import UsageLimits
@@ -1057,7 +1056,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     ) -> Any:
         code = tool_args['code']
         # Taken before the script runs, so this is the `execute_tool run_workflow` span, not a sub-agent's.
-        span = current_span(ctx)
+        span = tool_call_span(ctx)
         budget_exhausted = False
         completed_dispatches: list[_CompletedDispatch] = []
 
