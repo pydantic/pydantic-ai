@@ -2044,6 +2044,34 @@ non_retryable_fallback_group_agent = Agent(
 )
 
 
+policy_named_fallback_group_agent = Agent(
+    FallbackModel(
+        FunctionModel(_unavailable_on_first_attempt_fn, model_name='primary'),
+        FunctionModel(_always_unavailable_fn, model_name='backup'),
+    ),
+    name='durability_policy_named_fallback_group',
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(
+                    maximum_attempts=3,
+                    initial_interval=timedelta(milliseconds=10),
+                    non_retryable_error_types=['ModelHTTPError'],
+                ),
+            )
+        )
+    ],
+)
+
+
+@workflow.defn
+class PolicyNamedFallbackGroupWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await policy_named_fallback_group_agent.run('hello')).output
+
+
 @workflow.defn
 class RetryableFallbackGroupWorkflow:
     @workflow.run
@@ -2094,6 +2122,27 @@ async def test_durability_does_not_retry_a_fallback_model_whose_models_all_faile
             await client.execute_workflow(
                 NonRetryableFallbackGroupWorkflow.run,
                 id=NonRetryableFallbackGroupWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    cause = _workflow_failure_cause(exc_info.value)
+    assert (cause.type, cause.non_retryable) == ('FallbackExceptionGroup', True)
+    assert _fallback_group_attempts == 1
+
+
+async def test_durability_does_not_retry_a_fallback_model_whose_errors_the_retry_policy_names(client: Client):
+    """A retry policy that names `ModelHTTPError` stops a chain of 503s on its first attempt, as it does one model."""
+    global _fallback_group_attempts
+    _fallback_group_attempts = 0
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PolicyNamedFallbackGroupWorkflow],
+        plugins=[AgentPlugin(policy_named_fallback_group_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                PolicyNamedFallbackGroupWorkflow.run,
+                id=PolicyNamedFallbackGroupWorkflow.__name__,
                 task_queue=TASK_QUEUE,
             )
     cause = _workflow_failure_cause(exc_info.value)

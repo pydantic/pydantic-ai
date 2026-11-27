@@ -36,6 +36,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 
+from ._model_errors import retry_policy_type
 from ._run_context import TemporalRunContext
 
 if TYPE_CHECKING:
@@ -184,16 +185,23 @@ A `FallbackExceptionGroup` isn't listed: it's retried unless every error in it i
 """
 
 
-def is_non_retryable(error: BaseException, non_retryable_model_errors: tuple[type[Exception], ...] = ()) -> bool:
+def is_non_retryable(
+    error: BaseException,
+    non_retryable_model_errors: tuple[type[Exception], ...] = (),
+    retry_policy: RetryPolicy | None = None,
+) -> bool:
     """Whether a retry can't fix `error`.
 
-    That's one of `NON_RETRYABLE_ERRORS` or `non_retryable_model_errors`.
-    A `FallbackExceptionGroup` from a `FallbackModel` whose models all failed counts only when every error in it does,
-    so a chain that ran into rate limits or outages is still retried.
+    That's one of `NON_RETRYABLE_ERRORS` or `non_retryable_model_errors`, or an error whose type `retry_policy` names
+    in its `non_retryable_error_types`. A `FallbackExceptionGroup` from a `FallbackModel` whose models all failed
+    counts only when every error in it does, so a chain that ran into rate limits or outages is still retried, and one
+    whose errors the retry policy names on their own isn't.
     """
     if isinstance(error, FallbackExceptionGroup):
-        return all(is_non_retryable(member, non_retryable_model_errors) for member in error.exceptions)
-    return isinstance(error, NON_RETRYABLE_ERRORS + non_retryable_model_errors)
+        return all(is_non_retryable(member, non_retryable_model_errors, retry_policy) for member in error.exceptions)
+    if isinstance(error, NON_RETRYABLE_ERRORS + non_retryable_model_errors):
+        return True
+    return retry_policy is not None and retry_policy_type(error) in (retry_policy.non_retryable_error_types or ())
 
 
 def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
@@ -226,7 +234,8 @@ def non_retryable_subclasses_as_application_errors(
     itself is raised unchanged, as the policy already names it.
 
     A `FallbackExceptionGroup` is raised as a non-retryable `ApplicationError` when every error in it is
-    non-retryable, counting `non_retryable_model_errors`, and unchanged, so the retry policy retries it, otherwise.
+    non-retryable, counting `non_retryable_model_errors` and the activity's retry policy, and unchanged, so the retry
+    policy retries it, otherwise.
     """
     try:
         yield
@@ -235,7 +244,8 @@ def non_retryable_subclasses_as_application_errors(
             raise
         raise ApplicationError(str(error), type=type(error).__name__, non_retryable=True) from error
     except FallbackExceptionGroup as error:
-        if not is_non_retryable(error, non_retryable_model_errors):
+        retry_policy = activity.info().retry_policy if activity.in_activity() else None
+        if not is_non_retryable(error, non_retryable_model_errors, retry_policy):
             raise
         raise ApplicationError(str(error), type=type(error).__name__, non_retryable=True) from error
 

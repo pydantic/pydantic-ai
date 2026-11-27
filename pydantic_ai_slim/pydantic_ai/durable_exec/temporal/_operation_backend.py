@@ -311,7 +311,11 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
                     # the error reaches the parent's tool call, instead of failing the workflow task, which
                     # Temporal would retry forever. The retry policy names the non-retryable classes, but not their
                     # subclasses, which are marked here.
-                    raise ApplicationError(str(e), type=type(e).__name__, non_retryable=is_non_retryable(e)) from e
+                    raise ApplicationError(
+                        str(e),
+                        type=type(e).__name__,
+                        non_retryable=is_non_retryable(e, retry_policy=workflow.info().retry_policy),
+                    ) from e
 
             # UTF-8 hex preserves the full operation name while using only Python identifier characters.
             encoded_name = name.encode().hex()
