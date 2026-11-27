@@ -14,13 +14,31 @@ on:
 
 permissions: {}
 
+# Each evaluation reads the live PR, so the newest wake-up for a head is enough: it replaces the
+# pending run and cancels the running one. The group names the head's branch and SHA because a
+# review wake-up reports the base repository as its head repository, even for a fork PR.
+# A wake-up that `review-target` skips takes a group of its own, so it cannot cancel an evaluation.
+# Concurrency cancels a wake-up only for a newer run, which wakes this workflow too. A wake-up
+# cancelled by hand has no newer run, so its head waits for the next event. Merge groups are never cancelled.
+concurrency:
+  group: >-
+    pr-review-gates-${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'cancelled' &&
+    github.event.workflow_run.event != 'merge_group' &&
+    (github.event.workflow_run.path != '.github/workflows/pr-review-checks.yml' ||
+    github.event.workflow_run.conclusion != 'skipped') &&
+    format('{0}-{1}', github.event.workflow_run.head_branch, github.event.workflow_run.head_sha) ||
+    format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
+
 jobs:
   review-target:
     name: Resolve review gate target
     # PR Review Checks also runs on merge groups, which have no PR to evaluate, and skips its job for unrelated
-    # label and edit events, which change nothing the gates read.
+    # label and edit events, which change nothing the gates read. A cancelled wake-up skips too; see `concurrency`.
+    # Keep this condition equal to the one that picks the head's concurrency group.
     if: >-
-      github.event_name != 'workflow_run' || (github.event.workflow_run.event != 'merge_group' &&
+      github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion != 'cancelled' &&
+      github.event.workflow_run.event != 'merge_group' &&
       (github.event.workflow_run.path != '.github/workflows/pr-review-checks.yml' ||
       github.event.workflow_run.conclusion != 'skipped'))
     runs-on: ubuntu-latest

@@ -1963,7 +1963,11 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_Tool
     response = history[index]
     assert isinstance(response, _messages.ModelResponse)
     requests = [message for message in history[index + 1 :] if isinstance(message, _messages.ModelRequest)]
-    if response.state != 'complete' or not all(_is_deferred_pause_record(request) for request in requests):
+    # A response whose stream ended before the provider's terminal event is `'incomplete'`, yet the run still ran its
+    # calls and paused on it.
+    if response.state not in ('complete', 'incomplete') or not all(
+        _is_deferred_pause_record(request) for request in requests
+    ):
         return None
     call_ids = {call.tool_call_id for call in response.tool_calls}
     answered = [

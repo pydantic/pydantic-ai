@@ -188,12 +188,18 @@ class OpenAIProvider(_OpenAISDKProvider):
                 # OpenAI-compatible Responses endpoints that share it don't necessarily implement the item.
                 # https://developers.openai.com/api/docs/guides/reasoning
                 supports_mid_conversation_effort=model_name.startswith(_GPT_6_MODEL_PREFIXES),
-                # GPT-6 rejects function tools on Chat Completions while reasoning is on, asking for
-                # `/v1/responses` or `reasoning_effort='none'` (verified live on gpt-6-luna, gpt-6-sol,
-                # gpt-6.1-terra, gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra, 2026-11). `OpenAIChatModel` raises a
-                # `ModelRequestRejectedError` before sending. Set here rather than in `openai_model_profile` because the
-                # restriction is unverified on the OpenAI-compatible endpoints that share it.
-                openai_chat_function_tools_require_reasoning_off=model_name.startswith(_GPT_6_MODEL_PREFIXES),
+                # GPT-5.4, GPT-5.6 and GPT-6 reject function tools on Chat Completions while reasoning is on, asking
+                # for `/v1/responses` or `reasoning_effort='none'` (verified live on gpt-5.4, gpt-5.4-mini,
+                # gpt-5.4-nano, gpt-5.6, gpt-5.6-sol, gpt-5.6-luna, gpt-5.6-terra and the GPT-6 families, 2026-11).
+                # `OpenAIChatModel` raises a `ModelRequestRejectedError` before sending. Set here rather than in
+                # `openai_model_profile` because the restriction is unverified on the OpenAI-compatible endpoints
+                # that share it.
+                # gpt-5.5 stays off: its default tool request succeeds live, and only an explicit effort gets the 400.
+                # gpt-5.4-pro stays off: Chat Completions doesn't serve it (404).
+                openai_chat_function_tools_require_reasoning_off=(
+                    (model_name.startswith('gpt-5.4') and not model_name.startswith('gpt-5.4-pro'))
+                    or model_name.startswith(('gpt-5.6', *_GPT_6_MODEL_PREFIXES))
+                ),
                 # Gemini's OpenAI-compatible endpoint repeats the running usage across streamed chunks: see
                 # `test_gemini_stream_usage_replaces_running_totals` and the live check across Gemini model families
                 # on https://github.com/pydantic/pydantic-ai/pull/14285. Set here rather than in
