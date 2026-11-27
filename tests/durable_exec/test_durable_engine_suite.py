@@ -2,6 +2,7 @@
 
 `TestDBOS` (`tests/harness/test_durable_tool_io.py`) and `TestTemporal` (`tests/harness/test_durable_temporal_replay.py`)
 run the suite end to end; these check the judgements their engines don't reach, such as a `restart` recovery.
+They run a stand-in engine and scripted model, with no provider exchange to record, so none is a VCR test.
 They call the suite's private judgement helpers rather than only the public `test_case` and `test_scenario`, unlike
 `tests/AGENTS.md` asks, because those branches (restart recovery, recovery from part way, refusal timing) are only
 reachable by scripting an engine's runs and recoveries, which is what these calls do directly.
@@ -18,6 +19,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities.conformance import CALLS, SCENARIO_RUNS, Calls, CapabilityBuilder
 from pydantic_ai.durable_exec import BaseDurabilityCapability, conformance
 from pydantic_ai.durable_exec.conformance import (
     ANSWER,
@@ -28,18 +30,16 @@ from pydantic_ai.durable_exec.conformance import (
     Support,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.toolsets import AbstractToolset
 
 REFUSAL = UserError('not supported inside a durable unit')
 
 
-@dataclass
-class _Script:
-    made: tuple[tuple[str, dict[str, object]], ...] = (('work', {}),)
-    follow_ups: int = 0
+def _unbuilt(directory: Path, /) -> Sequence[AbstractCapability[None]]:
+    raise NotImplementedError
 
-    def build(self, directory: Path, /) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
-        raise NotImplementedError
+
+def _script(follow_ups: int = 0) -> Calls:
+    return Calls((('work', {}),), build=_unbuilt, follow_ups=follow_ups)
 
 
 @dataclass
@@ -161,14 +161,14 @@ def test_the_first_run_must_answer_once_and_observe_what_it_should() -> None:
 
     suite = _suite(model_request_unit=model_request_unit, expected_units=expected_units)
     run = EngineRun('', 'other', ['model', 'tool', 'model'], ['event:a'])
-    assert suite._run_breaks('case', _Script(), ('event:b',), run, Counter({'search': 2})) == [  # pyright: ignore[reportPrivateUsage]
+    assert suite._run_breaks('case', _script(), ('event:b',), run, Counter({'search': 2})) == [  # pyright: ignore[reportPrivateUsage]
         f"the run returned 'other', not {ANSWER!r}",
         "a request was made more than once: {'search': 2}",
         "the run observed ['event:a'], not ['event:b']",
     ]
     followed = EngineRun('', ANSWER, ['model', 'tool', 'model', 'model'])
-    assert suite._run_breaks('case', _Script(follow_ups=1), None, followed, Counter()) == []  # pyright: ignore[reportPrivateUsage]
-    drifted = suite._run_breaks('case', _Script(), None, EngineRun('', ANSWER, ['model', 'other']), Counter())  # pyright: ignore[reportPrivateUsage]
+    assert suite._run_breaks('case', _script(follow_ups=1), None, followed, Counter()) == []  # pyright: ignore[reportPrivateUsage]
+    drifted = suite._run_breaks('case', _script(), None, EngineRun('', ANSWER, ['model', 'other']), Counter())  # pyright: ignore[reportPrivateUsage]
     assert drifted == [
         'the run recorded 1 `model` units, not one per call, one per follow-up and one to answer',
         "the calls record ('other',), not ('tool',). A recorded name is what a run from an earlier release recovers "
@@ -185,7 +185,17 @@ def test_the_defaults_pin_nothing_and_count_nothing() -> None:
     assert suite.expected_units('case') is None
     assert suite.marks('case') == ()
     assert suite.model_request_unit('case') is None
-    assert suite._run_breaks('case', _Script(), None, EngineRun('', ANSWER, ['model']), Counter()) == []  # pyright: ignore[reportPrivateUsage]
+    assert suite._run_breaks('case', _script(), None, EngineRun('', ANSWER, ['model']), Counter()) == []  # pyright: ignore[reportPrivateUsage]
+
+
+def test_a_suite_runs_the_public_cases_and_scenarios_by_default() -> None:
+    """A suite that doesn't set `cases` or `scenarios` runs every public case and scenario, so it can't run nothing.
+
+    It reads the suite's class attributes, with no provider exchange to record, so it isn't a VCR test.
+    """
+    assert DurableEngineSuite.cases is CALLS
+    assert DurableEngineSuite.scenarios is SCENARIO_RUNS
+    assert CALLS and SCENARIO_RUNS
 
 
 async def test_a_replayed_recovery_must_be_the_same_and_repeat_no_request() -> None:
@@ -241,10 +251,8 @@ async def test_a_refusal_mid_run_must_leave_its_record_unaffected() -> None:
     ]
 
 
-@dataclass
-class _RefusedAtBuild(_Script):
-    def build(self, directory: Path, /) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
-        raise REFUSAL
+def _refused_at_build(directory: Path, /) -> Sequence[AbstractCapability[None]]:
+    raise REFUSAL
 
 
 async def test_a_refusal_when_the_case_is_built_is_judged_by_its_cell(tmp_path: Path) -> None:
@@ -252,11 +260,126 @@ async def test_a_refusal_when_the_case_is_built_is_judged_by_its_cell(tmp_path: 
 
     It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
     """
-    cases = {'case': _RefusedAtBuild()}
+    cases = {'case': Calls((('work', {}),), build=_refused_at_build)}
     refused = _suite({'case': Support('refused', 'unit', match='inside a durable', issue=1)}, cases=cases)
     await refused.test_case('case', _Engine(), True, dict, tmp_path)
     with pytest.raises(AssertionError, match='the run raised UserError'):
         await _suite(cases=cases).test_case('case', _Engine(), True, dict, tmp_path)
+
+
+def _needs_a_missing_dependency(directory: Path, /) -> Sequence[AbstractCapability[None]]:
+    raise ModuleNotFoundError("No module named 'missing_sdk'", name='missing_sdk')
+
+
+def _hints_at_a_missing_dependency(directory: Path, /) -> Sequence[AbstractCapability[None]]:
+    missing = ModuleNotFoundError("No module named 'missing_sdk'", name='missing_sdk')
+    raise ImportError('Install it with: pip install "missing-sdk"') from missing
+
+
+def _imports_a_missing_name(directory: Path, /) -> Sequence[AbstractCapability[None]]:
+    raise ImportError("cannot import name 'gone' from 'installed_sdk'")
+
+
+def _builds_nothing(directory: Path, /) -> Sequence[AbstractCapability[None]]:
+    return []
+
+
+@pytest.mark.parametrize('build', [_needs_a_missing_dependency, _hints_at_a_missing_dependency])
+async def test_a_case_whose_dependency_is_missing_is_skipped(
+    build: CapabilityBuilder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A case whose build can't find its optional dependency is skipped, not judged: no engine ran it.
+
+    It runs a stand-in engine and build, with no provider exchange to record, so it isn't a VCR test.
+    """
+    monkeypatch.delenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', raising=False)
+    suite = _suite(cases={'case': Calls((('work', {}),), build=build)})
+    with pytest.raises(pytest.skip.Exception, match='case needs `missing_sdk`, from an optional dependency'):
+        await suite.test_case('case', _Engine(), True, dict, tmp_path)
+
+
+async def test_a_missing_dependency_fails_when_extras_are_required(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS` turns the skip into a failure, naming the missing module.
+
+    It runs a stand-in engine and build, with no provider exchange to record, so it isn't a VCR test.
+    """
+    monkeypatch.setenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', 'true')
+    suite = _suite(cases={'case': Calls((('work', {}),), build=_needs_a_missing_dependency)})
+    with pytest.raises(
+        pytest.fail.Exception, match=r'case needs `missing_sdk`.*`PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS`'
+    ):
+        await suite.test_case('case', _Engine(), True, dict, tmp_path)
+
+
+async def test_an_import_error_that_is_no_missing_module_fails(tmp_path: Path) -> None:
+    """A name a mismatched version lacks is a broken install, not a missing extra: the case fails.
+
+    It runs a stand-in engine and build, with no provider exchange to record, so it isn't a VCR test.
+    """
+    suite = _suite(cases={'case': Calls((('work', {}),), build=_imports_a_missing_name)})
+    with pytest.raises(ImportError, match="cannot import name 'gone'"):
+        await suite.test_case('case', _Engine(), True, dict, tmp_path)
+
+
+def _misses_its_own_module(directory: Path, /) -> Sequence[AbstractCapability[None]]:
+    raise ModuleNotFoundError("No module named 'pydantic_ai_harness.gone'", name='pydantic_ai_harness.gone')
+
+
+async def test_a_module_missing_from_the_suites_own_packages_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A module missing from `pydantic_ai` or `pydantic_ai_harness` is a broken install, not an extra: the case fails.
+
+    It runs a stand-in engine and build, with no provider exchange to record, so it isn't a VCR test.
+    """
+    monkeypatch.delenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', raising=False)
+    suite = _suite(cases={'case': Calls((('work', {}),), build=_misses_its_own_module)})
+    with pytest.raises(ModuleNotFoundError, match=r'pydantic_ai_harness\.gone'):
+        await suite.test_case('case', _Engine(), True, dict, tmp_path)
+
+
+@pytest.mark.parametrize('value', ['0', 'false', ''])
+async def test_extras_are_optional_unless_required(value: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`0`, `false` or an empty value leave a missing extra a skip.
+
+    It runs a stand-in engine and build, with no provider exchange to record, so it isn't a VCR test.
+    """
+    monkeypatch.setenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', value)
+    suite = _suite(cases={'case': Calls((('work', {}),), build=_needs_a_missing_dependency)})
+    with pytest.raises(pytest.skip.Exception):
+        await suite.test_case('case', _Engine(), True, dict, tmp_path)
+
+
+async def test_an_unknown_value_of_the_extras_variable_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A value the suite doesn't know, such as `yes`, is an error rather than silently leaving extras optional.
+
+    It runs a stand-in engine and build, with no provider exchange to record, so it isn't a VCR test.
+    """
+    monkeypatch.setenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', 'yes')
+    suite = _suite(cases={'case': Calls((('work', {}),), build=_needs_a_missing_dependency)})
+    with pytest.raises(ValueError, match='must be `1`, `true`, `0` or `false`'):
+        await suite.test_case('case', _Engine(), True, dict, tmp_path)
+
+
+@dataclass
+class _BrokenEngine(_Engine):
+    def durability(self) -> BaseDurabilityCapability[None]:
+        raise ModuleNotFoundError("No module named 'engine_sdk'", name='engine_sdk')
+
+
+async def test_a_missing_module_in_the_engine_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only a case's build can skip it: the engine's own code failing to import fails every cell.
+
+    It runs a stand-in engine and build, with no provider exchange to record, so it isn't a VCR test.
+    """
+    monkeypatch.delenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', raising=False)
+    suite = _suite(cases={'case': Calls((('work', {}),), build=_builds_nothing)})
+    with pytest.raises(ModuleNotFoundError, match='engine_sdk'):
+        await suite.test_case('case', _BrokenEngine(), True, dict, tmp_path)
 
 
 async def test_a_refused_unit_records_no_result() -> None:

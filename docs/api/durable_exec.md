@@ -18,3 +18,11 @@
             - SupportLevel
             - Recovery
             - RecoveryMode
+
+# `pydantic_ai_harness.conformance`
+
+::: pydantic_ai_harness.conformance
+    options:
+        members:
+            - HarnessDurableEngineSuite
+            - CALLS

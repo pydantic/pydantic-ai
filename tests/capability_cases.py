@@ -10,7 +10,10 @@ whose `calls` run its tools is also run by the `CONTRACTS` at the end of this mo
 `tests/harness/test_capability_contracts.py` checks, and under each durable engine, by
 `tests/harness/test_durable_tool_io.py` (DBOS) and `tests/harness/test_durable_temporal_replay.py` (Temporal),
 which check the units its calls record against its `durable_steps`. A case whose capability contributes a toolset
-or a tool hook declares `calls`, or an exemption from `DECLARES_CALLS` with its reason.
+or a tool hook declares `calls`, or an exemption from `DECLARES_CALLS` with its reason. A public capability's calls
+are defined once, in `pydantic_ai.capabilities.conformance.CALLS` (`pydantic_ai_harness.conformance.CALLS` for
+Pydantic AI Harness), which a third-party durable engine's suite runs, and its case refers to them; only a case
+whose calls need a stand-in from the tests defines its calls here.
 `agent_docs/capability-conformance.md` lists what each area's contracts require of a capability.
 
 This module imports nothing from Pydantic AI Harness: `tests/conftest.py` leaves `tests/harness` out of a
@@ -29,7 +32,6 @@ from functools import cached_property
 from typing import Any, Literal, TypeGuard, get_args
 from unittest.mock import patch
 
-from pydantic_ai import CapabilityEvent, CustomEvent, RunContext
 from pydantic_ai.capabilities import (
     MCP,
     Caching,
@@ -39,7 +41,6 @@ from pydantic_ai.capabilities import (
     FileUnderstanding,
     HandleDeferredToolCalls,
     ImageGeneration,
-    IncludeToolReturnSchemas,
     Instrumentation,
     LocalWorkspace,
     ModelFallback,
@@ -53,7 +54,6 @@ from pydantic_ai.capabilities import (
     ReinjectSystemPrompt,
     ResolveModelId,
     SelectModel,
-    SetToolMetadata,
     Thinking,
     ToolSearch,
     Toolset,
@@ -63,18 +63,19 @@ from pydantic_ai.capabilities import (
     WindowsWorkspace,
     WrapperCapability,
     XSearch,
-    durable_operation,
+    conformance,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
+from pydantic_ai.capabilities.conformance import CALLS
 from pydantic_ai.durable_exec.conformance import Recovery, Support
-from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
-from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
+from pydantic_ai.messages import ModelMessage
+from pydantic_ai.models import Model, ModelSelectionContext
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool, XSearchTool
 from pydantic_ai.toolsets import FunctionToolset
 
-from .append_only import Fixture, ToolCall, drain_events
+from .append_only import Fixture, drain_events
 from .conftest import try_import
 from .manifests import Exempt
 
@@ -198,29 +199,23 @@ class DurableSteps:
     unit flips between the two fails."""
 
 
-@dataclass(frozen=True)
-class Calls:
-    """Tool calls that run a capability's tools offline, in order, for the suites that call its tools."""
+@dataclass(frozen=True, kw_only=True)
+class Calls(conformance.Calls):
+    """The public `Calls`, with why running them moves the prompt-cache prefix.
 
-    made: tuple[ToolCall, ...]
-    build: Fixture
-    """What the calls run against, offline: stand-ins for any client its tools send requests through. It must
-    not need a test's state beyond the directory it is given: the DBOS suite builds it at import, as DBOS
-    registers a workflow before launch. A toolset it builds has an `id`, which Temporal names its activities by."""
-    durable_steps: DurableSteps = DurableSteps()
-    """What the calls record under each durable engine, run one per response."""
-    follow_ups: int = 0
-    """How many extra model requests the calls cause in all, one per result that arrives as a follow-up message
-    (`BackgroundTools` delivers each backgrounded call's result in a later request). `journal_breaks` adds it once."""
+    `moves_cache_prefix` belongs on `CapabilityCase`, beside `durable_steps`, but #14376 (the C1 route matrix) reads
+    it as `CASES[name].calls.moves_cache_prefix`. Whichever of the two lands second moves it there, and makes a
+    public case's `calls` the public `Calls` itself instead of a copy.
+    """
+
     moves_cache_prefix: str | None = None
     """Why running the calls rewrites earlier history by design, which moves the prompt-cache prefix: a suite
     that runs them one per response marks the run `moves_cache_prefix` with it."""
-    launches_python: str | None = None
-    """Why running the calls launches a Python interpreter, such as a kernel process: a suite that runs them marks
-    the test `subprocess` with it, as `conditional`, since a durable engine may refuse the case before it launches.
 
-    Every contract the case runs under gets the same conditional mark, the non-durable ones included, so the
-    stale-marker check doesn't judge any of them."""
+    @classmethod
+    def of(cls, calls: conformance.Calls, *, moves_cache_prefix: str | None = None) -> Calls:
+        """The public `calls` of a case, for its `CapabilityCase`."""
+        return cls(calls.made, build=calls.build, follow_ups=calls.follow_ups, moves_cache_prefix=moves_cache_prefix)
 
 
 @dataclass(frozen=True)
@@ -236,7 +231,16 @@ class CapabilityCase:
     env: Mapping[str, str] = field(default_factory=dict[str, str])
     """Credentials it checks when it's built; nothing is sent, as the scripted model never calls its tools."""
     calls: Calls | None = None
-    """Calls that run its tools, for the contracts and suites that call them."""
+    """Calls that run its tools, for the contracts and suites that call them: `Calls.of` the public ones, from
+    `CALLS`, unless they need a stand-in from the tests."""
+    durable_steps: DurableSteps = DurableSteps()
+    """What the calls record under each durable engine, run one per response."""
+    launches_python: str | None = None
+    """Why running the calls launches a Python interpreter, such as a kernel process: a suite that runs them marks
+    the test `subprocess` with it, as `conditional`, since a durable engine may refuse the case before it launches.
+
+    Every contract the case runs under gets the same conditional mark, the non-durable ones included, so the
+    stale-marker check doesn't judge any of them."""
 
     @property
     def reason(self) -> str:
@@ -295,6 +299,9 @@ def shipped_capability_types(packages: Sequence[str]) -> tuple[dict[str, type[Ab
             package = importlib.import_module(package_name)
             owner = f'{package_name.split(".")[0]}.'
             for module_info in pkgutil.walk_packages(package.__path__, f'{package_name}.'):
+                # A `conformance` module's classes are stand-ins its suites build, not capabilities the package ships.
+                if module_info.name.rsplit('.', 1)[-1] == 'conformance':
+                    continue
                 try:
                     module = importlib.import_module(module_info.name)
                 except Exception as exc:
@@ -324,7 +331,8 @@ def _mcp_server() -> FastMCP[None]:
 
     @server.tool()
     def extra_tool() -> str:
-        return 'extra'
+        # The contracts only list this server's tool; the public `CALLS['MCP']` calls one on its own server.
+        return 'extra'  # pragma: no cover
 
     return server
 
@@ -334,27 +342,9 @@ def _no_op_tool() -> str:
     return 'ok'  # pragma: no cover
 
 
-def echo(text: str) -> str:
-    """Return `text`."""
-    return text
-
-
-ECHO: tuple[ToolCall, ...] = (('echo', {'text': 'hi'}),)
-"""A call to the `echo` tool `with_echo` adds."""
-
-
 ECHO_STEPS = DurableSteps(temporal=('toolset__echo__call_tool',))
-"""What `ECHO` records under each durable engine: `echo` does no I/O, so only Temporal's activity for it."""
-
-
-def echo_toolset() -> FunctionToolset[None]:
-    """A toolset with one `echo` tool, and the `id` a durable engine names its units after."""
-    return FunctionToolset([echo], id='echo')
-
-
-def with_echo(build: Callable[[], AbstractCapability[None]]) -> Fixture:
-    """The capability beside a toolset with one `echo` tool, for a capability whose hooks run around other tools."""
-    return lambda _: [build(), Toolset(echo_toolset())]
+"""What a call to the `echo` tool records under each durable engine: `echo` does no I/O, so only Temporal's activity
+for it."""
 
 
 def _keep_history(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -514,7 +504,8 @@ CASES: dict[str, CapabilityCase] = {
             ),
             _check_instrumentation,
         ),
-        calls=Calls(ECHO, with_echo(Instrumentation), durable_steps=ECHO_STEPS),
+        calls=Calls.of(CALLS['Instrumentation']),
+        durable_steps=ECHO_STEPS,
     ),
     'ReinjectSystemPrompt': CapabilityCase(
         Combines(
@@ -583,11 +574,8 @@ CASES: dict[str, CapabilityCase] = {
     'PrefixTools': CapabilityCase(
         Anonymous('structural wrapper, applied once per wrapped capability'),
         build=lambda _: PrefixTools(Toolset(FunctionToolset([_no_op_tool])), prefix='extra'),
-        calls=Calls(
-            (('extra_echo', {'text': 'hi'}),),
-            lambda _: PrefixTools(Toolset(echo_toolset()), prefix='extra'),
-            durable_steps=ECHO_STEPS,
-        ),
+        calls=Calls.of(CALLS['PrefixTools']),
+        durable_steps=ECHO_STEPS,
     ),
     'DynamicCapability': CapabilityCase(
         Anonymous('one per capability function'),
@@ -610,20 +598,18 @@ CASES: dict[str, CapabilityCase] = {
         ),
         build=lambda _: MCP(local=MCPToolset(_mcp_server())),
         requires='fastmcp',
-        calls=Calls(
-            (('extra_tool', {}),),
-            lambda _: MCP(local=MCPToolset(_mcp_server(), id='extra')),
-            # The server's instructions are left out, as `include_instructions` is off by default.
-            durable_steps=DurableSteps(
-                dbos=('mcp_server__extra.get_tools', 'mcp_server__extra.call_tool'),
-                temporal=('mcp_server__extra__get_tools', 'mcp_server__extra__call_tool'),
-            ),
+        calls=Calls.of(CALLS['MCP']),
+        # The server's instructions are left out, as `include_instructions` is off by default.
+        durable_steps=DurableSteps(
+            dbos=('mcp_server__extra.get_tools', 'mcp_server__extra.call_tool'),
+            temporal=('mcp_server__extra__get_tools', 'mcp_server__extra__call_tool'),
         ),
     ),
     'Toolset': CapabilityCase(
         Anonymous('one per toolset'),
         build=lambda _: Toolset(FunctionToolset([_no_op_tool])),
-        calls=Calls(ECHO, lambda _: Toolset(echo_toolset()), durable_steps=ECHO_STEPS),
+        calls=Calls.of(CALLS['Toolset']),
+        durable_steps=ECHO_STEPS,
     ),
     'Hooks': CapabilityCase(Anonymous('several hook bundles compose')),
     'HandleDeferredToolCalls': CapabilityCase(
@@ -681,11 +667,13 @@ CASES: dict[str, CapabilityCase] = {
     ),
     'SetToolMetadata': CapabilityCase(
         Anonymous('one per `ToolSelector`; several selectors compose'),
-        calls=Calls(ECHO, with_echo(lambda: SetToolMetadata(source='case')), durable_steps=ECHO_STEPS),
+        calls=Calls.of(CALLS['SetToolMetadata']),
+        durable_steps=ECHO_STEPS,
     ),
     'IncludeToolReturnSchemas': CapabilityCase(
         Anonymous('one per `ToolSelector`; several selectors compose'),
-        calls=Calls(ECHO, with_echo(IncludeToolReturnSchemas), durable_steps=ECHO_STEPS),
+        calls=Calls.of(CALLS['IncludeToolReturnSchemas']),
+        durable_steps=ECHO_STEPS,
     ),
     'DeferredCapabilityLoader': CapabilityCase(Anonymous('auto-injected only when absent')),
     'PendingMessageDrainCapability': CapabilityCase(Anonymous('auto-injected only when absent')),
@@ -962,115 +950,11 @@ table has a cell for each that it doesn't support. What each scenario checks:
   running across the wait, without the run suspending, and its result arrives.
 - `RunContext.*`: `ctx.emit` and `ctx.enqueue` from a function tool, from inside a durable unit (a
   `@durable_operation`), and from a hook. What the run observes, its custom and capability events and enqueued
-  messages, must be the same after recovery or replay, each once. `SCENARIO_RUNS` scripts them, and the built-in
-  engines' `DurableEngineSuite` subclasses run them.
+  messages, must be the same after recovery or replay, each once. The public `SCENARIO_RUNS`
+  (`pydantic_ai.capabilities.conformance`) scripts them, and every `DurableEngineSuite` subclass runs them.
 """
 
 SCENARIOS: tuple[Scenario, ...] = get_args(Scenario)
-
-
-@dataclass(kw_only=True)
-class ScenarioNote(CustomEvent):
-    """What a scenario's function tool emits: an application event."""
-
-    text: str
-
-
-@dataclass(kw_only=True)
-class ScenarioCapabilityNote(CapabilityEvent, namespace='scenario'):
-    """What a scenario's capability emits, from a hook or a durable unit."""
-
-    text: str
-
-
-SCENARIO_TOOLSET_ID = 'scenario'
-
-
-def _scenario_tool(*, emit: bool = False, enqueue: bool = False) -> FunctionToolset[None]:
-    """A toolset with one `work` tool, which emits or enqueues from where a function tool runs."""
-    toolset = FunctionToolset[None](id=SCENARIO_TOOLSET_ID)
-
-    @toolset.tool
-    async def work(ctx: RunContext[None]) -> str:
-        if emit:
-            await ctx.emit(ScenarioNote(text='tool'))
-        if enqueue:
-            ctx.enqueue('note from the tool')
-        return 'worked'
-
-    return toolset
-
-
-def _after_the_tool(ctx: RunContext[None]) -> bool:
-    """Whether the request about to be made is the one after `work` returned: true once per run, deterministically."""
-    last = ctx.messages[-1] if ctx.messages else None
-    return isinstance(last, ModelRequest) and any(
-        isinstance(part, ToolReturnPart) and part.tool_name == 'work' for part in last.parts
-    )
-
-
-@dataclass
-class _InUnit(AbstractCapability[None]):
-    """Emits or enqueues inside a `@durable_operation`, before the request after `work`."""
-
-    emit: bool = False
-    enqueue: bool = False
-    id: str | None = 'in_unit'
-
-    async def before_model_request(
-        self, ctx: RunContext[None], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        if _after_the_tool(ctx):
-            await self.act(ctx)
-        return request_context
-
-    @durable_operation('act')
-    async def act(self, ctx: RunContext[None]) -> None:
-        if self.emit:
-            await ctx.emit(ScenarioCapabilityNote(text='unit'))
-        if self.enqueue:
-            ctx.enqueue('note from the unit')
-
-
-@dataclass
-class _FromHook(AbstractCapability[None]):
-    """Emits and enqueues from a hook, in workflow code, before the request after `work`."""
-
-    async def before_model_request(
-        self, ctx: RunContext[None], request_context: ModelRequestContext
-    ) -> ModelRequestContext:
-        if _after_the_tool(ctx):
-            await ctx.emit(ScenarioCapabilityNote(text='hook'))
-            ctx.enqueue('note from the hook')
-        return request_context
-
-
-@dataclass(frozen=True)
-class ScenarioRun:
-    """A scenario the D1 suites run under each engine they cover: one `work` call, then an answer."""
-
-    build: Callable[[], Sequence[AbstractCapability[None] | FunctionToolset[None]]]
-    """The toolset and capabilities the scenario's agent has, besides the engine's durability capability."""
-    observed: tuple[str, ...]
-    """What a correct run observes, each once: `event:<text>` per custom or capability event, `enqueued:<text>`
-    per enqueued message's event, and `message:<text>` per enqueued message in the history."""
-
-
-SCENARIO_RUNS: Mapping[Scenario, ScenarioRun] = {
-    'RunContext.emit_from_tool': ScenarioRun(lambda: [_scenario_tool(emit=True)], ('event:tool',)),
-    'RunContext.enqueue_from_tool': ScenarioRun(
-        lambda: [_scenario_tool(enqueue=True)], ('enqueued:note from the tool', 'message:note from the tool')
-    ),
-    'RunContext.emit_in_unit': ScenarioRun(lambda: [_scenario_tool(), _InUnit(emit=True)], ('event:unit',)),
-    'RunContext.enqueue_in_unit': ScenarioRun(
-        lambda: [_scenario_tool(), _InUnit(enqueue=True)], ('enqueued:note from the unit', 'message:note from the unit')
-    ),
-    'RunContext.emit_enqueue_from_hook': ScenarioRun(
-        lambda: [_scenario_tool(), _FromHook()],
-        ('event:hook', 'enqueued:note from the hook', 'message:note from the hook'),
-    ),
-}
-"""The scenarios the D1 suites run, and what each must observe; the others are run by their capability's tests."""
 
 
 @dataclass(frozen=True)

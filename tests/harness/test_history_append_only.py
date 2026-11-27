@@ -686,7 +686,10 @@ async def test_conversation_only_appends(
         fixture, scenario = VARIANTS[name]
         capabilities = build_capabilities(name, lambda: AbstractCapability, fixture, tmp_path)
     else:
-        capabilities = build_capabilities(name, CAPABILITIES[name].load, CASES[name].fixture, tmp_path)
+        # A case's build may write the files its stand-ins read, so it runs off the event loop.
+        capabilities = await anyio.to_thread.run_sync(
+            build_capabilities, name, CAPABILITIES[name].load, CASES[name].fixture, tmp_path
+        )
         scenario = SCENARIOS.get(name, Scenario())
     clock = inject_clock(monkeypatch)
     result = await run_conversation(provider, capabilities, scenario, clock)

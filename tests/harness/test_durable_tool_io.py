@@ -31,9 +31,10 @@ import pytest
 
 from pydantic_ai import Agent, AgentStreamEvent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ValidatedToolArgs, durable_operation
-from pydantic_ai.durable_exec.conformance import EngineRun
+from pydantic_ai.durable_exec.conformance import EngineRun, Support
 from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai_harness.conformance import CALLS as HARNESS_CALLS, HarnessDurableEngineSuite
 from pydantic_ai_harness.planning import (
     InMemoryPlanStore,
     PlanCompletedEvent,
@@ -149,6 +150,43 @@ class TestDBOS(BuiltInEngineSuite):
         finally:
             DBOS.destroy()
             _ENGINE_AGENTS.clear()
+
+
+@dataclass
+class _RestartingDBOSEngine(DBOSEngine):
+    """DBOS, with a recovery that runs the workflow again from its start, repeating every completed step."""
+
+    async def recover(self, run: EngineRun, *, after: int | None = None) -> EngineRun:
+        return await super().recover(run, after=0)
+
+
+class TestTheSuiteCountsTheHarnessStores(HarnessDurableEngineSuite):
+    """A recovery that repeats a public case's store writes fails its cell, with no `count_requests` of the engine's.
+
+    So the check a third-party engine relies on, that a recovery repeats no request, isn't vacuous for the Harness
+    cases whose tools write to a store.
+    """
+
+    cases = {name: HARNESS_CALLS[name] for name in ('Memory', 'Planning')}
+    support = dict.fromkeys(
+        cases,
+        Support('broken', 'its recovery runs the case again', match='recovery made a request again', issue=14514),
+    )
+    test_scenario = None  # pyright: ignore[reportAssignmentType]
+
+    @pytest.fixture(scope='class')
+    @classmethod
+    def engine(cls, tmp_path_factory: pytest.TempPathFactory) -> Generator[DBOSEngine, None, None]:
+        _launch(tmp_path_factory.mktemp('dbos'), 'durable_engine_suite_counts')
+        try:
+            yield _RestartingDBOSEngine()
+        finally:
+            DBOS.destroy()
+            _ENGINE_AGENTS.clear()
+
+    @pytest.fixture
+    def can_fork_mid_run(self) -> bool:
+        return False
 
 
 def _call_tools(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:

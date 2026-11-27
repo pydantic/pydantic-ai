@@ -16,8 +16,11 @@ from types import ModuleType
 
 import pytest
 
+from pydantic_ai.capabilities.conformance import CALLS as CORE_CALLS, SCENARIO_RUNS
 from pydantic_ai.durable_exec.conformance import EngineRun, Recovery, Support
+from pydantic_ai_harness.conformance import CALLS as HARNESS_CALLS, HarnessDurableEngineSuite
 
+from .. import capability_cases as core
 from .._inline_snapshot import snapshot
 from ..append_only import discover_capabilities
 from ..capability_cases import (
@@ -28,7 +31,6 @@ from ..capability_cases import (
     ENGINES,
     ID_LESS_TOOLSETS,
     PENDING_ENGINES,
-    SCENARIO_RUNS,
     SCENARIOS,
     UNTESTED_ISSUE,
     Contract,
@@ -37,7 +39,8 @@ from ..capability_cases import (
     engine_table,
 )
 from ._contracts import CASES, PUBLIC
-from .capability_cases import HARNESS_CAPABILITY_PACKAGES
+from ._durable_cases import suite_cases
+from .capability_cases import CASES as HARNESS_CASES, HARNESS_CAPABILITY_PACKAGES
 
 REPO_ROOT = Path(__file__).parents[2]
 
@@ -245,7 +248,58 @@ def test_the_suites_run_every_run_context_scenario() -> None:
     It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
     run_context = {scenario for scenario in SCENARIOS if scenario.startswith('RunContext.')}
-    assert run_context == set(SCENARIO_RUNS)
+    assert run_context == {scenario for scenario in SCENARIO_RUNS if scenario.startswith('RunContext.')}
+    assert set(SCENARIO_RUNS) <= set(SCENARIOS)
+    assert not any(scenario.startswith('BackgroundTools.') for scenario in SCENARIO_RUNS), sorted(SCENARIO_RUNS)
+
+
+def test_the_cases_refer_to_the_public_calls() -> None:
+    """A public `Calls` is defined once, in its package's `conformance` module, and its case refers to it.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
+    for public, cases in ((CORE_CALLS, core.CASES), (HARNESS_CALLS, HARNESS_CASES)):
+        for name, calls in public.items():
+            case = cases[name].calls
+            assert name in PUBLIC and case is not None, f'{name} has public calls but no case that refers to them'
+            assert (case.made, case.build, case.follow_ups) == (calls.made, calls.build, calls.follow_ups), name
+            assert case.build is calls.build, f'{name} defines its calls again instead of `Calls.of(CALLS[{name!r}])`'
+
+
+def test_test_only_cases_only_shrink() -> None:
+    """The cases whose calls need a stand-in from the tests, which only the built-in engines run.
+
+    A third-party engine's `HarnessDurableEngineSuite` runs every other case the built-in ones do. A case leaves
+    this list when its stand-in goes public and its calls move to `CALLS`; none joins it.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
+    built_in = suite_cases(DURABLE_DBOS)
+    assert set(HarnessDurableEngineSuite.cases) <= set(built_in)
+    assert sorted(set(built_in) - set(HarnessDurableEngineSuite.cases)) == snapshot(
+        [
+            'Advisor',
+            'BrowserUse',
+            'DayAI',
+            'ExaAgent',
+            'ExaSearch',
+            'GitHub',
+            'Grain',
+            'KeenableSearch',
+            'Linear',
+            'LocalStack',
+            'LogfireMCP',
+            'Notion',
+            'Ordinal',
+            'PostHog',
+            'Pylon',
+            'Slack',
+            'SmartSearch',
+            'StackOne',
+            'YouResearch',
+            'YouSearch',
+        ]
+    )
 
 
 def test_the_compatibility_page_is_current(capsys: pytest.CaptureFixture[str]) -> None:
@@ -256,3 +310,39 @@ def test_the_compatibility_page_is_current(capsys: pytest.CaptureFixture[str]) -
     for engine in ENGINES:
         _table(engine)
     assert durable_exec_support.main([]) == 0, capsys.readouterr().err
+
+
+def _harness_modules_needing(extra: str) -> set[str]:
+    """The imported Harness modules that import `extra`, directly or through another Harness module."""
+    harness = {name: module for name, module in sys.modules.items() if name.split('.')[0] == 'pydantic_ai_harness'}
+
+    def references(module: ModuleType) -> set[str]:
+        names = (
+            value.__name__ if isinstance(value, ModuleType) else getattr(value, '__module__', None)
+            for value in vars(module).values()
+        )
+        return {name for name in names if isinstance(name, str)}
+
+    needing = {
+        name for name, module in harness.items() if any(ref.split('.')[0] == extra for ref in references(module))
+    }
+    while added := {name for name, module in harness.items() if name not in needing and references(module) & needing}:
+        needing |= added
+    return needing
+
+
+@pytest.mark.parametrize(
+    'extra', ['pydantic_monty', 'yaml', 'json_repair', 'PIL', 'jupyter_client', 'stackone_defender']
+)
+def test_the_harness_conformance_module_imports_without_an_extra(extra: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A missing extra skips only the cases that need it, so `pydantic_ai_harness.conformance` imports without it.
+
+    The module is imported again with the extra unavailable, and every Harness module that needs it forgotten, so a
+    top-level import of one of them fails here. Nothing else is imported again, which would register its event types
+    twice. It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
+    for name in {'pydantic_ai_harness.conformance', *_harness_modules_needing(extra)}:
+        monkeypatch.delitem(sys.modules, name, raising=False)
+    # `None` in `sys.modules` makes importing the module raise `ModuleNotFoundError`, as when it isn't installed.
+    monkeypatch.setitem(sys.modules, extra, None)
+    importlib.import_module('pydantic_ai_harness.conformance')
