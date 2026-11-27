@@ -349,7 +349,7 @@ class StepCounter:
 
 _SAMPLE = 'aA0 _-./:=@"\'<>\\\n\t!#\x1b\x00\u200b'
 """Characters to try in a set or wildcard, besides the ones a pattern names."""
-_GROWTH_LIMIT = 3
+GROWTH_LIMIT = 3
 """Doubling the input doubles a linear scan's added steps and quadruples a quadratic one's; this sits between."""
 
 
@@ -424,9 +424,15 @@ def _walk(nodes: list[Node], flags: int, prefix: str, walk: _Walk) -> tuple[int,
             reach, unbounded, prefix = reach + body_reach, unbounded or body_unbounded, ''
         elif node.name in ('ASSERT', 'ASSERT_NOT'):
             direction, body = _pair(node.argument)
-            body_reach, body_unbounded = _walk(_nodes(body), flags, '', walk)
+            body_nodes = _nodes(body)
+            body_reach, body_unbounded = _walk(body_nodes, flags, '', walk)
             reach += body_reach if _int(direction) == 1 else 0
             unbounded |= body_unbounded
+            # A one-character lookbehind lets an attempt start only after a character it admits, so the unit
+            # carries one: `(?<!\S)#` restarts at each `#` of ` # # #`, not of `###`.
+            behind = character_test(body_nodes[0], flags) if _int(direction) == -1 and len(body_nodes) == 1 else None
+            if behind is not None:
+                prefix += ''.join([c for c in _SAMPLE if behind(c) == (node.name == 'ASSERT')][:1])
     walk.units.add(prefix)
     walk.units.discard('')
     return reach, unbounded
@@ -447,7 +453,7 @@ def linearity_failure(pattern: str, flags: int) -> str | None:
     finds, and stay within `4 * nodes * (reach + 1)` steps per character: a linear scan tries each node about once
     per character an attempt reads. A pattern without an unbounded repeat reads at most `reach` characters per
     attempt, so that one scan is enough. One with an unbounded repeat is also scanned at twice and four times that
-    length, and must add no more than `_GROWTH_LIMIT` times as many steps for the second doubling as for the first.
+    length, and must add no more than `GROWTH_LIMIT` times as many steps for the second doubling as for the first.
     """
     counter = StepCounter(pattern, flags)
     compiled = re.compile(pattern, flags)
@@ -467,6 +473,6 @@ def linearity_failure(pattern: str, flags: int) -> str | None:
                 f'`StepCounter` disagrees with `re` on {text!r}'
             )
             steps.append(scan.steps)
-        if pattern_shape.unbounded and steps[2] - steps[1] > _GROWTH_LIMIT * (steps[1] - steps[0]):
+        if pattern_shape.unbounded and steps[2] - steps[1] > GROWTH_LIMIT * (steps[1] - steps[0]):
             return f'{unit!r} * {repeats}, {2 * repeats}, {4 * repeats}: {steps} steps'
     return None
