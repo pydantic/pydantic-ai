@@ -433,6 +433,21 @@ _FILE_AND_CONTAINER_IDS_UNSUPPORTED_CLIENTS = (AsyncAnthropicBedrock, AsyncAnthr
 _STATELESS_NATIVE_TOOL_KINDS = frozenset(
     {WebSearchTool.kind, 'web_search_tool_result', WebFetchTool.kind, ToolSearchTool.kind, AdvisorTool.kind}
 )
+# Wire types of the assistant-turn blocks that call a server-side tool, and of the blocks that carry
+# such a call's result. `AnthropicModel._leading_late_native_tool_results` uses both to tell a result
+# for a call made in an earlier response (its id names no call block in the same content) from one
+# answered in the same turn; see https://github.com/pydantic/pydantic-ai/issues/13239.
+_NATIVE_TOOL_CALL_BLOCK_TYPES = frozenset({'server_tool_use', 'mcp_tool_use'})
+_NATIVE_TOOL_RESULT_BLOCK_TYPES = frozenset(
+    {
+        'tool_search_tool_result',
+        'web_search_tool_result',
+        'code_execution_tool_result',
+        'web_fetch_tool_result',
+        'advisor_tool_result',
+        'mcp_tool_result',
+    }
+)
 # The advisor tool is documented for the direct Anthropic API and Claude Platform on AWS only. Claude Platform on AWS
 # is `AsyncAnthropicAWS`, an `AsyncAnthropic` subclass, so it keeps the tool. The Bedrock Messages API
 # (`AsyncAnthropicBedrockMantle`, which isn't an `AsyncAnthropicBedrock` subclass) is listed explicitly: verified
@@ -3527,9 +3542,51 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             insert_at = len(anthropic_messages)
             while insert_at > 0 and anthropic_messages[insert_at - 1]['role'] == 'system':
                 insert_at -= 1
-            anthropic_messages.insert(insert_at, {'role': 'user', 'content': carried_thinking_params})
+            leading_results = AnthropicModel._leading_late_native_tool_results(assistant_content_params)
+            if leading_results:
+                # A response that opens with results for native calls made in an earlier
+                # response (e.g. a late `tool_search_tool_result`) can't have the carried
+                # thinking turn between that call and its result: Anthropic rejects the
+                # request (https://github.com/pydantic/pydantic-ai/issues/13239). Send the
+                # leading result blocks as their own assistant turn ahead of the
+                # carried-thinking user turn, so the call and its result stay adjacent and the
+                # thinking is still sent. The rest of the content follows as today.
+                anthropic_messages.insert(
+                    insert_at, {'role': 'assistant', 'content': assistant_content_params[:leading_results]}
+                )
+                anthropic_messages.insert(insert_at + 1, {'role': 'user', 'content': carried_thinking_params})
+                assistant_content_params = assistant_content_params[leading_results:]
+            else:
+                anthropic_messages.insert(insert_at, {'role': 'user', 'content': carried_thinking_params})
         if len(assistant_content_params) > 0:
             anthropic_messages.append({'role': 'assistant', 'content': assistant_content_params})
+
+    @staticmethod
+    def _leading_late_native_tool_results(
+        assistant_content_params: list[_AssistantContentBlockParam],
+    ) -> int:
+        """How many leading result blocks answer native calls made in an earlier response.
+
+        A result block is late when its `tool_use_id` names no `server_tool_use` or
+        `mcp_tool_use` block in the same content. The count stops at the first block that
+        isn't such a result, so only a leading run is split off.
+        """
+        call_ids = {
+            cast('dict[str, Any]', block).get('id')
+            for block in assistant_content_params
+            if cast('dict[str, Any]', block).get('type') in _NATIVE_TOOL_CALL_BLOCK_TYPES
+        }
+        count = 0
+        for block in assistant_content_params:
+            block_dict = cast('dict[str, Any]', block)
+            if (
+                block_dict.get('type') in _NATIVE_TOOL_RESULT_BLOCK_TYPES
+                and block_dict.get('tool_use_id') not in call_ids
+            ):
+                count += 1
+            else:
+                break
+        return count
 
     def _register_thread_computer_calls(
         self, thread_history: Sequence[ModelMessage], map_context: _MapMessagesContext

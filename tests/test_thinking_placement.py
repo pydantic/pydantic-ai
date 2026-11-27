@@ -33,6 +33,8 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
+    NativeToolSearchCallPart,
+    NativeToolSearchReturnPart,
     SystemPromptPart,
     TextPart,
     ThinkingPart,
@@ -43,6 +45,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestParameters, infer_model
 from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool
+from pydantic_ai.native_tools._tool_search import ToolSearchTool
 from pydantic_ai.profiles import ModelProfile
 
 from ._inline_snapshot import snapshot
@@ -244,6 +247,61 @@ _EMPTY_FOREIGN_ONLY_HISTORY: list[ModelMessage] = [
     ModelRequest(parts=[UserPromptPart(content=_QUESTION)]),
     ModelResponse(parts=[ThinkingPart(content='', provider_name='anthropic')]),
     ModelRequest(parts=[UserPromptPart(content=_FOLLOW_UP)]),
+]
+# The issue's reproduction (https://github.com/pydantic/pydantic-ai/issues/13239): the search result
+# opens the response after the one that called `tool_search`, and that response also carries unsigned
+# thinking. The carried thinking must not sit between the `server_tool_use` and its late result.
+_LATE_TOOL_SEARCH_RESULT_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='Find the weather tool, and also call get_time.')]),
+    # The API stops for get_time, so the search result opens the next response.
+    ModelResponse(
+        parts=[
+            NativeToolSearchCallPart(
+                args={'queries': ['weather']},
+                tool_call_id='srvtoolu_01',
+                provider_name='anthropic',
+                provider_details={'strategy': 'regex'},
+            ),
+            ToolCallPart('get_time', {}, 'toolu_01'),
+        ],
+        provider_name='anthropic',
+    ),
+    ModelRequest(parts=[ToolReturnPart('get_time', '12:00', 'toolu_01')]),
+    ModelResponse(
+        parts=[
+            NativeToolSearchReturnPart(
+                content={'discovered_tools': [{'name': 'get_weather'}]},
+                tool_call_id='srvtoolu_01',
+                provider_name='anthropic',
+            ),
+            ThinkingPart(content=_REASONING, provider_name='anthropic'),
+            TextPart(content='It is 12:00, and I found get_weather.'),
+        ],
+        provider_name='anthropic',
+    ),
+]
+# The same response calling `tool_search` and receiving its result: the result's call is in the same
+# content, so it isn't late and the carried thinking renders ahead of the whole assistant turn, as today.
+_SAME_TURN_TOOL_SEARCH_RESULT_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='Find the weather tool.')]),
+    ModelResponse(
+        parts=[
+            NativeToolSearchCallPart(
+                args={'queries': ['weather']},
+                tool_call_id='srvtoolu_01',
+                provider_name='anthropic',
+                provider_details={'strategy': 'regex'},
+            ),
+            NativeToolSearchReturnPart(
+                content={'discovered_tools': [{'name': 'get_weather'}]},
+                tool_call_id='srvtoolu_01',
+                provider_name='anthropic',
+            ),
+            ThinkingPart(content=_REASONING, provider_name='anthropic'),
+            TextPart(content='I found get_weather.'),
+        ],
+        provider_name='anthropic',
+    ),
 ]
 
 
@@ -784,6 +842,120 @@ Interest-rate risk scales with duration, and duration rises with maturity, so th
                 {
                     'role': 'assistant',
                     'content': [{'text': 'The 10-year Treasury has more interest-rate risk.', 'type': 'text'}],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
+    ),
+    Case(
+        'anthropic-late-tool-search-result',
+        _anthropic_outbound,
+        _LATE_TOOL_SEARCH_RESULT_HISTORY,
+        carrying_roles={'user'},
+        native_tools=[ToolSearchTool(strategy='regex')],
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [
+                        {'text': 'Find the weather tool, and also call get_time.', 'type': 'text'},
+                    ],
+                },
+                {
+                    'role': 'assistant',
+                    'content': [
+                        {
+                            'id': 'srvtoolu_01',
+                            'type': 'server_tool_use',
+                            'name': 'tool_search_tool_regex',
+                            'input': {'pattern': 'weather'},
+                        },
+                        {'id': 'toolu_01', 'type': 'tool_use', 'name': 'get_time', 'input': {}},
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'tool_use_id': 'toolu_01',
+                            'type': 'tool_result',
+                            'content': [{'text': '12:00', 'type': 'text'}],
+                            'is_error': False,
+                        }
+                    ],
+                },
+                {
+                    'role': 'assistant',
+                    'content': [
+                        {
+                            'tool_use_id': 'srvtoolu_01',
+                            'type': 'tool_search_tool_result',
+                            'content': {'type': 'tool_search_tool_search_result', 'tool_references': []},
+                        }
+                    ],
+                },
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': """\
+<assistant_thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</assistant_thinking>\
+""",
+                            'type': 'text',
+                        }
+                    ],
+                },
+                {
+                    'role': 'assistant',
+                    'content': [{'text': 'It is 12:00, and I found get_weather.', 'type': 'text'}],
+                },
+            ]
+        ),
+        marks=(pytest.mark.skipif(not anthropic_imports(), reason='anthropic not installed'),),
+    ),
+    Case(
+        'anthropic-same-turn-tool-search-result',
+        _anthropic_outbound,
+        _SAME_TURN_TOOL_SEARCH_RESULT_HISTORY,
+        carrying_roles={'user'},
+        native_tools=[ToolSearchTool(strategy='regex')],
+        expected=snapshot(
+            [
+                {
+                    'role': 'user',
+                    'content': [{'text': 'Find the weather tool.', 'type': 'text'}],
+                },
+                {
+                    'role': 'user',
+                    'content': [
+                        {
+                            'text': """\
+<assistant_thinking>
+Interest-rate risk scales with duration, and duration rises with maturity, so the 10-year moves more per unit change in rates.
+</assistant_thinking>\
+""",
+                            'type': 'text',
+                        }
+                    ],
+                },
+                {
+                    'role': 'assistant',
+                    'content': [
+                        {
+                            'id': 'srvtoolu_01',
+                            'type': 'server_tool_use',
+                            'name': 'tool_search_tool_regex',
+                            'input': {'pattern': 'weather'},
+                        },
+                        {
+                            'tool_use_id': 'srvtoolu_01',
+                            'type': 'tool_search_tool_result',
+                            'content': {'type': 'tool_search_tool_search_result', 'tool_references': []},
+                        },
+                        {'text': 'I found get_weather.', 'type': 'text'},
+                    ],
                 },
             ]
         ),
