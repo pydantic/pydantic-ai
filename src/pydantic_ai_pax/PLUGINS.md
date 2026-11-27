@@ -1181,6 +1181,7 @@ settings using the former import paths are redirected to the new modules.
 | `hooks` | `pydantic_ai_pax.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
 | `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; `/computer-use` lets the model use its desktop; see [Sandboxes](docs/reference.md#sandboxes-sandbox) and [Computer use](docs/reference.md#computer-use-computer-use) |
 | `slack` (off until enabled) | `pydantic_ai_pax.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
+| `spend_limits` (off until enabled) | `pydantic_ai_pax.builtin_plugins.spend_limits` | `{}` | stops a run or conversation once it has spent its budget, and shows the totals in the status row; see [below](#spend_limits-a-budget-per-run-or-conversation) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
 are built in too, but start disabled because they need your Day AI or Grain
@@ -2489,6 +2490,55 @@ The settings can also be given up front:
 ```text
 /plugins add grain pydantic_ai_pax.builtin_plugins.grain '{"read_only": false, "include_instructions": true}'
 ```
+
+### `spend_limits`: a budget per run or conversation
+
+`spend_limits` (`pydantic_ai_pax.builtin_plugins.spend_limits`) gives the agent harness's
+[`SpendLimits`](../pydantic_ai_harness/pydantic_ai_harness/spend_limits/README.md) capability,
+built with `SpendLimits.from_spec` from the budgets you save. It starts disabled; turning it on
+(Space in `/plugins`, or `/plugins enable spend_limits`) opens its settings menu, and `c` in
+`/plugins` or `/plugins configure spend_limits` opens it again.
+
+| Row | Setting | Default | Does |
+|---|---|---|---|
+| Budgets | `budgets` | `[]` | a JSON list of budgets, each with a `window` and a `usd` or `tokens` ceiling |
+| Unpriced models | `on_unpriced` | `zero` | what a response from a model with no known price does: `zero` counts it as $0 and marks the total, `raise` stops the run |
+
+Each budget takes these keys:
+
+| Key | Meaning |
+|---|---|
+| `window` | `run` (one prompt, with its tool calls and retries) or `conversation`; required |
+| `usd` | ceiling in US dollars, as a string or a number |
+| `tokens` | ceiling in total tokens |
+| `name` | tells apart two budgets on one window, such as a strict and a loose one |
+
+A budget with neither ceiling only counts. `day` and `month` windows are refused when you save
+them: Pax keeps the counters in memory, so a daily total would start again from zero whenever
+Pax restarts. For the same reason a `conversation` total covers what this Pax process spent on the
+conversation: resuming it after a restart, or changing these settings, starts its count again.
+Harness's own checks run when you save, too, so two `usd` ceilings on one counter are refused with
+the reason.
+
+```text
+/plugins add spend_limits pydantic_ai_pax.builtin_plugins.spend_limits '{"budgets": [{"usd": "2", "window": "run"}, {"usd": "10", "window": "conversation"}]}'
+```
+
+Prices come from [genai-prices](https://github.com/pydantic/genai-prices), one response at a
+time. Once a recorded response reaches a ceiling, the next model request is refused: the request
+that crossed it completes, so a total can end a little past its ceiling. The turn then fails with
+harness's `SpendLimitExceeded` message, such as `Budget 'default' exhausted for this run: spent
+$2.0125 of $2`, and a line pointing to `/plugins configure spend_limits`. A headless `pax -p` run
+prints the message on stderr and exits with status 1. The next prompt starts a new run, so a `run`
+budget applies to it afresh.
+
+The status row shows each budget's spend in the shown conversation against its ceiling, as
+`spend: run $0.0125/$2.0000, conversation $0.3100/$10.0000`; a token ceiling reads `1,050/5,000
+tokens`. A response with no known price, from a local or custom model, counts as $0 under
+`zero`, so the total is marked as a lower bound, `>=$0.0000/$2.0000 (1 unpriced)`. With no
+budgets the plugin adds nothing to the row. The row's own [`cost`](docs/reference.md) figure is
+the retained history's price, which a rewind or compaction changes; these totals count every
+billed response and never go down.
 
 ## Managing plugins
 

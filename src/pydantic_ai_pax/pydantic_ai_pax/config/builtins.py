@@ -38,6 +38,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='web', factory='pydantic_ai_pax.builtin_plugins.web', enabled=False),
     PluginSettings(id='workspaces', factory='pydantic_ai_pax.builtin_plugins.workspaces', enabled=False),
     PluginSettings(id='sandbox', factory='pydantic_ai_pax.builtin_plugins.sandbox'),
+    PluginSettings(id='spend_limits', factory='pydantic_ai_pax.builtin_plugins.spend_limits', enabled=False),
 )
 """Built-in declarations, each integrated with the shell. `remove` restores their defaults.
 
