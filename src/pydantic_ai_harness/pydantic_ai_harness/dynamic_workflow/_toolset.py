@@ -546,14 +546,14 @@ def _budget_terminal_result(
     }
 
 
-# Each `run_workflow` call runs in a fresh session, so the advice carries no state to recreate. `other`
-# host errors re-raise in `call_tool` instead.
-_WORKER_FAILURE_ADVICE: dict[WorkerFailure, str] = {
-    'time_limit': 'The workflow script ran longer than its time limit and was stopped. Make it do less work per call.',
-    'crashed': 'The workflow script crashed the sandbox worker. Revise the script and try again.',
-    'session_ended': 'The sandbox session ended before the workflow script finished. Try again.',
-    'connection_lost': 'The sandbox connection was lost before the workflow script finished. Try again.',
-    'aborted': 'The workflow script aborted inside the sandbox. Revise the script and try again.',
+# What happened to the script, and the retry advice. Each `run_workflow` call runs in a fresh session, so
+# the advice carries no state to recreate. `other` host errors re-raise in `call_tool` instead.
+_WORKER_FAILURES: dict[WorkerFailure, tuple[str, str]] = {
+    'time_limit': ('ran longer than its time limit and was stopped', 'Make it do less work per call.'),
+    'crashed': ('crashed the sandbox worker', 'Revise the script and try again.'),
+    'session_ended': ('lost its sandbox session before it finished', 'Try again.'),
+    'connection_lost': ('lost its sandbox connection before it finished', 'Try again.'),
+    'aborted': ('aborted inside the sandbox', 'Revise the script and try again.'),
 }
 
 
@@ -587,12 +587,15 @@ def _failure_outcome(
         case _:
             # The worker, its connection, or the host failed rather than the script. Completed sub-agent
             # results are listed so the retry can reuse them as plain values.
-            message = _WORKER_FAILURE_ADVICE[worker_failure(failure)]
+            what, advice = _WORKER_FAILURES[worker_failure(failure)]
             if budget_exhausted:
+                # The budget error tells the model to conclude, so no retry advice here.
                 return _budget_terminal_result(
-                    max_agent_calls=max_agent_calls, last_error=message, completed_dispatches=completed_dispatches
+                    max_agent_calls=max_agent_calls,
+                    last_error=f'The workflow script {what} after exhausting the sub-agent budget.',
+                    completed_dispatches=completed_dispatches,
                 )
-            return ModelRetry(f'{message}{_completed_retry_section(completed_dispatches)}')
+            return ModelRetry(f'The workflow script {what}. {advice}{_completed_retry_section(completed_dispatches)}')
 
 
 def _completed_workflow_result(

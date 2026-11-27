@@ -333,7 +333,7 @@ async def test_disconnect_mid_snippet_reports_started_calls(monty_relay: MontyRe
     result = await agent.run('lose the worker mid-snippet')
 
     (retry,) = _retries(result.all_messages())
-    assert 'sandbox connection was lost' in str(retry.content)
+    assert 'sandbox connection' in str(retry.content)
     assert 'drop_connection({}) did not finish' in str(retry.content)
 
 
@@ -353,7 +353,7 @@ async def test_dynamic_workflow_disconnect_lists_completed_calls(monty_relay: Mo
     result = await agent.run('lose the worker mid-script')
 
     (retry,) = _retries(result.all_messages())
-    assert 'sandbox connection was lost' in str(retry.content)
+    assert 'sandbox connection' in str(retry.content)
     assert 'sub(task="a") -> "ok"' in str(retry.content)
 
 
@@ -515,8 +515,8 @@ class TestCodeModeErrorRouting:
             (_DisconnectError('turn_timeout', _SECRET), 'ran longer than its time limit'),
             (_DisconnectError('session_timeout', _SECRET), 'session ended; state is lost'),
             (_DisconnectError('idle_timeout', _SECRET), 'session ended; state is lost'),
-            (_DisconnectError(None, _SECRET), 'sandbox connection was lost'),
-            (_DisconnectError('unknown', _SECRET), 'sandbox connection was lost'),
+            (_DisconnectError(None, _SECRET), 'sandbox connection'),
+            (_DisconnectError('unknown', _SECRET), 'sandbox connection'),
             (RuntimeError(_SECRET), 'Code execution failed and the session was reset'),
         ],
     )

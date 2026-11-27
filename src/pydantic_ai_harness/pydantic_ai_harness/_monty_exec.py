@@ -197,7 +197,8 @@ def resolve_limits(
         if not (max_duration_seconds is None or _is_positive_seconds(max_duration_seconds)):
             raise UserError('`max_duration_seconds` must be a positive number of seconds below 2**64')
         resolved['max_feed_duration_secs'] = max_duration_seconds
-    if 'max_memory' in merged:
+    # Both capabilities default `max_memory`, so only `'unlimited'`, returned above, leaves it unset.
+    if 'max_memory' in merged:  # pragma: no branch
         max_memory = merged['max_memory']
         if not (max_memory is None or _is_positive_u64(max_memory)):
             raise UserError('`max_memory` must be a positive integer number of bytes below 2**64')

@@ -1137,7 +1137,7 @@ async def test_worker_crash_after_budget_exhaustion_returns_terminal_result(
     assert isinstance(out, dict)
     assert 'budget' in out['error']
     assert out['last_error'] == snapshot(
-        'The workflow script ran longer than its time limit and was stopped. Make it do less work per call.'
+        'The workflow script ran longer than its time limit and was stopped after exhausting the sub-agent budget.'
     )
     assert out['completed'] == ['counted(task="first") -> "counted-result"']
 
@@ -1184,7 +1184,7 @@ async def test_sandbox_panic_after_budget_exhaustion_returns_terminal_result(
         'further sub-agent calls in this run will be refused.'
     )
     assert out['last_error'] == snapshot(
-        'The workflow script aborted inside the sandbox. Revise the script and try again.'
+        'The workflow script aborted inside the sandbox after exhausting the sub-agent budget.'
     )
     assert out['completed'] == ['counted(task="first") -> "counted-result"']
 
