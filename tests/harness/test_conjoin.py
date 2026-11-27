@@ -78,10 +78,10 @@ def test_every_construction_path_keeps_what_was_stated() -> None:
 
 
 def test_a_field_assigned_after_construction_is_stated() -> None:
-    file_system = FileSystem[None]()
-    file_system.read_only_patterns = ['private/**']
-    merged = _file_system(_coders(FileSystem, Coder(unrestricted_filesystem=True)), file_system)
-    assert list(merged.read_only_patterns) == ['private/**']
+    """An assigned limit narrows `Coder`'s, which only a field recorded as stated does."""
+    shell = Shell()
+    shell.default_timeout = 10.0
+    assert _shell(_coders(Shell, Coder()), shell).default_timeout == 10.0
 
 
 def test_a_file_system_left_at_its_default_keeps_its_read_only_protection() -> None:
@@ -98,10 +98,11 @@ def test_a_shell_left_at_its_default_keeps_its_denylist() -> None:
 
 
 def test_the_deprecated_read_only_name_is_stated_as_the_new_one() -> None:
+    """Patterns stated through `protected_patterns` stay on their own root, as `read_only_patterns` do."""
     with pytest.warns(HarnessDeprecationWarning):
-        old = FileSystem[None](protected_patterns=['docs/**'])
-    merged = _file_system(_coders(FileSystem, Coder(unrestricted_filesystem=True)), old)
-    assert list(merged.read_only_patterns) == ['docs/**']
+        old = FileSystem[None](protected_patterns=['docs/**'], root_dir='..')
+    with pytest.raises(UserError, match='relative to their own `root_dir`'):
+        _file_system(FileSystem(), old)
 
 
 def test_shell_fields_left_at_their_default_take_no_part() -> None:
