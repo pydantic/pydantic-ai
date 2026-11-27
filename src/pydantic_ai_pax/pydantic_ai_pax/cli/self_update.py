@@ -143,11 +143,28 @@ class Update:
 
     channel: UpdateChannel
     target: str
+    move: bool = False
+    """The running build again, installed only to move a `pydantic-clai2` environment to `pax`."""
 
     @property
     def label(self) -> str:
         """The version, or the commit shortened like `git log --oneline`."""
         return self.target if self.channel == 'stable' else self.target[:9]
+
+    def by_hand(self, command: str) -> str:
+        """Why this Pax cannot install it without uv on `PATH`, and the `command` to run instead."""
+        if self.move:
+            return f'Pax moves itself to {COMMAND} only when uv is on PATH. To move it by hand, run:\n{command}'
+        return (
+            f'Pax {self.label} is available on the {self.channel} channel. Pax updates itself only when uv is '
+            f'on PATH. To update by hand, run:\n{command}'
+        )
+
+    def done(self) -> str:
+        """What a successful install did."""
+        if self.move:
+            return f'Moved Pax {self.label} ({self.channel}) to {COMMAND}.'
+        return f'Updated Pax to {self.label} ({self.channel}).'
 
     def requirement(self, name: str) -> str:
         """`name` from this commit's sdist in the `clai2-bleeding` release, named as `scripts/build_bleeding.sh` names it."""
@@ -173,10 +190,15 @@ class Update:
 
 
 def find_update(channel: UpdateChannel, current: Installed, target: str) -> Update | None:
-    """Offer `target` unless it is what runs; a Git install on `stable` is offered the release."""
-    if channel == 'main':
-        return None if current.commit == target else Update(channel=channel, target=target)
-    return None if current.commit is None and current.version == target else Update(channel=channel, target=target)
+    """Offer `target` unless it is what runs; a Git install on `stable` is offered the release.
+
+    A `pydantic-clai2` environment is offered what runs too, as a move to `pax`: its package has no releases
+    after the last one that moves it.
+    """
+    newest = current.commit == target if channel == 'main' else current.commit is None and current.version == target
+    if not newest:
+        return Update(channel=channel, target=target)
+    return Update(channel=channel, target=target, move=True) if tool_distribution() == LEGACY_DISTRIBUTION else None
 
 
 def find_uv(*, environ: Mapping[str, str] = os.environ, windows: bool = os.name == 'nt') -> str | None:
@@ -489,7 +511,7 @@ class Updates:
             return None
         self.failed = True
         return (
-            f'Not updating to {update.label}: other {COMMAND} processes run from the install it would replace, '
+            f'Not {f"moving to {COMMAND}" if update.move else f"updating to {update.label}"}: other {COMMAND} processes run from the install it would replace, '
             f'and would break (PID {", ".join(others)}). Quit them, then update again.'
         )
 
@@ -501,7 +523,9 @@ class Updates:
         if not self.current.tool:
             return ''
         found = self.check()
-        return f'update {found.update.label}: /update' if found is not None and found.update is not None else ''
+        if found is None or found.update is None:
+            return ''
+        return f'move to {COMMAND}: /update' if found.update.move else f'update {found.update.label}: /update'
 
     def check(self, *, wait: float = 0.0, max_age: float = CHECK_MAX_AGE) -> UpdateCheck | None:
         """The check of the current channel, started in the background unless one ran for it within `max_age` seconds.
@@ -559,10 +583,7 @@ class Updates:
             self.failed = True
             # Keep the overrides file: the printed command reads it.
             shown = powershell(command) if self.windows else shlex.join(command)
-            return (
-                f'Pax {update.label} is available on the {channel} channel. Pax updates itself only when uv is '
-                f'on PATH. To update by hand, run:\n{shown}'
-            )
+            return update.by_hand(shown)
         if self.windows:
             # The script removes the overrides file once uv has read it.
             self.hand_off(after_exit_script(command, pid=os.getpid(), overrides=overrides))
@@ -602,10 +623,11 @@ class Updates:
         self.relaunch = await self.locate(uv)
         self.web = served if self.relaunch is not None else None
         await tell('installed' if self.relaunch is None else 'restarting')
+        done = update.done()
         if self.relaunch is None:
-            return _with_notice(f'Updated Pax to {update.label} ({channel}). Exiting; start {COMMAND} again to use it.')
+            return _with_notice(f'{done} Exiting; start {COMMAND} again to use it.')
         # The CLI tells the person about the move to `pax` as it restarts, once it knows the conversation to resume.
-        return f'Updated Pax to {update.label} ({channel}). Restarting...'
+        return f'{done} Restarting...'
 
 
 def _with_notice(result: str) -> str:

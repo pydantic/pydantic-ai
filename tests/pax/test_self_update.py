@@ -810,6 +810,63 @@ async def test_an_install_from_a_pydantic_clai2_environment_that_does_not_restar
     )
 
 
+async def test_a_pydantic_clai2_environment_on_the_newest_version_moves_to_pax(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """With nothing newer, `/update` still installs what runs, as `pax`: otherwise the last `pydantic-clai2`
+    release would stay on `clai2` for good. Outside a `pydantic-clai2` environment, what runs stays the newest.
+    """
+    context, _ = make_context(tmp_path)
+    stable = Installed(version='0.53.0', tool=True)
+
+    def newest(channel: UpdateChannel) -> tuple[Updates, list[Sequence[str]]]:
+        return _updates(
+            [channel],
+            current=stable if channel == 'stable' else TOOL,
+            fetch=lambda _: '0.53.0' if channel == 'stable' else SHA,
+        )
+
+    for channel in ('stable', 'main'):
+        assert (
+            find_update(channel, stable if channel == 'stable' else TOOL, '0.53.0' if channel == 'stable' else SHA)
+            is None
+        )
+    current, ran = newest('stable')
+    assert current.segment() == ''
+    assert AboutSource(context, current).rows()[0].note == (
+        'pax is already on the latest version 0.53.0 on the stable channel (checked just now).'
+    )
+    assert await current.command([]) == 'Pax 0.53.0 is the newest on the stable channel.'
+    assert ran == []
+    _in_environment(monkeypatch, tmp_path, 'pydantic-clai2')
+    assert find_update('stable', stable, '0.53.0') == Update(channel='stable', target='0.53.0', move=True)
+    assert find_update('main', TOOL, SHA) == Update(channel='main', target=SHA, move=True)
+    assert find_update('stable', Installed(version='0.52.0'), '0.53.0') == Update(channel='stable', target='0.53.0')
+    moving, ran = newest('stable')
+    assert moving.segment() == 'move to pax: /update'
+    assert AboutSource(context, moving).rows()[0].note == (
+        'clai2 is now pax: Update installs 0.53.0, the latest on the stable channel, as pax (checked just now).'
+    )
+    assert await moving.command([]) == 'Moved Pax 0.53.0 (stable) to pax. Restarting...'
+    assert [command[-1] for command in ran] == ['pydantic-ai-pax==0.53.0']
+    # `main` installs the running commit's sdists, through the same overrides.
+    main, ran = newest('main')
+    assert await main.command([]) == 'Moved Pax 4bd401a55 (main) to pax. Restarting...'
+    [command] = ran
+    assert command[-1] == 'pydantic-ai-pax'
+    refused, ran = newest('stable')
+    refused.others = AsyncMock(return_value=['4545'])
+    assert await refused.command([]) == (
+        'Not moving to pax: other pax processes run from the install it would replace, '
+        'and would break (PID 4545). Quit them, then update again.'
+    )
+    by_hand, _ = _updates(['stable'], current=stable, fetch=lambda _: '0.53.0', uv=None)
+    assert await by_hand.command([]) == (
+        'Pax moves itself to pax only when uv is on PATH. To move it by hand, run:\n'
+        'uv tool install --force --compile-bytecode pydantic-ai-pax==0.53.0'
+    )
+
+
 async def _relaunch_after(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
