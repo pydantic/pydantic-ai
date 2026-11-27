@@ -163,6 +163,71 @@ async def test_web_search_citations(
     assert any(isinstance(item, dict) and item.get('kind') == 'search' for item in items)
 
 
+@pytest.mark.vcr
+@pytest.mark.parametrize('stream', [False, True], ids=['non_streamed', 'streamed'])
+async def test_web_search_thinking_history(
+    stream: bool, request_capture: RequestCapture, deepseek_api_key: str, allow_model_requests: None
+) -> None:
+    """With thinking on, a second turn from serialized history sends DeepSeek's reasoning and search back in order.
+
+    Thinking on, DeepSeek runs a multi-step `deep_search` between two `reasoning` items, a different wire shape from
+    the single search with thinking off.
+    """
+    model = DeepSeekResponsesModel(
+        'deepseek-flash', provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=request_capture.client)
+    )
+    agent = Agent(model, capabilities=[WebSearch()], model_settings={'thinking': True})
+    prompt = 'Search the web for the publication years of RFC 9110 and RFC 9112. Answer in one short sentence.'
+    if stream:
+        async with agent.run_stream(prompt) as streamed:
+            await streamed.get_output()
+            messages = streamed.all_messages()
+            history_json = streamed.all_messages_json()
+            response = streamed.response
+    else:
+        result = await agent.run(prompt)
+        messages = result.all_messages()
+        history_json = result.all_messages_json()
+        response = result.response
+    assert [(type(part).__name__, getattr(part, 'tool_name', None)) for part in response.parts] == snapshot(
+        [
+            ('ThinkingPart', None),
+            ('NativeToolCallPart', 'web_search'),
+            ('NativeToolReturnPart', 'web_search'),
+            ('ThinkingPart', None),
+            ('TextPart', None),
+        ]
+    )
+    (call,) = [p for p in response.parts if isinstance(p, NativeToolCallPart)]
+    (returned,) = [p for p in response.parts if isinstance(p, NativeToolReturnPart)]
+    assert returned.provider_details == {'deepseek_web_tool': {'kind': 'deep_search'}}
+    assert response.usage.details['tool_search'] > 0
+
+    history = ModelMessagesTypeAdapter.validate_json(history_json)
+    assert isinstance(history[-1], ModelResponse) and isinstance(messages[-1], ModelResponse)
+    assert history[-1].parts == messages[-1].parts
+    follow_up = await Agent(model, model_settings={'thinking': True}).run(
+        'Which of the two was published first?', message_history=history
+    )
+    assert follow_up.output
+    first, second = request_capture.bodies('/responses')
+    assert first['tools'] == [{'type': 'deepseek_web_search'}]
+    items = second['input']
+    assert isinstance(items, list)
+    assert [item.get('type', item.get('role')) for item in items if isinstance(item, dict)] == snapshot(
+        ['user', 'reasoning', 'web_search_call', 'reasoning', 'assistant', 'user']
+    )
+    (replay,) = [item for item in items if isinstance(item, dict) and item.get('type') == 'web_search_call']
+    assert is_str_dict(returned.content)
+    assert replay == {
+        'type': 'web_search_call',
+        'id': call.tool_call_id,
+        'kind': 'deep_search',
+        'status': 'completed',
+        'action': {**call.args_as_dict(), 'sources': returned.content['sources']},
+    }
+
+
 async def test_web_search_citations_non_streamed(request_capture: RequestCapture, allow_model_requests: None) -> None:
     """A non-streamed response maps DeepSeek's `url_citation` offsets to the cited text.
 
