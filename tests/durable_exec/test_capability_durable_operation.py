@@ -2782,3 +2782,40 @@ async def test_file_understanding_reads_a_recorded_description_instead_of_descri
     durability = RecordingDurability.from_agent(continued)
     assert durability is not None
     assert [name for name, _ in durability.calls if '__capability__' in name] == []
+
+
+@pytest.mark.parametrize('bad_return', [None, dict[str, Any], ModelResponse])
+def test_custom_durable_operation_taking_model_request_context_rejects_non_context_return(
+    bad_return: Any,
+) -> None:
+    """Regression test for #14883: bind-time UserError when a ModelRequestContext op returns something else."""
+
+    class BadReturnCapability(AbstractCapability[None]):
+        id = 'bad_return'
+
+        @durable_operation(name='inspect')
+        async def inspect_request(self, ctx: RunContext[None], request_context: ModelRequestContext) -> Any:
+            return None
+
+    BadReturnCapability.inspect_request.__wrapped__.__annotations__['return'] = bad_return
+
+    with pytest.raises(UserError, match='ModelRequestContext'):
+        collect_capability_operations(BadReturnCapability())
+
+
+def test_custom_durable_operation_taking_model_request_context_allows_unannotated_and_context_return() -> None:
+    """Unannotated and ModelRequestContext return types remain valid at bind time."""
+
+    class GoodReturnCapability(AbstractCapability[None]):
+        id = 'good_return'
+
+        @durable_operation(name='typed')
+        async def typed_op(self, ctx: RunContext[None], request_context: ModelRequestContext) -> ModelRequestContext:
+            return request_context
+
+        @durable_operation(name='unannotated')
+        async def unannotated_op(self, ctx: RunContext[None], request_context: ModelRequestContext):
+            return request_context
+
+    decls = collect_capability_operations(GoodReturnCapability())
+    assert set(decls) == {'typed', 'unannotated'}

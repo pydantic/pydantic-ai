@@ -4,7 +4,7 @@ import inspect
 from collections.abc import Awaitable, Callable
 from dataclasses import KW_ONLY, dataclass, replace
 from functools import update_wrapper, wraps
-from typing import Any, Generic, ParamSpec, TypeVar, cast, get_type_hints
+from typing import Annotated, Any, Generic, ParamSpec, TypeVar, cast, get_args, get_origin, get_type_hints
 
 from pydantic_ai._function_schema import (
     FunctionSchema,
@@ -423,6 +423,14 @@ def _declaration(
         and signature.parameters[model_request_parameter].kind is inspect.Parameter.VAR_POSITIONAL
     ):
         raise UserError('ModelRequestContext cannot be used as a variadic positional parameter (`*args`)')
+    if model_request_parameter is not None and 'return' in type_hints:
+        return_hint = type_hints['return']
+        base_return = get_args(return_hint)[0] if get_origin(return_hint) is Annotated else return_hint
+        if base_return is not Any and base_return is not ModelRequestContext:
+            raise UserError(
+                f'Durable operation {operation_name!r} takes a `ModelRequestContext` and must return '
+                f'`ModelRequestContext`, got return annotation {return_hint!r}.'
+            )
     replacements = (
         {model_request_parameter: ModelRequestContextProjection, 'return': ModelRequestContextProjection}
         if model_request_parameter is not None
