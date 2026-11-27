@@ -468,7 +468,8 @@ class Permissions(AbstractCapability[AgentDepsT]):
             if found is None:
                 return True
             locations = found
-        return any(matches(location, self.protected_paths, posix=posix) for location in locations)
+        pattern = action == 'command'
+        return any(matches(location, self.protected_paths, posix=posix, pattern=pattern) for location in locations)
 
     def _mode_asks(
         self,

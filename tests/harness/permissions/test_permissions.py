@@ -1525,6 +1525,79 @@ class TestProtectedCommandWords:
         ]
         assert await _held(*map(_command, commands), commands=['pax config']) == commands[:12]
 
+    async def test_an_eval_after_a_shell_without_a_script_is_checked(self) -> None:
+        commands = [
+            "sh /dev/null; eval 'echo x > .pax/settings.json'",
+            "bash build.sh && sh x; eval 'echo x > .pax/settings.json'",
+        ]
+        assert await _held(*map(_command, commands)) == commands
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            'cp payload .git/hook?/pre-commit',
+            'cp payload .git/hook*/pre-commit',
+            'echo x > .pa[x]/settings.json',
+            'echo x > .pa[!y]/settings.json',
+            'echo x > .pa[]x]/settings.json',
+            'tee .pa{x,y}/settings.json < payload',
+            'cp payload .p{a{x,y},b}/settings.json',
+            'cp payload .pa{w..z}/settings.json',
+            'cp payload notes/.*/x',
+            'cp payload notes/[.]?/x',
+            'touch x{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}',
+        ],
+        ids=[
+            'question-mark',
+            'star',
+            'bracket',
+            'negated-bracket',
+            'bracket-holding-a-bracket',
+            'braces',
+            'nested-braces',
+            'brace-sequence',
+            'could-be-a-dot',
+            'bracket-could-be-a-dot',
+            'too-many-braces',
+        ],
+    )
+    async def test_a_pattern_that_could_expand_to_a_protected_path(self, command: str) -> None:
+        assert await _held(_command(command)) == [command]
+
+    async def test_a_windows_wildcard_that_could_name_a_protected_path(self) -> None:
+        commands = ['Set-Content .pa?\\settings.json x', 'Set-Content notes\\.*\\x y', 'Set-Content *.txt x']
+        assert await _held(*map(_command, commands), workspace=_WindowsRepo()) == commands[:2]
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            'sort -o.pax/settings.json payload',
+            'cp payload -t.git/hooks',
+            'install -D payload -t.git/hooks',
+            'cp -vt.git/hooks payload',
+        ],
+    )
+    async def test_a_value_attached_to_a_short_option(self, command: str) -> None:
+        assert await _held(_command(command), paths=[*PROTECTED, '.git/hooks']) == [command]
+
+    async def test_ordinary_patterns_options_and_shells_still_run(self) -> None:
+        commands = [
+            'cp *.py dest/',
+            "find . -name '*.py' -delete",
+            'touch f{1..3}.txt',
+            'mv config{,.bak}',
+            'echo {} a,b} {x',
+            'cp src/[a-z]?.txt .git/hooks-backup/',
+            'echo x > notes/[a/b]',
+            'echo x > notes/[unclosed',
+            'sort -o out.txt in.txt',
+            'cp -vt dest/ a.txt',
+            "python -c 'print([1, 2])'",
+            "git commit -m 'why?'",
+            "sh build.sh; eval 'echo hi'",
+        ]
+        assert await _held(*map(_command, commands), paths=[*PROTECTED, '.git/hooks']) == []
+
     async def test_a_quoted_path_is_one_word(self) -> None:
         commands = ['echo x > "my dir/.pax/x"', 'echo x > my dir/.pax/x', 'tool --out=my/a']
         assert await _held(*map(_command, commands), paths=['my dir/.pax/*', 'my/a']) == [commands[0], commands[2]]
