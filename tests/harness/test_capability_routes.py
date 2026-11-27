@@ -17,52 +17,37 @@ from __future__ import annotations
 import json
 import re
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
-from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Literal, get_args
 
 import pytest
 from _pytest.mark import ParameterSet
 
-from pydantic_ai import Agent, AgentRunResult, RunContext, ToolReturn
-from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools, ValidatedToolArgs
-from pydantic_ai.messages import (
-    CapabilityPart,
-    CapabilitySource,
-    InstructionCapabilityPart,
-    ModelMessage,
-    ModelMessagesTypeAdapter,
-    ModelRequest,
-    OperatorSource,
-    OperatorText,
-    ToolCallPart,
-    ToolReturnPart,
-)
+from pydantic_ai import Agent, RunContext
+from pydantic_ai.capabilities import AbstractCapability, PrepareTools
+from pydantic_ai.messages import CapabilitySource, ModelMessagesTypeAdapter
 from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import BackgroundTools, CodeMode, SubAgent, SubAgents, ToolBridge
-from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 
-from .. import capability_cases as core
-from ..append_only import (
-    OneCallPerResponse,
-    ToolArgs,
-    ToolCall,
-    build_calls,
-    discover_capabilities,
-    drain_events,
-    run_through_ui,
-    ui_imports_successful,
-)
-from ..capability_cases import CORE_CAPABILITY_PACKAGES, Calls, CapabilityCase
+from ..append_only import OneCallPerResponse, ToolArgs, ToolCall, drain_events, run_through_ui, ui_imports_successful
+from ..capability_cases import Calls
 from ..conftest import try_import
-from .capability_cases import CASES as HARNESS_CASES, HARNESS_CAPABILITY_PACKAGES
+from .capability_runs import (
+    PAYLOAD,
+    PROBES,
+    SUBJECTS,
+    RouteRun,
+    build_lowered,
+    case_calls,
+    run_native,
+    tools_ran,
+    typed_history,
+)
 
 with try_import() as ipython_installed:
     from pydantic_ai_harness.ipython_code_mode import IPythonCodeMode, IPythonKernel
 
-CASES: dict[str, CapabilityCase] = {**core.CASES, **HARNESS_CASES}
-PUBLIC = {**discover_capabilities(CORE_CAPABILITY_PACKAGES), **discover_capabilities(HARNESS_CAPABILITY_PACKAGES)}
 
 Route = Literal[
     'code_mode',
@@ -111,47 +96,6 @@ _WRAPS: dict[Route, Callable[[str, ToolArgs, AgentInfo], ToolCall]] = {
 """How a route that dispatches calls itself makes one, given what the model is offered."""
 
 
-PAYLOAD = 'the page says hello'
-"""What every probe's calls put in the history, which each route must deliver unchanged."""
-
-
-def fetch_page() -> ToolReturn:
-    """Fetch a page, with what it says beside the return value."""
-    return ToolReturn(return_value='ok', content=PAYLOAD)
-
-
-def fetch_and_note(ctx: RunContext[None]) -> str:
-    """Fetch a page, and note what it says for the next request."""
-    ctx.enqueue(PAYLOAD)
-    return 'ok'
-
-
-@dataclass(kw_only=True)
-class _ReminderPart(InstructionCapabilityPart, namespace='test_capability_routes', name='reminder'):
-    """A reminder for the next request only."""
-
-
-def fetch_and_remind(ctx: RunContext[None]) -> str:
-    """Fetch a page, and remind the model of what it says for the next request only."""
-    ctx.enqueue(_ReminderPart(content=OperatorText(PAYLOAD), source=OperatorSource(), scope='request'))
-    return 'ok'
-
-
-PROBES: dict[str, Calls] = {
-    'probe:tool_return_content': Calls(
-        (('fetch_page', {}),), lambda _: Capability[None](id='plugin', tools=[fetch_page])
-    ),
-    'probe:enqueued': Calls((('fetch_and_note', {}),), lambda _: Capability[None](id='plugin', tools=[fetch_and_note])),
-    'probe:request_scoped': Calls(
-        (('fetch_and_remind', {}),),
-        lambda _: Capability[None](id='plugin', tools=[fetch_and_remind]),
-        moves_cache_prefix='a request-scoped reminder is gone from the request after the one it was for',
-    ),
-}
-"""Capabilities built only here, whose calls put more than their return value in the history, so every route has a
-part to compare while few cases' calls do: one returns `ToolReturn.content`, one calls `ctx.enqueue` with text, and one
-enqueues a request-scoped system prompt. What they put there is fixed, so their routes are also compared on content."""
-
 _PULL = 'https://github.com/pydantic/pydantic-ai/pull/'
 _CONTENT = f"{_PULL}14327: a nested call's `ToolReturn.content` is attributed to the route's own tool"
 _ISSUE = 'https://github.com/pydantic/pydantic-ai/issues/'
@@ -175,73 +119,6 @@ KNOWN: dict[tuple[str, Route], tuple[str, type[Exception]]] = {
 }
 """A route on which a case's calls reach the model differently than natively, with what fixes it and the error the
 check fails with."""
-
-
-@dataclass(frozen=True)
-class Seen:
-    """What the model sees of one part the calls put in the history, besides what a call returned."""
-
-    part: str
-    """The part's type, or its kind for a capability part."""
-    source: object = None
-    capability_id: str | None = None
-    authority: str | None = None
-    frame: tuple[str, str | None] | None = None
-    """A capability part's voice and tag."""
-    scope: str | None = None
-    """How long the model sees a capability part: a route mustn't turn a request-scoped part into a lasting one."""
-    content: object = None
-    """What a capability part tells the model, compared only for the probes, whose content is fixed."""
-
-
-def _seen(part: object, *, with_content: bool) -> Seen:
-    if not isinstance(part, CapabilityPart):
-        return Seen(type(part).__name__)
-    return Seen(
-        part.kind,
-        part.source,
-        part.capability_id,
-        part.source.authority,
-        (part.rendering.voice, part.rendering.tag),
-        part.scope,
-        part.model_content() if with_content else None,
-    )
-
-
-_CARRIERS = (ToolReturnPart, BackgroundToolResultPart)
-"""Parts that carry what a call returned, which each route wraps its own way."""
-
-
-def typed_history(messages: Sequence[ModelMessage], *, with_content: bool = False) -> list[Seen]:
-    """What the model sees of each part the calls put in the history, besides the prompt and what each call returned.
-
-    `with_content` compares what each capability part says too, for calls whose content doesn't vary between runs.
-    """
-    requests = [message for message in messages if isinstance(message, ModelRequest)]
-    return [
-        _seen(part, with_content=with_content)
-        for request in requests[1:]
-        for part in request.parts
-        if not isinstance(part, _CARRIERS)
-    ]
-
-
-@dataclass
-class _Observer(AbstractCapability[None]):
-    """Records the tools each run executes and the history it ends with: a sub-agent's run doesn't return its own."""
-
-    ran: list[str] = field(default_factory=list[str])
-    histories: list[list[ModelMessage]] = field(default_factory=list[list[ModelMessage]])
-
-    async def before_tool_execute(
-        self, ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
-    ) -> ValidatedToolArgs:
-        self.ran.append(call.tool_name)
-        return args
-
-    async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[object]) -> AgentRunResult[object]:
-        self.histories.append(result.all_messages())
-        return result
 
 
 async def _rebuild_definitions(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -269,39 +146,13 @@ async def _rebuild_definitions(ctx: RunContext[None], tool_defs: list[ToolDefini
     ]
 
 
-@dataclass
-class RouteRun:
-    """What a case's calls did on one route."""
-
-    messages: list[ModelMessage]
-    ran: list[str]
-    """The tools the calls executed, in order, leaving out the route's own dispatchers."""
-
-
-async def _built(calls: Calls, directory: Path) -> tuple[list[AbstractCapability[None]], _Observer]:
-    capabilities = await build_calls(calls.build, directory)
-    return [capability.with_authority('none') for capability in capabilities], _Observer()
-
-
-def _ran(calls: Calls, observer: _Observer) -> list[str]:
-    names = {name for name, _ in calls.made}
-    return [name for name in observer.ran if name in names]
-
-
-async def _native(calls: Calls, directory: Path) -> RouteRun:
-    capabilities, observer = await _built(calls, directory)
-    agent = Agent(OneCallPerResponse(calls.made).model, deps_type=type(None), capabilities=[*capabilities, observer])
-    result = await agent.run('go', event_stream_handler=drain_events)
-    return RouteRun(result.all_messages(), _ran(calls, observer))
-
-
 async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonKernel | None = None) -> RouteRun:
     """What the calls do on `route`."""
     if route == 'type_adapter':
-        native = await _native(calls, directory)
+        native = await run_native(calls, directory)
         loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(native.messages))
         return RouteRun(loaded, native.ran)
-    capabilities, observer = await _built(calls, directory)
+    capabilities, observer = await build_lowered(calls, directory)
     # A sub-agent's run doesn't stream.
     script = OneCallPerResponse(calls.made, wrap=_WRAPS.get(route), unstreamed=route == 'sub_agent')
     if route in ('vercel_ai', 'ag_ui'):
@@ -310,7 +161,7 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
         first = (await run_through_ui(protocol, agent, 'go')).all_messages()
         # The client sends the whole conversation back, and the server keeps the history it stored.
         second = await run_through_ui(protocol, agent, 'next', message_history=first)
-        return RouteRun(second.all_messages()[: len(first)], _ran(calls, observer))
+        return RouteRun(second.all_messages()[: len(first)], tools_ran(calls, observer))
     if route == 'sub_agent':
         child = Agent(script.model, deps_type=type(None), name='child', capabilities=[observer])
         parent = Agent(
@@ -320,7 +171,7 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
         )
         await parent.run('go', event_stream_handler=drain_events)
         [history] = observer.histories
-        return RouteRun(history, _ran(calls, observer))
+        return RouteRun(history, tools_ran(calls, observer))
     around: dict[Route, Callable[[], AbstractCapability[None]]] = {
         'code_mode': CodeMode,
         'ipython_code_mode': lambda: IPythonCodeMode(kernel=kernel),
@@ -332,15 +183,11 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
     result = await agent.run('go', event_stream_handler=drain_events)
     if route in _WRAPS and not script.wrapped:
         pytest.skip(f'{route} keeps every tool the calls make native')
-    return RouteRun(result.all_messages(), _ran(calls, observer))
+    return RouteRun(result.all_messages(), tools_ran(calls, observer))
 
 
 def _matrix(routes: Sequence[Route]) -> Iterator[ParameterSet]:
-    subjects: dict[str, Calls] = {
-        **{name: case.calls for name, case in sorted(CASES.items()) if name in PUBLIC and case.calls is not None},
-        **PROBES,
-    }
-    for name, calls in subjects.items():
+    for name, calls in SUBJECTS.items():
         for route in routes:
             marks: list[pytest.MarkDecorator] = []
             if (known := KNOWN.get((name, route))) is not None:
@@ -356,19 +203,9 @@ def _matrix(routes: Sequence[Route]) -> Iterator[ParameterSet]:
             yield pytest.param(name, route, marks=marks, id=f'{name}-{route}')
 
 
-def _calls(name: str) -> Calls:
-    if (probe := PROBES.get(name)) is not None:
-        return probe
-    case = CASES[name]
-    if case.requires is not None:
-        pytest.importorskip(case.requires)
-    assert case.calls is not None
-    return case.calls
-
-
 async def _assert_same(name: str, route: Route, directory: Path, kernel: IPythonKernel | None = None) -> None:
-    calls = _calls(name)
-    native = await _native(calls, directory / 'native')
+    calls = case_calls(name)
+    native = await run_native(calls, directory / 'native')
     assert native.ran, 'the calls ran no tool'
     routed = await _through(route, calls, directory / route, kernel)
     with_content = name in PROBES
@@ -415,14 +252,13 @@ async def test_calls_reach_the_model_the_same_through_ipython_code_mode(
 
 def test_every_known_entry_names_a_case_and_route() -> None:
     """An entry for a case that no longer has calls, or a route that's gone, would hide the next finding there."""
-    subjects = {name for name, case in CASES.items() if name in PUBLIC and case.calls is not None} | set(PROBES)
-    assert [key for key in KNOWN if key[0] not in subjects or key[1] not in ROUTES] == []
+    assert [key for key in KNOWN if key[0] not in SUBJECTS or key[1] not in ROUTES] == []
 
 
 async def test_the_native_route_attributes_the_probes(tmp_path: Path) -> None:
     """The baseline the probes' routes are compared with: `plugin`'s content at `'none'`, as written."""
     for name, calls in PROBES.items():
-        [seen] = typed_history((await _native(calls, tmp_path / name)).messages, with_content=True)
+        [seen] = typed_history((await run_native(calls, tmp_path / name)).messages, with_content=True)
         assert seen.content == PAYLOAD
         assert seen.scope == ('request' if name == 'probe:request_scoped' else 'conversation')
         assert seen.source == CapabilitySource('plugin', authority='none')
