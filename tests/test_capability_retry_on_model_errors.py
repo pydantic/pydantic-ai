@@ -622,6 +622,70 @@ async def test_each_fallback_model_gets_its_own_budget(retry_first: bool):
     assert len(delays) == 2
 
 
+async def test_each_pass_gets_a_fresh_budget_on_a_one_model_chain():
+    """A `ModelFallback` pass that starts over on the model the last pass ended on retries it `max_attempts` times."""
+    answered: list[str] = []
+    model = _flaky('primary', [_http_error(ModelUnavailableError, 'primary')] * 10, answered)
+    agent = Agent(
+        model,
+        capabilities=[
+            ModelFallback(model, passes=2, initial_delay=0),
+            RetryOnModelErrors(max_attempts=3, initial_delay=0),
+        ],
+    )
+    with _recorded_sleeps() as delays, pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x')
+    assert answered == ['primary'] * 6
+    assert [kind for _, kind, _, _ in _kinds(exc_info.value.attempts)] == ['retry', 'retry', 'fallback'] * 2
+    # Two retries in each pass, and the wait between the passes.
+    assert len(delays) == 5
+
+
+async def test_each_pass_gets_a_fresh_budget_on_a_multi_model_chain():
+    """Every model in a later pass is retried `max_attempts` times again."""
+    answered: list[str] = []
+    primary = _flaky('primary', [_http_error(ModelUnavailableError, 'primary')] * 10, answered)
+    backup = _flaky('backup', [_http_error(ModelUnavailableError, 'backup')] * 10, answered)
+    agent = Agent(
+        primary,
+        capabilities=[
+            ModelFallback(backup, passes=2, initial_delay=0),
+            RetryOnModelErrors(max_attempts=2, initial_delay=0),
+        ],
+    )
+    with _recorded_sleeps(), pytest.raises(FallbackExceptionGroup):
+        await agent.run('x')
+    assert answered == ['primary', 'primary', 'backup', 'backup'] * 2
+
+
+async def test_each_pass_gets_a_fresh_request_deadline(monkeypatch: pytest.MonkeyPatch):
+    """A pass that starts over on the model the last pass ended on is sent the whole `request_timeout` again.
+
+    Each attempt moves the event loop's clock forward by 4s rather than taking that long.
+    """
+    clock = Clock()
+    clock.install(monkeypatch)
+    timeouts: list[float | None] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        timeouts.append((info.model_settings or {}).get('request_timeout'))
+        clock.advance(4)
+        raise _http_error(ModelUnavailableError, 'primary')
+
+    model = FunctionModel(respond, model_name='primary')
+    agent = Agent(
+        model,
+        model_settings={'request_timeout': 10},
+        capabilities=[
+            ModelFallback(model, passes=2, initial_delay=0),
+            RetryOnModelErrors(max_attempts=3, initial_delay=0),
+        ],
+    )
+    with _recorded_sleeps(), pytest.raises(FallbackExceptionGroup):
+        await agent.run('x')
+    assert [round(timeout or 0) for timeout in timeouts] == [10, 6, 2, 10, 6, 2]
+
+
 async def test_an_error_not_retried_falls_back_at_once():
     """An error `retry_on` doesn't cover, or one the provider says not to retry, moves on to the next model."""
     answered: list[str] = []

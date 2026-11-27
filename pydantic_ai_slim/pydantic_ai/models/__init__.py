@@ -721,6 +721,12 @@ class ModelRequestContext:
     _usage_response_ledger: _ModelRequestUsageLedger = field(
         default_factory=_ModelRequestUsageLedger, repr=False, compare=False
     )
+    _moved: bool = field(default=False, repr=False, compare=False)
+    """Whether a hook's `RetryModelRequest` moved this attempt to a model it named, rather than retrying the last one.
+
+    It's set even when the named model is the one the last attempt was at, as when a `ModelFallback` pass starts
+    over on it, so that a `RetryOnModelErrors` gives the model a fresh budget.
+    """
     _serving_wrapper: tuple[Model, Model] | None = field(default=None, repr=False, compare=False)
     """The model a capability's `get_wrapper_model` returned to serve the request, which is entered around it, and
     the model it wraps, whose lifecycle its owner manages."""
