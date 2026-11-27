@@ -426,8 +426,8 @@ async def test_draft_rows_follow_a_prompt_marker() -> None:
     async with editor() as (live, _, _):
         live.buffer.replace('a' * 79 + '\nxy')
         frame = live.frame()
-        # The title rule, three draft rows, the bottom rule, the input hint, and the footer.
-        draft = frame[1:-3]
+        # The title rule, three draft rows, the bottom rule, and the footer.
+        draft = frame[1:-2]
         assert [Text.from_ansi(row).plain for row in draft] == ['❯ ' + 'a' * 78, '  a', '  xy ']
         # The cursor paints after the indent, not at the left edge.
         assert draft[-1].endswith('  xy\x1b[7m \x1b[27m')
@@ -437,7 +437,7 @@ async def test_draft_rows_follow_a_prompt_marker() -> None:
         assert first.index('❯') < first.index('\x1b[7ma\x1b[27m')
         # A draft taller than its rows scrolls to the cursor, and the marker stays on the top row shown.
         live.buffer.replace('\n'.join(f'line {index}' for index in range(20)))
-        plain = [Text.from_ansi(row).plain for row in live.frame()[1:-3]]
+        plain = [Text.from_ansi(row).plain for row in live.frame()[1:-2]]
         assert plain == ['❯ line 12', *(f'  line {index}' for index in range(13, 19)), '  line 19 ']
 
 

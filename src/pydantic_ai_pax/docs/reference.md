@@ -98,6 +98,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `input.bindings` | `{"send":"enter","steer":"alt-enter","newline":"shift-enter"}` | User-only decoded composer keys; `/input` edits each action. Ctrl+J inserts a newline, except on Windows, where it steers. |
 | `input.keyboard_labels` | `unset` | User-only keyboard labels: `neutral`, `mac`, or `pc`. Unset offers setup; labels do not detect terminal transport. |
 | `input.question_submit` | `ask` | User-only interaction preference: `ask`, `answer`, or `follow-up`. Never grants tool approval. |
+| `input.questions` | `picker` | User-only: where questions and tool approvals wait. `picker` takes the keys as each one arrives; opt-in `composer` keeps your draft and keys, and F2 reviews them. |
 | `input.busy_delivery` | `after-turn` | User-only busy composer delivery: `after-turn` or opt-in `next-checkpoint`. F4 inspects/changes it. |
 | `display.thinking` | `true` | Show the model's thinking as it streams. |
 | `display.task_models` | `true` | Name the model each subagent runs on in its start row, which waits for the child to report it. Off, the row prints at once without it. |
@@ -1278,7 +1279,7 @@ response has omitted usage information.
 ### Keyboard setup
 
 Run `/input` to choose Mac, PC, or neutral key labels and configure **Send**,
-**Steer**, and **Newline**. Until you choose labels, the footer offers setup.
+**Steer**, and **Newline**. Until you choose labels, the launch banner names `/input`.
 The defaults stay Enter to send or queue, Alt/Option+Enter to steer, and a
 distinctly reported Shift+Enter to insert a newline. Ctrl+J inserts a
 newline, including in custom question answers, except on
@@ -1299,10 +1300,12 @@ on that connection. Test Ctrl+J for newline or another offered binding before
 remapping. Ctrl+M, Ctrl+Enter and Ctrl+Shift+Enter act as Enter (Ctrl+Enter
 steers on Windows), so they cannot be bound separately; `/set` rejects bindings that collide. In `/input`, choosing a
 key another action holds swaps the two, so Enter can become the newline and Alt+Enter send. Unsupported shortcuts are refused
-rather than silently taking over editing keys. The hints follow effective bindings.
+rather than silently taking over editing keys. The hint row below the composer follows effective
+bindings. It appears once you change an `input.*` setting, and while a question waits in the composer or
+messages are queued or held for editing.
 
 `/input` and `/set` can edit or reset `input.keyboard_labels`, `input.bindings`,
-`input.question_submit`, and `input.busy_delivery`. `/input reset` resets all four. These are user-only
+`input.question_submit`, `input.questions`, and `input.busy_delivery`. `/input reset` resets all five. These are user-only
 preferences, not project settings. A remap affects the composer and focused
 questions, not unrelated full-screen menus or the browser's shortcuts.
 
@@ -1437,9 +1440,9 @@ restores `after-turn`. Bare settings menus such as
 in the editor as turns finish. Queued messages are not saved as conversation turns
 until execution starts, and are discarded on exit or `/reload`.
 
-Slash-command menus temporarily take over input. The editor and its draft return
-when the menu closes. Incoming questions do not take composer focus: see
-[Questions from the model](#questions-from-the-model).
+Full-screen question menus and slash-command menus temporarily take over input.
+The editor and its draft return when the menu closes. With `input.questions=composer`,
+questions do not take composer focus: see [Questions from the model](#questions-from-the-model).
 Small terminals omit the border to leave room for output.
 
 ### Pasting images
@@ -2326,27 +2329,12 @@ cannot be imported, Pax prints a warning and runs tools natively.
 ### Questions from the model
 
 When the task is ambiguous, the model can call `ask_user_question` instead of
-guessing. A pending question appears above the composer without taking focus.
-Keep typing with your cursor, undo history, draft, and attachments intact.
-Press F2 to review its numbered choices; F2 or Esc returns to the composer.
-Ctrl-C while focused declines the request. A question from a session the terminal
-does not show, such as one the browser opened, waits until you show that session
-there with `/resume`; the web UI can answer it meanwhile.
-
-Sending composer text while a question waits offers **Answer this question** (`a`)
-or **Queue follow-up** (`q`), naming the answer target. Enter does not choose for
-you. `r` toggles **Remember my choice**; `/input` changes or resets the preference
-later. Cancellation preserves the draft; a successful text answer clears it.
-Question answers cannot carry images: queue an image-bearing draft instead.
-The setting remembers interaction preference only, never answer text or approval.
-Each subsequent question in a batch requires review or an explicit routing choice;
-held Enter and pasted text do not answer the next question.
-
-When focused, questions show a compact numbered picker. The question stays pinned above its choices, so output that
+guessing. Questions appear inline, with the conversation still visible above a
+compact numbered picker. The question stays pinned above its choices, so output that
 streams meanwhile, from a delegated task for instance, scrolls past above it instead
 of pushing it away. A delegated task's question names the task in its title. Use Up/Down and Enter, or press an option's number to
 select it. For multiple selections, Enter or a number toggles a choice; select
-`Done` to submit. At least one choice is required. Ctrl+C declines the
+`Done` to submit. At least one choice is required. Esc or Ctrl+C declines the
 whole request, which the model is told so it can make a stated choice and carry
 on. Several questions show progress in the title. The tool's transcript line
 names the questions by header, not their raw JSON. The editor's draft is
@@ -2362,6 +2350,22 @@ and keeps your draft; Ctrl+C declines the whole request. Backspace and arrow key
 edit the text. Multiline paste is inserted as text and waits for Enter; it does
 not submit an answer or select choices. The conversation stays visible while you type. Custom answers
 appear in the transcript and reach the model as a one-item list under the question's header.
+
+Set `input.questions` to `composer`, in `/input` or with `/set`, to keep typing instead. A pending
+question then appears above the composer without taking focus, leaving your cursor, undo history,
+draft, and attachments intact. Press F2 to review its numbered choices; F2 or Esc returns to the
+composer, and Ctrl+C while focused declines the request. A question from a session the terminal does
+not show, such as one the browser opened, waits until you show that session there with `/resume`;
+the web UI can answer it meanwhile.
+
+In the composer, sending text while a question waits offers **Answer this question** (`a`)
+or **Queue follow-up** (`q`), naming the answer target. Enter does not choose for
+you. `r` toggles **Remember my choice**; `/input` changes or resets the preference
+later. Cancellation preserves the draft; a successful text answer clears it.
+Question answers cannot carry images: queue an image-bearing draft instead.
+The setting remembers interaction preference only, never answer text or approval.
+Each subsequent question in a batch requires review or an explicit routing choice;
+held Enter and pasted text do not answer the next question.
 
 The menu is the built-in `ask_user` plugin around the harness's
 [`AskUser`](../../../docs/harness/ask-user.md) capability. The capability only knows an
@@ -2381,10 +2385,10 @@ shows how to put a different one, a web form for instance, in its place.
 
 A held call waits for your answer: the inline picker in the terminal, or an approval card in the web UI,
 showing the command or the file change; the terminal prints the command (or a path too long for the
-picker) in full above it. A call held in a session the terminal does not show waits
-until the terminal shows it, or the web UI answers it. In the terminal, F2 explicitly focuses the approval before
-an option can authorize the call. Generic send, steering, queued text and the remembered
-question preference never approve a tool. A custom text answer always denies it. **Approve** runs it once, **Approve for this session** also runs the
+picker) in full above it. With `input.questions=composer`, the approval waits above the composer
+instead: F2 focuses it before an option can authorize the call, and a call held in a session the terminal
+does not show waits until the terminal shows it, or the web UI answers it. Generic send, steering, queued
+text and the remembered question preference never approve a tool. A custom text answer always denies it. **Approve** runs it once, **Approve for this session** also runs the
 same tool on the same command (or the same file) without asking for the rest of the conversation, and **Deny** tells
 the model the call did not run, with the reason you type, if any. The web UI shows the mode as a chip by the
 prompt box and changes it there too. A change applies from the next tool call, also during a turn, except

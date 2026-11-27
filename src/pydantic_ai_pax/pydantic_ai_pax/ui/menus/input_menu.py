@@ -9,7 +9,7 @@ from pydantic_ai_pax.config.input_bindings import BINDABLE_KEYS, InputAction, In
 from pydantic_ai_pax.plugins.menus import CloseMenu, Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_ai_pax.ui.menus.set_menu import SettingsSource
 
-INPUT_SETTINGS = ('input.keyboard_labels', 'input.question_submit', 'input.busy_delivery')
+INPUT_SETTINGS = ('input.keyboard_labels', 'input.questions', 'input.question_submit', 'input.busy_delivery')
 _ACTIONS: tuple[InputAction, ...] = ('send', 'steer', 'newline')
 
 

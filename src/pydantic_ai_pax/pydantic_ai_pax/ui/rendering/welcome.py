@@ -3,15 +3,23 @@
 from rich.console import Console
 
 from pydantic_ai_pax.cli.self_update import installed
+from pydantic_ai_pax.config import Settings
+from pydantic_ai_pax.config.input_bindings import InputBindings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.runtime.worktrees import Worktree
+from pydantic_ai_pax.ui.prompt.prompt_keys import ctrl_enter_steers
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.branding import print_banner
 from pydantic_ai_pax.ui.rendering.tool_output import terminal_text
 
 
-def print_welcome(project: ProjectSettings, console: Console, *, worktree: Worktree | None = None) -> None:
-    """The banner, version, and hints a fresh launch shows, which `/clear` returns to without the worktree notice."""
+def print_welcome(
+    project: ProjectSettings, console: Console, *, worktree: Worktree | None = None, settings: Settings | None = None
+) -> None:
+    """The banner, version, and hints a fresh launch shows, which `/clear` returns to without the worktree notice.
+
+    Until `input.keyboard_labels` is chosen, a line offers `/input` key setup.
+    """
     console.print()
     print_banner(console)
     console.print(f'pydantic-ai-pax {installed().label}', style=theme.color(theme.MUTED))
@@ -22,6 +30,11 @@ def print_welcome(project: ProjectSettings, console: Console, *, worktree: Workt
         '/new starts a session; /resume restores one; /exit quits. Esc or Ctrl+C interrupts a turn.',
         style=theme.color(theme.MUTED),
     )
+    if settings is None or settings.keyboard_labels == 'unset':
+        bindings = InputBindings() if settings is None else settings.input_bindings
+        # Where Ctrl+J steers, the newline binding inserts one, as the composer's hints say.
+        newline = bindings.label('newline') if ctrl_enter_steers() else 'Ctrl+J'
+        console.print(f'/input sets up keys; {newline} inserts a newline.', style=theme.color(theme.MUTED))
     _report_project(project, console)
 
 

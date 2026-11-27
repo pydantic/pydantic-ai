@@ -113,7 +113,7 @@ A few keys to know:
 | <kbd>Up</kbd> | Edit a queued message. <kbd>Esc</kbd> stops editing; clear it to remove it. |
 | <kbd>Esc</kbd> <kbd>Esc</kbd> | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
 | <kbd>Ctrl</kbd>+<kbd>J</kbd> | Insert a newline, including when Shift+Enter arrives as plain Enter. On Windows it steers. |
-| <kbd>F2</kbd> | Review a pending question or approval without losing your draft. |
+| <kbd>F2</kbd> | With `input.questions=composer`, review a pending question or approval without losing your draft. |
 | <kbd>F4</kbd> | Queue actions: Edit, Remove, Steer, and persistent busy delivery mode. |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste an image from the clipboard. |
 | <kbd>Ctrl</kbd>+<kbd>O</kbd> | Show or hide the full output of commands. Output already in the terminal's scrollback is shown on the alternate screen, which stays for the session. |
@@ -297,14 +297,14 @@ rows.
 
 ### Questions from the model
 
-When a task could go more than one way, the model can ask you instead of guessing.
-Questions wait above the composer while you keep typing. Press <kbd>F2</kbd> to review
-choices, then use the arrow keys and your send key, or press an option's number.
-**Other** lets you type your own answer. <kbd>F2</kbd> returns to your draft; <kbd>Ctrl</kbd>+<kbd>C</kbd> while focused declines.
+When a task could go more than one way, the model can ask you instead of guessing. Pick
+an answer with the arrow keys and <kbd>Enter</kbd>, or press its number. **Other** lets you type
+your own answer. <kbd>Esc</kbd> declines; the model is told, and carries on with a choice it states.
 
-Sending your draft while a question waits offers **Answer this question** or **Queue
-follow-up**, with a remember-my-choice option. Change or reset that preference in
-`/input`. It never approves tools: approvals require explicitly focusing their choices.
+To keep typing while questions and approvals wait, set `input.questions` to `composer` in `/input`.
+Press <kbd>F2</kbd> to review a waiting question's choices; <kbd>F2</kbd> returns to your draft. Sending
+your draft while a question waits offers **Answer this question** or **Queue follow-up**, with a
+remember-my-choice option. It never approves tools: approvals require explicitly focusing their choices.
 
 ![The model asking which CI service to use, with three numbered choices](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/ask-user.png)
 

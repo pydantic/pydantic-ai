@@ -1447,23 +1447,25 @@ declaration under the same name changes them too:
 The second built-in, `ask_user` (`pydantic_ai_pax.builtin_plugins.ask_user_menu`), gives
 the model the harness's `AskUser` capability: one tool, `ask_user_question`, for
 asking you one to ten multiple-choice questions when the task is ambiguous. Each
-question waits above the composer without taking focus or changing the draft,
-cursor, undo history, or attachments. F2 explicitly focuses its numbered picker;
-F2 returns to the composer. While focused, Up/Down or Tab/Shift+Tab moves the
-highlight; the configured send key (Enter by default) or an option's number selects it.
-The question is pinned with its choices while output streams above it.
+question appears inline above a compact numbered picker, keeping the conversation
+visible. The question is pinned with its choices, so output streamed meanwhile (a
+delegated task's, say) lands above it instead of between it and the picker. Up/Down or Tab/Shift+Tab moves the highlight; Enter or an option's number selects it.
 For multi-select questions, Enter or a number toggles that choice; select `Done`
 to submit at least one choice. The title says `question 2 of 3` when there are
-several. Ctrl+C while focused declines the whole request and lets the model continue.
-Esc backs out of custom entry, or returns from choices to the composer.
+several. Esc or Ctrl+C declines the whole request and lets the model continue.
 The plugin's `render` replaces the tool's argument dump with a header that lists
-the question headers. In the live composer, its existing key reader serves the
-question; no second reader or `host.full_screen()` handoff starts. Standalone
-terminal answerers retain their inline picker, which uses `host.full_screen()` only to flush streaming
-output and suspend the editor's input reader, keeping the live panel on screen.
-The response is printed to the transcript afterwards.
+the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
+the editor's input reader. It keeps the live panel on screen. The draft
+is restored on exit, and the question and your picks are printed to the transcript afterwards.
 
-Sending composer text while a question waits offers **Answer this question** or
+With `input.questions=composer`, each question instead waits above the composer without
+taking focus or changing the draft, cursor, undo history, or attachments. F2 focuses its
+numbered picker and returns to the composer; the configured send key (Enter by default)
+or an option's number selects. Ctrl+C while focused declines the whole request, and Esc
+backs out of custom entry or returns from choices to the composer. The composer's own key
+reader serves the question; no second reader or `host.full_screen()` handoff starts.
+
+In the composer, sending text while a question waits offers **Answer this question** or
 **Queue follow-up**. The optional remembered choice is `input.question_submit`,
 editable/resettable through `/input`. Only the interaction preference is saved,
 not answer text or authorization. A successful text answer moves the draft;
@@ -1490,8 +1492,9 @@ is harness `approval_ask`, which puts each held call to the answerer as a questi
 session`, and `Deny`; a typed answer denies the call with it as the reason. The held command is printed in full above the
 picker first, since the picker cuts its question to the rows it has (`TerminalAnswerer.ask_approval`); a
 replacement approver should show it in full too. A replacement for this plugin that should answer approvals binds
-`approval_handler` with its own approver; without one, held calls are denied. In the live composer, approvals wait without taking
-focus and require explicit F2 focus before a choice authorizes a call. Generic
+`approval_handler` with its own approver; without one, held calls are denied. With `input.questions=composer`,
+approvals wait in the live composer without taking focus and require explicit F2 focus before a choice
+authorizes a call. Generic
 send, steering, queue actions, custom text, and remembered question routing never
 approve tools. Each held command is printed once its own approval's choices are the
 ones shown, and again after the terminal redraws the session to show it, so concurrent
@@ -3214,9 +3217,9 @@ choice made with that focus answers, and `preamble` for text printed in the tran
 just before the request appears, such as the held command. A session the terminal does
 not show keeps the request until the terminal shows it, so race it with another way to
 answer, as the `web` plugin does, and cancel the call once that one answers. It returns
-`None` when no composer serves the session, as on a host built outside the shell,
-before the editor opens, or in a Pax with no terminal or one that reads lines: ask in a
-picker of your own then.
+`None` when no composer serves the session, as while the user keeps questions in the picker
+(`input.questions`, the default), on a host built outside the shell, before the editor opens, or in a
+Pax with no terminal or one that reads lines: ask in a picker of your own then.
 `TerminalAnswerer(full_screen=..., console=..., composer=self.host.ask_in_composer)`
 does all of this.
 

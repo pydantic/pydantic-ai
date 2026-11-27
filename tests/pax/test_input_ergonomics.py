@@ -94,6 +94,7 @@ async def test_remapped_composer_and_hints_use_effective_bindings() -> None:
         pipe.send_text('one\rtwo\nthree\x13')
         assert await live.read() == 'one\ntwo\nthree'
         # Newline keeps naming Ctrl+J, which every terminal sends.
+        live.input_changed = lambda: True
         hint = 'Ctrl+S: send - F4 Delivery - Ctrl+J newline - /input'
         assert live.input_hint() == hint
         assert live.key_label('steer') == 'Option+S'
@@ -160,6 +161,7 @@ async def test_setup_actions_save_reset_and_cancel(tmp_path: Path) -> None:
         'newline',
         'test',
         'input.keyboard_labels',
+        'input.questions',
         'input.question_submit',
         'input.busy_delivery',
     } == rows.keys()
@@ -205,6 +207,7 @@ async def test_input_command_resets_every_input_setting_and_hands_key_tests_to_t
         'input.bindings': '{"send": "ctrl-s"}',
         'input.keyboard_labels': 'mac',
         'input.question_submit': 'answer',
+        'input.questions': 'composer',
         'input.busy_delivery': 'next-checkpoint',
     }
     for key, value in chosen.items():
@@ -213,12 +216,13 @@ async def test_input_command_resets_every_input_setting_and_hands_key_tests_to_t
     assert await runtime.commands.execute_async('/input reset') == '\n'.join(f'Reset {key}. Applied.' for key in chosen)
     assert not any(key.startswith('input.') for key in process.store.overrides())
     settings = runtime.context.settings
-    assert (settings.input_bindings, settings.keyboard_labels, settings.question_submit, settings.busy_delivery) == (
-        InputBindings(),
-        'unset',
-        'ask',
-        'after-turn',
-    )
+    assert (
+        settings.input_bindings,
+        settings.keyboard_labels,
+        settings.question_submit,
+        settings.question_answerer,
+        settings.busy_delivery,
+    ) == (InputBindings(), 'unset', 'ask', 'picker', 'after-turn')
     with pytest.raises(ValueError, match=r'^Usage: /input \[test\|reset\]$'):
         await runtime.commands.execute_async('/input reset now')
     with pytest.raises(ValueError, match='Key testing needs the terminal composer'):
@@ -373,6 +377,35 @@ async def test_enter_on_a_highlighted_completion_completes_while_a_question_wait
             await anyio.lowlevel.checkpoint()
             live.feed('ctrl-c')
         assert responses[0].cancelled
+
+
+async def test_the_hint_row_shows_after_an_input_change_or_while_input_waits() -> None:
+    async with editor() as (live, _, _):
+
+        def shown() -> str:
+            return Text.from_ansi('\n'.join(live.frame())).plain
+
+        assert 'Ctrl+J newline' not in shown(), "with no input setting changed, the frame is main's"
+        live.input_changed = lambda: True
+        assert 'Enter: send - F4 Delivery - Ctrl+J newline - /input' in shown()
+        live.input_changed = lambda: False
+        live.questions.preference = lambda: 'follow-up'
+        responses: list[AskUserResponse] = []
+
+        async def ask() -> None:
+            responses.append(await live.questions.ask(question_request()))
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(ask)
+            await anyio.wait_all_tasks_blocked()
+            assert 'Enter: queue follow-up - F2 choices' in shown()
+            live.feed('paste', 'next step')
+            live.feed('enter')
+            live.feed('f2')
+            await anyio.lowlevel.checkpoint()
+            live.feed('ctrl-c')
+        assert responses[0].cancelled and live.queued_messages == ('next step',)
+        assert 'F4 Queue: Edit / Remove / Steer / Delivery' in shown()
 
 
 async def test_remembered_follow_up_queues_the_draft_without_routing() -> None:
@@ -674,6 +707,8 @@ async def test_first_run_hint_offers_keyboard_setup_until_labels_are_chosen() ->
         live.keyboard_labels = lambda: 'unset'
         newline = live.key_label('newline')
         assert live.input_hint() == f'Keyboard setup: /input - {newline} newline'
+        assert live.input_hint() not in [Text.from_ansi(row).plain for row in live.frame()], 'the banner offers it'
+        live.input_changed = lambda: True
         assert live.input_hint() in [Text.from_ansi(row).plain for row in live.frame()]
         live.keyboard_labels = lambda: 'pc'
         assert live.input_hint() == f'Enter: send - F4 Delivery - {newline} newline - /input'
@@ -1182,6 +1217,7 @@ async def test_input_hints_fit_without_displacing_pinned_status_or_pending_work(
     async with editor() as (live, _, _):
         live.console.size = (100, height)
         live.pinned = lambda: 'PINNED ROW'
+        live.input_changed = lambda: True
 
         def panel(glyph: str) -> list[str]:
             return ['pending work'] * 5

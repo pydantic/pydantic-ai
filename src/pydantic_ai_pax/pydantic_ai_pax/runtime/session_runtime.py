@@ -61,7 +61,13 @@ from pydantic_ai_pax.commands import (
     is_silent,
     set_completions,
 )
-from pydantic_ai_pax.config import PERMISSION_MODES, PERMISSIONS_SETTING as PERMISSIONS, PluginSettings, Settings
+from pydantic_ai_pax.config import (
+    PERMISSION_MODES,
+    PERMISSIONS_SETTING as PERMISSIONS,
+    SETTING_FIELDS,
+    PluginSettings,
+    Settings,
+)
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.errors import error_message
@@ -500,7 +506,7 @@ def create_shell(
         # Forget the old output too, or a resize or the exit printout would show it again.
         if shell.terminal is not None:
             shell.terminal.transcript.clear()
-        print_welcome(project, console)
+        print_welcome(project, console, settings=context.settings)
 
     async def clear(_: list[str]) -> str:
         await session.clear()
@@ -1070,8 +1076,11 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         """Ask in the composer of the terminal showing this session; `None` while it shows it with no editor open.
 
         While the terminal shows another session, the request waits to be shown, printing nothing and reading no
-        keys meanwhile: a browser racing it can still answer it.
+        keys meanwhile: a browser racing it can still answer it. `None` too unless `input.questions` chooses the
+        composer, so questions and approvals keep the picker by default.
         """
+        if self.context.settings.question_answerer != 'composer':
+            return None
         if self.editor is None and (self.terminal is not None or not self.process.live.composer):
             # Shown before its editor opens, or in a Pax whose terminal, if any, never opens one.
             return None
@@ -1107,10 +1116,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             self.test_input_key()
             return 'Test a key now. Ctrl+G closes.'
         if args == ['reset']:
-            return '\n'.join(
-                self.context.reset_setting(key)
-                for key in ('input.bindings', 'input.keyboard_labels', 'input.question_submit', 'input.busy_delivery')
-            )
+            return '\n'.join(self.context.reset_setting(key) for key in SETTING_FIELDS if key.startswith('input.'))
         if args:
             raise ValueError('Usage: /input [test|reset]')
         return '\n'.join(await run_settings_menu(input_menu(self.context, start_test=self.test_input_key)))

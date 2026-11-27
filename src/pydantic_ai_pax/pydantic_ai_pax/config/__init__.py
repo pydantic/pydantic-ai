@@ -15,7 +15,13 @@ from pydantic import (
     model_validator,
 )
 
-from pydantic_ai_pax.config.input_bindings import BusyDelivery, InputBindings, KeyboardLabels, QuestionSubmit
+from pydantic_ai_pax.config.input_bindings import (
+    BusyDelivery,
+    InputBindings,
+    KeyboardLabels,
+    QuestionAnswerer,
+    QuestionSubmit,
+)
 from pydantic_ai_pax.config.theme_names import names
 
 _WORKTREE_COMMAND_PLACEHOLDER = re.compile(r'{[A-Za-z_]\w*}')
@@ -100,6 +106,13 @@ class Settings(BaseModel):
     )
     question_submit: QuestionSubmit = Field(
         default='ask', description='When a question waits: ask, answer it, or queue a follow-up. Never approves tools.'
+    )
+    question_answerer: QuestionAnswerer = Field(
+        default='picker',
+        description=(
+            'Where questions and tool approvals wait: picker takes the keys as each one arrives; composer keeps '
+            'your draft and keys, and F2 reviews the choices.'
+        ),
     )
     request_limit: int = Field(
         default=10000, gt=0, description='Most model requests one prompt may make before the turn stops.'
@@ -306,6 +319,7 @@ SETTING_FIELDS = {
     'input.bindings': 'input_bindings',
     'input.keyboard_labels': 'keyboard_labels',
     'input.question_submit': 'question_submit',
+    'input.questions': 'question_answerer',
     'input.busy_delivery': 'busy_delivery',
 }
 
@@ -317,6 +331,7 @@ USER_ONLY_SETTINGS = frozenset(
         'input_bindings',
         'keyboard_labels',
         'question_submit',
+        'question_answerer',
         'busy_delivery',
         'repo_context_walk_up_roots',
         'repo_context_autoload_symlink_roots',
@@ -332,6 +347,7 @@ STRING_SETTINGS = frozenset(
         'run.instructions',
         'input.keyboard_labels',
         'input.question_submit',
+        'input.questions',
         'input.busy_delivery',
         'run.permissions',
         'display.theme',

@@ -1866,7 +1866,9 @@ def test_input_preferences_roundtrip_and_unknown_settings_survive(
     assert previous == {'display.thinking': False}
     assert store.load().input_bindings == InputBindings()
     assert store.load().busy_delivery == 'after-turn'
+    assert store.load().question_answerer == 'picker'
     store.set('input.busy_delivery', 'next-checkpoint')
+    store.set('input.questions', 'composer')
     store.set('input.keyboard_labels', 'mac')
     store.set('input.question_submit', 'answer')
     store.set('input.bindings', {'send': 'ctrl-s', 'steer': 'alt-enter', 'newline': 'shift-enter'})
@@ -1874,6 +1876,7 @@ def test_input_preferences_roundtrip_and_unknown_settings_survive(
     assert reopened.load().keyboard_labels == 'mac'
     assert reopened.load().question_submit == 'answer'
     assert reopened.load().busy_delivery == 'next-checkpoint'
+    assert reopened.load().question_answerer == 'composer'
     assert reopened.load().input_bindings.send == 'ctrl-s'
     saved = reopened.overrides()
     with pytest.raises(ValidationError, match='collide'):
@@ -1890,5 +1893,5 @@ def test_input_preferences_roundtrip_and_unknown_settings_survive(
         older_store.reset('display.thinking')
         assert older_store.overrides() == {}
     inputs = {key: value for key, value in saved.items() if key.startswith('input.')}
-    assert len(inputs) == 4
+    assert len(inputs) == 5
     assert SettingsStore(store.path).overrides() == inputs

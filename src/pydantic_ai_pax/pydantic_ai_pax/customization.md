@@ -209,16 +209,17 @@ before reinstalling. Plugin code runs as the user; install only trusted reposito
 The second built-in is ask_user (pydantic_ai_pax.builtin_plugins.ask_user_menu): the
 harness AskUser capability with an inline numbered picker as its answerer, so
 the model can ask the user multiple-choice questions mid-run through
-ask_user_question. Pending questions leave composer focus, cursor, undo history,
-draft and attachments intact. F2 explicitly focuses the question's choices;
-F2 returns to the composer. The configured send key (Enter by default) or a number selects;
+ask_user_question. The conversation remains visible, and the question stays pinned
+above its choices while output streams. Enter or a number selects;
 for multiple selections it toggles, then Done submits. /plugins disable ask_user removes the tool. To answer the
 questions somewhere other than the terminal, declare ask_user again with a
 module whose Plugin returns AskUser(answerer=...) from get_capabilities with your
 own async answerer; see PLUGINS.md.
 
-Sending a draft while a question waits offers Answer this question or Queue
-follow-up. Remember my choice saves only input.question_submit; /input edits or
+With input.questions set to composer, pending questions and approvals instead leave
+composer focus, cursor, undo history, draft and attachments intact. F2 explicitly focuses
+the question's choices; F2 returns to the composer. Sending a draft while a question waits
+then offers Answer this question or Queue follow-up. Remember my choice saves only input.question_submit; /input edits or
 resets it. Each later question in a batch requires review or an explicit routing
 choice. Generic send, steering, queued prompts, custom text and this preference
 never approve tools. Approvals require explicit F2 focus before choosing an

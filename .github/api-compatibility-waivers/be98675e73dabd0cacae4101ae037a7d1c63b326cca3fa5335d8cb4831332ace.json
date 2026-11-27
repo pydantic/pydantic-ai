@@ -1,5 +1,0 @@
-{
-  "against": "v2.76.0",
-  "reason": "Not a compatibility impact: `USER_ONLY_SETTINGS` only gains the new `input_bindings`, `keyboard_labels`, `question_submit` and `busy_delivery` settings, which no earlier release had, so no existing project file sets them. Every setting it held before stays user-only.",
-  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13162"
-}

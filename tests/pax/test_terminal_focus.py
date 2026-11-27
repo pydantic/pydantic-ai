@@ -26,6 +26,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_ai_pax import chat
 from pydantic_ai_pax.builtin_plugins.web import WebPlugin
 from pydantic_ai_pax.config import PluginSettings, Settings
+from pydantic_ai_pax.config.input_bindings import QuestionAnswerer
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins import LiveSessions, Plugin, SessionStart
@@ -51,7 +52,12 @@ class Desk(Fleet):
     """A terminal Pax: the session it started with, shown in a terminal, beside sessions the browser opens."""
 
     def __init__(
-        self, root: Path, *, agent: Agent[None, str] | None = None, builtin: tuple[PluginSettings, ...] = (RECORDER,)
+        self,
+        root: Path,
+        *,
+        agent: Agent[None, str] | None = None,
+        builtin: tuple[PluginSettings, ...] = (RECORDER,),
+        settings: Settings | None = None,
     ) -> None:
         super().__init__(root, builtin=builtin)
         self.screen = SurfaceTerminal(width=100, height=30)
@@ -62,7 +68,7 @@ class Desk(Fleet):
             usage_limits=None,
             # A terminal by `isatty`, as a real one: `force_terminal` would hide a file handed elsewhere.
             console=Console(file=self.screen, width=100, height=30),
-            settings=None,
+            settings=settings,
             store=None,
             builtin_plugins=(),
             project=ProjectSettings(),
@@ -352,7 +358,7 @@ async def test_line_mode_terminal_follows_the_session_shown(tmp_path: Path) -> N
 
 
 async def test_a_line_mode_terminal_has_no_composer_for_a_hidden_session_to_wait_for(tmp_path: Path) -> None:
-    desk = Desk(tmp_path)
+    desk = Desk(tmp_path, settings=Settings(model=None, question_answerer='composer'))
     terminal = Terminal[None, str](
         console=Console(file=io.StringIO()), transcript=TranscriptBuffer(), history=InMemoryHistory()
     )
@@ -512,9 +518,45 @@ async def settle(check: Callable[[], bool]) -> None:
 
 
 async def test_a_session_shown_before_its_editor_opens_leaves_questions_to_the_picker(tmp_path: Path) -> None:
-    home = Desk(tmp_path).home
+    home = Desk(tmp_path, settings=Settings(model=None, question_answerer='composer')).home
     assert home.terminal is not None and home.editor is None
     assert await home.ask_in_composer(question_request(), approval=False, preamble=None) is None
+
+
+@pytest.mark.parametrize('answerer', ['picker', 'composer'])
+async def test_questions_keep_the_picker_unless_the_composer_is_chosen(
+    tmp_path: Path, answerer: QuestionAnswerer
+) -> None:
+    desk = Desk(tmp_path, settings=Settings(model=None, question_answerer=answerer))
+    home, terminal = desk.home, desk.terminal
+
+    async def body() -> None:
+        (recorder,) = [
+            entry.loaded.plugin for entry in home.loader.entries() if entry.loaded and entry.name == 'recorder'
+        ]
+        await settle(lambda: terminal.editor is not None)
+        assert terminal.editor is not None
+        responses: list[AskUserResponse | None] = []
+
+        async def ask() -> None:
+            responses.append(await recorder.host.ask_in_composer(question_request()))
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(ask)
+            await settle(lambda: bool(responses) or home.questions.menu is not None)
+            if answerer == 'picker':
+                assert responses == [None], 'no composer serves the session, so the picker asks'
+            else:
+                assert responses == [] and home.questions.menu is not None
+                terminal.editor.feed('f2')
+                await anyio.lowlevel.checkpoint()
+                terminal.editor.feed('ctrl-c')
+        if answerer == 'composer':
+            (response,) = responses
+            assert response is not None and response.cancelled
+        home.live_session.send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
 
 
 @pytest.mark.parametrize('answered_in', ['browser', 'terminal'])
@@ -523,7 +565,12 @@ async def test_a_hidden_sessions_approval_waits_to_be_shown_while_the_browser_ca
 ) -> None:
     """The approval a session asks while the terminal shows another is neither declined nor read from unseen keys."""
     ran: list[str] = []
-    desk = Desk(tmp_path, agent=removing_agent(tmp_path, ran), builtin=(RECORDER, WEB))
+    desk = Desk(
+        tmp_path,
+        agent=removing_agent(tmp_path, ran),
+        builtin=(RECORDER, WEB),
+        settings=Settings(model=None, question_answerer='composer'),
+    )
     home, terminal = desk.home, desk.terminal
 
     async def body() -> None:
@@ -570,7 +617,12 @@ def held(command: str, call_id: str) -> PermissionRequest:
 
 async def test_an_approval_shown_again_prints_its_held_command_after_the_redraw(tmp_path: Path) -> None:
     ran: list[str] = []
-    desk = Desk(tmp_path, agent=removing_agent(tmp_path, ran), builtin=(RECORDER, WEB))
+    desk = Desk(
+        tmp_path,
+        agent=removing_agent(tmp_path, ran),
+        builtin=(RECORDER, WEB),
+        settings=Settings(model=None, question_answerer='composer'),
+    )
     home, terminal = desk.home, desk.terminal
 
     async def body() -> None:
@@ -594,7 +646,7 @@ async def test_an_approval_shown_again_prints_its_held_command_after_the_redraw(
 
 
 async def test_an_approval_whose_turn_comes_while_hidden_prints_its_command_once_shown(tmp_path: Path) -> None:
-    desk = Desk(tmp_path, builtin=(RECORDER, WEB))
+    desk = Desk(tmp_path, builtin=(RECORDER, WEB), settings=Settings(model=None, question_answerer='composer'))
     home, terminal = desk.home, desk.terminal
 
     async def body() -> None:
@@ -629,6 +681,7 @@ async def test_an_approval_whose_turn_comes_while_hidden_prints_its_command_once
 
 async def test_a_pax_without_a_terminal_has_no_composer_to_ask_in(tmp_path: Path) -> None:
     runtime = Fleet(tmp_path).build(None)
+    runtime.context.settings = runtime.context.settings.model_copy(update={'question_answerer': 'composer'})
     assert runtime.terminal is None and not runtime.process.live.composer
     answers: list[AskUserResponse | None] = []
 

@@ -93,6 +93,7 @@ class LivePrompt:
         keyboard_labels: Callable[[], KeyboardLabels] = lambda: 'neutral',
         busy_delivery: Callable[[], BusyDelivery] = lambda: 'after-turn',
         remember_busy_delivery: Callable[[BusyDelivery], object] = lambda _: None,
+        input_changed: Callable[[], bool] = lambda: False,
         queue_in_toolbar: Callable[[], bool] | None = None,
         full_screen: bool = False,
     ) -> None:
@@ -127,6 +128,7 @@ class LivePrompt:
         self.keyboard_labels = keyboard_labels
         self.busy_delivery = busy_delivery
         self.remember_busy_delivery = remember_busy_delivery
+        self.input_changed = input_changed
         self.key_test: KeyTest | None = None
         # A shell's `SessionRuntime.bind` replaces this with the shown session's questions and preference.
         self.questions = PromptQuestions(
@@ -1166,8 +1168,14 @@ class LivePrompt:
         if pinned:
             rows.append(truncate(pinned, width) + reset)
         rows.append(muted + truncate(self._footer(width, muted=muted), width) + reset)
-        # Hints use spare space, without displacing the draft, pinned status, or pending work.
-        if len(rows) < height - 2:
+        # Hints use spare space, without displacing the draft, pinned status, or pending work. Until an input
+        # setting changes, they show only while a question, queued entry or held edit needs their keys.
+        if len(rows) < height - 2 and (
+            self.input_changed()
+            or self.questions.menu is not None
+            or bool(self.queued_messages)
+            or self._editing is not None
+        ):
             rows.insert(-1 - bool(pinned), muted + truncate(self.input_hint(), width) + reset)
         return tuple(rows)
 
