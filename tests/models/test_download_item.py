@@ -1,5 +1,4 @@
 import re
-from collections.abc import Callable, Coroutine
 from unittest.mock import patch
 
 import anyio
@@ -19,6 +18,7 @@ from pydantic_ai.models import (
 from pydantic_ai.models.batch import BatchRequest
 
 from ..conftest import IsInstance, IsStr, try_import
+from .conftest import mock_downloads
 
 with try_import() as openai_imports_successful:
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
@@ -34,17 +34,6 @@ with try_import() as openai_imports_successful:
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
-
-
-def _mock_downloads(
-    monkeypatch: pytest.MonkeyPatch,
-    handle_request: Callable[[httpx2.Request], httpx2.Response]
-    | Callable[[httpx2.Request], Coroutine[None, None, httpx2.Response]],
-) -> None:
-    def create_http_client(*, timeout: int) -> httpx2.AsyncClient:
-        return httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
-
-    monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_http_client)
 
 
 @pytest.mark.parametrize(
@@ -106,7 +95,7 @@ async def test_download_item_rejects_oversized_body(
             request=request,
         )
 
-    _mock_downloads(monkeypatch, handle_request)
+    mock_downloads(monkeypatch, handle_request)
 
     with (
         patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 512),
@@ -123,7 +112,7 @@ def _serve_text_files(monkeypatch: pytest.MonkeyPatch, size: int) -> list[str]:
         downloaded.append(str(request.url))
         return httpx2.Response(200, content=b'x' * size, headers={'content-type': 'text/plain'}, request=request)
 
-    _mock_downloads(monkeypatch, handle_request)
+    mock_downloads(monkeypatch, handle_request)
     return downloaded
 
 
@@ -279,7 +268,7 @@ async def test_concurrent_downloads_in_a_model_request_share_one_total(monkeypat
         await both_arrived.wait()
         return httpx2.Response(200, content=b'x' * 1024, headers={'content-type': 'text/plain'}, request=request)
 
-    _mock_downloads(monkeypatch, handle_request)
+    mock_downloads(monkeypatch, handle_request)
     outcomes: list[str] = []
 
     async def download(i: int) -> None:
@@ -397,7 +386,7 @@ async def test_download_item_media_type_precedence(
     def handle_request(request: httpx2.Request) -> httpx2.Response:
         return httpx2.Response(200, content=b'\x89PNG', headers=headers, request=request)
 
-    _mock_downloads(monkeypatch, handle_request)
+    mock_downloads(monkeypatch, handle_request)
 
     downloaded_item = await download_item(url, data_format='base64_uri')
     assert downloaded_item == {

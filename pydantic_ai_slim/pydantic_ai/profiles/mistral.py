@@ -1,6 +1,26 @@
 from __future__ import annotations as _annotations
 
+from typing import Literal, TypeAlias
+
 from . import InlineDefsJsonSchemaTransformer, ModelProfile, merge_profile
+
+MistralReasoningEffort: TypeAlias = Literal['none', 'low', 'medium', 'high']
+"""Native Mistral `reasoning_effort` values."""
+
+
+class MistralModelProfile(ModelProfile, total=False):
+    """Profile for Mistral models (used with `MistralProvider`).
+
+    ALL FIELDS MUST BE `mistral_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+    mistral_reasoning_efforts: frozenset[MistralReasoningEffort]
+    """Native `reasoning_effort` values the model accepts. Default: unset.
+
+    When unset, a model with adjustable reasoning maps every enabled `thinking` level to `'high'` and
+    `thinking=False` to `'none'`. When set, each level maps to the closest accepted effort, and
+    `thinking=False` to `'none'` if accepted, else the lowest accepted effort.
+    """
 
 
 def mistral_model_profile(model_name: str) -> ModelProfile:

@@ -6,7 +6,7 @@ import warnings
 from collections.abc import AsyncGenerator, AsyncIterable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
-from datetime import timedelta
+from datetime import datetime, timedelta
 from functools import cached_property
 from typing import TYPE_CHECKING, Any, Literal, Never, assert_never, cast, overload
 
@@ -38,7 +38,7 @@ from openai.types.chat.completion_create_params import (
 from openai.types.shared import ReasoningEffort
 from pydantic import JsonValue, ValidationError
 
-from ... import UnexpectedModelBehavior, _utils, usage
+from ... import _utils, usage
 from ..._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
 from ..._http import to_httpx2_timeout
 from ..._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -46,11 +46,12 @@ from ..._run_context import RunContext
 from ..._thinking_part import render_replayed_thinking
 from ..._utils import (
     guard_tool_call_id as _guard_tool_call_id,
+    has_yaml_structured_suffix as _has_yaml_structured_suffix,
     is_text_like_media_type as _is_text_like_media_type,
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ...exceptions import UserError
+from ...exceptions import ModelEmptyResponseError, ModelInvalidResponseError, ModelRequestRejectedError, UserError
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -104,6 +105,7 @@ from .. import (
 )
 from .._decode_errors import map_decode_errors
 from .._sdk_retries import with_max_retries
+from .._tool_call_ids import stored_tool_call_id
 from .._tool_choice import resolve_tool_choice
 from ._caching import (
     CACHE_SETTINGS_KEYS,
@@ -130,8 +132,13 @@ from ._citations import map_chat_content
 from ._errors import check_azure_content_filter, is_azure, map_api_errors
 from ._model_names import OpenAIModelName
 from ._model_response_streaming import ModelResponseStreamedResponse
-from ._reasoning import drop_sampling_params_for_reasoning, reasoning_active, resolve_openai_thinking_effort
-from ._response_fields import map_usage
+from ._reasoning import (
+    drop_sampling_params_for_reasoning,
+    reasoning_active,
+    resolve_openai_thinking_effort,
+    supports_reasoning_effort_none,
+)
+from ._response_fields import add_reasoning_tokens_omitted_from_completion_tokens, map_usage
 from ._settings import (
     OpenAIChatModelSettings,
     drop_unsupported_params,
@@ -190,6 +197,19 @@ def merge_leading_system_messages(
     return [merged, *openai_messages[leading_count:]]
 
 
+_CHAT_AUDIO_FORMATS: dict[str, Literal['wav', 'mp3']] = {
+    'audio/wav': 'wav',
+    'audio/x-wav': 'wav',
+    'audio/mpeg': 'mp3',
+    'audio/mp3': 'mp3',
+}
+"""The audio Chat Completions' `input_audio` takes, by media type."""
+
+
+def _chat_audio_format_error(media_type: str) -> str:
+    return f'OpenAI Chat Completions takes WAV and MP3 audio only, not {media_type!r}.'
+
+
 def system_prompt_message(role: OpenAISystemPromptRole | None, content: str) -> chat.ChatCompletionMessageParam:
     """A system prompt or instruction as a message with the role the profile sends them as, `'system'` by default."""
     if role == 'developer':
@@ -239,8 +259,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     Apart from `__init__`, all methods are private or match those of the base class.
     """
 
-    # Chat Completions has no video content part.
+    # Chat Completions has no video content part, and `input_audio` takes only WAV and MP3.
     _unsupported_file_inputs = frozenset({'video'})
+    _supported_media_types = {'audio': frozenset({'audio/wav', 'audio/mpeg'})}
     # Tool results are text-only here, so a tool's files go on the user channel, framed.
     _relocates_tool_files = True
 
@@ -316,10 +337,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Leave the `'12h'` cache retention out of `supported_cache_retentions`, before the user's `profile=` applies.
 
-        Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400 (verified live on every GPT-5.6, GPT-6
-        and GPT-6.1 model), while the Responses API on the same models accepts it, and the providers declare their
+        Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400 (verified live on every GPT-5.6, GPT-6,
+        GPT-6.1 and GPT-6.2 model), while the Responses API on the same models accepts it, and the providers declare their
         tiers per model rather than per API.
+
+        `deprecation` is dropped for an Azure OpenAI client, as Azure retires models on its own schedule.
         """
+        if 'deprecation' in profile and is_azure(self._provider.client, self._provider.name):
+            profile = merge_profile(profile, ModelProfile(deprecation=None))
         retentions = profile.get('supported_cache_retentions', ())
         if '12h' not in retentions:
             return profile
@@ -524,6 +549,29 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         web_search_options = self._get_web_search_options(model_request_parameters)
         profile = self.profile
 
+        # A flagged model rejects any request that sends tools while reasoning is on, output tools included, with a
+        # 400 pointing at `/v1/responses` or `reasoning_effort='none'`. `thinking=False` maps to `'none'` only where
+        # the model accepts it; elsewhere it maps to the lowest effort, which the API rejects too. The error is the
+        # category of that 400, so `FallbackModel` and `except ModelAPIError` handle it as they handle the 400.
+        if (
+            tools
+            and profile.get('openai_chat_function_tools_require_reasoning_off', False)
+            and reasoning_active(profile, model_settings, model_request_parameters)
+        ):
+            remedy = ''
+            if supports_reasoning_effort_none(profile):
+                # An explicit `openai_reasoning_effort` wins over `thinking`, so `thinking=False` alone wouldn't help.
+                remedy = (
+                    ", or set `openai_reasoning_effort='none'`"
+                    if model_settings.get('openai_reasoning_effort') is not None
+                    else ', or disable reasoning with `thinking=False`'
+                )
+            raise ModelRequestRejectedError(
+                self.model_name,
+                f'OpenAI rejects tools, output tools included, while reasoning is enabled on {self.model_name!r} over '
+                f'Chat Completions. Use `OpenAIResponsesModel`{remedy} instead.',
+            )
+
         openai_messages = await self._map_messages(messages, model_request_parameters, model_settings=model_settings)
         self._finalize_cache_breakpoints(tools, openai_messages)
 
@@ -568,6 +616,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     seed=model_settings.get('seed', OMIT),
                     reasoning_effort=self._translate_thinking(model_settings, model_request_parameters),
                     user=model_settings.get('openai_user', OMIT),
+                    safety_identifier=model_settings.get('openai_safety_identifier', OMIT),
                     web_search_options=web_search_options or OMIT,
                     # The SDK types `ultrafast` as Responses-only; rejecting it is left to the API.
                     service_tier=cast(Any, resolve_openai_service_tier(model_settings)),
@@ -593,6 +642,9 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     extra_body=self._thinking_false_extra_body(model_settings, model_request_parameters),
                 )
             except APIStatusError as e:
+                # A status a retrying transport gave up on arrives as `httpx2.HTTPStatusError` instead, which isn't
+                # checked here: it stays a `ModelHTTPError`, so fallback moves on to the next model, see
+                # https://github.com/pydantic/pydantic-ai/pull/11934.
                 if model_response := check_azure_content_filter(e, self.client, self.system, self.model_name):
                     return model_response
                 raise
@@ -620,6 +672,16 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         This method may be overridden by subclasses of `OpenAIChatModel` to apply custom mappings.
         """
         return map_provider_details(response.choices[0])
+
+    def _first_choice(self, response: chat.ChatCompletion) -> chat_completion.Choice:
+        """The completion's first choice, or a `ModelEmptyResponseError` if it has none."""
+        if not response.choices:
+            raise ModelEmptyResponseError(
+                self.model_name,
+                f'Empty response from {self.system} chat completions endpoint: no choices',
+                body=response.model_dump(warnings=False),
+            )
+        return response.choices[0]
 
     def _unmapped_provider_details(
         self, response: chat.ChatCompletion, content_parts: list[object], *, include: bool
@@ -651,8 +713,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # * if the endpoint returns plain text, the return type is a string
         # Thus we validate it fully here.
         if not isinstance(response, chat.ChatCompletion):
-            raise UnexpectedModelBehavior(
-                f'Invalid response from {self.system} chat completions endpoint, expected JSON data'
+            raise ModelInvalidResponseError(
+                self.model_name,
+                f'Invalid response from {self.system} chat completions endpoint, expected JSON data',
+                body=response,
             )
 
         timestamp = _now_utc()
@@ -668,9 +732,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         try:
             response = self._validate_completion(response)
         except ValidationError as e:
-            raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
+            raise ModelInvalidResponseError(
+                self.model_name,
+                f'Invalid response from {self.system} chat completions endpoint: {e}',
+                # The completion as the SDK built it, without validating it, after the `created` and `finish_reason`
+                # fill-ins above.
+                body=response.model_dump(warnings=False),
+            ) from e
 
-        choice = response.choices[0]
+        choice = self._first_choice(response)
         finish_reason = self._map_finish_reason(choice.finish_reason)
         if missing_finish_reason:
             # Restore the missing value after validation, so it's not reported as the provider's.
@@ -720,7 +790,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             )
         )
         if choice.message.tool_calls is not None:
-            items.extend(self._process_tool_call(c) for c in choice.message.tool_calls)
+            items.extend(
+                self._process_tool_call(c, provider_response_id=response.id or None, timestamp=timestamp)
+                for c in choice.message.tool_calls
+            )
 
         if response.created:
             provider_details['timestamp'] = number_to_datetime(response.created)
@@ -751,14 +824,23 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return True
 
     def _process_tool_call(
-        self, tool_call: ChatCompletionMessageFunctionToolCall | ChatCompletionMessageCustomToolCall
+        self,
+        tool_call: ChatCompletionMessageFunctionToolCall | ChatCompletionMessageCustomToolCall,
+        *,
+        provider_response_id: str | None,
+        timestamp: datetime,
     ) -> ToolCallPart:
         if isinstance(tool_call, ChatCompletionMessageFunctionToolCall):
             part_provider_details = map_tool_call_provider_details(tool_call)
             part = ToolCallPart(
                 tool_call.function.name,
                 tool_call.function.arguments,
-                tool_call_id=tool_call.id,
+                tool_call_id=stored_tool_call_id(
+                    tool_call.id,
+                    response_scoped=self.profile.get('tool_call_ids_are_response_scoped', False),
+                    provider_response_id=provider_response_id,
+                    timestamp=timestamp,
+                ),
                 provider_name=self.system if part_provider_details else None,
                 provider_details=part_provider_details,
             )
@@ -820,9 +902,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior(  # pragma: no cover
-                'Streamed response ended without content or tool calls'
-            )
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         # When using Azure OpenAI and a content filter is enabled, the first chunk will contain a `''` model name,
         # so we set it from a later chunk in `OpenAIChatStreamedResponse`.
@@ -850,7 +930,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return OpenAIStreamedResponse
 
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
-        return map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+        request_usage = map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+        if self.profile.get('openai_chat_completion_tokens_omit_reasoning', False):
+            add_reasoning_tokens_omitted_from_completion_tokens(request_usage, response.usage)
+        return request_usage
 
     def _get_tool_choice(
         self,
@@ -935,7 +1018,8 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     ) -> bool:
         """Allow provider subclasses to express conditional forcing support.
 
-        Overrides should raise `UserError` when the user explicitly requested forcing.
+        Overrides should raise `UserError` when the user explicitly requested forcing, or
+        `ModelRequestRejectedError` where the API would reject the request.
         """
         return support_openai_tool_forcing(
             self.model_name,
@@ -976,15 +1060,14 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _auto_thinking_field(self, part: ThinkingPart) -> str | None:
         """The custom field `part` goes back in under `openai_chat_send_back_thinking_parts='auto'`, or `None` for tags.
 
-        It goes back in a field when it came from a custom field of this same provider. `id='content'` means it came
-        from tags in the content, not a custom field.
+        It goes back in a field when it came from this same provider and its id is the profile's
+        `openai_chat_thinking_field`, or, with none set, `reasoning` or `reasoning_content`. Any other id is not a
+        field: `id='content'` marks thinking parsed from tags, and an `OpenAIResponsesModel` reasoning item id
+        (`rs_...`) shares this provider's `system`.
         """
         custom_field = self.profile.get('openai_chat_thinking_field', None)
-        if (
-            part.id
-            and part.id != 'content'
-            and part.provider_name == self.system
-            and (not custom_field or part.id == custom_field)
+        if part.provider_name == self.system and part.id in (
+            (custom_field,) if custom_field else ('reasoning', 'reasoning_content')
         ):
             return part.id
         return None
@@ -1087,8 +1170,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             profile = self._model.profile
             include_method = profile.get('openai_chat_send_back_thinking_parts', 'auto')
 
-            # Auto-detect: if thinking came from a custom field and from the same provider, use field mode
-            # id='content' means it came from tags in content, not a custom field
             if include_method == 'auto':
                 if field := self._model._auto_thinking_field(item):
                     # Store both content and field name for later use in _into_message_param
@@ -1113,7 +1194,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
         def _map_response_thinking_as_text(self, item: ThinkingPart) -> None:
             text, carry_in_user_turn = render_replayed_thinking(item.content, self._model.profile)
-            if not carry_in_user_turn:
+            if not carry_in_user_turn and item.content:
                 self.texts.append(text)
             elif item.content:
                 # An empty wrapper in the user turn would tell the model the assistant thought nothing.
@@ -1195,6 +1276,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         model_settings: ModelSettings | None = None,
     ) -> list[chat.ChatCompletionMessageParam]:
         """Just maps a `pydantic_ai.Message` to a `openai.types.ChatCompletionMessageParam`."""
+        messages = self._restore_response_scoped_tool_call_ids(messages)
         profile = self.profile
         # DeepSeek-style APIs 400 on a tool-calling assistant turn that omits their thinking field while
         # the run is reasoning. A turn another model or provider produced, or one served with thinking off,
@@ -1385,10 +1467,21 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             image_url['url'] = image_content['data']
         return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
 
+    @staticmethod
+    def _is_inlined_as_text(item: BinaryContent) -> bool:
+        """Whether `item` is inlined as a text block.
+
+        An `image/*+yaml` type is an image, and a `+yaml` type the OS mime table knows an extension for is a
+        document: both keep their own part.
+        """
+        return _is_text_like_media_type(item.media_type) or (
+            _has_yaml_structured_suffix(item.media_type) and not item.is_image and not item.is_document
+        )
+
     async def _map_binary_content_item(self, item: BinaryContent) -> ChatCompletionContentPartParam:
         """Map a BinaryContent item to a chat completion content part."""
         profile = self.profile
-        if _is_text_like_media_type(item.media_type):
+        if self._is_inlined_as_text(item):
             # Inline text-like binary content as a text block
             return self._inline_text_file_part(
                 item.data.decode('utf-8'),
@@ -1401,11 +1494,13 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 image_url['detail'] = metadata.get('detail', 'auto')
             return ChatCompletionContentPartImageParam(image_url=image_url, type='image_url')
         elif item.is_audio:
-            assert item.format in ('wav', 'mp3')
+            audio_format = _CHAT_AUDIO_FORMATS.get(item.media_type)
+            if audio_format is None:
+                raise UserError(_chat_audio_format_error(item.media_type))
             if profile.get('openai_chat_audio_input_encoding', 'base64') == 'uri':
-                audio = InputAudio(data=item.data_uri, format=item.format)
+                audio = InputAudio(data=item.data_uri, format=audio_format)
             else:
-                audio = InputAudio(data=item.base64, format=item.format)
+                audio = InputAudio(data=item.base64, format=audio_format)
             return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
         elif item.is_document:
             if not profile.get('openai_chat_supports_document_input', True):
@@ -1424,14 +1519,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
 
     async def _map_audio_url_item(self, item: AudioUrl) -> ChatCompletionContentPartInputAudioParam:
         """Map an AudioUrl to a chat completion audio content part."""
+        # Checked before downloading, by the same table as binary audio, so a format the API won't take is refused
+        # without fetching it.
+        audio_format = _CHAT_AUDIO_FORMATS.get(item.media_type)
+        if audio_format is None:
+            raise UserError(_chat_audio_format_error(item.media_type))
         profile = self.profile
         data_format = 'base64_uri' if profile.get('openai_chat_audio_input_encoding', 'base64') == 'uri' else 'base64'
         downloaded_item = await download_item(item, data_format=data_format, type_format='extension')
-        assert downloaded_item['data_type'] in (
-            'wav',
-            'mp3',
-        ), f'Unsupported audio format: {downloaded_item["data_type"]}'
-        audio = InputAudio(data=downloaded_item['data'], format=downloaded_item['data_type'])
+        audio = InputAudio(data=downloaded_item['data'], format=audio_format)
         return ChatCompletionContentPartInputAudioParam(input_audio=audio, type='input_audio')
 
     async def _map_document_url_item(self, item: DocumentUrl) -> ChatCompletionContentPartParam:

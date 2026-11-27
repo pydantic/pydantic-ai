@@ -15,6 +15,8 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, dur
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import TextContent, ToolCallPart, ToolReturn
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
+from pydantic_ai_harness._from_spec import use_default_from_spec
+from pydantic_ai_harness._judge import SerializableToolSelector
 
 try:
     from stackone_defender import DefenseResult, PromptDefense
@@ -72,6 +74,28 @@ def _diagnostics(verdict: DefenseResult) -> dict[str, object]:
     }
 
 
+def _trace(ctx: RunContext[Any], call: ToolCallPart, verdict: DefenseResult) -> None:
+    """Mark a flagged verdict with a zero-duration span.
+
+    Sanitized field names come from the tool result, so they are only recorded with `trace_include_content`.
+    """
+    span = ctx.tracer.start_span('prompt_injection flagged')
+    if span.is_recording():
+        attributes: dict[str, str | float | list[str]] = {
+            'gen_ai.tool.name': call.tool_name,
+            'gen_ai.tool.call.id': call.tool_call_id,
+            'prompt_injection.action': 'reported' if verdict.allowed else 'blocked',
+            'prompt_injection.risk_level': verdict.risk_level,
+            'prompt_injection.detections': list(verdict.detections),
+        }
+        if verdict.tier2_score is not None:
+            attributes['prompt_injection.tier2_score'] = verdict.tier2_score
+        if ctx.trace_include_content:
+            attributes['prompt_injection.fields_sanitized'] = list(verdict.fields_sanitized)
+        span.set_attributes(attributes)
+    span.end()
+
+
 def _payload(value: object) -> object:
     """Put a bare string under Defender's standard `content` field."""
     return {'content': value} if isinstance(value, str) else to_jsonable_python(value, fallback=str)
@@ -107,8 +131,8 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     returns. A result passes through unchanged unless the defense rejects it. With
     `block_high_risk=True`, the built-in defense rejects detected high or critical risk
     results, which are replaced with `blocked_message` so their content never reaches the
-    model. Every flagged verdict is reported through
-    `on_detection`, and a withheld result carries a diagnostics summary on
+    model. Every flagged verdict is recorded as a `prompt_injection flagged` span and reported
+    through `on_detection`, and a withheld result carries a diagnostics summary on
     `ToolReturn.metadata` (not visible to the model).
 
     Pass `semantic_detection=True` to add the local ML classifier, which is what catches
@@ -172,6 +196,39 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
     """
 
     _defense: PromptDefense = field(init=False, repr=False)
+
+    # Core reads this signature to generate the spec's JSON schema. Inherited, core reads `__init__`, and `defense`'s
+    # `PromptDefense` has no JSON schema, so only the bare `'PromptInjectionDefender'` is published.
+    @classmethod
+    def from_spec(
+        cls,
+        defense: None = None,
+        *,
+        id: str | None = None,
+        description: str | None = None,
+        defer_loading: bool = False,
+        block_high_risk: bool | None = None,
+        semantic_detection: bool = False,
+        tool_filter: SerializableToolSelector = 'all',
+        on_detection: None = None,
+        blocked_message: str = _DEFAULT_BLOCKED_MESSAGE,
+    ) -> PromptInjectionDefender[AgentDepsT]:
+        """Build from an agent spec, where `defense` and `on_detection` can only be `None`."""
+        return cls(
+            defense,
+            id=id,
+            description=description,
+            defer_loading=defer_loading,
+            block_high_risk=block_high_risk,
+            semantic_detection=semantic_detection,
+            tool_filter=tool_filter,
+            on_detection=on_detection,
+            blocked_message=blocked_message,
+        )
+
+    def __init_subclass__(cls, **kwargs: object) -> None:
+        super().__init_subclass__(**kwargs)
+        use_default_from_spec(cls, PromptInjectionDefender)
 
     def __post_init__(self) -> None:
         try:
@@ -266,6 +323,7 @@ class PromptInjectionDefender(AbstractCapability[AgentDepsT]):
         return [await self._defense.defend_tool_result_async(payload, tool_name) for payload in payloads]
 
     async def _notify(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, verdict: DefenseResult) -> None:
+        _trace(ctx, call, verdict)
         if self.on_detection is None:
             return
         outcome = self.on_detection(ctx, call, verdict)

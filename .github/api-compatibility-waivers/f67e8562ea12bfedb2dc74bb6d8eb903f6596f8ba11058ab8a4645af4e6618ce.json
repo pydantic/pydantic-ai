@@ -1,0 +1,5 @@
+{
+  "against": "v2.70.0",
+  "reason": "`MCPToolsetClient` types the MCP SDK's in-process server with a protocol over `name` and `streamable_http_app()` instead of `mcp.server.fastmcp.FastMCP`, which MCP SDK v2 removed. The same servers are accepted on both SDK generations; strict pyright users on FastMCP 4 no longer see a partially unknown type (#11903).",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13721"
+}

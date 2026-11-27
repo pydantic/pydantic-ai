@@ -6,6 +6,7 @@ import inspect
 import re
 import threading
 import time
+import uuid
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass, field, replace
 from traceback import extract_tb
@@ -15,19 +16,21 @@ import anyio
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import _agent_graph
+from pydantic_ai import AgentInstructions, SourcedInstruction, _agent_graph
 from pydantic_ai._run_context import RunContext
 from pydantic_ai._utils import Some
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.agent import Agent
+from pydantic_ai.agent import Agent, AgentInstructions as AgentModuleAgentInstructions
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import (
+    AgentInstructions as CapabilitiesAgentInstructions,
     Capability,
     CapabilityOrdering,
     DynamicCapability,
     HandleDeferredToolCalls,
     PrefixTools,
     ResolveModelId,
+    SourcedInstruction as CapabilitiesSourcedInstruction,
     Thinking,
     ToolSearch,
     Toolset,
@@ -49,6 +52,7 @@ from pydantic_ai.capabilities.hooks import Hooks, HookTimeoutError
 from pydantic_ai.exceptions import (
     AgentRunError,
     CallDeferred,
+    ContentFilterError,
     ModelRetry,
     ToolFailed,
     UserError,
@@ -2690,6 +2694,75 @@ async def test_wrapper_capability_delegates_hooks():
     assert 'after_run' in hook_calls
 
 
+@pytest.mark.parametrize('provided', [None, 'legacy-run-id'])
+@pytest.mark.parametrize('container', ['leaf', 'wrapper', 'combined', 'wrapper_override'])
+async def test_legacy_default_run_id_hook(provided: str | None, container: str) -> None:
+    calls: list[str] = []
+
+    class LegacyCapability(AbstractCapability[object]):
+        def get_default_run_id(self) -> str | None:
+            calls.append('leaf')
+            return 'child-run-id' if container == 'wrapper_override' else provided
+
+    class LegacyWrapper(WrapperCapability[object]):
+        def get_default_run_id(self) -> str | None:
+            calls.append('wrapper')
+            return provided
+
+    capability: AbstractCapability[object] = LegacyCapability()
+    if container == 'wrapper':
+        capability = WrapperCapability(capability)
+    elif container == 'combined':
+        capability = CombinedCapability([capability, AbstractCapability()])
+    elif container == 'wrapper_override':
+        capability = LegacyWrapper(capability)
+
+    agent = Agent(TestModel(), capabilities=[capability])
+    result = await agent.run('hello')
+    if provided is not None:
+        assert result.run_id == provided
+    else:
+        assert uuid.UUID(result.run_id).version == 7
+    assert calls == ['wrapper' if container == 'wrapper_override' else 'leaf']
+    calls.clear()
+    assert (await agent.run('hello', run_id='explicit')).run_id == 'explicit'
+    assert calls == []
+
+
+@pytest.mark.parametrize('provided', [None, 'container-run-id'])
+async def test_combined_default_run_id_override(provided: str | None) -> None:
+    """A wrapped container override owns bootstrap even when it declines to supply an ID."""
+
+    class LegacyCombined(CombinedCapability[object]):
+        def get_default_run_id(self) -> str | None:
+            return provided
+
+    class ChildCapability(AbstractCapability[object]):
+        def get_default_run_id(self) -> str:
+            return 'child-run-id'
+
+    child = ChildCapability()
+    assert child.get_default_run_id() == 'child-run-id'
+    # A wrapper retains the group; plain nested combined capabilities are flattened during composition.
+    capability = WrapperCapability(LegacyCombined([child]))
+    result = await Agent(TestModel(), capabilities=[capability]).run('hello')
+    if provided is None:
+        assert uuid.UUID(result.run_id).version == 7
+    else:
+        assert result.run_id == provided
+
+
+@pytest.mark.parametrize('provided', [None, 'legacy-run-id'])
+def test_public_default_run_id_container_delegation(provided: str | None) -> None:
+    class LegacyCapability(AbstractCapability[object]):
+        def get_default_run_id(self) -> str | None:
+            return provided
+
+    capability = LegacyCapability()
+    assert WrapperCapability(capability).get_default_run_id() == provided
+    assert CombinedCapability([capability, AbstractCapability[object]()]).get_default_run_id() == provided
+
+
 def test_wrapper_capability_for_agent_replaces():
     """WrapperCapability.for_agent replaces wrapped when its for_agent rebinds.
 
@@ -3694,7 +3767,7 @@ async def test_resolve_model_id_uses_override_root_capability() -> None:
     agent = Agent('magic-model', name='resolve_override_root', capabilities=[_StringResolver(target=chain_target)])
 
     override_root = CombinedCapability[Any]([_StringResolver(target=override_target)])
-    token = agent._override_root_capability.set(Some(override_root))  # pyright: ignore[reportPrivateUsage]
+    token = agent._override_root_capability.set(Some((override_root, frozenset())))  # pyright: ignore[reportPrivateUsage]
     try:
         resolved = await agent._resolve_model_selection(  # pyright: ignore[reportPrivateUsage]
             agent._pick_raw_model(None),  # pyright: ignore[reportPrivateUsage]
@@ -3713,6 +3786,24 @@ async def test_resolve_model_id_uses_override_root_capability() -> None:
         deps=None,
     )
     assert resolved is chain_target
+
+
+async def test_override_capabilities_resolver_owns_an_overridden_model_string() -> None:
+    """`override(capabilities=[resolver], model=...)` resolves the model string through the override's resolver.
+
+    The agent's own capabilities have no resolver, so the string survives only because the override's capabilities are
+    in place when `model=` is applied: against the agent's root it would go to `infer_model`, which knows no such model.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart(content='from the override resolver')])
+
+    target = FunctionModel(respond, model_name='override-capabilities')
+    agent = Agent(FunctionModel(_resolve_dummy_model_fn), name='resolve_override_capabilities')
+
+    with agent.override(capabilities=[_StringResolver(target=target)], model='magic-model'):
+        result = await agent.run('Hello')
+    assert result.output == 'from the override resolver'
 
 
 async def test_resolve_model_id_alias_unusable_outside_run() -> None:
@@ -4846,6 +4937,119 @@ def test_a_synthetic_key_retries_until_it_is_unused(monkeypatch: pytest.MonkeyPa
     monkeypatch.setattr('pydantic_ai.agent.uuid4', lambda: next(minted))
 
     assert _synthetic_capability_id(_Unnamed, taken={'<_unnamed:aaaaaa>'}) == '<_unnamed:bbbbbb>'
+
+
+async def test_instruction_types_publicly_importable() -> None:
+    """`AgentInstructions` and `SourcedInstruction` are importable from public entry points."""
+    assert AgentInstructions is CapabilitiesAgentInstructions is AgentModuleAgentInstructions
+    assert SourcedInstruction is CapabilitiesSourcedInstruction
+
+    # `AgentInstructions` annotates what a capability's `get_instructions` accepts.
+    class SourcedCap(AbstractCapability):
+        def get_instructions(self) -> AgentInstructions:
+            return 'instructions annotated with the public types'
+
+    captured_instructions: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        request = next(m for m in messages if isinstance(m, ModelRequest))
+        captured_instructions.append(request.instructions or '')
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[SourcedCap()])
+    await agent.run('Hello')
+    assert captured_instructions == ['instructions annotated with the public types']
+
+    # `SourcedInstruction` is the collected form of capability instructions.
+    extra: SourcedInstruction = SourcedInstruction('per-run addition')
+    assert extra.instruction == 'per-run addition'
+
+
+async def test_override_capabilities_kwarg() -> None:
+    """`override(capabilities=...)` replaces the capability set, restores it after the block, and stacks explicitly."""
+    captured_instructions: list[str] = []
+
+    class BaseCap(AbstractCapability):
+        def get_instructions(self) -> AgentInstructions:
+            return 'base instructions'
+
+    class OverrideCap(AbstractCapability):
+        def get_instructions(self) -> AgentInstructions:
+            return 'override instructions'
+
+    class ExtraCap(AbstractCapability):
+        def get_instructions(self) -> AgentInstructions:
+            return 'extra instructions'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        request = next(m for m in messages if isinstance(m, ModelRequest))
+        captured_instructions.append(request.instructions or '')
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[BaseCap()])
+    await agent.run('Hello')
+    assert captured_instructions[-1] == 'base instructions'
+
+    # Replacement: the override replaces (not merges with) the configured set.
+    with agent.override(capabilities=[OverrideCap()]):
+        await agent.run('Hello')
+        assert captured_instructions[-1] == 'override instructions'
+
+    # Restoration: the configured set is back after the block.
+    await agent.run('Hello')
+    assert captured_instructions[-1] == 'base instructions'
+
+    # Stacking: include the configured capabilities explicitly to add one.
+    with agent.override(capabilities=[*agent.root_capability.capabilities, ExtraCap()]):
+        await agent.run('Hello')
+        assert 'base instructions' in captured_instructions[-1]
+        assert 'extra instructions' in captured_instructions[-1]
+
+
+async def test_override_capabilities_take_precedence_over_spec_capabilities() -> None:
+    """With both set, `override(capabilities=...)` replaces the agent's capabilities and the spec's go unused."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('filtered')], finish_reason='content_filter')
+
+    agent = Agent(FunctionModel(respond))
+    spec: dict[str, Any] = {'capabilities': ['RaiseContentFilterError']}
+
+    with agent.override(spec=spec):
+        with pytest.raises(ContentFilterError):
+            await agent.run('Hello')
+
+    with agent.override(spec=spec, capabilities=[]):
+        result = await agent.run('Hello')
+    assert result.output == 'filtered'
+
+
+async def test_override_capabilities_binds_only_the_capabilities_it_adds() -> None:
+    """Capabilities the agent already bound pass through `override(capabilities=...)` without a second `for_agent`."""
+    bound_for: list[str] = []
+
+    @dataclass
+    class Binds(AbstractCapability[object]):
+        label: str = ''
+
+        def for_agent(self, agent: AbstractAgent[object, Any]) -> AbstractCapability[object]:
+            bound_for.append(self.label)
+            return replace(self)
+
+        def get_instructions(self) -> str:
+            return self.label
+
+    agent = Agent(TestModel(), capabilities=[Binds(label='configured', id='configured')])
+    assert bound_for == ['configured']
+    configured = agent.root_capability.capabilities
+
+    with agent.override(capabilities=[*configured, Binds(label='added', id='added')]):
+        assert bound_for == ['configured', 'added']
+        result = await agent.run('Hello')
+
+    request = result.all_messages()[0]
+    assert isinstance(request, ModelRequest)
+    assert request.instructions == 'configured\n\nadded'
 
 
 async def test_an_answer_given_during_the_run_passes_the_tools_result_hooks() -> None:

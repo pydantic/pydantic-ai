@@ -18,6 +18,7 @@ from ._warnings import (
 )
 
 if TYPE_CHECKING:
+    from .conversation import Conversation
     from .messages import (
         ModelMessage,
         ModelRequestAttempt,
@@ -61,12 +62,16 @@ __all__ = (
     'ModelRequestRejectedError',
     'ModelAuthenticationError',
     'ModelNotFoundError',
+    'ModelSchemaTooComplexError',
     'ModelRequestTimeout',
+    'ModelEmptyResponseError',
+    'ModelInvalidResponseError',
     'ContentFilterError',
     'OutputTokenLimitExceeded',
     'IncompleteToolCall',
     'MessageHistoryMutatedWarning',
     'UnsupportedSettingWarning',
+    'DeprecatedModelWarning',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
     'UsageExtractionFailedWarning',
@@ -265,7 +270,8 @@ class RetryModelRequest(Exception):
     [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] for
     the model that is about to serve it, so preparation a capability does there for that model is
     redone rather than inherited from the previous attempt, as are the model's own message preparation
-    and token counting.
+    and token counting. An attempt at another model than the step's also resolves the instructions
+    and model settings again, with that model as `ctx.model`.
     `before_model_request` and `wrap_model_request` are *not* re-run: they belong to the request as a
     whole, not to a single attempt.
     """
@@ -315,6 +321,15 @@ class UserError(RuntimeError):
         super().__init__(message)
 
 
+class _TokenCountingUnavailableError(UserError, NotImplementedError):  # pyright: ignore[reportUnusedClass]
+    """Raised by a model's `count_tokens` when its provider serves no token counting.
+
+    It is a `NotImplementedError`, as `Model.count_tokens` raises for a model that can't count, so a caller that
+    falls back for such a model, like Pydantic AI Harness running a nested agent, falls back here too. A durable
+    engine records it as a `UserError`.
+    """
+
+
 class UndrainedPendingMessagesError(UserError):
     """Error that used to be raised when an agent run ended with messages still queued via `enqueue`.
 
@@ -332,9 +347,25 @@ class AgentRunError(RuntimeError):
     message: str
     """The error message."""
 
+    _pydantic_ai_conversation: Conversation | None = None
+
     def __init__(self, message: str):
         self.message = message
         super().__init__(message)
+
+    @property
+    def conversation(self) -> Conversation | None:
+        """The conversation of the run that raised this, with the messages it got to, so it can still be stored.
+
+        It includes a partial response with `state='interrupted'`, and saving it to a
+        [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore] appends just what the run
+        added. It's set once the error leaves the `run`, `iter` or `run_stream` call or `async with` block,
+        so it's `None` when caught inside an `iter` or `run_stream` block, if the error didn't come out of
+        an [`Agent`][pydantic_ai.agent.Agent] run, or if it came out of a realtime session. To get the
+        conversation there, or for an exception raised by a tool's own code, use
+        [`capture_run_conversation`][pydantic_ai.agent.capture_run_conversation].
+        """
+        return self._pydantic_ai_conversation
 
     def __str__(self) -> str:
         return self.message
@@ -590,8 +621,10 @@ class UnexpectedModelBehavior(AgentRunError):
                 self.body = body
         super().__init__(message)
 
-    def __reduce__(self) -> tuple[type, tuple[Any, ...]]:
-        return self.__class__, (self.message, self.body)
+    def __reduce__(self) -> tuple[Any, ...]:
+        # Keeps the state Pydantic AI attaches on the error's way out, like the failed run's conversation.
+        attached = {key: value for key, value in vars(self).items() if key.startswith(_ATTACHED_ATTR_PREFIX)}
+        return self.__class__, (self.message, self.body), attached or None
 
     def __str__(self) -> str:
         if self.body:
@@ -617,8 +650,9 @@ class ModelAPIError(AgentRunError):
     [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]), or
     [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError] (and its
     [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
-    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and
-    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError]). When the error
+    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError],
+    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError] and
+    [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError]). When the error
     came with an HTTP status code, the raised exception is also a
     [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError]; see
     [`ModelHTTPError.for_category`][pydantic_ai.exceptions.ModelHTTPError.for_category].
@@ -641,7 +675,7 @@ class ModelAPIError(AgentRunError):
     """The provider's machine-readable error code, if it sent one.
 
     For example `'rate_limit_exceeded'` or `'context_length_exceeded'` (OpenAI), `'ThrottlingException'` (Bedrock),
-    `'RESOURCE_EXHAUSTED'` (Google, xAI), or `'3051'` (Mistral).
+    `'RESOURCE_EXHAUSTED'` (Google, xAI), or `'3059'` (Mistral).
     """
 
     provider_error_type: str | None
@@ -761,7 +795,7 @@ RequestTimeoutSetting: TypeAlias = Literal['request_timeout', 'first_event_timeo
 
 
 class ModelConnectionError(ModelAPIError):
-    """Raised when the request could not reach the provider or its response could not be read.
+    """Raised when the request could not reach the provider, its response could not be read, or the provider timed it out.
 
     For example a refused connection, a reset connection, or a dropped stream. The transport library's exception
     is available as `__cause__`.
@@ -776,7 +810,8 @@ class ModelConnectionError(ModelAPIError):
     - `'read'`: receiving the response, including a stream that broke off. The request was sent, so the provider
       may have acted on it.
 
-    `None` when the transport error doesn't say, e.g. a connection closed at an unknown point.
+    `None` when the transport error doesn't say, e.g. a connection closed at an unknown point, and for a timeout the
+    provider reports, which is not a transport error.
     """
 
     def __init__(
@@ -807,23 +842,26 @@ class ModelConnectionError(ModelAPIError):
 
 
 class ModelTimeoutError(ModelConnectionError):
-    """Raised when a single attempt at the request timed out at the transport layer.
+    """Raised when a single attempt at the request timed out, at the transport layer or at the provider.
 
-    This is the provider SDK's or HTTP client's own timeout, controlled by
-    [`ModelSettings['timeout']`][pydantic_ai.settings.ModelSettings.timeout], and applies to one attempt. A deadline
-    over all attempts at a request is [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout],
-    which raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] instead.
+    A transport timeout is the provider SDK's or HTTP client's own, controlled by
+    [`ModelSettings['timeout']`][pydantic_ai.settings.ModelSettings.timeout], and applies to one attempt. A timeout
+    the provider reports, like an HTTP 408 or Bedrock's `ModelTimeoutException`, is also a
+    [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError], and its `phase` is `None`. A deadline over all attempts
+    at a request is [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout], which
+    raises [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout] instead.
     """
 
 
 class ModelRequestRejectedError(ModelAPIError):
     """Raised when the provider rejected the request itself, so sending it again unchanged won't succeed.
 
-    For example an HTTP 400 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies. Its
-    subclasses say why, where the provider does:
+    For example an HTTP 400, 413 or 422, or a gRPC `INVALID_ARGUMENT`, when no more specific category applies.
+    Its subclasses say why, where the provider does:
     [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
-    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], and
-    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError].
+    [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError],
+    [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError], and
+    [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError].
 
     Exhausted credits are a [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] instead, even
     when the provider sends them as a 400 like Anthropic does, since topping up the account fixes them.
@@ -874,6 +912,24 @@ class ModelNotFoundError(ModelRequestRejectedError):
     """
 
 
+class ModelSchemaTooComplexError(ModelRequestRejectedError):
+    """Raised when the provider rejected the request because it couldn't compile its strict schemas.
+
+    For example Anthropic's 400 saying that the schema is too complex or that the compiled grammar is too large,
+    which can arrive only after minutes of compiling, for strict tool schemas and a Native Output schema that are
+    within the documented limits. Its [`hint`][pydantic_ai.exceptions.ModelHTTPError.hint] says how to simplify
+    them. When the model chose Native Output for the request itself, because the output type didn't pick a mode, the
+    run sends the request again in Tool Output instead of raising this, on the agent's model or one
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] moved the request to, but not on a model inside a
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], which handles the error itself; see
+    [Schema complexity limits](../models/anthropic.md#schema-complexity-limits). A subclass of
+    [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
+
+    It's not the [`UserError`][pydantic_ai.exceptions.UserError] Pydantic AI raises before sending a schema whose
+    `$ref`s expand too far when inlined: this is the provider rejecting a request that was sent.
+    """
+
+
 class ModelRequestTimeout(ModelAPIError):
     """Raised when a model request didn't finish within its [`ModelSettings['request_timeout']`][pydantic_ai.settings.ModelSettings.request_timeout], or a streamed one produced no output within its [`ModelSettings['first_event_timeout']`][pydantic_ai.settings.ModelSettings.first_event_timeout].
 
@@ -912,6 +968,67 @@ class ModelRequestTimeout(ModelAPIError):
         self.setting = state.get('setting', 'request_timeout')
         self.message = _request_timeout_message(self.model_name, self.timeout, self.setting)
         self.args = (self.message,)
+
+
+class _ModelResponseError(ModelAPIError, UnexpectedModelBehavior):
+    """A response the model layer couldn't use, which is a model error and, until v3, an `UnexpectedModelBehavior`."""
+
+    # TODO(v3): drop the `UnexpectedModelBehavior` base, which only keeps existing `except` clauses working, and raise
+    # these from the sites that raise a plain `ModelAPIError` for the same kind of response (`check_json_response`,
+    # `map_decode_errors`, OpenRouter's `null` `choices`). Until then, the base would make those non-retryable on
+    # Temporal and change which `except` clause catches them.
+
+    body: object | None
+    """The response the provider sent, if available, as the SDK built it (which may fill in fields it left out)."""
+
+    def __init__(self, model_name: str, message: str, *, body: object | None = None):
+        super().__init__(model_name, message, body=body)
+        # `ModelAPIError.__init__` reaches `UnexpectedModelBehavior.__init__` on its way to `AgentRunError`, which
+        # resets `body` as it isn't passed along. It's the `ModelAPIError` field, which takes any body, not just a
+        # string.
+        self.body = body  # pyright: ignore[reportIncompatibleVariableOverride]
+
+    def __str__(self) -> str:
+        # Like every other `ModelAPIError`, not `UnexpectedModelBehavior`, which appends the body: a response body can
+        # hold the whole completion, which doesn't belong in logs or error messages. It stays on `body`, so, like an
+        # HTTP error's body, it still crosses a Temporal activity boundary in the `ApplicationError`'s details.
+        return self.message
+
+
+class ModelEmptyResponseError(_ModelResponseError):
+    """Raised when the provider answered a request successfully but sent no response in it.
+
+    For example a stream that ended before its first event, or a completion whose `choices` are empty. It's often a
+    transient glitch on the provider's side, so sending the request again, or to another model, may well succeed.
+
+    A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] and
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] fall back on it by default. These responses used to
+    raise a plain [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which this class still
+    subclasses so `except UnexpectedModelBehavior` keeps catching it.
+
+    Some adapters still raise a plain `ModelAPIError` for the same kind of response, so to handle all of them, catch
+    `ModelAPIError`.
+    """
+
+
+class ModelInvalidResponseError(_ModelResponseError):
+    """Raised when the provider answered a request successfully but its response couldn't be used.
+
+    For example a completion that doesn't match the API's schema, or a response the API doesn't allow, like an MCP
+    sampling result that's not from the assistant. Unlike a
+    [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError], sending the same request again
+    often gets the same response, but another model or provider may answer it.
+
+    A [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], so
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] and
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] fall back on it by default. These responses used to
+    raise a plain [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which this class still
+    subclasses so `except UnexpectedModelBehavior` keeps catching it.
+
+    Some adapters still raise a plain `ModelAPIError` for the same kind of response, so to handle all of them, catch
+    `ModelAPIError`.
+    """
 
 
 def _request_timeout_message(model_name: str, timeout: float, setting: RequestTimeoutSetting) -> str:
@@ -1020,6 +1137,7 @@ class ModelHTTPError(ModelAPIError):
             | ModelQuotaExceededError
             | ModelUnavailableError
             | ModelServerError
+            | ModelTimeoutError
             | ModelRequestRejectedError
         ]
         | None,
@@ -1055,10 +1173,12 @@ class ModelHTTPError(ModelAPIError):
                 [`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError],
                 [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError],
                 [`ModelServerError`][pydantic_ai.exceptions.ModelServerError],
+                [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError],
                 [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError],
                 [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError],
-                [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], or
-                [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError].
+                [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError],
+                [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError], or
+                [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError].
             status_code: The HTTP status code.
             model_name: The name of the model.
             body: The body of the error response.
@@ -1150,6 +1270,10 @@ class _HTTPModelServerError(_CategorizedHTTPError, ModelServerError):
     pass
 
 
+class _HTTPModelTimeoutError(_CategorizedHTTPError, ModelTimeoutError):
+    pass
+
+
 class _HTTPModelContextWindowExceededError(_CategorizedHTTPError, ModelContextWindowExceededError):
     pass
 
@@ -1166,16 +1290,22 @@ class _HTTPModelNotFoundError(_CategorizedHTTPError, ModelNotFoundError):
     pass
 
 
+class _HTTPModelSchemaTooComplexError(_CategorizedHTTPError, ModelSchemaTooComplexError):
+    pass
+
+
 _HTTP_CATEGORY_CLASSES: dict[type[ModelAPIError], type[_CategorizedHTTPError]] = {
     ModelRateLimitError: _HTTPModelRateLimitError,
     ModelQuotaExceededError: _HTTPModelQuotaExceededError,
     ModelUnavailableError: _HTTPModelUnavailableError,
     ModelOverloadedError: _HTTPModelOverloadedError,
     ModelServerError: _HTTPModelServerError,
+    ModelTimeoutError: _HTTPModelTimeoutError,
     ModelContextWindowExceededError: _HTTPModelContextWindowExceededError,
     ModelRequestRejectedError: _HTTPModelRequestRejectedError,
     ModelAuthenticationError: _HTTPModelAuthenticationError,
     ModelNotFoundError: _HTTPModelNotFoundError,
+    ModelSchemaTooComplexError: _HTTPModelSchemaTooComplexError,
 }
 
 
@@ -1379,5 +1509,31 @@ class UnsupportedSettingWarning(UserWarning):
     from pydantic_ai import UnsupportedSettingWarning
 
     warnings.filterwarnings('error', category=UnsupportedSettingWarning)
+    ```
+    """
+
+
+class DeprecatedModelWarning(UserWarning):
+    """Warning emitted when a request targets a model that its provider has deprecated or retired.
+
+    It's emitted each time a model prepares a request it sends, streamed or not, for a model whose profile has a
+    [`deprecation`][pydantic_ai.profiles.ModelProfile.deprecation]. The message names the model, its retirement
+    date, the model the provider routes its requests to from then, if any, and the replacement the provider
+    recommends, and links the provider's announcement. Creating the model doesn't warn. Python's warning filters
+    decide how often it's shown.
+
+    The profile is set for models on the Anthropic and OpenAI APIs and, for some Google models, on the Gemini API and
+    Google Cloud, each with that API's dates, including through the Pydantic AI Gateway. It isn't set where another
+    platform, such as Amazon Bedrock, Google Cloud's Vertex AI for Claude models or Azure, serves the same model on a
+    schedule of its own. See [Deprecated models](../models/overview.md#deprecated-models).
+
+    To turn it into an error, use a warnings filter:
+
+    ```python {test="skip"}
+    import warnings
+
+    from pydantic_ai import DeprecatedModelWarning
+
+    warnings.filterwarnings('error', category=DeprecatedModelWarning)
     ```
     """

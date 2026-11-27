@@ -9,11 +9,12 @@ from typing import Any
 
 import anyio
 
-from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, WrapRunHandler
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import SET_WORKING_DIR_ON_THE_WORKSPACE, warn_argument_ignored
 from pydantic_ai_harness._workspace import require_workspace
+from pydantic_ai_harness.announce_working_directory import AnnounceWorkingDirectory
 from pydantic_ai_harness.shell._jobs import CONTROL_TIMEOUT
 from pydantic_ai_harness.shell._toolset import RUN_SCOPED_TOOL_NAMES, ShellToolset
 
@@ -129,6 +130,16 @@ class Shell(AbstractCapability[AgentDepsT]):
     provider-credential denylist.
     """
 
+    secret_env: Mapping[str, str] | None = field(default=None, kw_only=True, repr=False)
+    """Secrets added to every command's environment, like `env`, and masked in what the tools return.
+
+    Exact occurrences of each value are replaced with `[REDACTED:<name>]` in tool results and retry or failure
+    messages before the model sees them. This guards against a secret printed by accident, not against a command
+    that transforms or splits it, and a short or common value is masked everywhere it appears.
+    `denied_env_patterns` does not filter these. Log files, which the model can read with other tools, and the
+    persistent `shell` tool's events hold the raw output.
+    """
+
     tools: Sequence[str] = RUN_SCOPED_TOOL_NAMES
     """Which tools to register, from `SHELL_TOOL_NAMES`.
 
@@ -164,6 +175,15 @@ class Shell(AbstractCapability[AgentDepsT]):
         """Fail the run at its start when it has no workspace to run commands in."""
         require_workspace(ctx.workspace, 'Shell', ctx.messages)
 
+    async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
+        """Bring `AnnounceWorkingDirectory` along; copies from other capabilities merge into one line.
+
+        A deferred one doesn't: naming the directory starts a sandbox the model may never load this capability for.
+        """
+        if self.defer_loading:
+            return self
+        return CombinedCapability([self, AnnounceWorkingDirectory()])
+
     def get_toolset(self) -> ShellToolset[AgentDepsT]:
         """The shell toolset, built once; its `for_run` gives each run a fresh copy."""
         if self._toolset is None:
@@ -183,6 +203,7 @@ class Shell(AbstractCapability[AgentDepsT]):
             allow_interactive=self.allow_interactive,
             env=self.env,
             denied_env_patterns=self.denied_env_patterns,
+            secret_env=self.secret_env,
             tools=self.tools,
             id=self.id or 'shell',
         )

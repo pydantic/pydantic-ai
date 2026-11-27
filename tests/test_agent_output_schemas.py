@@ -678,6 +678,11 @@ async def test_deferred_output_json_schema():
                             'title': 'Metadata',
                             'type': 'object',
                         },
+                        'validated_args': {
+                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                            'title': 'Validated Args',
+                            'type': 'object',
+                        },
                         '_kinds': {
                             'additionalProperties': {'enum': ['approval', 'question', 'external'], 'type': 'string'},
                             'title': 'Kinds',
@@ -709,6 +714,11 @@ async def test_deferred_output_json_schema():
                             ],
                             'default': None,
                             'title': 'Tool Kind',
+                        },
+                        'ui_visibility': {
+                            'anyOf': [{'enum': ['public', 'redacted', 'private'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Ui Visibility',
                         },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
                         'provider_name': {
@@ -801,6 +811,11 @@ async def test_deferred_output_json_schema():
                             'title': 'Metadata',
                             'type': 'object',
                         },
+                        'validated_args': {
+                            'additionalProperties': {'additionalProperties': True, 'type': 'object'},
+                            'title': 'Validated Args',
+                            'type': 'object',
+                        },
                         '_kinds': {
                             'additionalProperties': {'enum': ['approval', 'question', 'external'], 'type': 'string'},
                             'title': 'Kinds',
@@ -832,6 +847,11 @@ async def test_deferred_output_json_schema():
                             ],
                             'default': None,
                             'title': 'Tool Kind',
+                        },
+                        'ui_visibility': {
+                            'anyOf': [{'enum': ['public', 'redacted', 'private'], 'type': 'string'}, {'type': 'null'}],
+                            'default': None,
+                            'title': 'Ui Visibility',
                         },
                         'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'default': None, 'title': 'Id'},
                         'provider_name': {

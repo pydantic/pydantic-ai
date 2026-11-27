@@ -183,7 +183,14 @@ class PixeltableMemoryStore:
         )
 
     async def list_paths(self, prefix: str = '', *, limit: int) -> list[str]:
-        return await anyio.to_thread.run_sync(self._locked, functools.partial(self._list_paths_sync, prefix, limit))
+        return await anyio.to_thread.run_sync(
+            self._locked, functools.partial(self._list_paths_sync, prefix, limit, nested=True)
+        )
+
+    async def list_child_paths(self, prefix: str, *, limit: int) -> list[str]:
+        return await anyio.to_thread.run_sync(
+            self._locked, functools.partial(self._list_paths_sync, prefix, limit, nested=False)
+        )
 
     async def search(
         self,
@@ -358,7 +365,12 @@ class PixeltableMemoryStore:
                 _insert_rows(t, [{'path': path, **values, 'fingerprint': None}])
             return
         where = (t.path == path) & (t.kind == row['kind']) & (t.version == row['version'])
-        if t.update(values, where=where).row_count_stats.upd_rows != 1:
+        stats = t.update(values, where=where).row_count_stats
+        # Pixeltable 0.7.25 renamed `upd_rows` to `updated_rows`; the declared floor, 0.7.21, has only `upd_rows`.
+        updated = getattr(stats, 'updated_rows', None)
+        if not isinstance(updated, int):
+            updated = stats.upd_rows
+        if updated != 1:
             action = 'deleted' if deleting else 'written'
             raise MemoryConflictError(f'memory path {path!r} changed before it could be {action}')
 
@@ -469,15 +481,20 @@ class PixeltableMemoryStore:
         assert isinstance(selected, pxt.Query)
         return list(selected.collect())
 
-    def _list_paths_sync(self, prefix: str, limit: int) -> list[str]:
+    @staticmethod
+    def _below(t: pxt.Table, prefix: str, *, nested: bool) -> Expr:
+        where = t.path.slice(0, len(prefix)) == prefix
+        # Paths in a deeper scope nested under `prefix` belong to another namespace or agent.
+        return where if nested else where & ~t.path.slice(len(prefix)).contains('/')
+
+    def _list_paths_sync(self, prefix: str, limit: int, *, nested: bool) -> list[str]:
         validate_store_prefix(prefix)
         if limit <= 0:
             raise ValueError('limit must be positive')
         t = self._ensure_table()
-        return [str(row['path']) for row in self._file_rows(t, t.path.slice(0, len(prefix)) == prefix, limit)]
+        return [str(row['path']) for row in self._file_rows(t, self._below(t, prefix, nested=nested), limit)]
 
     def _search_files_sync(self, prefix: str, max_files: int, max_file_chars: int) -> list[dict[str, Any]]:
         t = self._ensure_table()
-        where = (t.path.slice(0, len(prefix)) == prefix) & ~t.path.slice(len(prefix)).contains('/')
         # One extra file/character lets search report each truncation bound.
-        return self._file_rows(t, where, max_files + 1, content_chars=max_file_chars + 1)
+        return self._file_rows(t, self._below(t, prefix, nested=False), max_files + 1, content_chars=max_file_chars + 1)
