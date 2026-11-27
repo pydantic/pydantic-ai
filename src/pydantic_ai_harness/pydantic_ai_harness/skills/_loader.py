@@ -492,12 +492,14 @@ async def load_skill_libraries(
     libraries, skipped = await _libraries(workspace, directories, missing_directories)
     discovered, unreadable = await _discover_skills(workspace, libraries)
     skipped.extend(unreadable)
-    available_names = frozenset(name for name, _ in discovered)
+    # An unreadable skill directory still names a skill, so selecting it reports it as skipped, not unknown.
+    unreadable_names = {_normalize_name(posixpath.basename(entry.path)) for entry in unreadable}
+    available_names = frozenset(name for name, _ in discovered).union(unreadable_names)
     normalized_include = None if include is None else frozenset(_normalize_name(name) for name in include)
     normalized_exclude = frozenset(_normalize_name(name) for name in exclude)
     if unknown_names == 'error':
-        _validate_selection('include', normalized_include, available_names)
-        _validate_selection('exclude', normalized_exclude, available_names)
+        _validate_selection('include', normalized_include, available_names, skipped)
+        _validate_selection('exclude', normalized_exclude, available_names, skipped)
     selected_names = (
         normalized_include if normalized_include is not None else available_names.difference(normalized_exclude)
     )
@@ -542,6 +544,7 @@ def _validate_selection(
     name: str,
     selected: Collection[str] | None,
     available: Collection[str],
+    skipped: Sequence[SkippedSkill] = (),
 ) -> None:
     if selected is None:
         return
@@ -550,4 +553,8 @@ def _validate_selection(
         return
     noun = 'skill' if len(unknown) == 1 else 'skills'
     available_text = ', '.join(sorted(available)) or '(none)'
-    raise ValueError(f'Unknown {noun} in {name}: {", ".join(unknown)}. Available skills: {available_text}.')
+    message = f'Unknown {noun} in {name}: {", ".join(unknown)}. Available skills: {available_text}.'
+    if skipped:
+        # A skipped library or skill may be where the name is, so its reason is the likelier cause.
+        message += ' Some paths were skipped: ' + ' '.join(entry.message for entry in skipped)
+    raise ValueError(message)

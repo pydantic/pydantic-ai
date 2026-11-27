@@ -45,6 +45,12 @@ from tests.harness.conftest import IsStr
 from tests.harness.file_system.test_windows_paths import DriveBackend
 from tests.workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend, RunOnlyWorkspaceBackend
 
+# Mode bits do not bind root, and Windows cannot make a directory unreadable with them.
+requires_posix_permissions = pytest.mark.skipif(
+    os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
+    reason='POSIX mode bits must apply to this process.',
+)
+
 
 def _write_skill(
     library: Path,
@@ -1192,11 +1198,7 @@ class TestSkillLibraryLayering:
         assert [str(warning.message) for warning in caught] == [message]
         assert catalog.skipped == (SkippedSkill(path=library, reason='skill_package', message=message),)
 
-    # Mode bits do not bind root, and Windows cannot make a directory unreadable with them.
-    @pytest.mark.skipif(
-        os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
-        reason='POSIX mode bits must apply to this process.',
-    )
+    @requires_posix_permissions
     @pytest.mark.parametrize(
         ('locked', 'mode'),
         [('.agents/skills', 0o000), ('.agents/skills', 0o300), ('.agents', 0o000)],
@@ -1235,7 +1237,7 @@ class TestSkillLibraryLayering:
 
         assert names == ['review']
 
-    @pytest.mark.skipif(os.name != 'posix' or os.geteuid() == 0, reason='needs file permissions that apply')
+    @requires_posix_permissions
     @pytest.mark.parametrize('locked', ['deploy', 'deploy/SKILL.md'], ids=['skill-directory', 'skill-file'])
     async def test_an_unreadable_skill_is_skipped_and_the_others_still_load(self, tmp_path: Path, locked: str) -> None:
         # Like an invalid `SKILL.md`, a skill the workspace denies reading must not make the other skills unusable.
@@ -1256,6 +1258,34 @@ class TestSkillLibraryLayering:
         message = f'Skipping {path}: it is not readable.'
         assert [str(warning.message) for warning in caught] == [message]
         assert catalog.skipped == (SkippedSkill(path=path, reason='unreadable', message=message),)
+
+    @requires_posix_permissions
+    async def test_an_included_unreadable_skill_is_skipped_not_unknown(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'skills', 'deploy')
+        _write_skill(tmp_path / 'skills', 'review')
+        locked = tmp_path / 'skills' / 'deploy'
+        locked.chmod(0)
+        try:
+            with pytest.warns(UserWarning, match='deploy: it is not readable'):
+                names = await _names(Skills('skills', include=['deploy', 'review']), tmp_path)
+        finally:
+            locked.chmod(0o755)
+
+        assert names == ['review']
+
+    @requires_posix_permissions
+    async def test_an_unknown_name_error_names_the_skipped_paths(self, tmp_path: Path) -> None:
+        # The included skill's library is unreadable, so the skipped path is the likelier cause.
+        _write_skill(tmp_path / 'locked', 'deploy')
+        _write_skill(tmp_path / 'skills', 'review')
+        (tmp_path / 'locked').chmod(0)
+        try:
+            with pytest.raises(
+                ValueError, match=r'Unknown skill in include: deploy\..*Some paths were skipped: .*not readable'
+            ):
+                await _names(Skills(['locked', 'skills'], include=['deploy']), tmp_path)
+        finally:
+            (tmp_path / 'locked').chmod(0o755)
 
     async def test_an_invalid_earlier_skill_does_not_hide_a_valid_one(self, tmp_path: Path) -> None:
         broken = tmp_path / 'project' / 'review'
