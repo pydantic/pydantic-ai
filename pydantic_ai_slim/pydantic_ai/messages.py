@@ -4044,10 +4044,10 @@ class DocumentCitationSource:
 
 @dataclass(repr=False)
 class WorkspaceLocation:
-    """A file in the [workspace](../workspace.md) the response ran in,
-    [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref].
+    """A file in the [workspace](../workspace.md) a response ran in.
 
-    It holds no reference to the workspace, so a client that sees or sends it back can't point it at another one.
+    That workspace is the response's [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref].
+    The location holds no reference to it, so a client that sees or sends it back can't point it at another one.
     """
 
     path: str

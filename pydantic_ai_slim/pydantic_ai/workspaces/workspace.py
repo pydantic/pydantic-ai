@@ -739,7 +739,7 @@ class Workspace(WorkspaceBackend):
         """Read a file as text; undecodable bytes raise `UnicodeDecodeError`."""
         return (await self.read_bytes(path)).decode(encoding)
 
-    async def read_file(self, path: str | FileCitationSource) -> BinaryContent:
+    async def read_file(self, path: str | FileCitationSource, /) -> BinaryContent:
         """Read a file as [`BinaryContent`][pydantic_ai.messages.BinaryContent], to hand to a user, an app or a model.
 
         The media type comes from the file name's extension, as in

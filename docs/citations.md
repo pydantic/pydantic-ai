@@ -16,7 +16,7 @@ and, on the Anthropic API, for web search on models with the `20260209` or `2026
 Add the [`Citations`][pydantic_ai.capabilities.Citations] capability to ask them:
 
 ```python {title="document_citations.py"}
-from pydantic_ai import Agent, BinaryContent, TextPart
+from pydantic_ai import Agent, BinaryContent, DocumentCitationSource, TextPart
 from pydantic_ai.capabilities import Citations
 
 agent = Agent('{{ anthropic:medium }}', capabilities=[Citations()])
@@ -29,8 +29,10 @@ result = agent.run_sync(
 for part in result.response.parts:
     if isinstance(part, TextPart):
         for citation in part.citations or []:
-            print(citation.sources[0].excerpts)
-            #> ['Items may be returned within 30 days.']
+            source = citation.sources[0]
+            if isinstance(source, DocumentCitationSource):
+                print(source.excerpts)
+                #> ['Items may be returned within 30 days.']
 ```
 
 The model can still answer without citations.
@@ -57,6 +59,7 @@ A [`Citation`][pydantic_ai.messages.Citation] has:
 from pydantic_ai import (
     Agent,
     ContentCitationAnchor,
+    FileCitationSource,
     MarkerCitationAnchor,
     TextPart,
     WebCitationSource,
@@ -81,6 +84,8 @@ for part in result.response.parts:
             for source in citation.sources:
                 if isinstance(source, WebCitationSource):
                     label = source.title or source.url
+                elif isinstance(source, FileCitationSource):
+                    label = source.title or source.location.path
                 else:
                     label = source.title or source.document_id or 'document'
                 print(location, label)
