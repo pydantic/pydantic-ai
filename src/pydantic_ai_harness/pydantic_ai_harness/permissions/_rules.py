@@ -392,9 +392,9 @@ def command_matches(rules: Sequence[PermissionRule[Any]], command: str, *, posix
 
 
 def command_segments(command: str) -> list[tuple[list[str], bool]] | None:
-    """The simple commands in `command`, each with whether it redirects; `None` when it is too complex to split."""
-    # `Permissions` counts a longer command as protected before it splits one, so only a direct caller gets here.
-    if len(command) > COMMAND_LIMIT:  # pragma: lax no cover
-        return None
+    """The simple commands in `command`, each with whether it redirects; `None` when it is too complex to split.
+
+    The caller checks `COMMAND_LIMIT` first: `Permissions` counts a longer command as protected without splitting it.
+    """
     segments = _segments(command)
     return None if segments is None else [(segment.words, segment.redirected) for segment in segments]
