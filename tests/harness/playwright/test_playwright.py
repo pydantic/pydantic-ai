@@ -354,6 +354,7 @@ class _FakePage:
         go_forward_error: PlaywrightError | None = None,
         go_back_result: object | None = _HISTORY_RESPONSE,
         go_forward_result: object | None = _HISTORY_RESPONSE,
+        history_moves_to: str | None = None,
         wait_for_error: PlaywrightError | None = None,
         hover_error: PlaywrightError | None = None,
         press_error: PlaywrightError | None = None,
@@ -380,6 +381,7 @@ class _FakePage:
         self._screenshot_error = screenshot_error
         self._go_back_error = go_back_error
         self._go_forward_error = go_forward_error
+        self._history_moves_to = history_moves_to
         self._go_back_result = go_back_result
         self._go_forward_result = go_forward_result
         self._wait_for_error = wait_for_error
@@ -494,12 +496,16 @@ class _FakePage:
         self.timeouts['go_back'] = timeout
         if self._go_back_error is not None:
             raise self._go_back_error
+        if self._history_moves_to is not None:
+            self.url = self._history_moves_to
         return self._go_back_result
 
     async def go_forward(self, *, timeout: float | None = None) -> object | None:
         self.timeouts['go_forward'] = timeout
         if self._go_forward_error is not None:
             raise self._go_forward_error
+        if self._history_moves_to is not None:
+            self.url = self._history_moves_to
         return self._go_forward_result
 
     async def wait_for_selector(
@@ -1334,6 +1340,22 @@ class TestPlaywrightBrowserTools:
     async def test_go_back_reports_empty_history(self) -> None:
         result = await _toolset(_FakePage(go_back_result=None)).go_back()
         assert result == 'No previous page in browser history.'
+
+    async def test_go_back_after_a_same_document_traversal(self) -> None:
+        # Playwright returns `None` for a `pushState` or `#hash` entry too, but the page did move.
+        page = _FakePage(
+            url='https://example.com/#second',
+            body='first',
+            go_back_result=None,
+            history_moves_to='https://example.com/',
+        )
+        result = await _toolset(page).go_back()
+        assert result == 'Went back. URL: https://example.com/\n\nfirst'
+
+    async def test_go_forward_after_a_same_document_traversal(self) -> None:
+        page = _FakePage(body='second', go_forward_result=None, history_moves_to='https://example.com/#second')
+        result = await _toolset(page).go_forward()
+        assert result == 'Went forward. URL: https://example.com/#second\n\nsecond'
 
     async def test_go_forward(self) -> None:
         toolset = _toolset(_FakePage(url='https://example.com/next', body='next'))
