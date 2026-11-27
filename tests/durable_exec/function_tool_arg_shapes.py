@@ -559,7 +559,8 @@ def check_shapes(
         for shape in SHAPES
         if (name := shape.tool.__name__)
         and (
-            carried_raw.get(name) is not shape.carries_raw(engine)
+            name not in received
+            or carried_raw.get(name) is not shape.carries_raw(engine)
             or (received.get(name) == in_process[name]) is not shape.in_process
             or (shape.hook_value is not None and shape.hook_value not in (received.get(name) or ''))
         )

@@ -30,7 +30,14 @@ from pydantic import (
     field_validator,
     model_validator,
 )
-from pydantic_core import to_jsonable_python
+from pydantic.plugin import (
+    SchemaKind,
+    SchemaTypePath,
+    ValidateJsonHandlerProtocol,
+    ValidatePythonHandlerProtocol,
+    ValidateStringsHandlerProtocol,
+)
+from pydantic_core import CoreConfig, CoreSchema, to_jsonable_python
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool
@@ -992,6 +999,52 @@ async def test_raw_tool_args_for_unit_keeps_the_dump_for_a_type_it_cannot_compar
     """
     toolset, params = await _validated_call(Tool(linked), {'venue': VENUE, 'url': 'https://example.com/'})
     assert raw_tool_args_for_unit(toolset, params, loaded_tool_args=_dumped_by_name(params.tool_args)) is None
+
+
+class CountingHandler(ValidatePythonHandlerProtocol, ValidateJsonHandlerProtocol, ValidateStringsHandlerProtocol):
+    # The protocols give `on_success`, `on_error` and `on_exception` bodies that do nothing.
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+
+    def on_enter(self, *args: object, **kwargs: object) -> None:
+        self.events.append('validate')
+
+
+@dataclass
+class CountingPlugin:
+    events: list[str] = field(default_factory=list[str])
+
+    def new_schema_validator(
+        self,
+        schema: CoreSchema,
+        schema_type: object,
+        schema_type_path: SchemaTypePath,
+        schema_kind: SchemaKind,
+        config: CoreConfig | None,
+        plugin_settings: dict[str, object],
+    ) -> tuple[ValidatePythonHandlerProtocol, ValidateJsonHandlerProtocol, ValidateStringsHandlerProtocol]:
+        handler = CountingHandler(self.events)
+        return handler, handler, handler
+
+
+def plugin_observed(venue: Venue, n: int) -> None:
+    pass
+
+
+async def test_raw_tool_args_for_unit_runs_no_validation_a_pydantic_plugin_observes(monkeypatch: pytest.MonkeyPatch):
+    """Deciding what to send validates with pydantic-core alone, so an installed Pydantic plugin sees nothing.
+
+    Not a VCR test: the claim is about work the helper doesn't show a plugin, and no model request is involved.
+    """
+    plugin = CountingPlugin()
+    monkeypatch.setattr('pydantic.plugin._loader._plugins', {'counting': plugin})
+    args = {'venue': VENUE, 'n': 1}
+    toolset, params = await _validated_call(Tool(plugin_observed), args)
+    loaded = _dumped_by_name(params.tool_args)
+    assert plugin.events
+    seen = len(plugin.events)
+    assert raw_tool_args_for_unit(toolset, params, loaded_tool_args=loaded) == args
+    assert len(plugin.events) == seen
 
 
 class Sparse(BaseModel):
