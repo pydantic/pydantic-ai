@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 
 from prefect import task
-from prefect.context import FlowRunContext
+from prefect.context import FlowRunContext, TaskRunContext
 
 from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOperationId, EventStreamHandlerId
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend, RoleBasedOperationConfig
@@ -20,6 +20,10 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
     def __init__(self, *, config: PrefectOperationConfig, event_sequence_key: str) -> None:
         super().__init__(namer=PrefectOperationNamer(), config=config)
         self._event_sequence_key = event_sequence_key
+
+    def execution_attempt(self) -> int:
+        task_run_context = TaskRunContext.get()
+        return 1 if task_run_context is None else task_run_context.task_run.run_count
 
     async def execute(
         self,

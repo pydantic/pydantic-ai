@@ -1,29 +1,35 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import AsyncGenerator, Sequence
+from contextlib import AsyncExitStack, asynccontextmanager
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Literal, get_args
 
+from pydantic_ai import exceptions
 from pydantic_ai._fallback import (
     FallbackChain,
     FallbackOn,
     FallbackPredicates,
     SpecModelError,
-    spec_error_types,
+    spec_exception_types,
     spec_list,
 )
+from pydantic_ai._unsupported_settings import raise_warnings as raise_unsupported_setting_warnings
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
     OutputTokenLimitExceeded,
     RetryModelRequest,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
 from pydantic_ai.messages import ModelMessage, ModelResponse
-from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.batch import BatchRequest, EncodedBatchRequest
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 from .abstract import AbstractCapability, AgentModel, CapabilityOrdering
@@ -33,6 +39,14 @@ if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
 
 __all__ = ('ModelFallback',)
+
+_SpecFallbackError = Literal[SpecModelError, 'UnsupportedSettingWarning']
+"""The exceptions an agent spec can name in `ModelFallback`'s `fallback_on`: those `RetryOnModelErrors` takes, and
+`UnsupportedSettingWarning`."""
+
+_SPEC_FALLBACK_ERRORS: dict[
+    str, type[ModelAPIError | ContentFilterError | OutputTokenLimitExceeded | UnsupportedSettingWarning]
+] = {name: getattr(exceptions, name) for name in get_args(_SpecFallbackError)}
 
 
 @dataclass(init=False)
@@ -122,7 +136,10 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 response is accepted, so in `fallback_on` they stand for that response. Leave
                 `ContentFilterError` out to accept refusals instead: an empty one ends the run with
                 `ContentFilterError`, and one with text is the output. Leave `OutputTokenLimitExceeded` out to accept
-                cut-off responses, as when `max_tokens` is a deliberate cap: cut-off text is then the output. Accepts:
+                cut-off responses, as when `max_tokens` is a deliberate cap: cut-off text is then the output. Naming
+                [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] moves on from a model
+                that would ignore a setting the request relies on, like `stop_sequences`, before anything is sent,
+                instead of sending the request without it. Accepts:
 
                 - A tuple of exception types: `(ModelRateLimitError, ModelUnavailableError)`
                 - An exception handler (sync or async): `lambda exc: isinstance(exc, MyError)`
@@ -154,7 +171,10 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         self.models = list(models)
         self.sticky = sticky
         self._predicates = FallbackPredicates.parse(
-            fallback_on, owner='ModelFallback', default='(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)'
+            fallback_on,
+            owner='ModelFallback',
+            default='(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)',
+            judges_settings=True,
         )
         self._supplies_model = False
         self._default_model = None
@@ -183,6 +203,12 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         anyway, so those keep working either way.
         """
         return replace_no_init(self, _supplies_model=agent.model is None)
+
+    def get_wrapper_model(self, model: Model) -> Model | None:
+        """With `UnsupportedSettingWarning` in `fallback_on`, have each attempt's model raise the warning it would emit."""
+        if not self._predicates.unsupported_setting:
+            return None
+        return _JudgingSettingsModel(model)
 
     def get_model(self) -> AgentModel[AgentDepsT] | None:
         if not self._supplies_model:
@@ -351,7 +377,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         cls,
         models: KnownModelName | str | Sequence[KnownModelName | str],
         *,
-        fallback_on: SpecModelError | Sequence[SpecModelError] = (
+        fallback_on: _SpecFallbackError | Sequence[_SpecFallbackError] = (
             'ModelAPIError',
             'ContentFilterError',
             'OutputTokenLimitExceeded',
@@ -364,8 +390,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         `ModelFallback(...)` is, so a [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability's
         aliases work in a spec too. `fallback_on` takes the names of exception classes in
         [`pydantic_ai.exceptions`][pydantic_ai.exceptions] that subclass
-        [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], `ContentFilterError` or `OutputTokenLimitExceeded`;
-        exception and response handlers can only be passed to `ModelFallback(...)` directly.
+        [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], `ContentFilterError`, `OutputTokenLimitExceeded`
+        or `UnsupportedSettingWarning`; exception and response handlers can only be passed to `ModelFallback(...)`
+        directly.
 
         YAML form:
 
@@ -383,8 +410,48 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         if len(model_names) != len(given_models):
             invalid = [model for model in given_models if not isinstance(model, str)]
             raise UserError(f'`ModelFallback` in an agent spec takes model names, got {invalid!r}.')
-        error_types = spec_error_types(fallback_on, owner='ModelFallback', param='fallback_on')
+        error_types = spec_exception_types(
+            fallback_on, _SPEC_FALLBACK_ERRORS, owner='ModelFallback', param='fallback_on'
+        )
         return cls(*model_names, fallback_on=error_types, sticky=sticky)
+
+
+@dataclass(init=False)
+class _JudgingSettingsModel(WrapperModel):
+    """Raises the `UnsupportedSettingWarning` its model would emit for a request, so `ModelFallback` moves on from it.
+
+    The warning is raised before anything is sent, as the attempt's error, so the agent records it as a failed attempt.
+    """
+
+    async def request(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> ModelResponse:
+        with raise_unsupported_setting_warnings():
+            return await super().request(messages, model_settings, model_request_parameters)
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        async with AsyncExitStack() as stack:
+            # Only while the stream is opened, which is when the model prepares the request.
+            with raise_unsupported_setting_warnings():
+                response = await stack.enter_async_context(
+                    super().request_stream(messages, model_settings, model_request_parameters, run_context)
+                )
+            yield response
+
+    async def batch_encode(self, request: BatchRequest) -> EncodedBatchRequest:
+        # Under `BatchModelRequests`, the model prepares the request here instead of in `request`.
+        with raise_unsupported_setting_warnings():
+            return await super().batch_encode(request)
 
 
 def _pin_id(model: Model | str) -> str:

@@ -27,6 +27,7 @@ from pydantic_core import PydanticCustomError, PydanticSerializationError, to_js
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai._agent_graph import build_validation_context
 from pydantic_ai._cancel import RunCancellation
+from pydantic_ai._compaction_requests import CompactionRequests, RequestedCompaction
 from pydantic_ai._enqueue import EnqueueGuard
 from pydantic_ai._run_context import ToolNamePath, with_tool_name_path, without_tool_name_path
 from pydantic_ai._utils import is_str_dict
@@ -53,6 +54,7 @@ from pydantic_ai.toolsets.function import FunctionToolsetTool
 from ._operation import ToolsetCallToolParams
 
 if TYPE_CHECKING:
+    from pydantic_ai._function_schema import FunctionSchema
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.mcp import MCPToolset
 
@@ -577,14 +579,46 @@ def revalidate_function_args(
     toolset: FunctionToolset[Any], tool: ToolsetTool[Any], tool_args: dict[str, Any], *, context: Any = None
 ) -> dict[str, Any]:
     """Validate a function tool's already-validated arguments again after they crossed a durable boundary as JSON."""
+    if (function_schema := _validating_function_schema(toolset, tool)) is not None:
+        return function_schema.revalidate(tool_args, context=context)
+    return tool.args_validator.validate_python(tool_args, context=context)
+
+
+def dump_json_function_args(
+    toolset: FunctionToolset[Any],
+    tool: ToolsetTool[Any],
+    tool_args: dict[str, Any],
+    *,
+    by_alias: bool | None,
+    round_trip: bool = False,
+) -> dict[str, Any]:
+    """Prepare a function tool's validated arguments to cross a durable boundary as JSON.
+
+    A validated `Json` value is the parsed value, which the tool's schema rejects when
+    `revalidate_function_args` validates it again. So each argument whose parameter takes a `Json`
+    value is dumped by that parameter's schema in JSON mode, with those values as JSON strings again.
+    Pass the `by_alias` and `round_trip` the engine dumps the arguments with, so the rest of the
+    argument dumps as it did. Every other argument is returned as it is, so what the engine journals
+    for it doesn't change.
+    """
+    function_schema = _validating_function_schema(toolset, tool)
+    return (
+        tool_args
+        if function_schema is None
+        else function_schema.dump_json_parameters(tool_args, by_alias=by_alias, round_trip=round_trip)
+    )
+
+
+def _validating_function_schema(toolset: FunctionToolset[Any], tool: ToolsetTool[Any]) -> FunctionSchema | None:
+    """The function schema whose validator produced `tool`'s arguments, if `tool` is one of `toolset`'s functions."""
     if (
         isinstance(tool, FunctionToolsetTool)
         and (source := toolset.tools.get(tool.original_name or tool.tool_def.name)) is not None
         # Only the source's own validator produced arguments in the shape `revalidate` expects.
         and tool.args_validator is source.function_schema.validator
     ):
-        return source.function_schema.revalidate(tool_args, context=context)
-    return tool.args_validator.validate_python(tool_args, context=context)
+        return source.function_schema
+    return None
 
 
 @dataclass
@@ -604,6 +638,30 @@ class DispatchSnapshots:
     active_capability_ids: set[str] = field(repr=False)
     _deferred_capability_ids: set[str] = field(repr=False)
     _tool_names_by_kind: dict[str, str] = field(repr=False)
+
+
+class CompactionRequestGuard(CompactionRequests):
+    """Replaces the run's compaction requests inside a durable unit, where `ctx.request_compaction()` can't be supported.
+
+    Like an enqueue, a request made inside a unit whose recorded result is replayed without re-running its code
+    would be silently dropped on recovery, so it raises an explanatory `UserError` instead.
+    """
+
+    def __init__(self, message: str):
+        super().__init__()
+        self._message = message
+
+    def request(self, requested: RequestedCompaction) -> None:
+        raise UserError(self._message)
+
+
+def compaction_request_not_supported_message(unit_noun: str, container_noun: str) -> str:
+    """The shared `ctx.request_compaction()` error, worded for one engine's durable unit and container."""
+    return (
+        f'`request_compaction` is not supported inside a durable {unit_noun}: the durable runtime replays '
+        f"the {unit_noun}'s recorded result without re-running your code, so the request would be dropped "
+        f'on recovery. Request compaction from a capability hook, which runs in {container_noun}-level code.'
+    )
 
 
 class CancelGuard(RunCancellation):
@@ -634,7 +692,7 @@ def cancel_not_supported_message(unit_noun: str, container_noun: str) -> str:
 
 
 def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_noun: str) -> RunContext[AgentDepsT]:
-    """Return a copy of `ctx` whose `enqueue()` and `cancel()` raise, for user code in a durable unit.
+    """Return a copy of `ctx` whose `enqueue()`, `request_compaction()` and `cancel()` raise, for user code in a durable unit.
 
     Every engine's durable units go through it: on the live context for the in-process engines
     (DBOS steps, Prefect tasks), and on the reconstructed context for Temporal activities and
@@ -646,6 +704,9 @@ def guard_run_context(ctx: RunContext[AgentDepsT], *, unit_noun: str, container_
     return replace(
         ctx,
         pending_messages=EnqueueGuard(unit_noun, container_noun),
+        _compaction_requests=CompactionRequestGuard(
+            compaction_request_not_supported_message(unit_noun, container_noun)
+        ),
         _cancellation=CancelGuard(cancel_not_supported_message(unit_noun, container_noun)),
     )
 
