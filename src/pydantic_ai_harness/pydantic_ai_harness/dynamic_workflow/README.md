@@ -440,6 +440,57 @@ reach runtime validation; they are still rejected before a sub-agent runs.
 > previews of up to the 20 most recent completed results. The model can reuse an untruncated preview
 > as a plain value instead of paying for the same call again.
 
+## Remote workers
+
+Set `monty_sandbox` to a Monty server's root URL to run the orchestration script on a remote worker
+instead of a local subprocess:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import DynamicWorkflow
+
+reviewer = Agent('openai:gpt-5', name='reviewer', description='Reviews code for bugs.')
+workflow = DynamicWorkflow(agents=[reviewer], monty_sandbox='https://sandbox.example.com')
+```
+
+It takes the same values as [Code Mode's `monty_sandbox`](../code_mode/README.md#remote-workers). A
+URL with a path, query, or fragment, or a pool passed instead of a function, raises a `UserError`
+when `DynamicWorkflow` is built. A URL connects without a key. To send credentials or set other pool
+options, pass a sync or async function returning a `pydantic_monty.AsyncMontyRemote`, such as
+`logfire.agent_sandboxes` for Logfire Agent Sandboxes:
+
+```python {test="skip"}
+import logfire
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import DynamicWorkflow
+
+logfire.configure()
+
+reviewer = Agent('openai:gpt-5', name='reviewer', description='Reviews code for bugs.')
+workflow = DynamicWorkflow(agents=[reviewer], monty_sandbox=logfire.agent_sandboxes)
+```
+
+The function is called for each `run_workflow` call, and each script gets a new session. A URL's
+pool has a per-turn transport deadline of `max_duration_seconds` plus 10 seconds, or none when no
+duration is set; a function's pool uses its own `request_timeout` (10 seconds by default). Time
+spent waiting for sub-agents counts toward neither.
+
+Only the script moves to the worker. Sub-agents and `print` output stay in your process. Use
+`https://` unless the network is trusted: the connection carries the script, its sub-agent
+arguments, and their results.
+
+Pool creation, connection, and session checkout errors propagate to the code calling the agent,
+since the model can't fix sandbox configuration. A worker crash, lost connection, or unexpected host
+error ends the script and becomes a model retry that reports the session reset and lists the
+completed sub-agent results. Remote host-side error details, which can contain pool URLs or
+credentials, are left out; the original exception stays the retry's cause. A time limit, including a
+pool's `request_timeout` and a remote `turn_timeout`, asks the model to make the script do less
+work.
+
+Under Temporal the script runs in workflow code, so the worker must be reachable whenever the
+workflow replays.
+
 ## Running inside a Temporal workflow
 
 Attach `TemporalDurability` to the orchestrating agent alongside `DynamicWorkflow`, and to each
@@ -537,6 +588,7 @@ DynamicWorkflow(  # all parameters are keyword-only
     sub_agent_usage_limits=None,  # UsageLimits per sub-agent run; None -> parent run's limits when forwarding usage
     resource_limits=None,  # None -> 256 MB, no time cap; a dict overrides only named caps; 'unlimited' -> limits off
     call_scheduler=None,  # (RunContext) -> WorkflowCallScheduler; None starts each call when made
+    monty_sandbox=None,  # server URL or () -> AsyncMontyRemote; None runs scripts locally
     id=None,  # required when defer_loading=True
     description=None,  # one-line catalog entry shown while deferred
     defer_loading=False,

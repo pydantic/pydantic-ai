@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 from pydantic_ai import RunContext
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -20,6 +20,9 @@ from pydantic_ai_harness.dynamic_workflow._toolset import (
     index_workflow_agents,
     validate_workflow_settings,
 )
+
+if TYPE_CHECKING:
+    from pydantic_monty import AsyncMontyRemote
 
 
 @dataclass(kw_only=True)
@@ -119,6 +122,16 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
     `DBOSDurability`, the calls already run one at a time in that order, and the factory is not called.
     """
 
+    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
+        default=None, repr=False
+    )
+    """Where the orchestration script runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, such as `logfire.agent_sandboxes`, called for each `run_workflow` call. Unset, scripts run locally.
+
+    Sub-agents and print output stay in your process. A URL's pool gets a per-turn transport deadline of
+    `max_duration_seconds` plus 10 seconds, or none without one; a pool from a function uses its own
+    `request_timeout`. Time spent awaiting sub-agents counts toward neither.
+    """
+
     @classmethod
     def get_serialization_name(cls) -> str | None:
         # Not spec-serializable: `agents` holds live Agent objects, not YAML-expressible config.
@@ -126,7 +139,9 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
 
     def __post_init__(self) -> None:
         self.resource_limits = renamed_duration_limit(self.resource_limits, 'DynamicWorkflow')
-        validate_workflow_settings(max_agent_calls=self.max_agent_calls, resource_limits=self.resource_limits)
+        validate_workflow_settings(
+            max_agent_calls=self.max_agent_calls, resource_limits=self.resource_limits, monty_sandbox=self.monty_sandbox
+        )
         catalog = [self._normalize_workflow_agent(entry) for entry in self.agents]
         index_workflow_agents(catalog)
         self._catalog = catalog
@@ -167,6 +182,7 @@ class DynamicWorkflow(AbstractCapability[AgentDepsT]):
             sub_agent_usage_limits=self.sub_agent_usage_limits,
             resource_limits=self.resource_limits,
             call_scheduler=self.call_scheduler,
+            monty_sandbox=self.monty_sandbox,
             toolset_id=self.id,
             owning_capability=self,
         )

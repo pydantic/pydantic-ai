@@ -44,13 +44,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
 
 try:
-    from pydantic_monty import (
-        MontyCrashedError,
-        MontyRuntimeError,
-        MontySyntaxError,
-        MontyTypingError,
-        ResourceLimits,
-    )
+    from pydantic_monty import AsyncMontyRemote, ResourceLimits
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'pydantic-monty is required for DynamicWorkflow. '
@@ -61,10 +55,14 @@ from pydantic_ai_harness._monty_exec import (
     DispatchFn,
     MontyExecutor,
     MontyRunState,
+    MontySandbox,
     PrintCapture,
+    check_monty_sandbox,
     in_temporal_workflow,
+    resolve_limits,
+    worker_failure_message,
 )
-from pydantic_ai_harness._monty_turns import is_sandbox_panic
+from pydantic_ai_harness._monty_turns import MontyFailure
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
     cancel_pending_output,
@@ -110,18 +108,13 @@ class WorkflowResourceLimits(TypedDict, total=False):
     """Maximum sandbox memory, in bytes."""
 
 
-def _default_resource_limits() -> ResourceLimits:
-    """Backstop sandbox limits; no duration cap -- see `WorkflowResourceLimits.max_duration_seconds`."""
-    return {
-        'max_memory': 256 * 1024 * 1024,
-    }
-
-
 # The keys `WorkflowResourceLimits` accepts, without the deprecated one `__post_init__` renames.
 # A `total=False` TypedDict does not validate keys at runtime, so a typo (e.g. `max_durations_seconds`)
 # would otherwise merge through and be silently dropped -- quietly disabling the only guard against
 # a pure-CPU `while True`. We reject unknowns.
 _RESOURCE_LIMIT_KEYS = frozenset(WorkflowResourceLimits.__annotations__) - {'max_duration_secs'}
+# The backstop; no duration cap -- see `WorkflowResourceLimits.max_duration_seconds`.
+_DEFAULT_RESOURCE_LIMITS: WorkflowResourceLimits = {'max_memory': 256 * 1024 * 1024}
 _MODEL_SAFE_EXCEPTION_MESSAGE_TYPES = (UsageLimitExceeded,)
 _MAX_COMPLETED_DISPATCHES = 20
 _MAX_TASK_PREVIEW_CHARS = 120
@@ -139,21 +132,7 @@ def _resolve_resource_limits(limits: WorkflowResourceLimits | Literal['unlimited
     A partial mapping merges *onto* the backstop rather than replacing it. Full semantics:
     `DynamicWorkflow.resource_limits`.
     """
-    if limits is None:
-        return _default_resource_limits()
-    if limits == 'unlimited':
-        return {}
-    unknown = set(limits) - _RESOURCE_LIMIT_KEYS
-    if unknown:
-        raise UserError(
-            f'Unknown `resource_limits` key(s): {sorted(unknown)}. Valid keys are {sorted(_RESOURCE_LIMIT_KEYS)}.'
-        )
-    resolved = _default_resource_limits()
-    if 'max_memory' in limits:
-        resolved['max_memory'] = limits['max_memory']
-    if 'max_duration_seconds' in limits:
-        resolved['max_feed_duration_secs'] = limits['max_duration_seconds']
-    return resolved
+    return resolve_limits(limits, keys=_RESOURCE_LIMIT_KEYS, defaults=_DEFAULT_RESOURCE_LIMITS)
 
 
 class _WorkflowArgs(TypedDict):
@@ -566,23 +545,43 @@ def _budget_terminal_result(
     }
 
 
-def _worker_crash_result(
+def _failure_outcome(
+    failure: MontyFailure,
+    capture: PrintCapture,
     *,
-    crash: MontyCrashedError,
+    remote: bool,
     budget_exhausted: bool,
     max_agent_calls: int,
     completed_dispatches: list[_CompletedDispatch],
-) -> dict[str, object]:
-    if budget_exhausted:
-        return _budget_terminal_result(
-            max_agent_calls=max_agent_calls,
-            last_error='The workflow script crashed the sandbox worker after exhausting the sub-agent budget.',
-            completed_dispatches=completed_dispatches,
-        )
-    raise ModelRetry(
-        'The workflow script crashed the sandbox worker. Revise the script and try again.'
-        f'{_completed_retry_section(completed_dispatches)}'
-    ) from crash
+) -> ModelRetry | dict[str, object]:
+    """The retry to raise for a failed script, or the terminal result once the sub-agent budget is spent.
+
+    The script may catch the budget error and fail later on something else, so `budget_exhausted` --
+    not the reported error -- proves this script hit the budget; under gather, the reported error may
+    also be an independently surfaced failure from the same batch.
+    """
+    match failure.kind:
+        case 'typing':
+            return ModelRetry(f'Type error in workflow:\n{capture.prepend_to(failure.display)}')
+        case 'syntax':  # pragma: lax no cover
+            # Backstop: the type checker parses the code first.
+            return ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(failure.display)}')
+        case 'runtime':
+            error = capture.prepend_to(failure.display)
+            if budget_exhausted:
+                return _budget_terminal_result(
+                    max_agent_calls=max_agent_calls, last_error=error, completed_dispatches=completed_dispatches
+                )
+            return ModelRetry(f'Runtime error in workflow:\n{error}{_completed_retry_section(completed_dispatches)}')
+        case _:
+            # The worker, its connection, or the host failed rather than the script. Completed sub-agent
+            # results are listed so the retry can reuse them as plain values.
+            message = worker_failure_message(failure, capture, remote=remote)
+            if budget_exhausted:
+                return _budget_terminal_result(
+                    max_agent_calls=max_agent_calls, last_error=message, completed_dispatches=completed_dispatches
+                )
+            return ModelRetry(f'{message}{_completed_retry_section(completed_dispatches)}')
 
 
 def _completed_workflow_result(
@@ -676,12 +675,16 @@ def validate_workflow_agent(entry: WorkflowAgent[AgentDepsT], existing_names: se
 
 
 def validate_workflow_settings(
-    *, max_agent_calls: int, resource_limits: WorkflowResourceLimits | Literal['unlimited'] | None
+    *,
+    max_agent_calls: int,
+    resource_limits: WorkflowResourceLimits | Literal['unlimited'] | None,
+    monty_sandbox: MontySandbox | None,
 ) -> None:
     """Reject settings the toolset cannot run with, so the error points at the constructor call."""
     if max_agent_calls < 1:
         raise UserError('DynamicWorkflow `max_agent_calls` must be at least 1.')
     _resolve_resource_limits(resource_limits)
+    check_monty_sandbox(monty_sandbox)
 
 
 def index_workflow_agents(
@@ -739,6 +742,12 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     """Creates the scheduler that decides when each script's sub-agent calls start.
     See `DynamicWorkflow.call_scheduler`."""
 
+    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
+        default=None, repr=False
+    )
+    """Where the orchestration script runs: a Monty server URL or a function that returns the remote pool.
+    See `DynamicWorkflow.monty_sandbox`."""
+
     toolset_id: str | None = None
     """Stable toolset id; defaults to the tool name."""
 
@@ -772,7 +781,9 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
 
     def __post_init__(self) -> None:
         self.resource_limits = renamed_duration_limit(self.resource_limits, 'DynamicWorkflowToolset')
-        validate_workflow_settings(max_agent_calls=self.max_agent_calls, resource_limits=self.resource_limits)
+        validate_workflow_settings(
+            max_agent_calls=self.max_agent_calls, resource_limits=self.resource_limits, monty_sandbox=self.monty_sandbox
+        )
         self._rebuild()
 
     def _rebuild(self) -> None:
@@ -1054,7 +1065,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         capture = PrintCapture()
         type_check_stubs = self._build_type_check_stubs()
         in_workflow_token = _in_workflow.set(True)
-        monty = MontyRunState()
+        monty = MontyRunState(sandbox=self.monty_sandbox)
         try:
             session = await monty.get_session(
                 type_check=True, type_check_stubs=type_check_stubs, limits=limits, in_temporal_workflow=in_temporal
@@ -1062,60 +1073,31 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
             # which does not interleave with `call_tool`), so it is a stable name registry for
             # the whole script.
-            completed = await MontyExecutor(
+            executor = MontyExecutor(
                 dispatch=scheduled_dispatch,
                 valid_names=self._by_name,
                 flush=flush,
                 global_sequential=sequential,
                 portal=monty.portal,
                 max_sleep_seconds=limits.get('max_feed_duration_secs'),
-            ).run(partial(session.feed_start, code, print_callback=capture.callback))
-        except MontyTypingError as exc:
-            raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(exc.display())}') from exc
-        # Backstop: the type checker parses the code first. `lax` because the errors handled below
-        # are still matched against this clause.
-        except MontySyntaxError as exc:  # pragma: lax no cover
-            raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(exc.display())}') from exc
-        except MontyRuntimeError as exc:
-            if budget_exhausted:
-                # The script may catch the budget error and fail later on something else, so
-                # the flag -- not the displayed error -- proves this script hit the budget;
-                # under gather, the displayed error may also be an independently surfaced
-                # failure from the same batch.
-                return _budget_terminal_result(
-                    max_agent_calls=self.max_agent_calls,
-                    last_error=capture.prepend_to(exc.display()),
-                    completed_dispatches=completed_dispatches,
-                )
-            raise ModelRetry(
-                f'Runtime error in workflow:\n{capture.prepend_to(exc.display())}'
-                f'{_completed_retry_section(completed_dispatches)}'
-            ) from exc
-        except MontyCrashedError as exc:
-            # The worker died mid-script (e.g. resource exhaustion or request timeout);
-            # the pool replaces it transparently. Completed sub-agent results are listed
-            # so the retry can reuse them as plain values.
-            return _worker_crash_result(
-                crash=exc,
-                budget_exhausted=budget_exhausted,
-                max_agent_calls=self.max_agent_calls,
-                completed_dispatches=completed_dispatches,
             )
-        except BaseException as exc:
-            # Convert a sandbox panic to a retry (see `is_sandbox_panic`);
-            # anything else (CancelledError, ...) re-raises unchanged.
-            if not is_sandbox_panic(exc):
-                raise
-            if budget_exhausted:
-                return _budget_terminal_result(
+            try:
+                completed = await executor.run(partial(session.feed_start, code, print_callback=capture.callback))
+            except BaseException as exc:
+                failure = MontyFailure.from_error(exc)
+                if failure is None:
+                    raise  # an interruption, such as cancellation
+                outcome = _failure_outcome(
+                    failure,
+                    capture,
+                    remote=self.monty_sandbox is not None,
+                    budget_exhausted=budget_exhausted,
                     max_agent_calls=self.max_agent_calls,
-                    last_error='The workflow script aborted inside the sandbox after exhausting the sub-agent budget.',
                     completed_dispatches=completed_dispatches,
                 )
-            raise ModelRetry(
-                'The workflow script aborted inside the sandbox. Revise the script and try again.'
-                f'{_completed_retry_section(completed_dispatches)}'
-            ) from exc
+                if isinstance(outcome, ModelRetry):
+                    raise outcome from exc
+                return outcome
         finally:
             _in_workflow.reset(in_workflow_token)
             await monty.aclose()
