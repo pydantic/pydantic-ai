@@ -394,6 +394,8 @@ Pydantic AI and provider API clients have their own retry logic. When using Pref
 
 This prevents requests from being retried multiple times at different layers. The layers *multiply*: see [Retry multiplication](../retries.md#retry-multiplication) for the arithmetic.
 
+Whatever `retries` says, a task isn't retried when it fails with an error a retry can't fix: a [`UserError`][pydantic_ai.exceptions.UserError], `PydanticUserError`, [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded], `WorkspaceTimeoutError`, `WorkspaceOutputLimitError`, `WorkspaceReadOnlyError` or `WorkspaceUnavailableError`, or a subclass of one of them.
+
 Prefect doesn't wait the delay a model error asks for in its [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] (read from a provider's `Retry-After` header, for example), unlike [Temporal](temporal.md#activity-retries) and [DBOS](dbos.md#step-retries). A task's retry delay comes from its `retry_delay_seconds`, and Prefect has no way to set it for one failure, nor a durable timer to wait it with: a task waiting to retry sleeps in the flow's process. So a model request task is retried after `retry_delay_seconds` whatever the provider asked for. Size `retry_delay_seconds` for your provider's rate limits, or give the model request task no retries and let a [fallback model](../capabilities/model-fallback.md) take over.
 
 ## Run and Conversation IDs

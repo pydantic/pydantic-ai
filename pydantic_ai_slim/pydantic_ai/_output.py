@@ -11,6 +11,7 @@ from functools import partial
 from types import FunctionType, MethodType, NoneType
 from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_origin, overload
 
+import pydantic_core
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
 from pydantic_core import (
     ErrorDetails,
@@ -140,6 +141,23 @@ def is_incomplete_json(error: BaseException | None) -> bool:
     return isinstance(error, ValidationError) and any(detail['type'] == 'json_invalid' for detail in error.errors())
 
 
+def are_tool_call_args_cut_off(call: _messages.ToolCallPart) -> bool:
+    """Whether the arguments of a tool call the token limit ended on were cut off before they were complete.
+
+    That's JSON that doesn't parse, or no arguments at all: Anthropic sends `{}` for a tool call it cut off,
+    and no input when streamed. JSON that parsed keeps its retry when the schema or an output validator rejects it.
+    """
+    args = call.args
+    if not args:
+        return True
+    if isinstance(args, str):
+        try:
+            pydantic_core.from_json(args)
+        except ValueError:
+            return True
+    return False
+
+
 def truncated_output_message(max_tokens: int | None) -> str:
     """The error message for structured text output that the token limit cut off into incomplete JSON."""
     return (
@@ -164,6 +182,7 @@ def build_retried_tool_return(
     tool_name: str,
     tool_call_id: str | None = None,
     tool_kind: _messages.ToolPartKind | None = None,
+    ui_visibility: _messages.ToolUIVisibility | None = None,
     cause: _messages.ToolRetryCause | None = None,
 ) -> _messages.ToolReturnPart:
     """Build the result a tool call that has to be retried is answered with.
@@ -195,6 +214,7 @@ def build_retried_tool_return(
         tool_name=tool_name,
         content=content,
         tool_kind=tool_kind,
+        ui_visibility=ui_visibility,
         outcome='retried',
         retry=_messages.RetryInfo(cause=cause),
     )
@@ -210,6 +230,7 @@ def retried_return_from_legacy(
     tool_name: str,
     tool_call_id: str,
     tool_kind: _messages.ToolPartKind | None = None,
+    ui_visibility: _messages.ToolUIVisibility | None = None,
 ) -> _messages.ToolReturnPart:
     """The result a deferred call is answered with when its handler hands back the deprecated part.
 
@@ -223,6 +244,7 @@ def retried_return_from_legacy(
         content=content if isinstance(content, str) else _messages._dump_error_details(content),  # pyright: ignore[reportPrivateUsage]
         tool_call_id=tool_call_id,
         tool_kind=tool_kind,
+        ui_visibility=ui_visibility,
         outcome='retried',
         retry=_messages.RetryInfo(cause='model_retry' if isinstance(content, str) else 'validation_error'),
     )
