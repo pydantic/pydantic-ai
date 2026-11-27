@@ -553,7 +553,7 @@ class Skills(AbstractCapability[AgentDepsT]):
     async def _load(self, run_workspace: Workspace | None) -> SkillCatalog:
         entries, skipped = await self._read(run_workspace)
         skills = tuple(entry.skill for entry in entries.values())
-        return SkillCatalog(skills=skills, skipped=skipped, advice=self._advice(skills))
+        return SkillCatalog(skills=skills, skipped=skipped, advice=tuple(self._advice(skills)))
 
     async def _read(
         self, run_workspace: Workspace | None, *, only: frozenset[str] | None = None

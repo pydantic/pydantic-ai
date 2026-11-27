@@ -2658,8 +2658,9 @@ each pick turns a skill on or off. A skill that is off is hidden from the model
 and has no `/command`, in every project; skills you add later start on. A
 skill folder that becomes a file, a single skill, or unreadable mid-session is
 left out of the next turn's catalog. A single skill's directory or `SKILL.md`
-that Pax cannot read when it starts turns skills off, with a notice, until the
-next `/reload`; the coding tools still load.
+that Pax cannot read is skipped with a notice, and the other skills still load.
+Any other error reading the folders when Pax starts turns skills off, with a
+notice, until the next `/reload`; the coding tools still load.
 
 Skill commands are read on this machine. With a plugin that runs the agent in a
 sandbox, the model's catalog is read from the sandbox's workspace instead, so the

@@ -1299,7 +1299,7 @@ class TestSkillsLoad:
         assert [skill.name for skill in catalog.skills] == ['review', 'tooled', 'wordy']
         assert catalog.skills[1].ignored_behavioral_fields == ('allowed-tools',)
         # The same advice a run emits as warnings, for a host that hides them.
-        assert catalog.advice == [
+        assert list(catalog.advice) == [
             'Agent Skill descriptions exceed the 1,024-character limit: wordy (1,025 characters)',
             'Ignoring unsupported Agent Skill behavioral frontmatter fields: tooled: allowed-tools',
         ]

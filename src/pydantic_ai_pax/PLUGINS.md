@@ -1339,8 +1339,9 @@ harness leaves skills with `disable-model-invocation: true` out of the model's
 catalog. Frontmatter fields harness ignores, such as `allowed-tools`, belong to
 other clients sharing the folders, so `coder` does not report them, and Pax
 hides harness's run-start warning about them. A skill directory or `SKILL.md`
-that cannot be read when `coder` loads prints `Skills are off: ...` and leaves
-skills out. The
+that cannot be read is skipped with a notice, and the other skills still load.
+Any other error reading the folders when `coder` loads prints
+`Skills are off: ...` and leaves skills out. The
 setting is tagged `coder-skill-folders`, so a Pax build without it
 ignores a saved value instead of failing to load `coder`.
 
