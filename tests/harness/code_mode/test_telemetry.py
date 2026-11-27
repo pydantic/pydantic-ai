@@ -100,7 +100,7 @@ class DisconnectError(Exception):
 
 async def diverged_prefix_attributes(
     original: str, rewritten: str, *, ready: Callable[[], object], sync_code: str, capability: CodeMode[None]
-) -> list[tuple[str, dict[str, AttributeValue]]]:
+) -> list[dict[str, AttributeValue]]:
     """Stream `original` to an eager `run_code` call, let its statements run, then dispatch it as `rewritten`.
 
     `original`'s last fed statement calls `ready`, which must set the event the helper waits on, and
@@ -132,12 +132,12 @@ async def diverged_prefix_attributes(
         tracer=tracer,
         trace_include_content=settings.include_content,
     )
-    # The hand-built calls run inside a real instrumented run's tool, which publishes that run's telemetry;
-    # `ctx` has the same tracer and content setting, so the helpers trace it as that run.
+    # The hand-built calls run inside a real instrumented run's `host` tool. Only the dispatch given the host
+    # run's id records on `execute_tool host`, the tool call span `Instrumentation` has open there.
     host_agent = Agent(TestModel(call_tools=['host']), capabilities=[Instrumentation(settings=settings)])
 
-    @host_agent.tool_plain
-    async def host() -> str:
+    @host_agent.tool
+    async def host(host_ctx: RunContext[object]) -> str:
         async with root:
             manager = await ToolManager(toolset=root).for_run_step(ctx)
             ctx.tool_manager = manager
@@ -153,23 +153,20 @@ async def diverged_prefix_attributes(
             async for _ in capability.wrap_run_event_stream(ctx, stream=stream()):
                 pass
             await asyncio.wait_for(started.wait(), timeout=READINESS_WAIT_TIMEOUT)
-            # Dispatched under the host tool's span, which is left out of the result below.
+            # Not given the host run's id, so it records nothing.
             sync_ctx = dataclasses.replace(ctx, tool_call_id='c2', tool_name='run_code')
             try:
                 await toolset.call_tool('run_code', {'code': sync_code}, sync_ctx, run_code)
             except ModelRetry:
                 pass
 
-            exec_ctx = dataclasses.replace(ctx, tool_call_id='c1', tool_name='run_code')
-            with (
-                tracer.start_as_current_span('execute_tool run_code'),
-                pytest.raises(ModelRetry, match='no longer matches'),
-            ):
+            exec_ctx = dataclasses.replace(ctx, tool_call_id='c1', tool_name='run_code', run_id=host_ctx.run_id)
+            with pytest.raises(ModelRetry, match='no longer matches'):
                 await toolset.call_tool('run_code', {'code': rewritten}, exec_ctx, run_code)
         return 'done'
 
     await host_agent.run('go')
-    return [found for found in code_mode_attributes(exporter) if found[0] != 'execute_tool host']
+    return [attributes for name, attributes in code_mode_attributes(exporter) if name == 'execute_tool host']
 
 
 def run_code_span(*, budget_exhausted: bool = False, **failure: str | bool) -> tuple[str, dict[str, AttributeValue]]:
@@ -363,4 +360,4 @@ class TestRunCodeFailureTelemetry:
             ready=lambda: 1,
             sync_code='None',
             capability=CodeMode[None](eager=True),
-        ) == [run_code_span()]
+        ) == [{'code_mode.budget_exhausted': False}]
