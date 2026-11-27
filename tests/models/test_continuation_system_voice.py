@@ -194,6 +194,8 @@ class AnthropicThreadsServer:
         self.bodies.append(body)
         thread = body['thread']
         if thread['type'] == 'continue':
+            # The thread keeps the `system` it was created with, so a continue request resending it is a regression.
+            assert 'system' not in body
             system, held = self.threads[thread['previous_message_id']]
         else:
             system, held = body['system'], []
