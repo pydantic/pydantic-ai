@@ -25,6 +25,7 @@ from pydantic_ai import (
     Agent,
     AudioUrl,
     BinaryContent,
+    BinaryImage,
     Citation,
     DocumentUrl,
     ImageUrl,
@@ -4682,6 +4683,19 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
         match=r"WebSearchTool is not supported with `OpenAIChatModel` and model 'gpt-4o'.*OpenAIResponsesModel",
     ):
         await agent.run('What day is today?')
+
+
+async def test_openai_chat_image_output_not_supported(allow_model_requests: None, openai_api_key: str):
+    """Chat Completions can't return images, though the OpenAI profile allows image output for the Responses API.
+
+    Not a VCR test: the request is rejected before it is sent.
+    """
+    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    assert m.profile.get('supports_image_output') is False
+    agent = Agent(m, output_type=BinaryImage)
+
+    with pytest.raises(UserError, match='Image output is not supported by this model'):
+        await agent.run('Draw a cat.')
 
 
 async def test_openai_chat_citation_without_content(allow_model_requests: None):
