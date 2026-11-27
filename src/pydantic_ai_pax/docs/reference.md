@@ -368,8 +368,8 @@ an install exits Pax first and installs in a new PowerShell window; start `pax`
 again when that window reports success.
 
 The reinstall keeps the extras Pax was installed with, such as `pydantic-ai-pax[groq]`,
-which uv records in the tool environment, but only Pax's own packages, so add any `--with`
-packages again afterwards. Without uv on `PATH`, an install prints the complete command to
+which uv records in the tool environment. It does not keep `--with` packages, so add those
+again afterwards. Without uv on `PATH`, an install prints the complete command to
 run yourself, in PowerShell syntax on Windows. For `main` installs, it also
 writes the overrides file and includes its path in the printed command.
 
