@@ -42,7 +42,7 @@ from pydantic_ai_pax.ui.prompt.prompt_questions import PromptQuestions
 from tests.conftest import no_leaked_tasks
 from tests.pax.dialog_script import Back, Pick, ScriptedDialogs
 from tests.pax.menu_script import Script, pick
-from tests.pax.test_live_prompt import editor
+from tests.pax.test_live_prompt import editor, highlighted, popup_shows
 from tests.pax.test_permissions import request as permission_request
 from tests.pax.test_session_runtime import runtime_over
 from tests.pax.test_steering import running
@@ -340,6 +340,37 @@ async def test_a_focused_question_names_the_composer_keys_once() -> None:
             frame = Text.from_ansi('\n'.join(live.frame())).plain
             assert 'Enter submits - Esc back - Ctrl+C decline' in frame
             assert frame.count('Ctrl+C decline') == 1
+            live.feed('ctrl-c')
+        assert responses[0].cancelled
+
+
+@pytest.mark.parametrize('preference', ['ask', 'answer'])
+async def test_enter_on_a_highlighted_completion_completes_while_a_question_waits(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, preference: QuestionSubmit
+) -> None:
+    (tmp_path / 'notebook.md').touch()
+    (tmp_path / 'notes.md').touch()
+    monkeypatch.chdir(tmp_path)
+    async with editor() as (live, _, _):
+        live.questions.preference = lambda: preference
+        responses: list[AskUserResponse] = []
+
+        async def ask() -> None:
+            responses.append(await live.questions.ask(question_request()))
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(ask)
+            await anyio.wait_all_tasks_blocked()
+            for key in 'look at @no':
+                live.feed(key)
+            await popup_shows(live, 'notes.md')
+            live.feed('tab')
+            assert highlighted(live)
+            live.feed('enter')
+            assert live.buffer.text in ('look at @notebook.md', 'look at @notes.md')
+            assert not live.questions.routing and responses == []
+            live.feed('f2')
+            await anyio.lowlevel.checkpoint()
             live.feed('ctrl-c')
         assert responses[0].cancelled
 

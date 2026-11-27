@@ -789,13 +789,6 @@ class LivePrompt:
 
     def accept(self, *, follow_up: bool = False, keep_position: bool = False) -> None:
         """Accept a completion, route a pending question, or choose delivery for the nonempty draft."""
-        if (
-            not follow_up
-            and self._editing is None
-            and input_kind(self.buffer.text) == 'prompt'
-            and self.questions.route(self.buffer)
-        ):
-            return
         if self._selection >= 0:
             item = self._completions[self._selection]
             if self.buffer.text[self._completion_start(item) : self.buffer.cursor] != item.text:
@@ -803,6 +796,13 @@ class LivePrompt:
                 return
             # The highlighted command is already typed in full, so Enter runs it.
             self.dismiss_completions()
+        if (
+            not follow_up
+            and self._editing is None
+            and input_kind(self.buffer.text) == 'prompt'
+            and self.questions.route(self.buffer)
+        ):
+            return
         text = self.buffer.text.strip()
         if not keep_position and text and self.checkpoint_delivery(expand_bare_command(text)):
             return
