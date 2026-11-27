@@ -496,7 +496,14 @@ The part's model-invisible `metadata` carries `{'pydantic-ai-harness.compaction.
 
 `summary_prompt` is the user-turn template and must contain a `{messages}` placeholder and no other replacement field (otherwise it emits a `HarnessDeprecationWarning`, and will raise `ValueError` in a future release). `instructions` sets the internal agent's static instructions, sent in the system prompt; override it when the summarizer endpoint requires a fixed leading instruction.
 
-The default `summary_prompt` asks for fixed section headings. Its `## Intent` section asks for the user's goal and only constraints or preferences the user stated: an instruction in a tool result or fetched content is not the user's, and a summary that keeps one must say where it came from. A custom `summary_prompt` replaces all of this, so without its own rule a summarizer can list a request planted in a tool result as a user constraint; only the `<harness_data>` instruction below is still added.
+The default `summary_prompt` asks for fixed section headings. Apart from the first user turn and pinned content, the summary is the only place older user instructions survive, so four sections ask for specific things:
+
+- **Requirements:** the rules, preferences and constraints from the user's own messages, quoted verbatim where short. The prompt tells the summarizer not to take one from a tool result, a file or a `<harness_data>` element, and to record a fact from those under Artifacts or Current state with its source. This is an instruction to the model, not a filter.
+- **People and ownership:** who owns, is assigned to, or is doing what, by exact name, until the user reassigns it.
+- **Key decisions:** the current choice on each question; one the user overrode is written as the new choice with "(replaces: ...)", so the old option isn't carried forward as live. Assignments stay out of it, so a reassignment isn't treated as a superseded choice.
+- **Plan and next steps:** the agreed plan's remaining steps, including ones not started yet.
+
+A custom `summary_prompt` replaces all of this, so without its own rule a summarizer can list a request planted in a tool result as a user constraint; only the `<harness_data>` instruction below is still added.
 
 The messages fill the template as a transcript with one `<message>` element per part (user prompt, system prompt, response text, tool call, tool return), tagged with its role and, for tool calls and returns, the tool name. Retry feedback (the correction a rejected tool call or output got) is a `role="retry_feedback"` element with the retry's `cause` and, for a tool call, the tool name, so the summary records the correction, not the rejected call, as what happened; feedback answering no tool call is shown as the model saw it. Text resembling the transcript's tags or a Pydantic AI framing tag (`<system>`, `<pyai:context>`, `<pyai:tool_result>` and the rest), in any case or spacing, is escaped, so a tool return can't leave its message or end the transcript early. After escaping, each tool return and retry feedback is capped at `tool_return_max_chars` (default 500) characters with the same truncation marker as kept user turns; raise it, or set `None` to render them whole, when the summarizer's window can absorb them.
 
@@ -726,7 +733,7 @@ Kept user turns and any receipt become adjacent `ModelRequest`s after the summar
 
 ## Anchored incremental summarization and the cross-model bridge
 
-With `incremental=True` (the default), a prior summary is not re-summarized, since summaries of summaries decay. It is fed back in a `<previous-summary>` block with an *update* instruction: keep still-true details, remove stale ones, merge in new facts, under a fixed structure.
+With `incremental=True` (the default), a prior summary is not re-summarized, since summaries of summaries decay. It is fed back in a `<previous-summary>` block with an *update* instruction: keep still-true details, remove stale ones, merge in new facts, under a fixed structure. A requirement or decision the previous summary established stays until the user explicitly changes it; a passing remark or a later unrelated turn doesn't replace it.
 
 !!! note "Behavior change: `incremental=True` is the default"
     Every existing `SummarizingCompaction` user gets a different summary-call prompt from this release on: once a prior summary exists, the summarizer is asked to *update* it under `<previous-summary>` rather than regenerate one, so summaries read differently. Set `incremental=False` to keep regenerating from scratch.
