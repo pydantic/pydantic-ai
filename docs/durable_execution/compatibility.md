@@ -9,7 +9,7 @@ what the run observed, such as the events a tool emits. Pydantic AI checks this 
 [`DurableEngineSuite`][pydantic_ai.durable_exec.conformance.DurableEngineSuite]: it runs each capability's tool calls,
 and each scenario below, under the engine, recovers the run, and checks what the engine recorded and what the
 recovered run did. The tables below are generated from what each engine declares, and the suite checks every cell
-on each change.
+on each change. A third-party engine can run the same suite: see [Checking an engine](backends.md#checking-an-engine).
 
 - **Supported**: recovering a run repeats no completed model request or tool call, records the same units, and
   observes the same events and messages.

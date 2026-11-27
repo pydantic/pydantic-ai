@@ -113,10 +113,11 @@ def _comparable(content: object, directory: Path) -> object:
     return _GENERATED_ID.sub('<id>', content.replace(str(directory), '<dir>'))
 
 
-def _capabilities(
-    built: AbstractCapability[DepsT] | Sequence[AbstractCapability[DepsT]],
-) -> list[AbstractCapability[DepsT]]:
-    return [built] if isinstance(built, AbstractCapability) else list(built)
+def _capabilities(built: Sequence[AbstractCapability[None] | AbstractToolset[None]]) -> list[AbstractCapability[None]]:
+    """What a case's calls run against: only a scenario's calls run against a toolset of the agent's own."""
+    capabilities = [part for part in built if isinstance(part, AbstractCapability)]
+    assert len(capabilities) == len(built), 'the calls run against a toolset, which only a scenario may'
+    return capabilities
 
 
 async def _run_calls(
@@ -133,7 +134,7 @@ async def _run_calls(
         capabilities = [capability.prefix_tools(_PREFIX) for capability in capabilities]
     model = _one_call_per_response(case.calls.made, f'{_PREFIX}_' if prefixed else '')
     # Streamed, so a tool that emits a capability event has a handler to deliver it to.
-    return await Agent(model, capabilities=capabilities).run(
+    return await Agent(model, deps_type=type(None), capabilities=capabilities).run(
         'go', event_stream_handler=drain_events, usage_limits=usage_limits
     )
 
@@ -216,7 +217,8 @@ async def test_a_nested_run_that_drops_its_usage_breaks_forwards_usage(
         return (await Agent(TestModel()).run('nested')).output
 
     case = CapabilityCase(
-        Anonymous('built only here'), calls=Calls((('ask', {}),), lambda _: Toolset(FunctionToolset[None]([ask])))
+        Anonymous('built only here'),
+        calls=Calls((('ask', {}),), build=lambda _: [Toolset(FunctionToolset[None]([ask]))]),
     )
     assert await _usage_breaks(case, tmp_path, monkeypatch) == [
         '3 requests reached a model, but `usage.requests` is 2',
@@ -395,13 +397,14 @@ async def test_a_workspace_from_a_function_works_like_a_static_one(
 ) -> None:
     for directory in ('static', 'function'):
         (tmp_path / directory).mkdir()
-    static = _build(name, tmp_path / 'static', monkeypatch)
+    # Built off the event loop, as an app builds its agent: a case's build writes the files its stand-ins read.
+    static = await anyio.to_thread.run_sync(_build, name, tmp_path / 'static', monkeypatch)
     if not any(isinstance(capability, LocalWorkspace) for capability in static):
         _assert_not_exempt(WORKSPACE_FROM_FUNCTION, name, 'builds no `LocalWorkspace`')
         return
     supplied: list[AgentCapability[None]] = [
         (lambda ctx, workspace=capability: workspace) if isinstance(capability, LocalWorkspace) else capability
-        for capability in _build(name, tmp_path / 'function', monkeypatch)
+        for capability in await anyio.to_thread.run_sync(_build, name, tmp_path / 'function', monkeypatch)
     ]
     static_request = await _first_request(static, tmp_path / 'static')
     assert not isinstance(static_request, str), f'{name} does not run with a static workspace: {static_request}'

@@ -385,3 +385,94 @@ spans around it, so live work never loses its parent.
 An engine that knows instead whether it is replaying at a given moment passes
 `replay_scope(is_replaying=...)`, as Temporal does with `workflow.unsafe.is_replaying_history_events()`:
 a span or model request that ends while it returns `True` is not reported.
+
+## Checking an engine
+
+Subclass [`DurableEngineSuite`][pydantic_ai.durable_exec.conformance.DurableEngineSuite] in your pytest suite
+and provide its `engine` fixture. Each test runs one cell under your engine: a capability's tool calls, or a
+scenario such as an event emitted from a tool. It runs the agent, recovers the run from what your engine recorded,
+and checks the recovered run repeats no completed work and observes the same events and messages. The built-in
+engines run the same suite, and the [compatibility tables](compatibility.md) show their results.
+
+```python {test="skip" lint="skip"}
+import pytest
+from pydantic_ai.durable_exec.conformance import DurableEngineSuite, EngineRun, Support
+
+
+class MyEngine:
+    name = 'my-engine'
+
+    def durability(self) -> MyDurability:
+        return MyDurability()
+
+    async def run(self, agent, prompt: str) -> EngineRun:
+        ...  # run `agent` as a workflow of your engine, in process, and read back its record
+
+    async def recover(self, run: EngineRun, *, after: int | None = None) -> EngineRun:
+        ...  # recover `run` from its record, keeping only its first `after` units when given
+
+
+class TestMyEngine(DurableEngineSuite):
+    support = {
+        'RunContext.emit_from_tool': Support(
+            'refused', 'tools run in a unit, which refuses an emitted event', match='not supported inside'
+        ),
+    }
+
+    @pytest.fixture(scope='class')
+    @classmethod
+    def engine(cls) -> MyEngine:
+        return MyEngine()
+```
+
+- The `engine` fixture returns a [`DurableEngine`][pydantic_ai.durable_exec.conformance.DurableEngine]:
+    - `durability()` returns a new instance of your durability capability, which the suite puts last on each agent.
+    - `run(agent, prompt)` runs the agent the way your engine runs a workflow, and returns an
+      [`EngineRun`][pydantic_ai.durable_exec.conformance.EngineRun] with the output, or the error the run raised,
+      and the units your engine recorded, in order. Unwrap a refusal your engine wraps back into the
+      [`UserError`][pydantic_ai.exceptions.UserError] it was.
+    - `recover(run, after=None)` recovers the run from its record, as your engine does after a crash. With
+      `after=k`, it keeps only the first `k` units, as if the run had stopped there.
+- Start the engine once per class, with a class-scoped fixture, and use no real waits: inject retry delays and poll
+  intervals. The suite needs the anyio pytest plugin.
+- Declare each cell that isn't supported in `support`, keyed by the case's capability class name or the
+  scenario's name, as a [`Support`][pydantic_ai.durable_exec.conformance.Support]:
+    - `'limited'`: the cell works with a limit, which its `check` asserts on the run, its `reason` documents, and
+      its `issue` tracks.
+    - `'refused'`: your engine raises a `UserError` matching `match` before the refused operation records anything.
+    - `'broken'`: your engine runs it and gets it wrong; `match` names the symptom, and `issue` the bug tracking it.
+- A cell you don't list must be supported. Set `unlisted = 'pending'` to report a failing unlisted cell as an
+  expected failure instead, so a case a new release adds doesn't fail your CI until you declare its support.
+- Set `recovery` to a [`Recovery('restart', ...)`][pydantic_ai.durable_exec.conformance.Recovery] if your engine retries a run by running it again from the start, rather
+  than replaying its record.
+- Return `False` from the `can_fork_mid_run` fixture if your engine can't recover a run from part of its record,
+  and document that limit for your users.
+- Override `count_requests` to count the requests your own stand-ins make, so the suite checks a recovery repeats
+  none of them. Override `expected_units` and `model_request_unit` to pin the names your engine records, which a run
+  recorded by an earlier release recovers by.
+
+[`HarnessDurableEngineSuite`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/conformance.py),
+from `pydantic_ai_harness.conformance`, is the same suite with the [Pydantic AI Harness](../harness/index.md)
+capabilities' cases added. Subclass it instead to check your engine against both.
+
+The cases are the [`Calls`][pydantic_ai.capabilities.conformance.Calls] in
+[`pydantic_ai.capabilities.conformance.CALLS`][pydantic_ai.capabilities.conformance.CALLS] and
+`pydantic_ai_harness.conformance.CALLS`, and the scenarios are
+[`SCENARIO_RUNS`][pydantic_ai.capabilities.conformance.SCENARIO_RUNS]. To also check a capability of your own, add
+its calls to `cases`:
+
+```python {test="skip" lint="skip"}
+from pydantic_ai.capabilities.conformance import Calls
+from pydantic_ai_harness.conformance import HarnessDurableEngineSuite
+
+
+class TestMyEngine(HarnessDurableEngineSuite):
+    cases = {
+        **HarnessDurableEngineSuite.cases,
+        'MyCapability': Calls((('my_tool', {'query': 'q'}),), build=lambda directory: [MyCapability()]),
+    }
+```
+
+The suite's class, fixtures, `DurableEngine`, `EngineRun`, `Support`, `Recovery`, the level names, `Calls` and
+the case and scenario names are stable in 2.x. Minor releases can add cases, scenarios and checks, or tighten them,
+so pin `pydantic-ai` or set `unlisted = 'pending'` if a new cell failing your CI is a problem.

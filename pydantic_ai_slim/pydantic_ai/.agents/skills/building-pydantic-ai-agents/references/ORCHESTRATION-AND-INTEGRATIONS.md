@@ -107,6 +107,8 @@ When a durable engine owns model request retries, set `model_settings={'max_retr
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 
+To integrate an engine Pydantic AI doesn't ship, [build a backend](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/) and check it by subclassing `pydantic_ai.durable_exec.conformance.DurableEngineSuite` (or `pydantic_ai_harness.conformance.HarnessDurableEngineSuite`, which adds the Pydantic AI Harness capabilities' cases) and providing its `engine` fixture. Declare each cell that isn't supported in `support`, and set `unlisted = 'pending'` so a case a new release adds doesn't fail CI until you declare it. See [Checking an engine](https://pydantic.dev/docs/ai/capabilities/durable_execution/backends/#checking-an-engine).
+
 For latency-tolerant work at batch prices, add the `BatchModelRequests` capability from `pydantic_ai.capabilities`
 (Anthropic, OpenAI Responses and Gemini API models have batch APIs; not through Pydantic AI Gateway) and run the
 agent as usual; runs started together in one process share batches, and so do agents and runs given the same

@@ -14,7 +14,8 @@ Durable execution integrations are first-class compatibility targets.
 Build new integrations on the public `pydantic_ai.durable_exec` surface. Subclass
 `BaseDurabilityCapability` for the agent-facing capability and provide a `DurableOperationBackend`
 from `get_durable_operation_backend`. Do not copy the model, toolset, event, or capability-operation
-collection machinery into the integration.
+collection machinery into the integration. Check the engine with the conformance suite, as
+[Checking an engine](#checking-an-engine) says: a built-in engine isn't done until it runs it.
 
 Choose the backend tier from the engine SDK's execution model:
 
@@ -99,7 +100,12 @@ context in the engine's own suite.
 
 ### Checking an engine
 
-Every engine runs `DurableEngineSuite` from `pydantic_ai.durable_exec.conformance`. Subclass it and
+Every engine runs `DurableEngineSuite` from `pydantic_ai.durable_exec.conformance`, or
+`HarnessDurableEngineSuite` from `pydantic_ai_harness.conformance`, which adds the Harness cases. A
+third-party engine runs it the same way, as the user docs' "Checking an engine"
+(`docs/durable_execution/backends.md`) says. Its cases are the public `Calls` in
+`pydantic_ai.capabilities.conformance.CALLS` and `pydantic_ai_harness.conformance.CALLS`, and its
+scenarios `SCENARIO_RUNS`, so it needs nothing from `tests/`. Subclass it and
 provide an `engine` fixture implementing `DurableEngine`: `durability()` returns a new durability
 capability, `run(agent, prompt)` runs the agent in process the way the engine runs a workflow and
 returns an `EngineRun` with the units it recorded (agent name left out) and the output or the error,
@@ -117,8 +123,9 @@ ones included. When it joins the suite, point its subclass at both, take it out 
 keep only the cells that aren't `supported`, and regenerate the docs table with
 `uv run python scripts/durable_exec_support.py --write`. A new engine adds its table to
 `ENGINE_SUPPORT_MODULES` (`tests/capability_cases.py`) and `TABLES` in that script. A built-in
-engine's subclass extends `BuiltInEngineSuite` (`tests/harness/_durable_cases.py`), which runs every
-case and scenario and pins the case units to `Calls.durable_steps`. `TestDBOS` and `TestTemporal` are the examples, and
+engine's subclass extends `BuiltInEngineSuite` (`tests/harness/_durable_cases.py`), a
+`HarnessDurableEngineSuite` that also runs the cases whose stand-ins are test-only and pins the case
+units to each `CapabilityCase.durable_steps`. `TestDBOS` and `TestTemporal` are the examples, and
 `agent_docs/capability-conformance.md` ("Durable execution") says what each level checks.
 
 ## Core changes that engines depend on

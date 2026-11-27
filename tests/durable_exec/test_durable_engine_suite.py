@@ -15,6 +15,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities.conformance import Calls
 from pydantic_ai.durable_exec import BaseDurabilityCapability, conformance
 from pydantic_ai.durable_exec.conformance import (
     ANSWER,
@@ -25,18 +26,16 @@ from pydantic_ai.durable_exec.conformance import (
     Support,
 )
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.toolsets import AbstractToolset
 
 REFUSAL = UserError('not supported inside a durable unit')
 
 
-@dataclass
-class _Script:
-    made: tuple[tuple[str, dict[str, object]], ...] = (('work', {}),)
-    follow_ups: int = 0
+def _unbuilt(directory: Path, /) -> Sequence[AbstractCapability[None]]:
+    raise NotImplementedError
 
-    def build(self, directory: Path, /) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
-        raise NotImplementedError
+
+def _script(follow_ups: int = 0) -> Calls:
+    return Calls((('work', {}),), build=_unbuilt, follow_ups=follow_ups)
 
 
 @dataclass
@@ -129,14 +128,14 @@ def test_the_first_run_must_answer_once_and_observe_what_it_should() -> None:
 
     suite = _suite(model_request_unit=model_request_unit, expected_units=expected_units)
     run = EngineRun('', 'other', ['model', 'tool', 'model'], ['event:a'])
-    assert suite._run_breaks('case', _Script(), ('event:b',), run, Counter({'search': 2})) == [  # pyright: ignore[reportPrivateUsage]
+    assert suite._run_breaks('case', _script(), ('event:b',), run, Counter({'search': 2})) == [  # pyright: ignore[reportPrivateUsage]
         f"the run returned 'other', not {ANSWER!r}",
         "a request was made more than once: {'search': 2}",
         "the run observed ['event:a'], not ['event:b']",
     ]
     followed = EngineRun('', ANSWER, ['model', 'tool', 'model', 'model'])
-    assert suite._run_breaks('case', _Script(follow_ups=1), None, followed, Counter()) == []  # pyright: ignore[reportPrivateUsage]
-    drifted = suite._run_breaks('case', _Script(), None, EngineRun('', ANSWER, ['model', 'other']), Counter())  # pyright: ignore[reportPrivateUsage]
+    assert suite._run_breaks('case', _script(follow_ups=1), None, followed, Counter()) == []  # pyright: ignore[reportPrivateUsage]
+    drifted = suite._run_breaks('case', _script(), None, EngineRun('', ANSWER, ['model', 'other']), Counter())  # pyright: ignore[reportPrivateUsage]
     assert drifted == [
         'the run recorded 1 `model` units, not one per call, one per follow-up and one to answer',
         "the calls record ('other',), not ('tool',). A recorded name is what a run from an earlier release recovers "
@@ -150,7 +149,7 @@ def test_the_defaults_pin_nothing_and_count_nothing() -> None:
     assert suite.marks('case') == ()
     assert suite.model_request_unit('case') is None
     assert DurableEngineSuite.count_requests._get_wrapped_function()(suite)() == {}  # pyright: ignore[reportPrivateUsage]
-    assert suite._run_breaks('case', _Script(), None, EngineRun('', ANSWER, ['model']), Counter()) == []  # pyright: ignore[reportPrivateUsage]
+    assert suite._run_breaks('case', _script(), None, EngineRun('', ANSWER, ['model']), Counter()) == []  # pyright: ignore[reportPrivateUsage]
 
 
 async def test_a_replayed_recovery_must_be_the_same_and_repeat_no_request() -> None:
@@ -194,19 +193,31 @@ async def test_a_refusal_mid_run_must_leave_its_record_unaffected() -> None:
     ]
 
 
-@dataclass
-class _RefusedAtBuild(_Script):
-    def build(self, directory: Path, /) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
-        raise REFUSAL
+def _refused_at_build(directory: Path, /) -> Sequence[AbstractCapability[None]]:
+    raise REFUSAL
 
 
 async def test_a_refusal_when_the_case_is_built_is_judged_by_its_cell(tmp_path: Path) -> None:
     """A capability that refuses the engine as it's built records nothing, so a `refused` cell holds."""
-    cases = {'case': _RefusedAtBuild()}
+    cases = {'case': Calls((('work', {}),), build=_refused_at_build)}
     refused = _suite({'case': Support('refused', 'unit', match='inside a durable', issue=1)}, cases=cases)
     await refused.test_case('case', _Engine(), True, dict, tmp_path)
     with pytest.raises(AssertionError, match='the run raised UserError'):
         await _suite(cases=cases).test_case('case', _Engine(), True, dict, tmp_path)
+
+
+def _needs_a_missing_dependency(directory: Path, /) -> Sequence[AbstractCapability[None]]:
+    raise ModuleNotFoundError("No module named 'missing_sdk'", name='missing_sdk')
+
+
+async def test_a_case_whose_dependency_is_missing_is_skipped(tmp_path: Path) -> None:
+    """A case whose build can't import its optional dependency is skipped, not judged: no engine ran it."""
+    suite = _suite(cases={'case': Calls((('work', {}),), build=_needs_a_missing_dependency)})
+    with pytest.raises(
+        pytest.skip.Exception,
+        match="case needs an optional dependency that is not installed: No module named 'missing_sdk'",
+    ):
+        await suite.test_case('case', _Engine(), True, dict, tmp_path)
 
 
 async def test_a_refused_unit_records_no_result() -> None:

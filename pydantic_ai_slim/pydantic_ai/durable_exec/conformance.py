@@ -2,7 +2,10 @@
 
 Subclass `DurableEngineSuite` in a pytest module and provide an `engine` fixture: each test runs one cell, a
 capability case's calls or a scenario, under the engine, recovers it, and checks the cell's declared
-[`Support`][pydantic_ai.durable_exec.conformance.Support] level. Requires pytest and the anyio pytest plugin.
+[`Support`][pydantic_ai.durable_exec.conformance.Support] level. The cases and scenarios are the core capabilities'
+[`CALLS`][pydantic_ai.capabilities.conformance.CALLS] and
+[`SCENARIO_RUNS`][pydantic_ai.capabilities.conformance.SCENARIO_RUNS]; `pydantic_ai_harness.conformance`'s
+`HarnessDurableEngineSuite` adds the Pydantic AI Harness cases. Requires pytest and the anyio pytest plugin.
 
 The suite's class, fixtures, `DurableEngine`, `EngineRun`, `Support`, `Recovery` and the level names are stable in 2.x.
 Minor releases can add cases, scenarios and checks, or tighten them: a new cell runs as `supported`, so an engine that
@@ -24,6 +27,7 @@ import pytest
 
 from ..agent import Agent
 from ..capabilities import AbstractCapability
+from ..capabilities.conformance import CALLS, SCENARIO_RUNS, Calls, ScenarioRun, ToolCall
 from ..exceptions import UserError
 from ..messages import (
     AgentStreamEvent,
@@ -61,8 +65,6 @@ PROMPT = 'go'
 ANSWER = 'done'
 """What the suite's model answers once it has made its calls: every run's output."""
 
-_ToolCall = tuple[str, dict[str, Any]]
-
 _UNPROMPTED_REQUEST = 'model.unprompted_request'
 """What the suite counts a model request without `PROMPT` under: a capability's own run on the run's model."""
 
@@ -71,50 +73,6 @@ _NESTED: Counter[str] = Counter()
 
 _OBSERVED: dict[str, list[str]] = {}
 """What each scenario agent's recorder saw in its latest run, by agent name: an engine may run a copy of it."""
-
-
-class _Script(Protocol):
-    """What the suite runs for a case: the tool calls its model makes, and what they run against.
-
-    S1 makes the public counterpart; until then a subclass supplies these from its own cases.
-    """
-
-    @property
-    def made(self) -> Sequence[_ToolCall]:
-        """The tool calls the suite's model makes, one per response, before it answers."""
-        ...
-
-    @property
-    def follow_ups(self) -> int:
-        """How many more model requests the calls' results cause in all, such as a background call's later result."""
-        ...
-
-    def build(self, directory: Path, /) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
-        """The capabilities and toolsets the calls run against, built offline in `directory`."""
-        ...
-
-
-class _ScenarioScript(Protocol):
-    """What the suite runs for a scenario: a case's script, and what a correct run observes."""
-
-    @property
-    def made(self) -> Sequence[_ToolCall]:
-        """The tool calls the suite's model makes, one per response, before it answers."""
-        ...
-
-    @property
-    def follow_ups(self) -> int:
-        """How many more model requests the calls' results cause in all, such as a background call's later result."""
-        ...
-
-    def build(self, directory: Path, /) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
-        """The capabilities and toolsets the calls run against, built offline in `directory`."""
-        ...
-
-    @property
-    def observed(self) -> Sequence[str]:
-        """What a correct run observes, each once, in the form of `EngineRun.observed`."""
-        ...
 
 
 class DurableEngine(Protocol):
@@ -148,7 +106,7 @@ class DurableEngine(Protocol):
         ...
 
 
-def _scripted_model(made: Sequence[_ToolCall]) -> FunctionModel:
+def _scripted_model(made: Sequence[ToolCall]) -> FunctionModel:
     """A model that makes the calls in `made`, one per response, then answers `ANSWER`; call `i` has the ID `call_{i}`.
 
     Every request past the calls, such as one a call's follow-up causes, gets the answer. It streams when the run
@@ -254,10 +212,10 @@ class DurableEngineSuite:
     unlisted: ClassVar[Literal['supported', 'pending']] = 'supported'
     """How to treat a cell `support` doesn't list. `'pending'` reports one that fails as an expected failure rather
     than an error, so a case or scenario a new release adds doesn't fail your CI until you declare its support."""
-    cases: ClassVar[Mapping[str, _Script]] = {}
-    """The cases the suite runs, by capability class name."""
-    scenarios: ClassVar[Mapping[str, _ScenarioScript]] = {}
-    """The scenarios the suite runs, named `<owner>.<scenario>`."""
+    cases: ClassVar[Mapping[str, Calls]] = CALLS
+    """The cases the suite runs, by capability class name: the core capabilities' `CALLS` by default."""
+    scenarios: ClassVar[Mapping[str, ScenarioRun]] = SCENARIO_RUNS
+    """The scenarios the suite runs, named `<owner>.<scenario>`: `SCENARIO_RUNS` by default."""
 
     @pytest.fixture
     def engine(self) -> DurableEngine | AsyncIterator[DurableEngine]:
@@ -320,15 +278,15 @@ class DurableEngineSuite:
         tmp_path: Path,
     ) -> None:
         """What a scenario's run observes, its events and enqueued messages, comes back the same, each once."""
-        script = self.scenarios[scenario_name]
+        scenario = self.scenarios[scenario_name]
         await self._check(
-            scenario_name, script, tuple(script.observed), engine, can_fork_mid_run, count_requests, tmp_path
+            scenario_name, scenario.calls, scenario.observed, engine, can_fork_mid_run, count_requests, tmp_path
         )
 
     async def _check(
         self,
         name: str,
-        script: _Script,
+        calls: Calls,
         observed: tuple[str, ...] | None,
         engine: DurableEngine,
         can_fork_mid_run: bool,
@@ -345,10 +303,12 @@ class DurableEngineSuite:
         agent_name = re.sub(r'\W', '_', name) + '_agent'
         observer = None if observed is None else agent_name
         try:
-            # A script may write the files its stand-ins read, so it's built off the event loop. A capability that
+            # A build may write the files its stand-ins read, so it runs off the event loop. A capability that
             # refuses the engine may already refuse when it's built, which the cell's level judges like any refusal.
-            built = await anyio.to_thread.run_sync(script.build, directory)  # workflow-nondeterminism-ok: test-side
-            agent = _agent(agent_name, script.made, built, engine.durability(), observer=observer)
+            built = await anyio.to_thread.run_sync(calls.build, directory)  # workflow-nondeterminism-ok: test-side
+            agent = _agent(agent_name, calls.made, built, engine.durability(), observer=observer)
+        except ImportError as error:
+            pytest.skip(f'{name} needs an optional dependency that is not installed: {error}')
         except UserError as error:
             run = EngineRun('', error)
         else:
@@ -358,12 +318,12 @@ class DurableEngineSuite:
             breaks = [f'the run raised {_describe(run.output)}']
             breaks += await self._refusal_breaks(engine, run, observer, counts) if run.units or run.failed else []
         else:
-            breaks = self._run_breaks(name, script, observed, run, await counts())
+            breaks = self._run_breaks(name, calls, observed, run, await counts())
             breaks += await self._recovery_breaks(engine, run, observer, can_fork_mid_run, counts)
         self._assert_cell(name, engine, run, breaks)
 
     def _run_breaks(
-        self, name: str, script: _Script, observed: tuple[str, ...] | None, run: EngineRun, first: Counter[str]
+        self, name: str, calls: Calls, observed: tuple[str, ...] | None, run: EngineRun, first: Counter[str]
     ) -> list[str]:
         """How the first run breaks the cell: its answer, its requests, its units and what it observed."""
         breaks = [] if run.output == ANSWER else [f'the run returned {_describe(run.output)}, not {ANSWER!r}']
@@ -374,7 +334,7 @@ class DurableEngineSuite:
         expected = self.expected_units(name)
         if expected is not None and (model_request := self.model_request_unit(name)) is not None:
             requests = run.units.count(model_request)
-            if requests != len(script.made) + script.follow_ups + 1:
+            if requests != len(calls.made) + calls.follow_ups + 1:
                 breaks.append(
                     f'the run recorded {requests} `{model_request}` units, not one per call, one per follow-up and '
                     'one to answer'
@@ -468,7 +428,7 @@ class DurableEngineSuite:
 
 def _agent(
     name: str,
-    made: Sequence[_ToolCall],
+    made: Sequence[ToolCall],
     built: Sequence[AbstractCapability[None] | AbstractToolset[None]],
     durability: BaseDurabilityCapability[None],
     *,

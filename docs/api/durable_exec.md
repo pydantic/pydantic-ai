@@ -20,3 +20,11 @@
             - RecoveryMode
             - ran_in_foreground
             - INLINE_ANSWER
+
+# `pydantic_ai_harness.conformance`
+
+::: pydantic_ai_harness.conformance
+    options:
+        members:
+            - HarnessDurableEngineSuite
+            - CALLS

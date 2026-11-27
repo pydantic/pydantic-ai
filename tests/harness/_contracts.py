@@ -40,7 +40,7 @@ def _marks(case: CapabilityCase) -> list[pytest.MarkDecorator]:
     marks: list[pytest.MarkDecorator] = []
     if reason := case.calls.moves_cache_prefix:
         marks.append(pytest.mark.moves_cache_prefix(reason=reason))
-    if reason := case.calls.launches_python:
+    if reason := case.launches_python:
         marks.append(pytest.mark.subprocess(reason=reason, conditional=True))
     return marks
 
