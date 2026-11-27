@@ -1388,7 +1388,7 @@ class AgentRunResult(Generic[OutputDataT]):
         return self._state.conversation_id
 
 
-@dataclasses.dataclass
+@dataclasses.dataclass(eq=False)
 class CompactionRunResult:
     """The result of [`compact_history`][pydantic_ai.agent.AbstractAgent.compact_history]: the compacted history, without an output.
 
@@ -1401,6 +1401,12 @@ class CompactionRunResult:
     _state: _agent_graph.GraphAgentState = dataclasses.field(repr=False)
     _new_message_index: int = dataclasses.field(repr=False, default=0)
     """Where the messages the run added, like one a hook queued, start in the history, as for `AgentRunResult`."""
+
+    def __repr__(self) -> str:
+        return (
+            f'{type(self).__name__}(run_id={self.run_id!r}, messages={len(self.all_messages())}, '
+            f'compactions={len(self.compactions)})'
+        )
 
     @classmethod
     def _of(cls, run_result: AgentRunResult[Any]) -> CompactionRunResult:

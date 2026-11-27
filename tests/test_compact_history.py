@@ -6,7 +6,6 @@ standing in for a provider, none of which is sent a request.
 
 from __future__ import annotations
 
-import asyncio
 import copy
 from collections.abc import AsyncIterable
 from contextlib import AbstractContextManager, nullcontext
@@ -231,6 +230,18 @@ async def test_focus_reaches_a_function_models_native_compaction():
     assert [record.handler for record in result.compactions] == ['native']
     assert shapes(result.all_messages()) == snapshot(['ModelResponse: CompactionPart'])
     assert result.new_messages() == result.all_messages()
+
+
+async def test_result_repr_says_whether_anything_was_compacted():
+    """The repr shows the run, the history's length and the compactions, and results compare by identity."""
+    agent = Agent(FunctionModel(not_sent), capabilities=[Summarize()])
+
+    result = await agent.compact_history(history())
+    other = await agent.compact_history(history())
+
+    assert repr(result) == f"CompactionRunResult(run_id='{result.run_id}', messages=2, compactions=1)"
+    assert result == result
+    assert result != other
 
 
 async def test_result_has_the_compacted_messages_records_and_usage():
@@ -937,8 +948,7 @@ async def test_cancelling_the_run_from_the_compaction_cancels_it():
     class CancelWhileCompacting(AbstractCapability[Any]):
         async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
             ctx.cancel()
-            await asyncio.sleep(0)
-            return None  # pragma: no cover
+            return None
 
     agent = Agent(FunctionModel(not_sent), capabilities=[CancelWhileCompacting()])
     with pytest.raises(RunCancelled):
