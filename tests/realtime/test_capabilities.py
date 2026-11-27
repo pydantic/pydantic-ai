@@ -904,7 +904,7 @@ def _replace_model_request_parameters(connect_context: RealtimeConnectContext) -
 async def test_before_realtime_connect_read_only_fields(
     modify: Callable[[RealtimeConnectContext], RealtimeConnectContext],
 ) -> None:
-    """Changing a read-only field, on a copy or in place, raises rather than being silently ignored."""
+    """Replacing a read-only field, on a copy or by reassigning it, raises rather than being silently ignored."""
 
     def change(ctx: RunContext[None], connect_context: RealtimeConnectContext) -> RealtimeConnectContext:
         return modify(connect_context)
