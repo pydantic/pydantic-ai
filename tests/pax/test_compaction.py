@@ -573,6 +573,7 @@ def test_compact_at_row_steps_through_shares_or_takes_a_token_count() -> None:
     assert source.problem(row(), '0') == 'Input should be greater than 0'
     assert source.problem(row(), '150%') == 'Type a share above 0% and up to 100%.'
     assert source.problem(row(), '150k') is None
+    assert source.problem(row(), '100%') is None, 'the whole window is the highest share'
 
     assert source.apply(row(), '150k') == 'Saved Compact at.'
     assert saved[-1] == {'threshold_tokens': 150_000}
@@ -591,6 +592,8 @@ def test_compact_at_row_steps_through_shares_or_takes_a_token_count() -> None:
     assert saved[-1] == {}, 'the default share is saved as no choice, so a later default still applies'
     assert source.reset(row()) == 'Reset Compact at.'
     assert saved[-1] == {} and source.current(row()) == '85%'
+    assert source.apply(row(), '100%') == 'Saved Compact at.'
+    assert saved[-1] == {'threshold': 1}
 
 
 async def test_configure_outside_a_terminal_explains_how() -> None:
