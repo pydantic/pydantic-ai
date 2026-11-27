@@ -13,8 +13,9 @@ A guard keeps the registry complete: every function in Pydantic AI and Pydantic 
 transformation that breaks a check for a case is a known finding, a strict `xfail` linked to its issue in the
 transform's `exempt`, so the fix fails the suite until its entry is removed.
 
-The run-level transformations (a `ModelFallback` switch, compaction, history processors), which rerun the case rather
-than transform its native history, live in `c4_transforms_runlevel.py`, which merges them into `TRANSFORMS`.
+The run-level transformations (a `ModelFallback` switch, compaction, history processors) live in
+`c4_transforms_runlevel.py`, which merges them into `TRANSFORMS`. Two of them rerun the case; the others transform its
+native history with the real strategy.
 """
 
 from __future__ import annotations
@@ -282,8 +283,9 @@ def _run_level_transforms() -> dict[Transformation, Transform]:
     module = f'{__package__}.c4_transforms_runlevel'
     try:
         return importlib.import_module(module).RUN_LEVEL_TRANSFORMS
-    except ModuleNotFoundError as error:
-        # Only the module missing: an import error inside it fails the suite.
+    except ModuleNotFoundError as error:  # pragma: no cover
+        # The module is optional, so a checkout without it still runs the registry. Only the module missing is
+        # tolerated: an import error inside it fails the suite.
         if error.name != module:  # pragma: no cover
             raise
         return {}

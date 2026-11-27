@@ -2,10 +2,10 @@
 
 `test_history_transformations.py` merges `RUN_LEVEL_TRANSFORMS` into its registry, so each one runs every case and
 probe through the same three checks as the cheap transforms there. Each one turns the case's native history into the
-history a real run would go on with: the fallback switch reruns the case with the primary model failing from its second
-request, and the others apply the real compaction strategy, provider trim or history-processor runner to the native
-history, with a `RunContext` of their own. Not VCR tests: every model here is a `FunctionModel`, and the provider trim
-runs offline.
+history a real run would go on with. Two rerun the case: the fallback switch with the primary model failing from its
+second request, and the history processor through a `ProcessHistory` capability. The other three apply the real
+compaction strategy or provider trim to the native history, with a `RunContext` of their own. Not VCR tests: every
+model here is a `FunctionModel`, and the provider trim runs offline.
 """
 
 from __future__ import annotations
@@ -15,7 +15,6 @@ from dataclasses import replace
 from pathlib import Path
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai._utils import await_maybe
 from pydantic_ai.capabilities import HistoryProcessor, ProcessHistory
 from pydantic_ai.exceptions import ModelHTTPError
 from pydantic_ai.messages import (
@@ -69,17 +68,14 @@ async def _model_fallback_switch(native: RouteRun, directory: Path) -> list[Mode
     """The case rerun with a `FallbackModel` whose primary fails from its second request, so the backup finishes it."""
     assert isinstance(native, NativeRun)
     backup = OneCallPerResponse(native.calls.made).model
-    assert backup.function is not None and backup.stream_function is not None
-    scripted, scripted_stream = backup.function, backup.stream_function
+    assert backup.stream_function is not None
+    scripted_stream = backup.stream_function
 
     def failing(step: int) -> None:
         if step >= 1:
             raise ModelHTTPError(status_code=503, model_name='primary', body='overloaded')
 
-    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        failing(sum(isinstance(message, ModelResponse) for message in messages))
-        return await await_maybe(scripted(messages, info))
-
+    # Streamed only: the run streams every request, so a non-streamed path would never be called.
     async def stream(
         messages: list[ModelMessage], info: AgentInfo
     ) -> AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns]:
@@ -87,7 +83,7 @@ async def _model_fallback_switch(native: RouteRun, directory: Path) -> list[Mode
         async for chunk in scripted_stream(messages, info):
             yield chunk
 
-    primary = FunctionModel(respond, stream_function=stream, model_name='primary')
+    primary = FunctionModel(stream_function=stream, model_name='primary')
     capabilities, observer = await _built(native.calls, directory)
     agent = Agent(FallbackModel(primary, backup), deps_type=type(None), capabilities=[*capabilities, observer])
     result = await agent.run('go', event_stream_handler=drain_events)
@@ -164,9 +160,9 @@ async def _history_processor(native: RouteRun, directory: Path) -> list[ModelMes
 
 _RECEIPT_IN_USER_VOICE: dict[Check, Exempt] = {
     'no_authority_gain': Exempt(
-        "Not filed yet: a compaction receipt is a `UserPromptPart`, so the harness's note about the history it "
-        "replaced reaches the model in the user's voice with 'user' authority, above the tool output it stands in "
-        'for. Being verified by the compaction and voice-authority sessions.'
+        'https://github.com/pydantic/pydantic-ai/pull/14597: a compaction receipt is a `UserPromptPart`, so the '
+        "harness's note about the history it replaced reaches the model in the user's voice with 'user' authority, "
+        'above the tool output it stands in for'
     )
 }
 """The receipt finding, on every case and probe: only the no-authority-gain check fails."""

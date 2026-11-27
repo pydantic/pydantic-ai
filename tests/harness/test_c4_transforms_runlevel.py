@@ -16,20 +16,20 @@ from pydantic_ai.messages import CompactionPart, ModelMessage, ModelRequest, Mod
 
 from .c4_transforms_runlevel import is_receipt, rebuilt, run_with_processor
 from .test_capability_routes import PROBES, _native  # pyright: ignore[reportPrivateUsage]
-from .test_history_transformations import TRANSFORMS, NativeRun, Signature, signature
+from .test_history_transformations import TRANSFORMS, NativeRun, Signature, Transformation, signature
 
 _PROBE = next(iter(PROBES))
 
 
-def _signatures(messages: Sequence[object]) -> list[Signature]:
+def _signatures(messages: Sequence[ModelMessage]) -> list[Signature]:
     return [signature(part) for message in messages if isinstance(message, ModelRequest) for part in message.parts]
 
 
-async def _transformed(transformation: str, directory: Path) -> tuple[NativeRun, list[object]]:
+async def _transformed(transformation: Transformation, directory: Path) -> tuple[NativeRun, list[ModelMessage]]:
     calls = PROBES[_PROBE]
     run = await _native(calls, directory / 'native')
     native = NativeRun(run.messages, run.ran, _PROBE, calls)
-    output = await TRANSFORMS[transformation].apply(native, directory / transformation)  # pyright: ignore[reportArgumentType]
+    output = await TRANSFORMS[transformation].apply(native, directory / transformation)
     return native, list(output)
 
 
