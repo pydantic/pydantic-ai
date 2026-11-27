@@ -139,14 +139,14 @@ CALLS: Mapping[str, Calls] = {
 
 
 @dataclass(kw_only=True)
-class _ScenarioNote(CustomEvent, name='scenario_note'):
+class _ScenarioNote(CustomEvent, name='pydantic_ai_conformance_scenario_note'):
     """What a scenario's function tool emits: an application event."""
 
     text: str
 
 
 @dataclass(kw_only=True)
-class _ScenarioCapabilityNote(CapabilityEvent, namespace='scenario', name='scenario_capability_note'):
+class _ScenarioCapabilityNote(CapabilityEvent, namespace='pydantic_ai_conformance', name='scenario_capability_note'):
     """What a scenario's capability emits, from a hook or a durable unit."""
 
     text: str
