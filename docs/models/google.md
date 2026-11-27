@@ -134,6 +134,31 @@ After the request, inspect [`ModelResponse`][pydantic_ai.messages.ModelResponse]
 
 See [Google Cloud Model Garden](google-cloud.md#model-garden).
 
+## Gemini 2.5 retirement {#gemini-25-retirement}
+
+Requests to `gemini-2.5-pro` and `gemini-2.5-flash` emit a [`DeprecatedModelWarning`][pydantic_ai.exceptions.DeprecatedModelWarning]
+(see [Deprecated models](overview.md#deprecated-models)).
+From December 1, 2026, the Gemini API [routes them](https://aistudio.google.com/docs/deprecations#gemini-2.5-pro-models)
+to other models, billed at those models' rates: `gemini-2.5-pro` to `gemini-3.8-flash`, and `gemini-2.5-flash` to
+`gemini-3.5-flash-lite`. Google Cloud [lists October 20, 2026](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions#gemini-models)
+as the retirement date of both, and lists `gemini-3.8-flash` first among their replacements.
+
+`GoogleModel` keeps building Gemini 2.5 requests for these model names, so `thinking=False` and each thinking level
+still send a `thinking_budget`, and `thinking=True` only asks for the thoughts. Both new models accept these, along
+with the function tools, structured output and native tools `GoogleModel` sends for Gemini 2.5. Google's migration guides for
+[Gemini 3.8 Flash](https://aistudio.google.com/docs/whats-new-gemini-3.8#migrate-to-gemini-3-8-flash) and
+[Gemini 3.5 Flash-Lite](https://aistudio.google.com/docs/whats-new-gemini-3.6#migrate-to-gemini-3-5-flash-lite) list
+what changes:
+
+- `temperature`, `top_p` and `top_k` are [ignored](https://aistudio.google.com/docs/whats-new-gemini-3.6#sampling-parameter-deprecation).
+- A request that ends with a model turn, which only the [direct API](../direct.md) sends, fails with a 400 error.
+
+`gemini-3.8-flash` also rejects `google_logprobs` with `Logprobs is not enabled for this model`, so once the Gemini API
+routes `gemini-2.5-pro` to it, that setting fails there.
+
+`NativeOutput` with function tools, and native tools with function tools, stay unavailable on these model names, as on
+Gemini 2.5. To use the new models' features, change the model name.
+
 ## Interactions API
 
 Choose Google's [Interactions API](https://ai.google.dev/gemini-api/docs/interactions-overview) when you need
@@ -429,7 +454,7 @@ For [Gemini models that support agentic video processing](https://ai.google.dev/
 from pydantic_ai import Agent, VideoUrl
 from pydantic_ai.models.google import GoogleModel
 
-agent = Agent(GoogleModel('gemini-3.7-flash'))
+agent = Agent(GoogleModel('gemini-4-hydrogen'))
 result = agent.run_sync(
     [
         'Summarize the important moments with timestamps.',
@@ -501,9 +526,7 @@ from pydantic_ai import Agent
 from pydantic_ai.models.google import GoogleModel, GoogleModelSettings
 
 settings = GoogleModelSettings(
-    temperature=0.2,
     max_tokens=1024,
-    top_k=40,
     google_safety_settings=[
         {
             'category': HarmCategory.HARM_CATEGORY_HATE_SPEECH,

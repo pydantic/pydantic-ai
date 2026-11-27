@@ -2704,6 +2704,9 @@ async def test_chat_completions_tools_with_reasoning_rejection_falls_back(allow_
         pytest.param('gpt-6-luna', True, id='gpt-6-luna'),
         pytest.param('gpt-6-sol', True, id='gpt-6-sol'),
         pytest.param('gpt-6.1-terra', True, id='gpt-6.1-terra'),
+        pytest.param('gpt-5.6-sol', True, id='gpt-5.6-sol'),
+        pytest.param('gpt-5.6-luna', True, id='gpt-5.6-luna'),
+        pytest.param('gpt-5.6-terra', True, id='gpt-5.6-terra'),
         # On these, `thinking=False` maps to the lowest effort, so it is not a way out.
         pytest.param('gpt-6-astra', False, id='gpt-6-astra'),
         pytest.param('gpt-6.1-sol', False, id='gpt-6.1-sol'),
@@ -2767,6 +2770,9 @@ async def test_chat_completions_function_tools_explicit_effort_error_names_effor
         pytest.param('gpt-6-luna', True, id='gpt-6-luna'),
         pytest.param('gpt-6-sol', True, id='gpt-6-sol'),
         pytest.param('gpt-6.1-terra', True, id='gpt-6.1-terra'),
+        pytest.param('gpt-5.6-sol', True, id='gpt-5.6-sol'),
+        pytest.param('gpt-5.6-luna', True, id='gpt-5.6-luna'),
+        pytest.param('gpt-5.6-terra', True, id='gpt-5.6-terra'),
         # `thinking=False` resolves to the lowest effort here, so the guard must still fire.
         pytest.param('gpt-6-astra', False, id='gpt-6-astra'),
         pytest.param('gpt-6.1-sol', False, id='gpt-6.1-sol'),
@@ -2820,16 +2826,61 @@ async def test_chat_completions_function_tools_unflagged_id_unaffected(allow_mod
     assert kwargs.get('reasoning_effort') == 'low'
 
 
+async def test_chat_completions_function_tools_gpt_5_4_opt_in_reasoning(allow_model_requests: None) -> None:
+    """GPT-5.4 allows function tools at default (reasoning off) and rejects them when reasoning is enabled.
+
+    A unit test of the request shape: it pins the request each setting sends, and that the guard sends nothing with
+    reasoning on. Probed live on https://github.com/pydantic/pydantic-ai/pull/14369: gpt-5.4 accepts tools with
+    omitted effort or `'none'`, and rejects them with `'low'` or `'medium'`. The 400 is recorded in
+    `test_chat_completions_function_tools_with_reasoning_provider_400_without_flag`.
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='done', role='assistant')))
+    m = OpenAIChatModel('gpt-5.4', provider=OpenAIProvider(openai_client=mock_client))
+
+    def echo(text: str) -> str:
+        return text  # pragma: no cover
+
+    agent = Agent(m, tools=[echo])
+
+    result = await agent.run('echo')
+    assert result.output == 'done'
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert kwargs.get('tools')
+    assert 'reasoning_effort' not in kwargs
+
+    with pytest.raises(ModelRequestRejectedError, match="openai_reasoning_effort='none'"):
+        await agent.run('echo', model_settings=OpenAIChatModelSettings(openai_reasoning_effort='low'))
+
+    with pytest.raises(ModelRequestRejectedError, match='thinking=False'):
+        await Agent(m, tools=[echo], capabilities=[Thinking(effort=True)]).run('echo')
+
+    assert len(get_mock_chat_completion_kwargs(mock_client)) == 1
+
+    result_off = await Agent(m, tools=[echo], capabilities=[Thinking(effort=False)]).run('echo')
+    assert result_off.output == 'done'
+    assert get_mock_chat_completion_kwargs(mock_client)[1].get('reasoning_effort') == 'none'
+
+
+@pytest.mark.parametrize(
+    'model_name, reasoning_effort',
+    [
+        pytest.param('gpt-6-luna', None, id='gpt-6-luna'),
+        pytest.param('gpt-5.6-sol', None, id='gpt-5.6-sol'),
+        # Reasoning is off by default on gpt-5.4, so only an effort turns the rejection on.
+        pytest.param('gpt-5.4', 'low', id='gpt-5.4'),
+    ],
+)
 async def test_chat_completions_function_tools_with_reasoning_provider_400_without_flag(
-    allow_model_requests: None, openai_api_key: str
+    allow_model_requests: None, openai_api_key: str, model_name: str, reasoning_effort: Literal['low'] | None
 ) -> None:
     """With the flag off, the request goes out and the API's 400 surfaces.
 
-    This is the rejection the flag exists for, recorded live: gpt-6-luna, one function tool, default reasoning.
-    The flag is off on the shared profile OpenAI-compatible endpoints reuse, so they reach the API this way.
+    This is the rejection the flag exists for, recorded live with one function tool: gpt-6-luna and gpt-5.6-sol at
+    default reasoning, gpt-5.4 at `'low'`. The flag is off on the shared profile OpenAI-compatible endpoints reuse,
+    so they reach the API this way.
     """
     m = OpenAIChatModel(
-        'gpt-6-luna',
+        model_name,
         provider=OpenAIProvider(api_key=openai_api_key),
         profile=OpenAIModelProfile(openai_chat_function_tools_require_reasoning_off=False),
     )
@@ -2839,17 +2890,18 @@ async def test_chat_completions_function_tools_with_reasoning_provider_400_witho
     def get_temperature(city: str) -> str:
         return f'{city}: 21°C'  # pragma: no cover
 
+    settings = OpenAIChatModelSettings()
+    if reasoning_effort is not None:
+        settings['openai_reasoning_effort'] = reasoning_effort
     with pytest.raises(ModelHTTPError) as exc_info:
-        await agent.run('What is the temperature in Tokyo?')
+        await agent.run('What is the temperature in Tokyo?', model_settings=settings)
     assert exc_info.value.status_code == 400
-    assert exc_info.value.body == snapshot(
-        {
-            'message': "Function tools with reasoning_effort are not supported for gpt-6-luna in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.",
-            'type': 'invalid_request_error',
-            'param': 'reasoning_effort',
-            'code': None,
-        }
-    )
+    assert exc_info.value.body == {
+        'message': f"Function tools with reasoning_effort are not supported for {model_name} in /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to 'none'.",
+        'type': 'invalid_request_error',
+        'param': 'reasoning_effort',
+        'code': None,
+    }
 
 
 async def test_user_id(allow_model_requests: None, openai_api_key: str):

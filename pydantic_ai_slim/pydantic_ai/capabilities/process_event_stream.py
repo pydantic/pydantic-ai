@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import AsyncIterable, AsyncIterator, Coroutine
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Generic, cast
 
 import anyio
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
@@ -97,7 +97,7 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
 
     handler: EventStreamHandlerFunc[AgentDepsT] | EventStreamProcessorFunc[AgentDepsT]
 
-    async def wrap_run_event_stream(  # noqa: C901
+    async def wrap_run_event_stream(
         self,
         ctx: RunContext[AgentDepsT],
         *,
@@ -120,17 +120,6 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         # run yet) and re-invoke the handler with the teed receive stream.
         cast('Coroutine[Any, Any, None]', probe).close()
 
-        observer = cast('EventStreamHandlerFunc[AgentDepsT]', self.handler)
-        send_stream: MemoryObjectSendStream[AgentStreamEvent]
-        receive_stream: MemoryObjectReceiveStream[AgentStreamEvent]
-        send_stream, receive_stream = anyio.create_memory_object_stream()
-        handler_scope = anyio.CancelScope()
-
-        async def run_handler() -> None:
-            with handler_scope:
-                async with receive_stream:
-                    await observer(ctx, receive_stream)
-
         # The handler runs in a plain `asyncio` task rather than an `anyio` task group held open
         # across the `yield`s below. A task group is bound to the task that entered it, which would
         # make this generator bound to that task too -- and the node stream it wraps is memoized, so
@@ -143,61 +132,14 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
         # resumed from a different task on every event. Nothing upstream may hold an `anyio` cancel
         # scope or task group open across one of its `yield`s: entering and exiting it from
         # different tasks raises that same error.
-        handler_task = asyncio.create_task(run_handler())
-        handler_cancel_requested = False
-        next_task: asyncio.Task[AgentStreamEvent] | None = None
-        next_scope = anyio.CancelScope()
-        stream_iterator = aiter(stream)
+        tee = _ObserverTee(cast('EventStreamHandlerFunc[AgentDepsT]', self.handler), ctx, stream)
         try:
-            async with send_stream:
-                handler_alive = True
-
-                async def pull_next(scope: anyio.CancelScope) -> AgentStreamEvent:
-                    with scope:
-                        return await anext(stream_iterator)
-                    # Reached only when teardown cancelled `scope`, which swallows that cancellation.
-                    raise StopAsyncIteration
-
+            async with tee.send_stream:
                 try:
-                    while True:
-                        next_task = asyncio.create_task(pull_next(next_scope))
-                        if handler_alive:
-                            await asyncio.wait(
-                                (next_task, handler_task),
-                                return_when=asyncio.FIRST_COMPLETED,
-                            )
-                            if handler_task.done():
-                                if not handler_task.cancelled() and handler_task.exception() is None:
-                                    handler_alive = False
-                                else:
-                                    next_scope.cancel()
-                                    with anyio.CancelScope(shield=True):
-                                        await asyncio.gather(next_task, return_exceptions=True)
-                                    try:
-                                        await _utils.aclose_if_supported(stream_iterator)
-                                    finally:
-                                        await handler_task
-
-                        # A plain await would forward a cancel of this task into the pull natively, and
-                        # `asyncio.shield` reports the pull's later exception to the loop on CPython 3.14 and
-                        # 3.15 releases without the fix for https://github.com/python/cpython/issues/156321.
-                        # Teardown cancels the pull through `next_scope`, which its shielded cleanup survives.
-                        # `asyncio.wait` always suspends, so skip it once the pull is done.
-                        if not next_task.done():
-                            await asyncio.wait((next_task,))
-                        try:
-                            event = next_task.result()
-                        except StopAsyncIteration:
-                            break
-
-                        if handler_alive:
-                            try:
-                                await send_stream.send(event)
-                            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
-                                # Handler bailed early; keep forwarding events downstream.
-                                handler_alive = False
+                    while (event := await tee.pull()) is not None:
+                        await tee.send(event)
                         yield event
-                        next_scope = anyio.CancelScope()
+                        tee.next_scope = anyio.CancelScope()
                 except BaseException:
                     # Cancel the handler natively, once, before `send_stream` closes, so it sees a
                     # cancellation rather than a normal end of stream. A native cancel is edge-triggered,
@@ -208,15 +150,15 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
                     # `receive()` would protect that work, but leave a handler interrupted mid-loop unable to
                     # finish an unshielded `finally`. Deferring the native cancel to the handler's next
                     # `receive()` would hang teardown on a handler stuck mid-loop.
-                    handler_task.cancel()
-                    handler_cancel_requested = True
+                    tee.handler_task.cancel()
+                    tee.handler_cancel_requested = True
                     raise
 
             # A plain `await handler_task` would forward a cancel of this task into the handler as a
             # native cancel, which interrupts even its shielded cleanup. `handler_scope` below owns that.
             # `asyncio.shield` would report the handler's later exception to the loop, as above.
-            await asyncio.wait((handler_task,))
-            handler_task.result()
+            await asyncio.wait((tee.handler_task,))
+            tee.handler_task.result()
         except BaseException:
             # The consumer stopped early or the inner stream failed: tear the handler down rather
             # than leaving it parked on `receive`, and let the original exception propagate.
@@ -224,11 +166,11 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
             # and the pull through `next_scope`: a scope cancel lets their shielded cleanup finish.
             # `_utils.cancel_and_drain` cancels natively and would interrupt that cleanup.
             with anyio.CancelScope(shield=True):
-                if not handler_cancel_requested:
-                    handler_scope.cancel()
-                next_scope.cancel()
-                await asyncio.gather(handler_task, *filter(None, (next_task,)), return_exceptions=True)
-                await _utils.aclose_if_supported(stream_iterator)
+                if not tee.handler_cancel_requested:
+                    tee.handler_scope.cancel()
+                tee.next_scope.cancel()
+                await asyncio.gather(tee.handler_task, *filter(None, (tee.next_task,)), return_exceptions=True)
+                await _utils.aclose_if_supported(tee.stream_iterator)
             raise
 
     @classmethod
@@ -238,3 +180,91 @@ class ProcessEventStream(AbstractCapability[AgentDepsT]):
     @property
     def _emits_app_events(self) -> bool:
         return True
+
+
+class _ObserverTee(Generic[AgentDepsT]):
+    """The state `ProcessEventStream.wrap_run_event_stream` keeps across the events it tees to an observer handler.
+
+    Creating it starts the handler task.
+    """
+
+    def __init__(
+        self,
+        observer: EventStreamHandlerFunc[AgentDepsT],
+        ctx: RunContext[AgentDepsT],
+        stream: AsyncIterable[AgentStreamEvent],
+    ) -> None:
+        self.send_stream: MemoryObjectSendStream[AgentStreamEvent]
+        receive_stream: MemoryObjectReceiveStream[AgentStreamEvent]
+        self.send_stream, receive_stream = anyio.create_memory_object_stream()
+        self.handler_scope = anyio.CancelScope()
+        self.handler_task = asyncio.create_task(_run_handler(self.handler_scope, observer, ctx, receive_stream))
+        self.handler_cancel_requested = False
+        self.handler_alive = True
+        self.next_task: asyncio.Task[AgentStreamEvent] | None = None
+        self.next_scope = anyio.CancelScope()
+        self.stream_iterator = aiter(stream)
+
+    async def pull(self) -> AgentStreamEvent | None:
+        """Pull the next event in a fresh task, or `None` at the end of the stream.
+
+        While the handler is alive, the pull races it: a handler that fails or is cancelled ends the stream
+        with its error.
+        """
+        self.next_task = next_task = asyncio.create_task(_pull_next(self.stream_iterator, self.next_scope))
+        handler_task = self.handler_task
+        if self.handler_alive:
+            await asyncio.wait(
+                (next_task, handler_task),
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if handler_task.done():
+                if not handler_task.cancelled() and handler_task.exception() is None:
+                    self.handler_alive = False
+                else:
+                    self.next_scope.cancel()
+                    with anyio.CancelScope(shield=True):
+                        await asyncio.gather(next_task, return_exceptions=True)
+                    try:
+                        await _utils.aclose_if_supported(self.stream_iterator)
+                    finally:
+                        await handler_task
+
+        # A plain await would forward a cancel of this task into the pull natively, and
+        # `asyncio.shield` reports the pull's later exception to the loop on CPython 3.14 and
+        # 3.15 releases without the fix for https://github.com/python/cpython/issues/156321.
+        # Teardown cancels the pull through `next_scope`, which its shielded cleanup survives.
+        # `asyncio.wait` always suspends, so skip it once the pull is done.
+        if not next_task.done():
+            await asyncio.wait((next_task,))
+        try:
+            return next_task.result()
+        except StopAsyncIteration:
+            return None
+
+    async def send(self, event: AgentStreamEvent) -> None:
+        """Send `event` to the handler while it is still receiving."""
+        if self.handler_alive:
+            try:
+                await self.send_stream.send(event)
+            except (anyio.BrokenResourceError, anyio.ClosedResourceError):
+                # Handler bailed early; keep forwarding events downstream.
+                self.handler_alive = False
+
+
+async def _run_handler(
+    handler_scope: anyio.CancelScope,
+    observer: EventStreamHandlerFunc[AgentDepsT],
+    ctx: RunContext[AgentDepsT],
+    receive_stream: MemoryObjectReceiveStream[AgentStreamEvent],
+) -> None:
+    with handler_scope:
+        async with receive_stream:
+            await observer(ctx, receive_stream)
+
+
+async def _pull_next(stream_iterator: AsyncIterator[AgentStreamEvent], scope: anyio.CancelScope) -> AgentStreamEvent:
+    with scope:
+        return await anext(stream_iterator)
+    # Reached only when teardown cancelled `scope`, which swallows that cancellation.
+    raise StopAsyncIteration

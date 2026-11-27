@@ -132,6 +132,8 @@ class AnthropicStreamedResponse(StreamedResponse):
         return self._thread_record.stamp(response, from_fallback_model=self._from_fallback_model)
 
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
+        # A stream that ends before `message_delta` reports a stop reason or `message_stop` arrives was cut off.
+        self.state = 'incomplete'
         with map_api_errors(self._model_name, self._model_id_namespace):
             self._fetched_pages = list(self._history_fetched_pages)
             async for event in MapStreamDecodeErrors(self._response, self._model_name):
@@ -151,7 +153,7 @@ class AnthropicStreamedResponse(StreamedResponse):
             case BetaRawContentBlockStopEvent():
                 yield from self._map_content_block_stop(event)
             case BetaRawMessageStopEvent():
-                self._current_block = None
+                self._map_message_stop()
             case _:  # pragma: no cover
                 pass
 
@@ -397,6 +399,12 @@ class AnthropicStreamedResponse(StreamedResponse):
             # array, which repeats the entries `message_start` already reported.
             self.provider_details = self.provider_details or {}
             self.provider_details['input_transformations'] = report_input_transformations(event.input_transformations)
+
+    def _map_message_stop(self) -> None:
+        self._current_block = None
+        # `message_delta` already set the state when it reported a stop reason, `'suspended'` for `pause_turn`.
+        if self.state == 'incomplete':
+            self.state = 'complete'
 
     def _map_content_block_stop(self, event: BetaRawContentBlockStopEvent) -> Iterator[ModelResponseStreamEvent]:
         block_citations = self._pending_citations.pop(event.index, [])

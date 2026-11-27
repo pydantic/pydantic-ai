@@ -142,7 +142,8 @@ its process group is killed, and its profile directory is removed once Chrome's 
 
 An agent with a durability capability (such as
 [Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/)'s `TemporalDurability`) is rejected
-at construction: a live browser cannot survive activity replay or a worker restart.
+at construction, and so is wrapping the agent in a deprecated wrapper agent such as `TemporalAgent`: a live browser
+cannot survive activity replay or a worker restart.
 
 `CDPBrowser` emits no spans of its own. Core's tool-call spans record each `browser_cdp` call, with its arguments and
 result under the usual content settings. Requests the egress policy refuses get no span: Chrome reports them on its
