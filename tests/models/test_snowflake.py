@@ -376,6 +376,23 @@ async def test_snowflake_function_tools_unsupported_family(allow_model_requests:
         await agent.run('The capital of Mexico')
 
 
+def test_snowflake_withheld_tools_unsupported_family(provider: SnowflakeProvider):
+    """A deferred tool that isn't revealed yet isn't sent in `tools`, so a family without tool support takes it.
+
+    Not a VCR test: it checks how the request is prepared, before anything is sent.
+    """
+    from pydantic_ai.tools import ToolDefinition
+
+    model = SnowflakeModel('llama4-maverick', provider=provider)
+
+    _, params = model.prepare_request(
+        None, ModelRequestParameters(function_tools=[ToolDefinition(name='get_capital', defer_loading=True)])
+    )
+
+    assert params.tool_visibility == {'get_capital': 'withheld'}
+    assert params.declared_function_tools == []
+
+
 async def test_snowflake_openai_model(allow_model_requests: None, live_provider: SnowflakeProvider):
     """OpenAI models return a proper `finish_reason` that passes through the coercion unchanged."""
     model = SnowflakeModel('openai-gpt-4.1', provider=live_provider)

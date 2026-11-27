@@ -1971,6 +1971,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 params,
                 tool_visibility={t.name: 'visible' for t in params.function_tools},
             )
+        # Checked once tools are resolved: a deferred tool that's withheld or sent through history isn't in `tools`.
+        _check_profile_supports_tools(self.profile, params)
 
         return model_settings, params
 
@@ -5341,13 +5343,11 @@ def _note_if_unsupported(item: object, profile: ModelProfile) -> object:
 
 
 def _check_profile_supports(profile: ModelProfile, params: ModelRequestParameters) -> None:
-    """Raise a `UserError` for tools or an output mode the request asks for and the profile says the model lacks."""
+    """Raise a `UserError` for an output the request asks for and the profile says the model lacks."""
     if params.output_mode == 'native' and not profile.get('supports_json_schema_output', False):
         raise UserError('Native structured output is not supported by this model.')
     if params.output_mode == 'tool' and not profile.get('supports_tools', True):
         raise UserError('Tool output is not supported by this model.')
-    if params.function_tools and not profile.get('supports_tools', True):
-        raise UserError('Tools are not supported by this model.')
     if params.allow_text_output and not profile.get('supports_text_output', True):
         raise UserError(
             'Text output is not supported by this model. Give the agent one structured `output_type`, '
@@ -5355,6 +5355,12 @@ def _check_profile_supports(profile: ModelProfile, params: ModelRequestParameter
         )
     if params.allow_image_output and not profile.get('supports_image_output', False):
         raise UserError('Image output is not supported by this model.')
+
+
+def _check_profile_supports_tools(profile: ModelProfile, params: ModelRequestParameters) -> None:
+    """Raise a `UserError` when the resolved request sends function tools and the profile says the model lacks them."""
+    if params.declared_function_tools and not profile.get('supports_tools', True):
+        raise UserError('Tools are not supported by this model.')
 
 
 def _render_append_blocks(params: ModelRequestParameters) -> ModelRequestParameters:
