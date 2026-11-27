@@ -166,6 +166,14 @@ CASES = [
 ]
 
 
+def test_counting_delta_counts_the_copied_characters():
+    """The control for the test below: the counter sees `+=` onto a plain string copy that string."""
+    copies = _Copies()
+    text = 'abc'
+    text += copies.delta('d')
+    assert (text, copies.chars) == ('abcd', 3)
+
+
 @pytest.mark.parametrize('n', [10, 100])
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id) for case in CASES])
 async def test_stream_copies_each_character_at_most_once(allow_model_requests: None, case: Case, n: int):
