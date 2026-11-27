@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import asyncio
-import contextvars
 import gc
 import inspect
 import logging
@@ -3101,25 +3100,6 @@ async def test_temporal_application_deserializer_restores_validated_workspace_re
     assert copied.workspace.ref == WorkspaceRef(provider='fake', id='readonly-ref')
     with pytest.raises(WorkspaceReadOnlyError, match='read-only'):
         await copied.workspace.run(['touch', 'blocked'])
-
-
-def test_an_activity_whose_context_did_not_carry_the_content_setting_is_untraced():
-    """A custom serializer can leave out `trace_include_content`; reading it would raise, so the activity goes untraced."""
-    from opentelemetry.sdk.trace import TracerProvider
-
-    from pydantic_ai.models.instrumented import InstrumentationSettings
-    from pydantic_ai.telemetry import current_run_telemetry
-
-    provider = TracerProvider()
-    agent = Agent('test', name='test_agent')
-    agent.instrument = InstrumentationSettings(tracer_provider=provider)
-
-    def restore_in_a_span() -> object:
-        with provider.get_tracer('test').start_as_current_span('activity'):
-            deserialize_run_context(TemporalRunContext, {'run_id': 'run-123'}, deps=None, agent=agent)
-            return current_run_telemetry()
-
-    assert contextvars.copy_context().run(restore_in_a_span) is None
 
 
 class TemporalAgentWorkspaceCapability(AbstractCapability[None]):

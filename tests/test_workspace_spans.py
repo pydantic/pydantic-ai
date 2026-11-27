@@ -100,12 +100,15 @@ async def test_operations_are_traced(tmp_path: Path, include_content: bool, inst
         {'name': 'workspace run', 'status': 'UNSET', 'process.exit.code': 4},
     ])}  # fmt: skip
     assert workspace_spans(exporter, tmp_path) == expected[include_content]
-    # Every operation names the workspace, with or without content.
+    # Every operation names the workspace's provider, and its id, a local path, only with content.
     assert {
-        str((span.attributes or {}).get('pydantic_ai.workspace.id'))
+        (
+            (span.attributes or {}).get('pydantic_ai.workspace.provider'),
+            (span.attributes or {}).get('pydantic_ai.workspace.id'),
+        )
         for span in exporter.get_finished_spans()
         if span.name.startswith('workspace ')
-    } == {str(tmp_path)}
+    } == {('local', str(tmp_path) if include_content else None)}
 
 
 async def test_shell_filesystem_commands_are_traced_without_their_text(

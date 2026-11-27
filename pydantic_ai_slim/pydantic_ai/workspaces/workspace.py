@@ -18,9 +18,8 @@ from typing_extensions import get_protocol_members
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 
-from ..telemetry import current_run_telemetry, set_content_attribute
 from ._authority_paths import AuthorityLayer, is_within, layer_authority, lowest_authority, merge_path_authority
-from ._telemetry import Operation, Step, command_span, operation_span, set_command
+from ._telemetry import Operation, Step, captures_content, command_span, operation_span, set_command
 from .protocol import (
     CommandResult,
     FileEntry,
@@ -611,7 +610,8 @@ class Workspace(WorkspaceBackend):
     async def _resolve_traced(self, path: str, span: Span) -> str:
         """Resolve `path`, recording it on `span` when content is captured."""
         resolved = await self.resolve(path)
-        set_content_attribute(current_run_telemetry(), span, 'file.path', resolved)
+        if captures_content():
+            span.set_attribute('file.path', resolved)
         return resolved
 
     async def run(
@@ -770,7 +770,8 @@ class Workspace(WorkspaceBackend):
             if not self._is_absolute(path):
                 # Joined, not normalized: `link/..` must climb from the link's target, not cancel out.
                 path = paths.join(await self.working_dir(), path)
-            set_content_attribute(current_run_telemetry(), span, 'file.path', path)
+            if captures_content():
+                span.set_attribute('file.path', path)
             backend = self._backend
             if isinstance(backend, SupportsRealpath):
                 return await backend.realpath(path)

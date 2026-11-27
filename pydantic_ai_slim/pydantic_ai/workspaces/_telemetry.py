@@ -1,4 +1,4 @@
-"""OpenTelemetry spans for workspace calls, on the calling run's telemetry (`pydantic_ai.telemetry`).
+"""OpenTelemetry spans for workspace calls, on the tracer and content setting of the run that makes the call.
 
 - `operation_span`: `workspace {operation}`, one per `Workspace` call, skipped inside another workspace span.
 - `acquire_span`: `workspace create` or `workspace attach`, around a backend getting its environment.
@@ -17,8 +17,8 @@ from opentelemetry.trace import INVALID_SPAN, Span
 from opentelemetry.util.types import AttributeValue
 
 from .._instrumentation import record_exception
+from .._telemetry import ambient_traced_run, open_ambient_span
 from ..messages import WorkspaceRef
-from ..telemetry import RunTelemetry, current_run_telemetry, open_span, records_content, set_content_attribute
 from .protocol import WorkspaceBackend, WorkspaceCommand
 
 __all__ = (
@@ -28,6 +28,7 @@ __all__ = (
     'command_span',
     'destroy_span',
     'operation_span',
+    'captures_content',
     'set_command',
 )
 
@@ -64,17 +65,17 @@ _LOOKUPS: frozenset[Operation] = frozenset({'stat', 'read_bytes', 'list_dir', 'r
 Every other span, such as `workspace run` with a missing `cwd`, records it as an error."""
 _SpanName: TypeAlias = Operation | Literal['create', 'attach', 'destroy']
 
-_opened_by: ContextVar[RunTelemetry | None] = ContextVar('pydantic_ai.workspace_span_opened_by', default=None)
+_opened_by: ContextVar[object | None] = ContextVar('pydantic_ai.workspace_span_opened_by', default=None)
 """The run whose workspace span is open, so that run's nested `Workspace` calls (such as `Workspace(self)`
-in a backend) add none, while a run started inside it, with its own telemetry, traces its own."""
+in a backend) add none, while a run started inside it, which publishes its own value, traces its own."""
 
 
 def operation_span(operation: Operation, workspace: WorkspaceBackend) -> AbstractContextManager[Span]:
     """Open a `workspace {operation}` span, unless the calling run's workspace span is already open."""
-    # By identity: each run publishes a new `RunTelemetry`, so a run started inside this one is never taken for it.
-    if (telemetry := current_run_telemetry()) is not None and _opened_by.get() is telemetry:
+    # By identity: each run publishes a new value, so a run started inside this one is never taken for it.
+    if (traced_run := ambient_traced_run()) is not None and _opened_by.get() is traced_run:
         return nullcontext(INVALID_SPAN)
-    return _span(operation, backend=workspace, missing_is_answer=operation in _LOOKUPS)
+    return _span(operation, backend=workspace, missing_is_answer=operation in _LOOKUPS, id_is_content=True)
 
 
 def acquire_span(action: Literal['create', 'attach'], backend: WorkspaceBackend) -> AbstractContextManager[Span]:
@@ -103,10 +104,17 @@ def command_span(step: Step) -> AbstractContextManager[Span]:
 
 def set_command(span: Span, command: WorkspaceCommand) -> None:
     """Record `command` on a `workspace run` span, only when the run captures content."""
+    if not captures_content():
+        return
     if isinstance(command, str):
-        set_content_attribute(current_run_telemetry(), span, 'process.command_line', command)
+        span.set_attribute('process.command_line', command)
     else:
-        set_content_attribute(current_run_telemetry(), span, 'process.command_args', command)
+        span.set_attribute('process.command_args', command)
+
+
+def captures_content() -> bool:
+    """Whether the calling run records content, such as a path, a command or a workspace's id."""
+    return (traced_run := ambient_traced_run()) is not None and traced_run.include_content
 
 
 @contextmanager
@@ -116,37 +124,43 @@ def _span(
     attributes: Mapping[str, AttributeValue] | None = None,
     backend: WorkspaceBackend | None = None,
     missing_is_answer: bool = False,
+    id_is_content: bool = False,
 ) -> Generator[Span]:
-    """Open `workspace {name}`, naming the environment it ran in when given `backend`."""
-    telemetry = current_run_telemetry()
-    token = _opened_by.set(telemetry)
+    """Open `workspace {name}`, naming the environment it ran in when given `backend`.
+
+    With `id_is_content`, the environment's id is recorded only when the run captures content: a
+    `Workspace` call can reach a local directory, whose path names the OS user, or an SSH destination.
+    """
+    token = _opened_by.set(ambient_traced_run())
     missing: FileNotFoundError | None = None
     try:
-        with open_span(telemetry, f'workspace {name}', attributes=attributes) as span:
+        with open_ambient_span(f'workspace {name}', attributes=attributes) as span:
             # The ref is read only when recording, so an untraced call never touches it.
             traced = backend if span.is_recording() else None
             if traced is not None:
                 # Read at the start: a failed attach may drop the ref it was given.
-                span.set_attributes(_ref_attributes(traced.ref))
+                span.set_attributes(_ref_attributes(traced.ref, id_is_content=id_is_content))
             try:
                 yield span
             except FileNotFoundError as error:
                 if not missing_is_answer:
                     raise
                 # Recorded, then raised once the span has ended, so `open_span` doesn't mark it ERROR.
-                record_exception(span, error, include_content=records_content(telemetry), escaped=False)
+                record_exception(span, error, include_content=captures_content(), escaped=False)
                 missing = error
             finally:
                 if traced is not None:
                     # Read at the end too: a lazy backend creates its environment during its first operation.
-                    span.set_attributes(_ref_attributes(traced.ref))
+                    span.set_attributes(_ref_attributes(traced.ref, id_is_content=id_is_content))
     finally:
         _opened_by.reset(token)
     if missing is not None:
         raise missing
 
 
-def _ref_attributes(ref: WorkspaceRef | None) -> dict[str, AttributeValue]:
+def _ref_attributes(ref: WorkspaceRef | None, *, id_is_content: bool = False) -> dict[str, AttributeValue]:
     if ref is None:
         return {}
+    if id_is_content and not captures_content():
+        return {'pydantic_ai.workspace.provider': ref.provider}
     return {'pydantic_ai.workspace.provider': ref.provider, 'pydantic_ai.workspace.id': ref.id}

@@ -1584,30 +1584,6 @@
       ]
     }
   },
-  "pydantic_ai_slim/pydantic_ai/_telemetry.py": {
-    "publish_run_telemetry": {
-      "engines": [
-        "temporal"
-      ],
-      "kinds": [
-        "import"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::<module>"
-      ]
-    },
-    "run_telemetry_scope": {
-      "engines": [
-        "render"
-      ],
-      "kinds": [
-        "import"
-      ],
-      "sites": [
-        "src/pydantic_ai_harness/pydantic_ai_harness/render/_operation_backend.py::<module>"
-      ]
-    }
-  },
   "pydantic_ai_slim/pydantic_ai/_unsupported_settings.py": {
     "suppress_warnings": {
       "engines": [

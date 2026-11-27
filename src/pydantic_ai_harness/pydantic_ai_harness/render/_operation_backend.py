@@ -9,7 +9,6 @@ from typing import TYPE_CHECKING, Generic, TypeVar
 from render import Options, Retry, TaskContext, Workflows
 from render.workflows import TaskDefinition
 
-from pydantic_ai._telemetry import run_telemetry_scope
 from pydantic_ai.durable_exec import (
     JournalOperationNamer,
     ParameterTransports,
@@ -220,9 +219,7 @@ class RenderOperationBackend(RegisteredOperationBackend[Options | None], Generic
                 return permanent_error('invalid-request', exc)
 
             try:
-                # Workspace calls trace like the task's tools, with its rebuilt run context's tracer and content flag.
-                # An operation without one, such as a cancellation sent without a context, traces none.
-                with self._runtime.activate(context), run_telemetry_scope(operation_run_context(params)):
+                with self._runtime.activate(context):
                     value = await operation.handler(params)
             except RenderProtocolError as exc:
                 return permanent_error('invalid-result', exc)

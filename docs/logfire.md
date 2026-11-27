@@ -546,14 +546,15 @@ The run's own instrumentation decides what is traced and whether content is reco
 
 | Attribute | Value |
 |-----------|-------|
-| `pydantic_ai.workspace.provider`, `pydantic_ai.workspace.id` | The workspace the call reached, as on the agent run span. A failed `workspace create` still names the sandbox it tried to create, if the backend had named it |
+| `pydantic_ai.workspace.provider` | The kind of workspace the call reached, such as `local` or `docker` |
+| `pydantic_ai.workspace.id` | Which workspace it reached. On `workspace {operation}`, only with `include_content=True`: for a local or SSH workspace it is a directory path or SSH destination, which can name the OS user. Always on `workspace create`, `workspace attach` and `workspace destroy`, where it is the sandbox's id; a failed `workspace create` still names the sandbox it tried to create, if the backend had named it |
 | `process.exit.code` | On `workspace run`. A non-zero exit leaves the status unset |
 | `process.command_args` or `process.command_line` | On `workspace run`, only with `include_content=True`. `env` is never recorded |
 | `pydantic_ai.workspace.command.step` | On a shell command behind a file operation: what it does, such as `stat` or `read_chunk`. Its text is never recorded, as it can carry file contents |
 | `file.path` | On file operations, only with `include_content=True` |
 | `file.size` | On `read_bytes` and `write_bytes` |
 
-An exception records an error status, except a missing file on `stat`, `read_bytes`, `list_dir`, `remove` or `realpath`, which is often an expected answer. Under [durable execution](durable_execution/overview.md), calls are traced where they run; with Temporal, that takes the [`LogfirePlugin`](durable_execution/temporal.md#observability-with-logfire) and instrumentation on the agent itself.
+An exception records an error status, except a missing file on `stat`, `read_bytes`, `list_dir`, `remove` or `realpath`, which is often an expected answer. Under [durable execution](durable_execution/overview.md), calls that run inside a Temporal activity or a Render task are not traced yet.
 
 ### Adding Custom Metadata
 

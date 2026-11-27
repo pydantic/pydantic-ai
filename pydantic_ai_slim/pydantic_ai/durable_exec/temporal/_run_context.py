@@ -6,7 +6,6 @@ from opentelemetry.trace import NoOpTracer
 from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import CapabilityEventT, CustomEventT
-from pydantic_ai._telemetry import publish_run_telemetry
 from pydantic_ai.durable_exec._run_context import DurableRunContext
 from pydantic_ai.durable_exec._utils import agent_instrumentation_settings
 from pydantic_ai.exceptions import UserError
@@ -76,7 +75,7 @@ def deserialize_run_context(
     deps: Any,
     agent: AbstractAgent[Any, Any] | None,
 ) -> RunContext[Any]:
-    """Deserialize a run context inside a Temporal activity, attach the agent instance, and trace its workspace calls.
+    """Deserialize a run context inside a Temporal activity and attach the agent instance.
 
     See [`DurableRunContext.restore`][pydantic_ai.durable_exec.DurableRunContext.restore]; in
     addition, `tracer` is resolved from the worker's agent so custom subclasses don't need to
@@ -84,10 +83,6 @@ def deserialize_run_context(
     """
     ctx = run_context_type.restore(serialized, deps=deps, agent=agent, engine_spec=TEMPORAL_ENGINE_SPEC)
     _restore_tracer(ctx, agent)
-    # Code in the activity that has no `ctx`, such as a workspace call, traces with the run's published
-    # telemetry, so publish it here as `Instrumentation` does in the run. A context that didn't carry the
-    # tracer and content flag publishes none.
-    publish_run_telemetry(ctx)
     return ctx
 
 
@@ -105,8 +100,7 @@ def _restore_tracer(ctx: RunContext[Any], agent: AbstractAgent[Any, Any] | None)
     if 'tracer' in ctx.__dict__:
         return
     settings = agent_instrumentation_settings(agent) if agent is not None else None
-    if 'trace_include_content' in ctx.__dataclass_fields__:
-        ctx.trace_include_content = ctx.trace_include_content and settings is not None and settings.include_content
+    ctx.trace_include_content = ctx.trace_include_content and settings is not None and settings.include_content
     ctx.__dict__['tracer'] = settings.tracer if settings is not None else NoOpTracer()
     assert isinstance(ctx, DurableRunContext)
     ctx._expose_field('tracer')  # pyright: ignore[reportPrivateUsage]

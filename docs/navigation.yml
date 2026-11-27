@@ -1530,11 +1530,6 @@ navigation:
             slug: "api/pydantic-ai/workspaces"
             aliases:
               - "api/workspaces"
-          - page: "telemetry"
-            path: "api/telemetry.md"
-            slug: "api/pydantic-ai/telemetry"
-            aliases:
-              - "api/telemetry"
           - page: "settings"
             path: "api/settings.md"
             slug: "api/pydantic-ai/settings"
