@@ -256,6 +256,16 @@ def _tool_events(count: int) -> list[AgentStreamEvent]:
     return events
 
 
+def _call_events(count: int, *, args_size: int = 0) -> list[AgentStreamEvent]:
+    return [
+        FunctionToolCallEvent(ToolCallPart('tool', {'data': 'x' * args_size}, str(index))) for index in range(count)
+    ]
+
+
+def _result_events(count: int, *, size: int = 0) -> list[AgentStreamEvent]:
+    return [FunctionToolResultEvent(ToolReturnPart('tool', 'x' * size, str(index))) for index in range(count)]
+
+
 class BatchingJournalDurability(JournalDurability):
     """A journal engine that opts into burst dispatch, as Temporal does."""
 
@@ -345,7 +355,8 @@ async def test_event_stream_dispatch_batches_ready_burst_and_preserves_handler_c
     bound = BatchingJournalDurability.from_agent(agent)
     assert bound is not None
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
-    events = _tool_events(3)
+    calls, results = _call_events(3), _result_events(3)
+    events = [*calls, *results]
 
     async def stream() -> AsyncIterator[AgentStreamEvent]:
         for event in events:
@@ -355,8 +366,8 @@ async def test_event_stream_dispatch_batches_ready_burst_and_preserves_handler_c
 
     assert actual == handled == events
     event_calls = [call for call in bound.calls if call[0].endswith('__event_stream_handler')]
-    assert len(event_calls) == 1
-    assert event_calls[0][1] == (events,)
+    # The ready calls share one unit; each result goes in its own, as before batching.
+    assert [call[1] for call in event_calls] == [(calls,), *((result,) for result in results)]
 
 
 async def test_event_stream_dispatch_accumulates_while_dispatch_is_in_flight() -> None:
@@ -375,7 +386,7 @@ async def test_event_stream_dispatch_accumulates_while_dispatch_is_in_flight() -
         pass
 
     durability = BlockingJournalDurability(event_stream_handler=handler)
-    events = _tool_events(2)
+    events = _call_events(4)
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
     async def stream() -> AsyncIterator[AgentStreamEvent]:
@@ -626,40 +637,30 @@ async def test_a_delegated_run_does_not_wait_for_the_delegating_run_s_dispatch()
     assert ordering == ['delegate model request started', 'delegating run dispatch finished']
 
 
-async def test_a_burst_splits_before_it_carries_more_than_one_large_event() -> None:
-    """Events that each fit in a unit don't add up to a burst over the payload budget; small ones still batch."""
-    first_dispatch_started = asyncio.Event()
-    finish_first_dispatch = asyncio.Event()
+@pytest.mark.parametrize('payload_size', [10, 1_000_000], ids=['small', 'large'])
+async def test_how_events_split_into_units_does_not_depend_on_their_size(payload_size: int) -> None:
+    """Units split by event type only, so a change in how events serialize can't change an in-flight run's units."""
     batches: list[list[AgentStreamEvent]] = []
 
-    class BlockingJournalDurability(BatchingJournalDurability):
+    class RecordingJournalDurability(BatchingJournalDurability):
         async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
             batches.append(events)
-            if len(batches) == 1:
-                first_dispatch_started.set()
-                await finish_first_dispatch.wait()
 
     async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
         pass  # pragma: no cover
 
-    def result(tool_call_id: str, size: int) -> AgentStreamEvent:
-        return FunctionToolResultEvent(ToolReturnPart('tool', 'x' * size, tool_call_id))
-
-    durability = BlockingJournalDurability(event_stream_handler=handler)
-    first = _tool_events(1)[0]
-    large = [result('large-1', 300_000), result('large-2', 300_000)]
-    small = [result('small-1', 10), result('small-2', 10)]
+    durability = RecordingJournalDurability(event_stream_handler=handler)
+    events = [*_call_events(3, args_size=payload_size), *_result_events(3, size=payload_size)]
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
     async def stream() -> AsyncIterator[AgentStreamEvent]:
-        yield first
-        await first_dispatch_started.wait()
-        for event in [*large, *small]:
+        for event in events:
             yield event
-        finish_first_dispatch.set()
 
-    assert [event async for event in durability.wrap_run_event_stream(ctx, stream=stream())] == [first, *large, *small]
-    assert batches == [[first], [large[0]], [large[1], *small]]
+    assert [event async for event in durability.wrap_run_event_stream(ctx, stream=stream())] == events
+    # Results of tools run in parallel could add up past a payload limit, so each goes alone; the calls come from
+    # one model response, which already fit in a payload.
+    assert [len(batch) for batch in batches] == [3, 1, 1, 1]
 
 
 @pytest.mark.parametrize('count', [1, 2], ids=['failed-event', 'event-after-the-failed-one'])
@@ -755,7 +756,7 @@ async def test_event_stream_handler_operation_preserves_one_handler_call_per_eve
     bound = BatchingJournalDurability.from_agent(agent)
     assert bound is not None
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
-    events = _tool_events(2)
+    events = _call_events(2)
 
     async def stream() -> AsyncIterator[AgentStreamEvent]:
         for event in events:

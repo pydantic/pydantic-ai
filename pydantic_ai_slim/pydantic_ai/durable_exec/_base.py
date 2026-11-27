@@ -30,7 +30,7 @@ from weakref import ReferenceType, ref
 
 import anyio
 from opentelemetry.trace import get_current_span
-from pydantic_core import PydanticSerializationError, to_json
+from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai._instrumentation import ContentPolicy, open_request_policy, request_policy_scope
@@ -58,6 +58,7 @@ from pydantic_ai.external_events import _refuse_unsupported_external_events  # p
 from pydantic_ai.messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentStreamEvent,
+    FunctionToolCallEvent,
     ModelRequest,
     ModelResponse,
     ModelResponseStreamEvent,
@@ -308,21 +309,13 @@ async def _await_pending_event_dispatch(run_id: str | None) -> None:
 
 _DispatchItem = tuple[AgentStreamEvent, 'asyncio.Future[None]']
 
-_MAX_EVENT_BURST_BYTES = 512 * 1024
-"""The most serialized event data one burst carries, beyond its first event.
-
-Temporal's server warns about payloads over 512 KiB and rejects blobs over 2 MB by default, and each event fit in
-its own unit before batching, so a burst must not add up to more than one event would. The size is a function of
-the events alone, so where a burst splits is as deterministic as the events.
-"""
-
 
 class _BatchedEventDispatch:
     """Hands a node's workflow-side events to the handler in bursts, while the node's stream runs ahead.
 
     The producer pulls the stream, which is what runs the node's tools, so tools start while earlier events are
-    still being dispatched. The dispatcher sends every event that became ready during the previous dispatch as one
-    durable unit. Events reach the caller in stream order, each dispatched one only once its unit recorded it.
+    still being dispatched. The dispatcher sends the tool call events that became ready during the previous dispatch
+    as one durable unit, and every other event in a unit of its own (see `_take_burst`). Events reach the caller in stream order, each dispatched one only once its unit recorded it.
     Burst boundaries follow task scheduling: see `BaseDurabilityCapability._batch_event_stream_dispatch`.
     """
 
@@ -425,14 +418,17 @@ class _BatchedEventDispatch:
                 return
 
     def _take_burst(self) -> list[_DispatchItem]:
-        """The ready events that fit in one unit, at least one; see `_MAX_EVENT_BURST_BYTES`."""
-        size = 0
-        count = 0
-        for event, _ in self._ready:
-            size += len(to_json(event, serialize_unknown=True))
-            if count and size > _MAX_EVENT_BURST_BYTES:
-                break
-            count += 1
+        """The ready events one unit dispatches: a run of tool call events, or any other event on its own.
+
+        The calls in one node's stream all come from one model response, which already fit in a payload, so a burst
+        of them can't outgrow what one event's unit carried before batching, while results of tools run in parallel
+        could. The split depends only on the events' types, so an upgrade that changes how an event serializes
+        can't move it and change the number of units an in-flight run schedules.
+        """
+        count = 1
+        if isinstance(self._ready[0][0], FunctionToolCallEvent):
+            while count < len(self._ready) and isinstance(self._ready[count][0], FunctionToolCallEvent):
+                count += 1
         burst, self._ready = self._ready[:count], self._ready[count:]
         return burst
 
