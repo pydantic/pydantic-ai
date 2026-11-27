@@ -2254,11 +2254,13 @@ class TestLauncherProgram:
         assert parsed.log_entries[0].data['status'] == 'failure'
 
     @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
+    @pytest.mark.parametrize('step_value', [pytest.param(None, id='unset'), pytest.param('0', id='step-sets-0')])
     @requires_clai2
-    def test_pax_runs_with_python_dotenv_disabled(self, tmp_path: Path) -> None:
+    def test_pax_runs_with_python_dotenv_disabled(self, tmp_path: Path, step_value: str | None) -> None:
+        step_env: dict[str, str] = {} if step_value is None else {'PYTHON_DOTENV_DISABLED': step_value}
         invocation = launch(
             tmp_path,
-            {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'environment_agent:agent'},
+            {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'environment_agent:agent', **step_env},
             extra_python_path=CLAI2_SOURCE,
         )
         workspace = Path(invocation.cwd)
@@ -2295,8 +2297,8 @@ def record() -> str:
         )
 
         assert completed.returncode == 0, completed.stdout
-        # The agent module imports without it: the default agent copies the environment for its commands then.
-        assert json.loads((workspace / 'seen.json').read_text(encoding='utf-8')) == {'import': None, 'run': '1'}
+        # The agent module imports with the step's value: the default agent copies the environment for its commands then.
+        assert json.loads((workspace / 'seen.json').read_text(encoding='utf-8')) == {'import': step_value, 'run': '1'}
 
 
 class TestLogParser:
