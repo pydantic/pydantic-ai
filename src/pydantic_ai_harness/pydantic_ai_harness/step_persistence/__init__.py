@@ -1,10 +1,9 @@
 """Step-event persistence: append-only event log, continuable snapshots, tool-effect ledger.
 
-`MongoStepStore` needs the `mongodb` extra (`pip install
-pydantic-ai-harness[mongodb]`); it is imported lazily so the rest of this
-module stays usable without `pymongo` installed. `PostgresStepStore` imports
-no driver (it takes a caller-owned asyncpg-compatible pool), so it is exported
-eagerly.
+`MongoStepStore` needs the `mongodb` extra (`pip install pydantic-ai-harness[mongodb]`); it is
+imported lazily so the rest of this module stays usable without `pymongo` installed.
+`PostgresStepStore` imports no driver (it takes a caller-owned asyncpg-compatible pool), so it
+is exported eagerly.
 """
 
 from typing import TYPE_CHECKING

@@ -195,6 +195,7 @@ delegation = SubAgents(
 ```
 
 - The child's relative file paths and repository instructions use the returned workspace. Read-only restrictions from the parent or `SubAgent(read_only=True)` still apply. Limit the delegate to trusted read-only tools too, since arbitrary Python tools can bypass the workspace API. The resolver must keep any other backend restrictions the application requires.
+- The child's whole workspace gets the lowest `authority` the parent gives anything in or above that directory, `path_authority` entries included, so no file gets more authority in the child than the parent gives it. A directory outside the parent's working directory is at `'none'`, as the parent gives it, unless one of the parent's `path_authority` entries contains it: name it there, such as `{'/srv/checkouts': 'operator'}`, to let the delegate's repository instructions, skills and agent definitions reach it as instructions.
 - The caller owns the returned workspace and keeps its resources alive until background children finish.
 - Managed tasks record the resolved directory in `DelegationTask.working_directory`. A resume without the argument resolves that saved directory again, so the resolver must accept its own resolved spelling; changing it is rejected. Older tasks without this field inherit the parent workspace.
 - Remote and durable delegations reject directory overrides.
@@ -591,6 +592,8 @@ orchestrator = Agent(
 ```
 
 Definitions are read at the start of every run from the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a sandbox's agent files are found and nothing is read from your home directory. To read them from elsewhere, such as definitions that ship with your application, pass `workspace=LocalWorkspaceBackend('/app')`.
+
+A definition file below `'operator'` [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) in the workspace it's read from, such as one in a repository the operator doesn't control, is not loaded, and the run warns naming it: a definition's body becomes a delegate's instructions, and its description is listed in the parent's. It's left out before names are compared, so it can't shadow an operator's definition of the same name. Read the folders from a workspace the operator controls with `workspace=` instead.
 
 `agent_folders` controls which folders are read:
 
