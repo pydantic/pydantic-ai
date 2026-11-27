@@ -1428,7 +1428,12 @@ class TestProtectedPathMatching:
 
     async def test_a_very_long_path_counts_as_protected(self) -> None:
         command = 'echo x > /' + 'x' * 5000
-        assert await _held(_command(command)) == [command]
+        path = '/' + 'x' * 5000
+        assert await _held(_command(command), ('write_file', {'path': path, 'content': 'x'})) == [command, path]
+
+    async def test_a_pattern_is_compared_with_a_bracket_glob(self) -> None:
+        commands = ['cp payload .pa?/settings.json', 'cp payload .pb?/settings.json']
+        assert await _held(*map(_command, commands), paths=['.pa[xy]/*']) == commands[:1]
 
     async def test_without_a_workspace_paths_are_only_normalized(self) -> None:
         calls = [
@@ -1545,7 +1550,6 @@ class TestProtectedCommandWords:
             'cp payload .pa{w..z}/settings.json',
             'cp payload .pa{w..z..2}/settings.json',
             'cp payload notes/.*/x',
-            'cp payload notes/[.]?/x',
             'touch x{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}',
         ],
         ids=[
@@ -1559,12 +1563,61 @@ class TestProtectedCommandWords:
             'brace-sequence',
             'brace-sequence-with-step',
             'could-be-a-dot',
-            'bracket-could-be-a-dot',
             'too-many-braces',
         ],
     )
     async def test_a_pattern_that_could_expand_to_a_protected_path(self, command: str) -> None:
         assert await _held(_command(command)) == [command]
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            'cp dist/.* out/',
+            'cp payload .pa?/settings.json',
+            'shopt -s dotglob',
+            'setopt GLOB_DOTS',
+            'setopt glob_dots; cp dist/* out/',
+            "zsh -o globdots -c 'cp dist/* out/'",
+            'GLOBIGNORE=x cp dist/* out/',
+            'shopt -s dot\\glob',
+            'rm build/*(D)',
+            'cp @(.pax)/settings.json x',
+            'cp payload .pa[[:lower:]]/settings.json',
+            'cp payload .pa[[:lower]/settings.json',
+        ],
+        ids=[
+            'dot-pattern',
+            'dot-then-wildcard',
+            'dotglob',
+            'zsh-globdots',
+            'zsh-glob-dots',
+            'zsh-option',
+            'globignore',
+            'escaped-dotglob',
+            'zsh-qualifier',
+            'extglob',
+            'character-class',
+            'unclosed-character-class',
+        ],
+    )
+    async def test_a_pattern_that_could_match_a_leading_dot(self, command: str) -> None:
+        assert await _held(_command(command)) == [command]
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            "python3 -c \"open('.pax/settings.json','w').write('x')\"",
+            "node -e \"require('fs').writeFileSync('.git/hooks/pre-commit','x')\"",
+            "python3 -c 'import os; os.remove( .pax/settings.json )'",
+        ],
+        ids=['python', 'node', 'whitespace'],
+    )
+    async def test_an_interpreter_one_liner_naming_a_protected_path(self, command: str) -> None:
+        assert await _held(_command(command)) == [command]
+
+    async def test_a_very_long_option_word_counts_as_protected_quickly(self) -> None:
+        commands = ['echo -' + 'a' * 60_000, 'cp -abcdefghijklmnopq payload out/']
+        assert await _held(*map(_command, commands)) == commands
 
     async def test_a_windows_wildcard_that_could_name_a_protected_path(self) -> None:
         commands = ['Set-Content .pa?\\settings.json x', 'Set-Content notes\\.*\\x y', 'Set-Content *.txt x']
@@ -1598,6 +1651,13 @@ class TestProtectedCommandWords:
             "python -c 'print([1, 2])'",
             "git commit -m 'why?'",
             "sh build.sh; eval 'echo hi'",
+            'cp dist/* out/',
+            'git add *',
+            'pytest tests/*',
+            'cp payload notes/[.]?/x',
+            'cp report[[:digit:]].txt out/',
+            'python -c "print(\'hello, world\')"',
+            'cp -abcdefghijklmnop payload out/',
         ]
         assert await _held(*map(_command, commands), paths=[*PROTECTED, '.git/hooks']) == []
 
