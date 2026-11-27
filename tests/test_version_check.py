@@ -512,3 +512,31 @@ def test_invalid_installed_version_has_an_empty_release_tuple(monkeypatch: pytes
     monkeypatch.setattr(_version_check, '_installed_versions', lambda: {'pydantic-ai': 'development'})
 
     assert _version_check.cached_updates(_version_check.read_cache()) == [('pydantic-ai', '2.46.0')]
+
+
+def test_unrecordable_claim_is_not_made(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
+    """Not a VCR test: a client outside the banner, such as Pax, claims the check before its own request.
+
+    A claim that can't be recorded would let that client and the banner both make the day's request.
+    """
+    write_cache(cache_file, checked_at=None, latest={})
+    monkeypatch.setattr(_version_check, '_write_cache', Mock(side_effect=OSError('read-only')))
+    assert _version_check.claim_due_check() is None
+
+
+def test_recorded_response_updates_the_banner(monkeypatch: pytest.MonkeyPatch, cache_file: Path):
+    """Not a VCR test: the response comes from another client's request, which the banner never sees."""
+    write_cache(cache_file, checked_at=_NOW, latest={'pydantic-ai': '2.46.0'})
+
+    _version_check.record_response(_NOW, {'not': 'the endpoint format'})
+    assert json.loads(cache_file.read_text(encoding='utf-8'))['latest'] == {'pydantic-ai': '2.46.0'}
+
+    _version_check.record_response(_NOW, {'pypi': {'pydantic-ai-slim': {'latest': '2.47.0'}}})
+    assert json.loads(cache_file.read_text(encoding='utf-8')) == {
+        'checked_at': _NOW,
+        'latest': {'pydantic-ai': '2.47.0'},
+    }
+
+    # Keeping it is a courtesy too: a cache that can't be written doesn't fail the client.
+    monkeypatch.setattr(_version_check, '_write_cache', Mock(side_effect=OSError('read-only')))
+    _version_check.record_response(_NOW, {'pypi': {'pydantic-ai-slim': {'latest': '2.48.0'}}})

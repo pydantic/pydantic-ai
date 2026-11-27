@@ -290,7 +290,10 @@ completion. Copilot requests use your saved login through the lazy provider reso
 Install with `uv tool install --compile-bytecode pydantic-ai-pax` and Pax can update itself.
 `updates.channel` picks where it looks:
 
-- `stable` (default): the newest release on PyPI.
+- `stable` (default): the newest release on PyPI. Once a day, after Pydantic AI's
+  banner has announced its [version check](https://pydantic.dev/docs/ai/production/network-requests/#the-version-check),
+  Pax makes that check instead, adding its own version to its `User-Agent`; every other
+  lookup, and one the check can't answer, asks PyPI directly. It installs from PyPI either way.
 - `main`: the newest build from the `main` branch. For each `main` commit that changes
   Pax, harness, or core, CI builds an sdist of each and publishes them to the
   [`clai2-bleeding`](https://github.com/pydantic/pydantic-ai/releases/tag/clai2-bleeding)
@@ -325,7 +328,9 @@ CLAI_BLEEDING_URL=http://localhost:8000 pax
 
 When a newer build exists, the status row shows `update <version or commit>: /update`.
 Pax checks once at startup and again when you change the channel, and only for
-`uv tool` installs. Offline, it shows nothing.
+`uv tool` installs. Offline, it shows nothing. With `PYDANTIC_AI_NO_VERSION_CHECK`
+or `DO_NOT_TRACK` set, it never checks on its own; `/update` and `pax update` still
+look when you run them, asking PyPI directly instead of Pydantic AI's endpoint.
 
 `/update` opens the **About Pax** menu: the running version, a line saying whether
 it is the latest on the channel or which newer one is out, and the `updates.channel` row.

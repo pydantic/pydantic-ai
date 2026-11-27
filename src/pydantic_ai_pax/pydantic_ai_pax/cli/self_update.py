@@ -29,9 +29,11 @@ from pathlib import Path
 from typing import IO, TYPE_CHECKING, Annotated
 
 from anyio import CancelScope, open_process, run_process, to_thread
+from packaging.version import InvalidVersion, Version
 from pydantic import StringConstraints, TypeAdapter
 from typing_extensions import TypedDict
 
+from pydantic_ai import _version_check
 from pydantic_ai_pax.cli.install import DISTRIBUTION, command_name, tool_distribution
 from pydantic_ai_pax.config import UpdateChannel
 from pydantic_ai_pax.plugins import InstallProgress, UpdateStage
@@ -57,6 +59,7 @@ MANIFEST = 'clai2-bleeding.json'
 _COMMIT_ARCHIVE = re.compile(r'.*[/-]([0-9a-f]{40})\.tar\.gz')
 """A `main` sdist, or the commit archive earlier builds installed: the full commit ends the file name."""
 PYPI_URL = 'https://pypi.org/pypi/pydantic-ai-pax/json'
+"""Where `stable` looks when the version check is turned off, or its endpoint doesn't name a Pax release."""
 TIMEOUT = 10.0
 """Seconds a release lookup may take."""
 
@@ -78,12 +81,27 @@ class _PyPIProject(TypedDict):
     info: _ProjectInfo
 
 
+_Version = Annotated[str, StringConstraints(pattern=r'^\d+(\.\d+)*((a|b|rc)\d+)?(\.post\d+)?(\.dev\d+)?$')]
+"""A plain PEP 440 version, the only text from the endpoint the status row prints."""
+
+
+class _Release(TypedDict):
+    latest: _Version
+
+
+class _Registries(TypedDict):
+    pypi: dict[str, object]
+    """Only Pax's entry is read, so another package's never keeps Pax from its answer."""
+
+
 class _Manifest(TypedDict):
     commit: Annotated[str, StringConstraints(pattern=r'^[0-9a-f]{40}$')]
 
 
 _DIRECT_URL = TypeAdapter(_DirectURL)
 _PYPI_PROJECT = TypeAdapter(_PyPIProject)
+_REGISTRIES = TypeAdapter(_Registries)
+_RELEASE = TypeAdapter(_Release)
 _MANIFEST = TypeAdapter(_Manifest)
 
 
@@ -124,15 +142,42 @@ def installed() -> Installed:
 
 
 def latest(channel: UpdateChannel, *, transport: 'httpx.BaseTransport | None' = None) -> str:
-    """The newest PyPI version for `stable`, or the commit the `clai2-bleeding` release was built from for `main`."""
+    """The newest release for `stable`, or the commit the `clai2-bleeding` release was built from for `main`."""
     import httpx
 
     with httpx.Client(transport=transport, timeout=TIMEOUT, follow_redirects=True) as client:
         if channel == 'stable':
+            if (version := _checked_version(client)) is not None:
+                return version
             response = client.get(PYPI_URL).raise_for_status()
             return _PYPI_PROJECT.validate_json(response.content)['info']['version']
         response = client.get(f'{bleeding_url()}/{MANIFEST}').raise_for_status()
     return _MANIFEST.validate_json(response.content)['commit']
+
+
+def _checked_version(client: 'httpx.Client') -> str | None:
+    """The newest Pax release from Pydantic AI's version check, or `None` when PyPI should answer instead.
+
+    The check keeps the library's limits: only once a banner has announced it, and at most once per 24 hours
+    shared with the banner, see https://pydantic.dev/docs/ai/production/network-requests/. Every other lookup,
+    and any that fails, goes to PyPI.
+    """
+    import httpx
+
+    if (checked_at := _version_check.claim_due_check()) is None:
+        return None
+    product = f'{DISTRIBUTION}/{metadata.version(DISTRIBUTION)}'
+    try:
+        response = client.get(
+            _version_check.VERSION_CHECK_URL, headers={'User-Agent': _version_check.user_agent(product)}
+        ).raise_for_status()
+        body = response.json()
+        _version_check.record_response(checked_at, body)
+        if (entry := _REGISTRIES.validate_python(body)['pypi'].get(DISTRIBUTION)) is None:
+            return None
+        return _RELEASE.validate_python(entry)['latest']
+    except (httpx.HTTPError, ValueError):
+        return None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -171,10 +216,19 @@ class Update:
 
 
 def find_update(channel: UpdateChannel, current: Installed, target: str) -> Update | None:
-    """Offer `target` unless it is what runs; a Git install on `stable` is offered the release."""
+    """Offer `target` unless it is what runs, or on `stable` a release no newer than it; a Git install is offered the release.
+
+    The version check endpoint can lag PyPI just after a release, so its answer may be older than what runs.
+    """
     if channel == 'main':
         return None if current.commit == target else Update(channel=channel, target=target)
-    return None if current.commit is None and current.version == target else Update(channel=channel, target=target)
+    if current.commit is None:
+        try:
+            if Version(target) <= Version(current.version):
+                return None
+        except InvalidVersion:
+            return None
+    return Update(channel=channel, target=target)
 
 
 def find_uv(*, environ: Mapping[str, str] = os.environ, windows: bool = os.name == 'nt') -> str | None:
@@ -471,9 +525,10 @@ class Updates:
     def segment(self) -> str:
         """A status-row hint once a background check finds an update; checks again on a channel change or after an hour.
 
-        Only `uv tool` installs check, so a source checkout never contacts PyPI or GitHub on its own.
+        Only `uv tool` installs check, so a source checkout never contacts PyPI or GitHub on its own; neither does
+        any install with `PYDANTIC_AI_NO_VERSION_CHECK` or `DO_NOT_TRACK` set. `/update` still looks when asked.
         """
-        if not self.current.tool:
+        if not self.current.tool or not _version_check.version_check_enabled():
             return ''
         found = self.check()
         return f'update {found.update.label}: /update' if found is not None and found.update is not None else ''

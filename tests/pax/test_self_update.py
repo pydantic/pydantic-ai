@@ -6,6 +6,7 @@ import os
 import shlex
 import sys
 import threading
+import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from functools import partial
 from importlib import metadata
@@ -23,7 +24,8 @@ from packaging.requirements import Requirement
 from rich.console import Console
 from termflow.tui.menu import MenuResult
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, _display as display, _version_check as version_check
+from pydantic_ai._version_check import VERSION_CHECK_URL
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
 from pydantic_ai_pax import app, chat, cli
@@ -141,6 +143,27 @@ def test_installed_reads_metadata_and_receipt(
     assert installed().tool
 
 
+@pytest.fixture(autouse=True)
+def version_check_cache(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Path:
+    """The version check's shared cache file, in a fresh cache directory where no banner has announced the check yet.
+
+    The background check honors the version check's opt-outs; tests opt out explicitly, not via the shell.
+    """
+    monkeypatch.delenv('PYDANTIC_AI_NO_VERSION_CHECK', raising=False)
+    monkeypatch.delenv('DO_NOT_TRACK', raising=False)
+    monkeypatch.setenv('XDG_CACHE_HOME', str(tmp_path / 'cache'))
+    monkeypatch.setenv('LOCALAPPDATA', str(tmp_path / 'cache'))
+    return tmp_path / 'cache' / 'pydantic-ai' / 'version-check.json'
+
+
+@pytest.fixture
+def announced(version_check_cache: Path) -> Path:
+    """A banner has announced the version check, so the next lookup may make it."""
+    version_check_cache.parent.mkdir(parents=True)
+    version_check_cache.write_text(json.dumps({'checked_at': None, 'latest': {}}), encoding='utf-8')
+    return version_check_cache
+
+
 def test_labels() -> None:
     assert TOOL.label == '4bd401a55'
     assert Installed(version='0.52.0').label == '0.52.0'
@@ -159,15 +182,100 @@ def test_latest_reads_pypi_and_the_bleeding_release(monkeypatch: pytest.MonkeyPa
 
     transport = httpx.MockTransport(respond)
     monkeypatch.delenv('CLAI_BLEEDING_URL', raising=False)
+    # With the version check turned off, `stable` asks PyPI and nothing else.
+    monkeypatch.setenv('PYDANTIC_AI_NO_VERSION_CHECK', '1')
     assert latest('stable', transport=transport) == '0.53.0'
     assert latest('main', transport=transport) == NEWER
     monkeypatch.setenv('CLAI_BLEEDING_URL', 'http://localhost:8000/')
     assert latest('main', transport=transport) == NEWER
     # A release download, not a GitHub API request.
-    assert seen[1:] == [
+    assert seen == [
+        PYPI_URL,
         'https://github.com/pydantic/pydantic-ai/releases/download/clai2-bleeding/clai2-bleeding.json',
         'http://localhost:8000/clai2-bleeding.json',
     ]
+
+
+def _registry(request: httpx.Request) -> httpx.Response:
+    if str(request.url) == PYPI_URL:
+        return httpx.Response(200, json={'info': {'version': '0.53.0'}})
+    return httpx.Response(
+        200,
+        json={
+            'pypi': {
+                'pydantic-ai-pax': {'latest': '1.0.0b2'},
+                'pydantic-ai-slim': {'latest': '99.0.0'},
+                'pydantic-ai-harness': {'latest': '98.0.0'},
+                'other': {'x': 1},
+            }
+        },
+    )
+
+
+def test_latest_stable_asks_the_version_check_once_a_day(announced: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Not a VCR test: the endpoint's answer is pinned to show what Pax reads and what it keeps for the banner."""
+    monkeypatch.setattr(display, 'known_coding_agent', lambda: 'codex')
+    seen: list[httpx.Request] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(request)
+        return _registry(request)
+
+    transport = httpx.MockTransport(respond)
+    assert latest('stable', transport=transport) == '1.0.0b2'
+    [request] = seen
+    assert str(request.url) == VERSION_CHECK_URL
+    pax = f'pydantic-ai-pax/{metadata.version("pydantic-ai-pax")}'
+    assert request.headers['user-agent'].startswith('pydantic-ai/')
+    # Pax's own product goes before the coding agent's, which always ends the header.
+    assert request.headers['user-agent'].split()[-2:] == [pax, 'agent/codex']
+    # The banner reads what Pax found, and counts Pax's request as the day's check.
+    cache = json.loads(announced.read_text(encoding='utf-8'))
+    assert cache['latest'] == {'pydantic-ai': '99.0.0', 'pydantic-ai-harness': '98.0.0'}
+    assert version_check.start_version_check(version_check.read_cache()) is None
+
+    # Every other lookup that day asks PyPI.
+    assert latest('stable', transport=transport) == '0.53.0'
+    assert [str(request.url) for request in seen] == [VERSION_CHECK_URL, PYPI_URL]
+
+
+def test_latest_stable_never_asks_the_version_check_before_it_is_announced(version_check_cache: Path) -> None:
+    """Not a VCR test: what's pinned is which host is asked, before and after a banner checked today."""
+    seen: list[str] = []
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        seen.append(str(request.url))
+        return _registry(request)
+
+    transport = httpx.MockTransport(respond)
+    assert latest('stable', transport=transport) == '0.53.0'
+    assert not version_check_cache.exists()
+    # Nor after a banner made the day's check.
+    version_check_cache.parent.mkdir(parents=True)
+    version_check_cache.write_text(json.dumps({'checked_at': time.time(), 'latest': {}}), encoding='utf-8')
+    assert latest('stable', transport=transport) == '0.53.0'
+    assert seen == [PYPI_URL, PYPI_URL]
+
+
+@pytest.mark.parametrize(
+    'endpoint',
+    [
+        pytest.param(httpx.Response(503), id='unavailable'),
+        pytest.param(httpx.Response(200, json={'pypi': {'pydantic-ai-slim': {'latest': '2.70.0'}}}), id='no-pax'),
+        pytest.param(httpx.Response(200, json={'pypi': {'pydantic-ai-pax': {'latest': '1.0\x1b[31m'}}}), id='unsafe'),
+        pytest.param(httpx.Response(200, text='not json'), id='not-json'),
+    ],
+)
+@pytest.mark.usefixtures('announced')
+def test_latest_stable_falls_back_to_pypi(endpoint: httpx.Response) -> None:
+    """Not a VCR test: the live endpoint can't be made to fail, omit Pax, or send terminal escapes on demand."""
+
+    def respond(request: httpx.Request) -> httpx.Response:
+        if str(request.url) == PYPI_URL:
+            return httpx.Response(200, json={'info': {'version': '0.53.0'}})
+        return endpoint
+
+    assert latest('stable', transport=httpx.MockTransport(respond)) == '0.53.0'
 
 
 def test_bleeding_url() -> None:
@@ -190,6 +298,11 @@ def test_find_update() -> None:
     release = Installed(version='0.52.0')
     assert find_update('stable', release, '0.52.0') is None
     assert find_update('stable', release, '0.53.0') == Update(channel='stable', target='0.53.0')
+    # The version check endpoint can lag PyPI just after a release: never offer a downgrade.
+    assert find_update('stable', Installed(version='0.74.0'), '0.73.0') is None
+    assert find_update('stable', Installed(version='1.0.0b2'), '1.0.0b1') is None
+    assert find_update('stable', Installed(version='1.0.0b1'), '1.0.0') == Update(channel='stable', target='1.0.0')
+    assert find_update('stable', release, 'not a version') is None
     # A `main` install switching back to stable is offered the release, even at the same base version.
     assert find_update('stable', Installed(version='0.52.0', commit=SHA), '0.52.0') is not None
     assert find_update('main', TOOL, SHA) is None
@@ -346,6 +459,24 @@ def test_segment_is_quiet_offline_and_outside_uv_tool() -> None:
     assert updates.segment() == ''
     source, _ = _updates(['main'], current=Installed(version='0.52.0'), fetch=offline)
     assert source.segment() == ''
+
+
+@pytest.mark.parametrize('variable', ['PYDANTIC_AI_NO_VERSION_CHECK', 'DO_NOT_TRACK'])
+def test_segment_never_checks_when_the_version_check_is_off(monkeypatch: pytest.MonkeyPatch, variable: str) -> None:
+    """Not a VCR test: the opt-out is set in the environment, and the point is that no lookup is made at all."""
+    fetched: list[UpdateChannel] = []
+
+    def fetch(channel: UpdateChannel) -> str:
+        fetched.append(channel)
+        return NEWER
+
+    monkeypatch.setenv(variable, '1')
+    updates, _ = _updates(['stable'], current=TOOL, fetch=fetch)
+    assert updates.segment() == ''
+    assert fetched == []
+    # Asking for it, as `/update` does, still looks.
+    assert updates.check() is not None
+    assert fetched == ['stable']
 
 
 def test_segment_ignores_a_result_for_another_channel() -> None:

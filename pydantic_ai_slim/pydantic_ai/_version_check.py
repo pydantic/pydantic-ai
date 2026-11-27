@@ -76,18 +76,44 @@ def start_version_check(cache: VersionCache | None) -> threading.Thread | None:
         return None
 
     now = time.time()
-    # A timestamp from the future is a clock that was wrong when it was written, not a check that
-    # is still fresh: trusting it would put off the next check until the clock caught up with it.
-    if (
-        cache is not None
-        and (checked_at := cache['checked_at']) is not None
-        and 0 <= now - checked_at < _CHECK_INTERVAL
-    ):
+    if cache is not None and not _is_due(cache, now):
         return None
 
     thread = threading.Thread(target=_check_for_updates, args=(now, cache), daemon=True)
     thread.start()
     return thread
+
+
+def claim_due_check() -> float | None:
+    """Claim the version check for a client that makes the request itself, such as Pax, and return when it was claimed.
+
+    Returns `None`, and the client must not make the request, unless a banner has announced the check and
+    none was made in the last 24 hours. The claim is recorded in the shared cache before the request, so
+    the banner and every such client make one request per 24 hours between them. Pass the response to
+    `record_response` so the banner can show what it found.
+    """
+    if (cache := read_cache()) is None or not _is_due(cache, now := time.time()):
+        return None
+    try:
+        _write_cache({'checked_at': now, 'latest': cache['latest']})
+    except Exception:
+        return None
+    return now
+
+
+def record_response(checked_at: float, response: object) -> None:
+    """Keep the latest versions from an endpoint response in the shared cache, as of the claim at `checked_at`."""
+    if (fetched := _latest_from_response(response)) is not None:
+        try:
+            _write_cache({'checked_at': checked_at, 'latest': fetched})
+        except Exception:
+            pass
+
+
+def _is_due(cache: VersionCache, now: float) -> bool:
+    # A timestamp from the future is a clock that was wrong when it was written, not a check that
+    # is still fresh: trusting it would put off the next check until the clock caught up with it.
+    return (checked_at := cache['checked_at']) is None or not 0 <= now - checked_at < _CHECK_INTERVAL
 
 
 def _check_for_updates(now: float, cache: VersionCache | None) -> None:
@@ -106,7 +132,7 @@ def _check_for_updates(now: float, cache: VersionCache | None) -> None:
 
         response = httpx2.get(
             VERSION_CHECK_URL,
-            headers={'User-Agent': _user_agent()},
+            headers={'User-Agent': user_agent()},
             timeout=httpx2.Timeout(timeout=5, connect=2),
         )
         response.raise_for_status()
@@ -202,22 +228,28 @@ def _distribution_version(module: str, distribution: str) -> str | None:
     return None
 
 
-def _user_agent() -> str:
+def user_agent(*products: str) -> str:
+    """The version check's pip-style `User-Agent`, with `products` (`name/version`) before the coding agent's.
+
+    Pax sends its own version check with this header, adding its own version.
+    """
     # Imported at call time so this module remains safe to reach from the banner during package
     # initialization, like the banner's own version lookup.
     from . import _display, models
 
-    user_agent = (
+    header = (
         f'{models.get_user_agent()} (Python {platform.python_version()}; {platform.system()}; {platform.machine()})'
     )
     if (harness := harness_version()) is not None:
-        user_agent += f' pydantic-ai-harness/{harness}'
+        header += f' pydantic-ai-harness/{harness}'
     if (prices_version := _distribution_version('genai_prices', 'genai-prices')) is not None:
-        user_agent += f' genai-prices/{prices_version}'
+        header += f' genai-prices/{prices_version}'
+    for product in products:
+        header += f' {product}'
 
     if agent := _display.known_coding_agent():
-        user_agent += f' agent/{agent}'
-    return user_agent
+        header += f' agent/{agent}'
+    return header
 
 
 def _is_newer(latest: str, installed: str) -> bool:
