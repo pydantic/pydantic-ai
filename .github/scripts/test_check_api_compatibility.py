@@ -12,6 +12,7 @@ from check_api_compatibility import (
     collection_entry_changes,
     emit_annotation,
     is_field_description_change,
+    is_released,
     literal_member_changes,
     load_allowlist,
     load_waivers,
@@ -144,6 +145,26 @@ def test_run_griffe_reports_real_griffe_findings(tmp_path: Path, monkeypatch: py
     (tmp_path / 'new_pkg').mkdir()
     (tmp_path / 'new_pkg' / '__init__.py').write_text('def greet(name): ...\n', encoding='utf-8')
     assert run_griffe('new_pkg', '.', 'v1') == []
+
+    # A release Git can't read fails rather than reading as one without the package.
+    with pytest.raises(SystemExit, match='`git ls-tree missing-tag` failed'):
+        run_griffe('new_pkg', '.', 'missing-tag')
+
+
+def test_is_released_reads_a_release_without_its_file_contents(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
+    source = tmp_path / 'source'
+    source.mkdir()
+    (source / 'released.json').write_text('{}', encoding='utf-8')
+    _release(source, 'v1')
+    _git(source, 'config', 'uploadpack.allowFilter', 'true')
+    clone = tmp_path / 'clone'
+    _git(tmp_path, 'clone', '-q', '--filter=blob:none', '--no-checkout', source.as_uri(), str(clone))
+    monkeypatch.chdir(clone)
+    # The clone holds the release's trees but not its blobs, and may not fetch them.
+    monkeypatch.setenv('GIT_NO_LAZY_FETCH', '1')
+
+    assert is_released('v1', Path('released.json'))
+    assert not is_released('v1', Path('missing.json'))
 
 
 def test_load_waivers_treats_a_missing_directory_as_empty(tmp_path: Path):
