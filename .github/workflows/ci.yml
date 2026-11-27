@@ -773,12 +773,12 @@ jobs:
             command: "--package pydantic-ai-slim"
           - name: pydantic-evals
             command: "--package pydantic-evals"
-          # Install Pax alongside the harness to exercise the gh-aw launcher, which runs it by its
-          # published name, the `pydantic-clai2` shim over `pydantic-ai-pax`.
+          # Install Pax alongside the harness to exercise the gh-aw launcher, which runs
+          # `pydantic_ai_pax` in-process.
           - name: pydantic-ai-harness
             command: "--no-sync"
             sync_command: >-
-              --inexact --package pydantic-ai-harness --package pydantic-clai2
+              --inexact --package pydantic-ai-harness --package pydantic-ai-pax
               --extra code-mode --extra coder --extra logfire --extra render
             # Its own suite: the rest of `tests/` is covered by the other cells.
             paths: tests/harness

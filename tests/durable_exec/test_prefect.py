@@ -52,6 +52,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseOrigin,
     ModelSettings,
     PartDeltaEvent,
     PartEndEvent,
@@ -106,12 +107,15 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelAPIError,
     ModelHTTPError,
     ModelRequestTimeout,
     ModelRetry,
     RunCancelled,
+    SuspendedResponseExpired,
     ToolFailed,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -599,6 +603,49 @@ async def test_prefect_durability_model_error_reaches_flow_with_its_type() -> No
         return (await agent.run('Hello Prefect')).output
 
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
+
+
+async def test_prefect_durability_retried_model_task_streams_a_later_execution() -> None:
+    """A model task that fails after it streamed runs again as a later execution of the same response."""
+    executions = 0
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal executions
+        executions += 1
+        if executions == 1:
+            yield 'Hel'
+            raise RuntimeError('connection lost')
+        yield 'Hello'
+
+    origins: list[ModelResponseOrigin | None] = []
+
+    async def handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            if isinstance(event, PartStartEvent):
+                origins.append(event.origin)
+
+    agent = Agent(
+        FunctionModel(stream_function=stream),
+        name='prefect_durability_retried_stream',
+        deps_type=type(None),
+        capabilities=[
+            PrefectDurability(
+                event_stream_handler=handler, model_task_config=TaskConfig(retries=1, retry_delay_seconds=0)
+            )
+        ],
+    )
+
+    @flow(name='test_prefect_durability_retried_model_task_streams_a_later_execution')
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello Prefect')).output
+
+    assert await run_durable_agent() == 'Hello'
+
+    first, second = origins
+    assert first is not None and second is not None
+    assert (first.execution_attempt, second.execution_attempt) == (1, 2)
+    assert first.response_id == second.response_id
+    assert second.supersedes(first)
 
 
 @pytest.mark.parametrize('where', ['tool-task', 'user-task', 'flow-code'])
@@ -3049,6 +3096,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'capabilities',  # live capability objects, not hashable run state
         'root_capability',  # live capability tree (static config); run-varying loaded state is projected via loaded_capability_ids/discovered_tool_names
         'pending_messages',  # live run queue, not hashable run state
+        '_compaction_requests',  # live run state; a request made inside a task raises, so it's never a task input
         'trace_include_content',  # tracing config, fixed for the agent rather than varying per run
         'instrumentation_version',  # tracing config, fixed for the agent rather than varying per run
         'partial_output',  # only set for output validators, which run in flow code, never inside a task
@@ -4771,6 +4819,30 @@ async def test_prefect_durability_runtime_registered_model() -> None:
     assert await run_by_instance() == 'alt-response'
 
 
+class _IgnoresStopSequences(FunctionModel):
+    unsupported_settings = frozenset({'stop_sequences'})
+
+
+async def test_prefect_durability_fallback_on_unsupported_setting_warning() -> None:
+    """A model that would ignore a setting the request relies on is moved on from inside a Prefect flow too."""
+    agent = Agent(
+        _IgnoresStopSequences(_prefect_alt_model_fn, model_name='primary'),
+        name='durability_unsupported_setting_fallback',
+        model_settings={'stop_sequences': ['STOP']},
+        capabilities=[
+            ModelFallback('alt', fallback_on=(ModelAPIError, UnsupportedSettingWarning)),
+            PrefectDurability(models={'alt': _prefect_alt_model}),
+        ],
+    )
+
+    @flow
+    async def run_agent() -> tuple[str | None, list[str]]:
+        result = await agent.run('hello')
+        return result.response.model_id, [f'{a.model_name} {a.outcome}' for a in result.response.failed_attempts or []]
+
+    assert await run_agent() == ('alt', ['primary error'])
+
+
 class _BehaviorChangingWrapper(WrapperModel):
     async def request(
         self,
@@ -5974,6 +6046,7 @@ async def test_prefect_with_non_retryable_errors_condition() -> None:
     assert await condition(None, None, _State(PydanticUserError('bad schema', code=None))) is False
     assert await condition(None, None, _State(UnexpectedModelBehavior('bad response'))) is False
     assert await condition(None, None, _State(UsageLimitExceeded('over the limit'))) is False
+    assert await condition(None, None, _State(SuspendedResponseExpired('expired'))) is False
     for error in (
         WorkspaceTimeoutError('slow'),
         WorkspaceOutputLimitError('loud', limit=1),

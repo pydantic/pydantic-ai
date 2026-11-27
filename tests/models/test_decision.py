@@ -5,14 +5,25 @@ import pickle
 from collections import defaultdict
 from collections.abc import Callable
 from dataclasses import dataclass, field, replace
-from enum import Enum
+from enum import Enum, IntEnum
 from typing import Annotated, Any, ClassVar, Literal, cast
 
 import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, JsonValue, WithJsonSchema, field_validator
 
-from pydantic_ai import Agent, BinaryContent, BoolCriteria, DocumentUrl, ModelRetry, RunContext, Tool, ToolOutput
+from pydantic_ai import (
+    Agent,
+    BinaryContent,
+    BoolCriteria,
+    DocumentUrl,
+    ModelRetry,
+    PartialRubricWarning,
+    RunContext,
+    Tool,
+    ToolOutput,
+    UseEnumMemberDocstrings,
+)
 from pydantic_ai.capabilities import Capability, FileUnderstanding, Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -1088,6 +1099,41 @@ async def test_levels_over_score_limit_are_a_pick_one(allow_model_requests: None
     question = model.requests[0].questions['score']
     assert isinstance(question, ChoiceQuestion)
     assert question.criteria == {str(level): f'Level {level}' for level in range(11)}
+
+
+class Urgency(UseEnumMemberDocstrings, IntEnum):
+    routine = 0
+    """It can wait a few days."""
+    soon = 1
+    now = 2
+    """Money is at risk until someone acts."""
+
+
+class UrgencyReview(BaseModel):
+    urgency: Urgency = Field(description='How urgent is this?')
+
+
+async def test_a_rubric_with_a_level_left_undescribed_warns_that_it_is_a_pick_one(allow_model_requests: None):
+    """Describing some of the levels 0 to n says a rubric was meant, so asking a pick-one instead is said out loud.
+
+    A level whose docstring is missing, or could not be read, turned the rubric into a pick-one with nothing said.
+    Not a VCR test: `DecisionModel` builds its questions locally and the in-memory backend makes no HTTP request, so
+    there is no provider exchange to record.
+    """
+    model = InMemoryDecisionModel()
+    with pytest.warns(
+        PartialRubricWarning, match="Output field 'urgency' has levels 0 to 2, but not every level is described"
+    ):
+        result = await Agent(model, output_type=UrgencyReview).run('Triage this.')
+
+    assert result.output == UrgencyReview(urgency=Urgency.routine)
+    question = model.requests[0].questions['urgency']
+    assert isinstance(question, ChoiceQuestion)
+    assert question.criteria == {
+        '0': 'It can wait a few days.',
+        '1': None,
+        '2': 'Money is at risk until someone acts.',
+    }
 
 
 async def test_profile_score_limit(allow_model_requests: None):

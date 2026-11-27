@@ -329,6 +329,20 @@ _OFFICE_DOCUMENT_MEDIA_TYPES = frozenset(
 )
 
 
+def _thinks_by_default(
+    model_name: str, *, supports_thinking: bool, thinking_always_enabled: bool, is_gemma: bool, is_image_model: bool
+) -> bool:
+    """Whether a model thinks when the request doesn't configure thinking.
+
+    Verified live 2026-10-22 against the Gemini API, by the thinking tokens a request without `thinking_config`
+    reports: Gemini 2.5 Flash and Pro, Gemini 3 Flash, Gemini 3.5 Flash and Gemini 3 Pro Image think, while the
+    Flash-Lite and Flash Image models don't. Whether Gemma 4 thinks by default depends on the host, so it's left out.
+    """
+    if thinking_always_enabled:
+        return True
+    return supports_thinking and not is_gemma and not is_image_model and 'flash-lite' not in model_name
+
+
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
@@ -370,6 +384,13 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     # Pro models have always-on thinking: Gemini 2.5 Pro rejects budget=0, Gemini 3+ Pro rejects MINIMAL
     is_pro = 'pro' in model_name and 'flash' not in model_name
     thinking_always_enabled = supports_thinking and is_pro
+    thinking_enabled_by_default = _thinks_by_default(
+        model_name,
+        supports_thinking=supports_thinking,
+        thinking_always_enabled=thinking_always_enabled,
+        is_gemma=is_gemma,
+        is_image_model=is_image_model,
+    )
     thinking_levels = next(
         (levels for prefix, levels in _MODEL_THINKING_LEVELS if model_name.startswith(prefix)),
         None,
@@ -387,6 +408,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
         supports_video_input=not is_image_model,
         supports_thinking=supports_thinking,
         thinking_always_enabled=thinking_always_enabled,
+        thinking_enabled_by_default=thinking_enabled_by_default,
         google_supports_tool_combination=is_modern_gemini,
         google_supports_server_side_tool_invocations=is_modern_gemini,
         google_supported_mime_types_in_tool_returns=_GOOGLE_NATIVE_TOOL_RETURN_MIME_TYPES if is_modern_gemini else (),

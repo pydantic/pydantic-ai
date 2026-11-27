@@ -29,7 +29,7 @@ from pydantic_ai.capabilities import FileUnderstanding
 
 agent = Agent(
     'openai:gpt-5.2',
-    capabilities=[FileUnderstanding(fallback_subagent_model='google:gemini-3-flash-preview')],
+    capabilities=[FileUnderstanding(fallback_subagent_model='google:gemini-4-hydrogen')],
 )
 result = agent.run_sync(['Summarize this call.', AudioUrl(url='https://example.com/call.mp3')])
 ```
@@ -135,6 +135,8 @@ Rules of thumb:
 - AG-UI live failed tool outcomes round-trip through a namespaced payload on `ReasoningEncryptedValueEvent.encrypted_value` with `ag-ui-protocol >= 0.1.11`. Earlier event streams have no outcome carrier, so reloading them reconstructs the tool result as successful.
 
 ## Manage Context Size
+
+Before writing your own trimming, consider ready-made compaction: the provider-native `OpenAICompaction` (OpenAI Responses API) and `AnthropicCompaction` capabilities, or Pydantic AI Harness's model-agnostic strategies, whose `TieredCompaction` is the recommended default (see [Compaction](https://pydantic.dev/docs/ai/capabilities/compaction/), [Compaction strategies](https://pydantic.dev/docs/ai/harness/compaction/) and the `pydantic-ai-harness` skill). Write a processor as below when you need an app-specific policy.
 
 Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`.
 

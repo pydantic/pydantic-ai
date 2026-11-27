@@ -1,5 +1,6 @@
 from __future__ import annotations as _annotations
 
+import inspect
 from abc import ABC, abstractmethod
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
@@ -9,7 +10,7 @@ from typing import Any, ClassVar, Literal, NoReturn, TypeAlias, assert_never, ca
 from pydantic import JsonValue
 
 from ._json_schema_keywords import SUBSCHEMA_KEYWORDS, Subschema, iter_subschemas, map_subschemas
-from ._utils import contains_ref
+from ._utils import capture_class_source, contains_ref
 from .exceptions import UserError
 
 JsonSchema = dict[str, Any]
@@ -320,8 +321,18 @@ class UseEnumMemberDocstrings:
     `class Urgency(UseEnumMemberDocstrings, str, Enum)`. It changes nothing else about the enum: its members,
     their values, and their `str`/`int` behaviour are exactly what they would be without it.
 
+    The docstrings are read from the enum's source. In a notebook or IPython session, where `inspect.getsource`
+    cannot find a class, they are read from the cell the enum was defined in. An enum built by calling an opted-in
+    enum class (`Priority('Urgency', {...})`) has no source, so it is described by its values alone, with an
+    [`EnumDocstringsUnavailableWarning`][pydantic_ai.exceptions.EnumDocstringsUnavailableWarning].
+
     See [enum options](../tools.md#enum-options) for an example.
     """
+
+    def __init_subclass__(cls, **kwargs: Any) -> None:
+        super().__init_subclass__(**kwargs)
+        # The cell a notebook class was defined in can only be found while the `class` statement is running.
+        capture_class_source(cls, inspect.currentframe())
 
 
 @dataclass(init=False)
