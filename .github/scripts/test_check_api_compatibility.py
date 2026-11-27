@@ -486,6 +486,28 @@ def test_main_checks_the_waiver_against_the_baseline_release(
         assert (stale in output) is (waived_against is not None)
 
 
+def test_main_fails_when_it_cannot_read_the_release_tree(monkeypatch: pytest.MonkeyPatch, tmp_path: Path):
+    finding = Finding('pydantic_ai', 'messages.py', 12, 'RequestPart: Attribute value was changed: Old -> New')
+    allowlist = _write_allowlist(tmp_path)
+    _write_waivers(tmp_path, {f'{finding.fingerprint}.json': {**WAIVER, 'against': 'v2.31.0'}})
+    # The repository has no `v2.32.1` tag to read.
+    _release(tmp_path, 'v2.31.0')
+    monkeypatch.chdir(tmp_path)
+
+    def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
+        return [finding]
+
+    monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_ai': 'pydantic_ai_slim'})
+    monkeypatch.setattr(check_api_compatibility, 'run_griffe', run_griffe)
+    monkeypatch.setattr(
+        'sys.argv',
+        ['check_api_compatibility.py', '--against', 'v2.32.1', '--allowlist', str(allowlist), '--waivers', 'waivers'],
+    )
+
+    with pytest.raises(SystemExit, match=r'`git ls-tree v2\.32\.1` failed'):
+        check_api_compatibility.main()
+
+
 def test_main_skips_the_clai2_web_ui_modules(
     monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
 ):

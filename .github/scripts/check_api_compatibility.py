@@ -3,7 +3,6 @@ from __future__ import annotations
 import argparse
 import ast
 import hashlib
-import os
 import re
 import subprocess
 import sys
@@ -203,12 +202,17 @@ def main() -> None:
 
 
 def is_released(against: str, path: PurePath) -> bool:
-    """Whether the tree of the `against` release holds `path`."""
-    # Git reads a `<rev>:<path>` path from the repository root, and fails on an absolute one. After `./` it reads it from
-    # the working directory, as the file system does.
-    relative = PurePath(os.path.relpath(path)).as_posix()
-    released = subprocess.run(['git', 'cat-file', '-e', f'{against}:./{relative}'], check=False, capture_output=True)
-    return released.returncode == 0
+    """Whether the tree of the `against` release holds `path`.
+
+    `ls-tree` reads only the release's trees, so a checkout without the release's file contents still answers. A
+    release Git can't read fails the check, so it never reads as a release without `path`.
+    """
+    result = subprocess.run(
+        ['git', 'ls-tree', '--name-only', against, '--', path.as_posix()], check=False, capture_output=True, text=True
+    )
+    if result.returncode != 0:
+        raise SystemExit(f'`git ls-tree {against}` failed: {result.stderr.strip()}')
+    return bool(result.stdout)
 
 
 def release_version(tag: str) -> tuple[int, ...]:
