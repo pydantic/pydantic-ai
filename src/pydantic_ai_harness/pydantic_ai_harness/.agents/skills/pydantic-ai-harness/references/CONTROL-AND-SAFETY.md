@@ -447,13 +447,20 @@ Gotchas:
 - It does not detect injection. It holds what an injection would need, whatever the content says.
 - A call is judged on the history before the model response that made it, so calls in the same
   response as a function tool's read run; a provider-native result in that response taints them.
-  Taint lives in message history: an approval never clears it, but a summarizing compaction drops it.
+  Taint lives in message history: an approval never clears it. A compaction summary (harness or provider)
+  taints the calls after it; a result dropped without one still counts for the rest of its run.
 - `ToolBridge`: bridged calls are held under their own names, `tool_call` is not, and approvals need
   a `HandleDeferredToolCalls` handler. `tool_search` and `tool_describe` are held in a tainted run.
+  A `tool_call` result is judged under the bridged tool, but only for calls made in this run.
+- External tools (the application runs them): in a tainted run a gated call reaches
+  `DeferredToolRequests.calls` with the gate's reason in its metadata, so check it before running the
+  call. `on_tainted='block'` raises `UserError` before the first request for a gated external tool,
+  frontend tools included: use `'ask'` or leave them out of `gated_tools`.
 - It is ordered innermost. When `Permissions`, a `requires_approval=True` tool, or another capability
   asks about the same call, the gate adds its reason to that request, so one approval covers both.
   UIs that show only their own capability's metadata do not show it; `Permissions`' approver gets it
-  at the end of `PermissionRequest.reason`.
+  at the end of `PermissionRequest.reason`. Exception: for a tool with an `args_validator` the gate asks
+  during validation, so that request also covers a later `Permissions` ask, whose reason is not shown.
 - `trusted_tools` trusts everything a tool returns, including text it relays (an editable wiki, a
   fetched page). List only tools whose results come from the person or the application.
 - `CodeMode`'s `run_code` is not gated unless `gated_tools` selects it; each nested call is, judged on

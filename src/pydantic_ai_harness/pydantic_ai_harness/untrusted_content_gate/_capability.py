@@ -331,7 +331,7 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], part: ToolReturnPart, calls: dict[str, ToolCallPart]
     ) -> _Source | None:
         """Where a result the tool wrote came from: under the bridged tool's name for `ToolBridge`'s `tool_call`."""
-        if (bridged := self._bridged_name(ctx, part, calls)) is not None:
+        if (bridged := self._bridged_name(part, calls)) is not None:
             trusted = self._trusted_by_name.get(bridged, False)
             return None if trusted else _Source(tool_name=bridged, tool_call_id=part.tool_call_id)
         return await self._tool_source(ctx, part.tool_name, part.tool_call_id)
@@ -349,25 +349,30 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
         if not trusted:
             self._ran.append((ctx.run_step, _Source(tool_name=call.tool_name, tool_call_id=call.tool_call_id)))
 
-    def _bridged_name(
-        self, ctx: RunContext[AgentDepsT], part: ToolReturnPart, calls: dict[str, ToolCallPart]
-    ) -> str | None:
+    @staticmethod
+    def _bridged_name(part: ToolReturnPart, calls: dict[str, ToolCallPart]) -> str | None:
         """The tool `ToolBridge`'s `tool_call` ran for this result, or `None` when `part` isn't `tool_call`'s.
 
-        Its trust is known only when it ran in this run, which recorded it under its own name: a result from an
-        earlier run taints.
+        The result's own `tool_kind` says it is `tool_call`'s, so this holds inside a bridged call's nested tool
+        manager and for history from earlier runs. The bridged tool's trust is known only when it ran in this run,
+        which recorded it under its own name: a result from an earlier run taints.
         """
-        tool_def = ctx.tool_manager.get_tool_def(part.tool_name) if ctx.tool_manager is not None else None
         call = calls.get(part.tool_call_id)
-        if tool_def is None or tool_def.tool_kind != _TOOL_CALL_KIND_ID or call is None:
+        if part.tool_kind != _TOOL_CALL_KIND_ID or call is None:
             return None
         name = call.args_as_dict().get('name')  # Malformed arguments read as `{}`.
         return name if isinstance(name, str) else part.tool_name
 
     async def _trusts(self, ctx: RunContext[AgentDepsT], tool_name: str) -> bool:
-        """Whether `trusted_tools` selects the tool; a tool the run can no longer resolve is untrusted."""
+        """Whether `trusted_tools` selects the tool.
+
+        A tool the tool manager can't resolve, such as a native tool seen from inside a bridged call, counts as
+        trusted only when it ran in this run as a trusted tool; any other is untrusted.
+        """
         tool_def = ctx.tool_manager.get_tool_def(tool_name) if ctx.tool_manager is not None else None
-        return tool_def is not None and await matches_tool_selector(self.trusted_tools, ctx, tool_def)
+        if tool_def is None:
+            return self._trusted_by_name.get(tool_name, False)
+        return await matches_tool_selector(self.trusted_tools, ctx, tool_def)
 
     def _trace(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, asked: _Asked) -> None:
         names = tuple(sorted({s.tool_name for s in asked.tainted_by if s.tool_name is not None}))

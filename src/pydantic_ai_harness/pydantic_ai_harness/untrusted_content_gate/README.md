@@ -67,7 +67,7 @@ Harness capabilities' own tools are not marked read-only, so the default holds t
 
 ## One request, every reason
 
-When another capability asks about the same call, the gate adds its reason to that request instead of asking separately. This covers [Permissions](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/permissions/) rules, a `requires_approval=True` tool, and any capability that raises `ApprovalRequired` from `before_tool_execute`, in any order in `capabilities`. One answer then covers the call, and `tool_call_approved` means the same thing for every capability. An approval `Permissions` remembers (`remember=True`) covers only its own half: the gate asks about the next gated call again.
+When another capability asks about the same call, the gate adds its reason to that request instead of asking separately. This covers [Permissions](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/permissions/) rules, a `requires_approval=True` tool, and any capability that raises `ApprovalRequired` from `before_tool_execute`, in any order in `capabilities`, except on a tool that asks during validation (below). One answer then covers the call, and `tool_call_approved` means the same thing for every capability. An approval `Permissions` remembers (`remember=True`) covers only its own half: the gate asks about the next gated call again.
 
 The gate's entry is under the `'untrusted_content_gate'` key of the request's metadata. Read its reason with `untrusted_content_reason`:
 
@@ -80,7 +80,7 @@ for call in requests.approvals:
 
 Show it to the person next to the call. An approval UI that shows only its own capability's metadata does not show it. `Permissions`' approver (`approval_ask` or `ask_permissions`) gets it at the end of `PermissionRequest.reason`.
 
-A `requires_approval=True` tool, or one with an argument validator (`args_validator`), can ask during validation, before any capability's execute hook runs. In a tainted run the gate asks there instead: its request replaces the tool's own, whose metadata is not kept, and one approval covers both.
+A `requires_approval=True` tool, or one with an argument validator (`args_validator`), can ask during validation, before any capability's execute hook runs. In a tainted run the gate asks there instead: its request replaces the tool's own, whose metadata is not kept, and one approval covers both. For a tool with an argument validator, that request also comes before any capability that would ask in `before_tool_execute`, such as a `Permissions` rule: the approval covers that ask too, and its reason is not in the request. A shared reason list for approval requests in Pydantic AI will let every asker's reason reach the person.
 
 ## Code Mode
 
@@ -94,7 +94,7 @@ A call made through [Tool Bridge](https://github.com/pydantic/pydantic-ai/tree/m
 
 An [external tool](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#external-tool-execution)'s calls are run by your application, not the agent, so no execute hook sees them, and the run can't approve one itself. In a tainted run the gate hands a gated external call to your application with its reason in the call's metadata, under the same key as for an approval. Check `untrusted_content_reason(requests.metadata.get(call.tool_call_id))` for each of `requests.calls` before you run it, and ask the person when it isn't `None`.
 
-`on_tainted='block'` can't stop a call your application runs, so the gate refuses a gated external tool in that mode with a `UserError` before the run's first request. Use `'ask'`, or leave the tool out of `gated_tools`.
+`on_tainted='block'` can't stop a call your application runs, so the gate refuses a gated external tool in that mode with a `UserError` before the run's first request, including the frontend tools a UI adapter registers. Use `'ask'`, or leave the tool out of `gated_tools`.
 
 ## Letting a model answer
 

