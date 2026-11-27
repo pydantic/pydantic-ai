@@ -805,7 +805,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
 
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
-        """Return `native_tool`'s restricting settings that the Responses `web_search` tool doesn't take: `max_uses`."""
+        """DeepSeek Flash accepts no restricting web tool settings; standard Responses web search excludes `max_uses`."""
         if self.profile.get('openai_responses_deepseek_web_tools', False) and isinstance(
             native_tool, WebSearchTool | WebFetchTool
         ):
@@ -3346,8 +3346,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if (
             result := response_context.deepseek_web_items.get((item.tool_name, item.tool_call_id))
         ) is not None and self.accepts_stateless_artifacts(response_context.message, item):
-            context.openai_messages.append(web_tool_replay(item, result))
-            response_context.message_item = None
+            if (replay := web_tool_replay(item, result)) is not None:
+                context.openai_messages.append(replay)
+                response_context.message_item = None
             return
         # Hosted tool-search items carry their state inline, so they replay to any provider
         # that accepts this one's stateless data; their IDs stay with the same provider.

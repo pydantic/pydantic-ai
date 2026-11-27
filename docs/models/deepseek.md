@@ -129,7 +129,7 @@ Reordering applies only when every function call has a result and the turn conta
 
 With `deepseek-flash`, [`WebSearch()`][pydantic_ai.capabilities.WebSearch] enables `deepseek_web_search`, and [`WebFetch()`][pydantic_ai.capabilities.WebFetch] enables `deepseek_read_url` on the Responses API. The alias `deepseek-v4-flash` also supports both tools. The model chooses when to search or read a link. URL reading considers links in the last user message. With thinking enabled, web search runs in deep search mode and decides which pages to open. This mode takes precedence over URL reading when both tools are declared. See the [DeepSeek web tools guide](https://api-docs.deepseek.com/guides/web_tools/).
 
-The tools have no domain filters or caller-specified use limits. Keep the complete message history to let DeepSeek restore signed page context in later turns, including turns with web tools disabled. Use the same API for those turns.
+The tools have no domain filters or caller-specified use limits. Keep the complete message history to let DeepSeek restore signed page context in later turns, including turns with web tools disabled. Use the Responses API for those turns.
 
 DeepSeek Responses requires a text response format when these tools are enabled. Use plain text or [`ToolOutput`][pydantic_ai.output.ToolOutput] for these requests. Leave `openai_top_logprobs` unset.
 

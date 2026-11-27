@@ -6,7 +6,7 @@ from collections.abc import Iterable
 from typing import Literal, cast
 
 from openai.types import responses
-from pydantic import BaseModel, JsonValue
+from pydantic import BaseModel, JsonValue, ValidationError
 
 from ..._utils import is_str_dict
 from ...messages import NativeToolCallPart, NativeToolReturnPart
@@ -22,16 +22,16 @@ def web_tool_usage(usage: BaseModel | None) -> dict[str, int]:
     return {
         'web_search_requests' if key == 'tool_search' else key: count
         for key, count in counters.items()
-        if isinstance(count, int) and count > 0
+        if isinstance(count, int) and not isinstance(count, bool) and count > 0
     }
 
 
 class _WebToolItem(BaseModel):
     type: Literal['web_search_call']
     id: str
-    kind: Literal['search', 'deep_search', 'image_search', 'deep_image_search', 'read_link']
+    kind: str
     status: Literal['in_progress', 'searching', 'completed', 'failed']
-    action: dict[str, JsonValue]
+    action: dict[str, JsonValue] | None = None
     page: dict[str, JsonValue] | None = None
     signature: str | None = None
     error: dict[str, JsonValue] | None = None
@@ -52,10 +52,11 @@ def web_tool_parts(
         return None
     parsed = _WebToolItem.model_validate(wire)
     name = WebFetchTool.kind if parsed.kind == 'read_link' else WebSearchTool.kind
-    args = {key: value for key, value in parsed.action.items() if key != 'sources'}
+    action = parsed.action or {}
+    args = {key: value for key, value in action.items() if key != 'sources'}
     content = {
         'status': parsed.status,
-        'sources': parsed.action.get('sources'),
+        'sources': action.get('sources'),
         'page': parsed.page,
         'error': parsed.error,
     }
@@ -69,7 +70,7 @@ def web_tool_parts(
             tool_call_id=parsed.id,
             outcome='failed' if parsed.status == 'failed' else 'success',
             provider_name=provider_name,
-            provider_details={_WEB_TOOL_KEY: parsed.model_dump(include={'kind', 'signature'}, exclude_unset=True)},
+            provider_details={_WEB_TOOL_KEY: parsed.model_dump(include={'kind', 'signature'}, exclude_none=True)},
         ),
     )
 
@@ -77,28 +78,32 @@ def web_tool_parts(
 def replayable_web_results(parts: Iterable[NativeToolReturnPart]) -> dict[tuple[str, str], NativeToolReturnPart]:
     # A streamed return can complete out of order. Match it to the call when rebuilding the request.
     return {
-        (part.tool_name, part.tool_call_id): part
-        for part in parts
-        if _WEB_TOOL_KEY in (part.provider_details or {}) and isinstance(part.content, dict)
+        (part.tool_name, part.tool_call_id): part for part in parts if _WEB_TOOL_KEY in (part.provider_details or {})
     }
 
 
-def web_tool_replay(call: NativeToolCallPart, result: NativeToolReturnPart) -> responses.ResponseInputItemParam:
-    metadata = (result.provider_details or {})[_WEB_TOOL_KEY]
-    assert is_str_dict(result.content)
+def web_tool_replay(call: NativeToolCallPart, result: NativeToolReturnPart) -> responses.ResponseInputItemParam | None:
+    metadata = (result.provider_details or {}).get(_WEB_TOOL_KEY)
     content = result.content
+    if not is_str_dict(metadata) or not is_str_dict(content):
+        return None
     action = call.args_as_dict()
     if 'sources' in content:
         action = {**action, 'sources': content['sources']}
     # History may be supplied by a client. Only restore fields owned by the web tool.
-    item = _WebToolItem(
-        type='web_search_call',
-        id=call.tool_call_id,
-        action=action,
-        status=content['status'],
-        page=content.get('page'),
-        error=content.get('error'),
-        kind=metadata['kind'],
-        signature=metadata.get('signature'),
-    )
+    try:
+        item = _WebToolItem.model_validate(
+            {
+                'type': 'web_search_call',
+                'id': call.tool_call_id,
+                'action': action,
+                'status': content.get('status'),
+                'page': content.get('page'),
+                'error': content.get('error'),
+                'kind': metadata.get('kind'),
+                'signature': metadata.get('signature'),
+            }
+        )
+    except ValidationError:
+        return None
     return cast(responses.ResponseInputItemParam, item.model_dump(mode='json', exclude_none=True))

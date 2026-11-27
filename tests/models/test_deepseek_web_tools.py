@@ -124,8 +124,9 @@ async def test_web_search_citations(
     assert any(isinstance(item, dict) and item.get('kind') == 'search' for item in items)
 
 
-async def test_web_tool_done_without_added(allow_model_requests: None) -> None:
-    """A stream missing the initial notification still exposes a matched native call and return."""
+@pytest.mark.parametrize('with_added', [True, False])
+async def test_web_tool_final_args(with_added: bool, allow_model_requests: None) -> None:
+    """The completed item supplies the final arguments even when the initial event is partial or absent."""
     item = responses.ResponseFunctionWebSearch.model_validate(
         {
             'type': 'web_search_call',
@@ -136,13 +137,20 @@ async def test_web_tool_done_without_added(allow_model_requests: None) -> None:
         }
     )
     reply = response_message([item])
+    added = responses.ResponseOutputItemAddedEvent(
+        item=item.model_copy(update={'action': None, 'status': 'in_progress'}),
+        output_index=0,
+        sequence_number=1,
+        type='response.output_item.added',
+    )
     client = MockOpenAIResponses.create_mock_stream(
         [
             responses.ResponseCreatedEvent(response=reply, type='response.created', sequence_number=0),
+            *([added] if with_added else []),
             responses.ResponseOutputItemDoneEvent(
-                item=item, output_index=0, sequence_number=1, type='response.output_item.done'
+                item=item, output_index=0, sequence_number=2, type='response.output_item.done'
             ),
-            responses.ResponseCompletedEvent(response=reply, type='response.completed', sequence_number=2),
+            responses.ResponseCompletedEvent(response=reply, type='response.completed', sequence_number=3),
         ]
     )
     model = OpenAIResponsesModel('deepseek-flash', provider=DeepSeekProvider(openai_client=client))
@@ -154,10 +162,18 @@ async def test_web_tool_done_without_added(allow_model_requests: None) -> None:
         call, result = stream.get().parts
     assert isinstance(call, NativeToolCallPart) and isinstance(result, NativeToolReturnPart)
     assert call.tool_call_id == result.tool_call_id == 'search_1'
+    assert call.args_as_dict() == {'type': 'search', 'query': 'RFC 9110'}
 
 
-async def test_deepseek_replays_standard_search_history(allow_model_requests: None) -> None:
-    """An unsigned search item follows the ordinary stateless Responses replay path."""
+@pytest.mark.parametrize(
+    'provider_details',
+    [None, {'deepseek_web_tool': 'edited'}, {'deepseek_web_tool': {}}],
+    ids=['standard', 'invalid-metadata', 'missing-kind'],
+)
+async def test_deepseek_replays_standard_search_history(
+    provider_details: dict[str, object] | None, allow_model_requests: None
+) -> None:
+    """A standard OpenAI web_search_call without kind follows the ordinary stateless Responses replay path."""
     reply: dict[str, object] = {
         'id': 'resp_1',
         'model': 'deepseek-flash',
@@ -189,7 +205,9 @@ async def test_deepseek_replays_standard_search_history(allow_model_requests: No
             capabilities=[WebSearch()],
         )
         result = await agent.run('Search for an example.')
-        assert any(isinstance(p, NativeToolReturnPart) and p.tool_call_id == 'search_1' for p in result.response.parts)
+        (returned,) = [p for p in result.response.parts if isinstance(p, NativeToolReturnPart)]
+        assert returned.tool_call_id == 'search_1'
+        returned.provider_details = provider_details
         await agent.run('What did you find?', message_history=result.all_messages())
     assert b'Found it.' in requests[1]
     assert b'search_1' not in requests[1]

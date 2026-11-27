@@ -512,8 +512,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def _map_web_search_call_added(self, item: responses.ResponseFunctionWebSearch) -> ModelResponseStreamEvent:
         if self._deepseek_web_tools and (parts := web_tool_parts(item, self.provider_name)) is not None:
-            return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=parts[0])
-        call_part, _ = map_web_search_tool_call(item, self.provider_name)
+            call_part, _ = parts
+        else:
+            call_part, _ = map_web_search_tool_call(item, self.provider_name)
         return self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=replace(call_part, args=None))
 
     def _map_tool_search_call_added(self, item: responses.ResponseToolSearchCall) -> ModelResponseStreamEvent:
@@ -656,9 +657,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             call_part, return_part = parts
             if self._parts_manager.get_part_by_vendor_id(f'{item.id}-call') is None:
                 yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-call', part=call_part)
-            yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
-            return
-        call_part, return_part = map_web_search_tool_call(item, self.provider_name)
+                yield self._parts_manager.handle_part(vendor_part_id=f'{item.id}-return', part=return_part)
+                return
+        else:
+            call_part, return_part = map_web_search_tool_call(item, self.provider_name)
 
         yield from self._parts_manager.handle_tool_call_delta_events(
             vendor_part_id=f'{item.id}-call',
