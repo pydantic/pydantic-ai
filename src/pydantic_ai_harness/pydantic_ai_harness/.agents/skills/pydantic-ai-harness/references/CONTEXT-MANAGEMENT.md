@@ -174,8 +174,15 @@ inside tool results aren't the user's, so include your own), `instructions`, `br
 On its own trigger, a summary whose compacted history is not estimated smaller than the original
 is discarded and the history left unchanged (a `compact_messages` span with
 `compaction.skipped='not_smaller'` records it); direct `compact()`/`compact_now()` calls return it
-anyway. Usage (tokens and the request) folds into the run's `ctx.usage`, so `UsageLimits` sees it. Keep
-the default `id='summarizing_compaction'` under durable execution.
+anyway. On its own trigger, `UnexpectedModelBehavior`, `ModelAPIError` and `FallbackExceptionGroup`
+leave the history unchanged and discard the attempt's receipts, with `compaction.skipped='summary_failed'`
+and `error.type` on the span. Explicit `compact()`/`compact_now()` calls still raise. Usage limits and
+programming errors propagate on both paths. A failed automatic summary is retried on the next request
+while the trigger stays exceeded. Usage (tokens and the request) folds into the run's `ctx.usage`,
+so `UsageLimits` sees it. Keep the default `id='summarizing_compaction'` under durable execution.
+Under Temporal, failed summary operations still propagate as `ActivityError` wrapping an
+`ApplicationError`: capability operations do not yet rebuild the model errors this recovery path
+catches. This gap is tracked in [#12291](https://github.com/pydantic/pydantic-ai/issues/12291).
 
 ### `RelevanceCompaction`
 
@@ -200,7 +207,7 @@ returns or user prompts.
 
 ### `FallbackCompaction`
 
-`FallbackCompaction(fallback_chain, fallback_on=(ModelAPIError, FallbackExceptionGroup), *, max_tokens=None, max_fraction=None, background_start=None)`:
+`FallbackCompaction(fallback_chain, fallback_on=(ModelAPIError, FallbackExceptionGroup, UnexpectedModelBehavior), *, max_tokens=None, max_fraction=None, background_start=None)`:
 tries the next strategy when one raises a `fallback_on` exception, re-raising the last one if all
 fail. When its trigger runs the chain, it also skips a `SummarizingCompaction` result that isn't
 smaller than the history, and leaves the history unchanged if nothing shrinks it. With no trigger,
@@ -332,8 +339,10 @@ capability to see post-compaction usage, before it to see what triggered compact
   Provider-native compaction still unloads them.
 - The same strategies keep tool search discoveries (a `search_tools` exchange, a native search result or a
   `ToolReturn.tools` reveal) by recording them again after the summary as a `ToolAvailabilityDeltaPart`.
-- `receipts=True` on `SlidingWindowCompaction` / `SummarizingCompaction` appends a note saying
-  history was compacted; with `StepPersistence` attached it includes the run handle.
+- `receipts=True` on `SlidingWindowCompaction` / `SummarizingCompaction` / `RelevanceCompaction` appends
+  a note saying history was compacted; with `StepPersistence` attached it includes the run handle. It's a
+  `CompactionReceiptPart` in the application's voice, not a user prompt, so it never starts a user turn;
+  find receipts by that type.
 - `await compact_now(strategy, history, model=..., focus=..., conversation_id=...)` (plus `deps=` for typed deps) runs a
   strategy between runs (for a `/compact` command). It applies no trigger of its own.
 

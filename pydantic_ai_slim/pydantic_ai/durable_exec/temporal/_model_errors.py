@@ -26,6 +26,7 @@ from temporalio import activity
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
 
+from ..._unsupported_settings import raised_for_fallback
 from ...exceptions import (
     ModelAPIError,
     ModelConnectionError,
@@ -37,6 +38,7 @@ from ...exceptions import (
     ModelUnavailableError,
     RetryModelRequest,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UserError,
     _CategorizedHTTPError,  # pyright: ignore[reportPrivateUsage]
 )
@@ -54,6 +56,9 @@ _response_adapter: TypeAdapter[ModelResponse] = TypeAdapter(ModelResponse)
 
 _RETRY_MODEL_REQUEST_KEY = 'pydantic_ai_retry_model_request'
 """Marks the `ApplicationError` detail that holds a `RetryModelRequest`'s model name."""
+
+_UNSUPPORTED_SETTING_KEY = 'pydantic_ai_unsupported_setting'
+"""Marks the `ApplicationError` detail that holds the message of an `UnsupportedSettingWarning` raised for `fallback_on`."""
 
 
 def _encode(error: ModelAPIError) -> dict[str, Any] | None:
@@ -136,6 +141,9 @@ def model_errors_as_application_errors(
 ) -> Generator[None]:
     """In a model activity, raise a model error as an `ApplicationError` the workflow can rebuild it from.
 
+    So is an `UnsupportedSettingWarning` a model raised for a `fallback_on` that names it, never retried; one a
+    warnings filter raised fails the activity as before.
+
     The `ApplicationError`'s `type` is what a retry policy's `non_retryable_error_types` matches; see
     `_retry_policy_type`. An error that is an instance of one of the `non_retryable` classes is raised as a
     non-retryable `ApplicationError`, so Temporal fails the activity without retrying it whatever the retry
@@ -146,19 +154,7 @@ def model_errors_as_application_errors(
     try:
         yield
     except ModelAPIError as error:
-        # Checked here, where the error's class is the same as in the workflow, so the workflow can
-        # count on rebuilding whatever it receives. Anything that can't cross fails as it always did,
-        # with only the non-retryable flag or the retry delay added if it has one.
-        try:
-            encoded = _encode(error)
-        except Exception:
-            encoded = None
-        details: tuple[dict[str, Any], ...] = ()
-        if encoded is not None and _decode(encoded) is not None:
-            detail: dict[str, Any] = {_DETAILS_KEY: encoded}
-            if (streamed := streamed_before_failing(error)) is not None:
-                detail[_STREAMED_KEY] = _response_adapter.dump_python(streamed, mode='json')
-            details = (detail,)
+        details = _crossing_details(error)
         retryable = not isinstance(error, non_retryable)
         next_retry_delay = _next_retry_delay(error) if retryable else None
         if retryable and not details and next_retry_delay is None:
@@ -170,6 +166,37 @@ def model_errors_as_application_errors(
             non_retryable=not retryable,
             next_retry_delay=next_retry_delay,
         ) from error
+    except UnsupportedSettingWarning as warning:
+        # One a warnings filter turned into an error fails the activity as it always did.
+        if not raised_for_fallback(warning):
+            raise
+        # Raised instead of emitted for a `fallback_on` that names it, before anything is sent, so another attempt
+        # at the same model would raise it again.
+        raise ApplicationError(
+            str(warning),
+            {_UNSUPPORTED_SETTING_KEY: str(warning)},
+            type=UnsupportedSettingWarning.__name__,
+            non_retryable=True,
+        ) from warning
+
+
+def _crossing_details(error: ModelAPIError) -> tuple[dict[str, Any], ...]:
+    """The `ApplicationError` details the workflow rebuilds `error` from, or none if it can't cross.
+
+    Checked here, where the error's class is the same as in the workflow, so the workflow can count on rebuilding
+    whatever it receives. Anything that can't cross fails as it always did, with only the non-retryable flag or the
+    retry delay added if it has one.
+    """
+    try:
+        encoded = _encode(error)
+    except Exception:
+        return ()
+    if encoded is None or _decode(encoded) is None:
+        return ()
+    detail: dict[str, Any] = {_DETAILS_KEY: encoded}
+    if (streamed := streamed_before_failing(error)) is not None:
+        detail[_STREAMED_KEY] = _response_adapter.dump_python(streamed, mode='json')
+    return (detail,)
 
 
 def _next_retry_delay(error: ModelAPIError) -> timedelta | None:
@@ -240,6 +267,7 @@ def _retry_policy_type(error: ModelAPIError) -> str:
 def rebuilt_model_errors() -> Generator[None]:
     """In the workflow, re-raise a model error a model activity failed with as its original type.
 
+    An `UnsupportedSettingWarning` raised as an error is re-raised as itself too, for `ModelFallback`'s `fallback_on`.
     Any other activity failure, including one from an error that wasn't a model error, is raised
     unchanged.
     """
@@ -252,11 +280,13 @@ def rebuilt_model_errors() -> Generator[None]:
         raise
 
 
-def _rebuild(application_error: ApplicationError) -> ModelAPIError | None:
+def _rebuild(application_error: ApplicationError) -> ModelAPIError | UnsupportedSettingWarning | None:
     details = application_error.details
     if not details or not isinstance(details[0], dict):
         return None
     detail = cast(dict[str, Any], details[0])
+    if isinstance(message := detail.get(_UNSUPPORTED_SETTING_KEY), str):
+        return UnsupportedSettingWarning(message)
     encoded = detail.get(_DETAILS_KEY)
     if not isinstance(encoded, dict):
         return None

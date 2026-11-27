@@ -9,7 +9,7 @@ the server's store is shared by every connection.
 
 from __future__ import annotations
 
-from collections.abc import AsyncGenerator
+from collections.abc import AsyncGenerator, Mapping
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 
@@ -18,6 +18,7 @@ from pydantic_monty import (
     AsyncMontyRemote,
     AsyncMontySession,
     AsyncSnapshot,
+    ExternalModule,
     MountDir,
     OsHandler,
     OSPolicy,
@@ -133,10 +134,15 @@ class StoredSessionPool:
         type_check: bool = False,
         type_check_stubs: str | None = None,
         os_policy: OSPolicy | None = None,
+        external_modules: Mapping[str, ExternalModule] | None = None,
         ephemeral: bool | None = None,
     ) -> AsyncGenerator[StoredSession]:
         async with self._pool.checkout(
-            limits=limits, type_check=type_check, type_check_stubs=type_check_stubs, os_policy=os_policy
+            limits=limits,
+            type_check=type_check,
+            type_check_stubs=type_check_stubs,
+            os_policy=os_policy,
+            external_modules=external_modules,
         ) as session:
             yield StoredSession(session, self.stores, self._pool)
 

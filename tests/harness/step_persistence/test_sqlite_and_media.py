@@ -10,6 +10,7 @@ SQLite-specific behavior and the media plumbing.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import sqlite3
 from contextlib import closing
@@ -456,6 +457,39 @@ class TestFileStepStoreMedia:
         assert isinstance(binary, BinaryContent)
         assert binary.data == payload
         assert binary.media_type == 'image/jpeg'
+
+    async def test_snapshot_from_before_the_literal_wrapper_loads(self, tmp_path: Path) -> None:
+        """A snapshot whose tool return carries the marker key unwrapped loads, next to its media markers.
+
+        Writers before the literal wrapper stored that tool return as it was. The
+        test writes the snapshot with the current writer, then unwraps it on disk.
+        """
+        store = FileStepStore(tmp_path / 'runs')
+        await store.register_run(RunRecord(run_id='r1'))
+        tool_output = {'__harness_external_media__': True, 'status': 'ok'}
+        messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[UserPromptPart(content=[BinaryContent(data=b'\xcd' * 80_000, media_type='image/jpeg')])]
+            ),
+            ModelRequest(parts=[ToolReturnPart(tool_name='fetch', tool_call_id='c1', content=tool_output)]),
+            ModelResponse(parts=[TextPart(content='x' * 80_000)]),
+        ]
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=messages))
+
+        [snap_file] = (tmp_path / 'runs' / 'r1' / 'snapshots').glob('*.json')
+        text = snap_file.read_text(encoding='utf-8')
+        wrapped = json.dumps(
+            {'__harness_external_literal__': tool_output, '__harness_external_marker_format__': 'literal-v1'}
+        )
+        assert text.count(wrapped) == 1
+        assert text.count('"__harness_external_media__": true') == 3
+        snap_file.write_text(text.replace(wrapped, json.dumps(tool_output)), encoding='utf-8')
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert ModelMessagesTypeAdapter.dump_python(snap.messages, mode='json') == ModelMessagesTypeAdapter.dump_python(
+            messages, mode='json'
+        )
 
     async def test_below_threshold_stays_inline(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path / 'runs', media_threshold_bytes=64 * 1024)

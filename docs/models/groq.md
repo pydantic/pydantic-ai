@@ -122,6 +122,10 @@ agent = Agent(
 
 The tier that served a non-streamed request is stored in [`ModelResponse.provider_details`][pydantic_ai.messages.ModelResponse.provider_details] `['service_tier']`.
 
+## Mid-conversation system prompts
+
+A [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts) goes to Groq as a `system` message at its position in the conversation, except on `openai/gpt-oss-*`. There it goes as `<system>` text in a user turn, because Groq doesn't keep a later `system` message in place on gpt-oss: a request that adds one reads the [cached prefix](https://console.groq.com/docs/prompt-caching) only up to the instructions and tools, while the `<system>` text keeps the whole conversation before it cached.
+
 ## SDK retries {#sdk-retries}
 
 The `AsyncGroq` client that the provider builds also retries failed requests on its own — `max_retries=2` by default, like the OpenAI client it is modelled on. Pass `groq_client=AsyncGroq(max_retries=0)` to keep the retry policy in your transport alone, or set [`ModelSettings['max_retries']`](../retries.md#setting-the-sdk-retry-count-per-request) to change the count without building the client. See [Provider SDK retries](../retries.md#provider-sdk-retries) for where this layer sits.

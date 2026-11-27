@@ -13,7 +13,7 @@ from typing import Annotated, Any, cast
 from unittest.mock import patch
 
 import pytest
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, Json, computed_field
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import (
@@ -24,6 +24,7 @@ from pydantic_ai import (
     DocumentUrl,
     ExternalToolset,
     FunctionToolset,
+    ImageUrl,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -1415,6 +1416,116 @@ async def test_aliased_args_reach_the_activity(client: Client, path: str):
     assert _received_bookings == [('Ada', Place(cityName='Paris'), Revision(draftNumber=0, draft=7))]
 
 
+class Batch(BaseModel):
+    nums: Json[list[int]]
+
+
+class Line(BaseModel):
+    image: ImageUrl
+    nums: Json[list[int]] | None = None
+
+    @computed_field
+    @property
+    def count(self) -> int:
+        return len(self.nums or [])
+
+
+_received_json_args: list[tuple[str, object]] = []
+"""The arguments `sum_nums`, `sum_batch` and `tally` ran with, recorded in the activity."""
+
+
+def sum_nums(nums: Json[list[int]]) -> int:
+    """Sum numbers."""
+    _received_json_args.append(('sum_nums', nums))
+    return sum(nums)
+
+
+def sum_batch(batch: Batch) -> int:
+    """Sum a batch."""
+    _received_json_args.append(('sum_batch', batch.nums))
+    return sum(batch.nums)
+
+
+def tally(lines: list[Line], label: str) -> int:
+    """Tally lines."""
+    _received_json_args.append(('tally', ([(line.image.media_type, line.nums) for line in lines], label)))
+    return len(lines)
+
+
+def _json_args_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) == 1:
+        return ModelResponse(
+            parts=[
+                ToolCallPart('sum_nums', {'nums': '[1, 2]'}, tool_call_id='c1'),
+                ToolCallPart('sum_batch', {'nums': '[3, 4]'}, tool_call_id='c2'),
+                ToolCallPart(
+                    'tally',
+                    {
+                        'lines': [
+                            {'image': {'url': 'https://example.com/a', 'media_type': 'image/png'}, 'nums': '[7]'},
+                            {'image': {'url': 'https://example.com/b', 'media_type': 'image/gif'}},
+                        ],
+                        'label': 'images',
+                    },
+                    tool_call_id='c3',
+                ),
+            ]
+        )
+    return ModelResponse(parts=[TextPart('Done.')])
+
+
+_json_args_durable_agent = Agent(
+    FunctionModel(_json_args_model),
+    name='json_args_durable',
+    tools=[sum_nums, sum_batch, tally],
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+_json_args_wrapped_agent = TemporalAgent(  # pyright: ignore[reportDeprecated]
+    Agent(FunctionModel(_json_args_model), name='json_args_wrapped', tools=[sum_nums, sum_batch, tally]),
+    activity_config=BASE_ACTIVITY_CONFIG,
+)
+
+
+@workflow.defn
+class JsonArgsWorkflow:
+    @workflow.run
+    async def run(self, path: str) -> str:
+        agent = _json_args_durable_agent if path == 'durability' else _json_args_wrapped_agent
+        result = await agent.run('Sum the numbers.')
+        return result.output
+
+
+@pytest.mark.parametrize('path', ['durability', 'temporal_agent'])
+async def test_json_args_reach_the_activity(client: Client, path: str):
+    """`Json` arguments run in the activity with the values the workflow validated.
+
+    A validated `Json` value is the parsed list, which the tool's schema rejects with `json_type` when the
+    activity validates it again, so the workflow ships it as a JSON string again, at the top level and nested in
+    a model. The rest of the argument ships as before, so the `ImageUrl` media types, computed fields that
+    `round_trip=True` would leave out, still reach the tool.
+    """
+    _received_json_args.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[JsonArgsWorkflow],
+        plugins=[AgentPlugin(_json_args_durable_agent if path == 'durability' else _json_args_wrapped_agent)],
+    ):
+        output = await client.execute_workflow(
+            JsonArgsWorkflow.run,
+            args=[path],
+            id=f'{JsonArgsWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+
+    assert output == 'Done.'
+    assert sorted(_received_json_args, key=lambda call: call[0]) == [
+        ('sum_batch', [3, 4]),
+        ('sum_nums', [1, 2]),
+        ('tally', ([('image/png', [7]), ('image/gif', None)], 'images')),
+    ]
+
+
 def _tool_return_metadata_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     if len(messages) == 1:
         return ModelResponse(parts=[ToolCallPart('analyze_data', {})])
@@ -1700,6 +1811,7 @@ def test_resolve_tool_activity_config_reads_metadata():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'UsageLimitExceeded',
+        'SuspendedResponseExpired',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -1778,6 +1890,7 @@ def test_resolve_tool_activity_config_restores_round_tripped_types():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'UsageLimitExceeded',
+        'SuspendedResponseExpired',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
