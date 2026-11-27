@@ -567,7 +567,7 @@ def _error_message(error: Any) -> str:
     path = '.'.join(_error_path(error))
     message = f'at `{path}`: {error.message}' if path else error.message
     if error.context:
-        from jsonschema.exceptions import best_match
+        from jsonschema.exceptions import best_match  # pyright: ignore[reportUnknownVariableType]
 
         closest: Any = cast(Any, best_match)(error.context)  # `jsonschema` has no type information
         message += f' (closest: {_error_message(closest)})'
