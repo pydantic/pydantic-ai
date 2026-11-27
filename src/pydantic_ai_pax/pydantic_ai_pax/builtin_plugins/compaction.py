@@ -33,6 +33,7 @@ from pydantic_ai_harness.compaction import (
     compact_now,
     estimate_message_tokens,
 )
+from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource, SnapshotStore
 from pydantic_ai_pax.commands import Command
 from pydantic_ai_pax.plugins import ConversationChanged, Plugin, PluginHost, SessionEnd, TurnEnd
 from pydantic_ai_pax.plugins.menus import FieldRow, SettingsMenu
@@ -81,6 +82,11 @@ class CompactionSettings(BaseModel):
         allow_inf_nan=False,
         description='Experimental: with background compaction on, start the summary at this fraction of the threshold.',
     )
+    search_history: bool = Field(
+        default=False,
+        description="Give the model a tool that searches this conversation's saved history, so it can get back "
+        'what compaction dropped. Needs saved sessions.',
+    )
 
     @model_serializer(mode='wrap')
     def _only_chosen(self, handler: SerializerFunctionWrapHandler) -> dict[str, JsonValue]:
@@ -91,6 +97,9 @@ class CompactionSettings(BaseModel):
 
 BACKGROUND_COMPACTION_FEATURE = 'compaction-background'
 """Builds without it would reject a saved `background_compaction` or `background_start`, so they drop both."""
+
+SEARCH_HISTORY_FEATURE = 'compaction-search-history'
+"""Builds without it would reject a saved `search_history`, so they drop it."""
 
 _TEXT_FIELDS = frozenset({'strategy', 'summarization_model'})
 """Settings typed as plain text; the others are typed as JSON numbers."""
@@ -126,6 +135,7 @@ class CompactionSource:
             row('summarization_model', 'Summarization model'),
             row('background_compaction', 'Background compaction', ('true', 'false')),
             row('background_start', 'Background start'),
+            row('search_history', 'Search history', ('true', 'false')),
         )
 
     def current(self, row: FieldRow) -> str:
@@ -138,6 +148,7 @@ class CompactionSource:
             'summarization_model': settings.summarization_model,
             'background_compaction': settings.background_compaction,
             'background_start': settings.background_start,
+            'search_history': settings.search_history,
         }
         return shown(values[row.key])
 
@@ -222,6 +233,7 @@ class CompactionPlugin(Plugin[CompactionSettings]):
     def from_host(cls, host: PluginHost[None]) -> Self:
         # Tags the settings, so a build without background compaction uses the defaults instead of failing to load.
         requires = {key: [BACKGROUND_COMPACTION_FEATURE] for key in ('background_compaction', 'background_start')}
+        requires['search_history'] = [SEARCH_HISTORY_FEATURE]
         return cls(host, host.settings(CompactionSettings, requires=requires))
 
     def __init__(self, host: PluginHost[None], settings: CompactionSettings) -> None:
@@ -233,7 +245,19 @@ class CompactionPlugin(Plugin[CompactionSettings]):
             self.chain,
             ReportContextUsage(context_window=self.settings.context_window),
             _ContextGauge(status=self.host.status, threshold=self.settings.threshold),
+            *self._history_search(),
         )
+
+    def _history_search(self) -> tuple[ConversationSearch[None], ...]:
+        """With `search_history` on, a search over the steps this conversation saved, where compaction keeps the originals.
+
+        Only the conversation's own runs are searched, never another session's. Without saved sessions there is
+        nothing to search, so nothing is added.
+        """
+        store = self.host.conversation.step_store
+        if not self.settings.search_history or not isinstance(store, SnapshotStore):
+            return ()
+        return (ConversationSearch(SnapshotHistorySource(store), scope='conversation'),)
 
     def get_commands(self) -> Sequence[Command]:
         return (
