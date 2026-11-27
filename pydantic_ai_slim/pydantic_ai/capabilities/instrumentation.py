@@ -34,7 +34,7 @@ from pydantic_ai._instrumentation import (
     serialize_any,
 )
 from pydantic_ai._output import build_retried_tool_return
-from pydantic_ai._telemetry import publish_run_telemetry
+from pydantic_ai._telemetry import bind_tool_call_span, run_telemetry_scope
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -276,7 +276,6 @@ class Instrumentation(AbstractCapability[Any]):
         # duplicate the session's canonical `invoke_agent` span. See the capability-owned span
         # direction documented in `realtime/_session.py`.
         if ctx.realtime:
-            publish_run_telemetry(ctx)
             return await handler()
 
         settings = self.settings
@@ -314,13 +313,14 @@ class Instrumentation(AbstractCapability[Any]):
             # Entered with the span and exited with it, so `_run_usage` ends up holding exactly
             # the usage this run recorded — nested runs report their own on their own spans.
             _usage_attribution.accumulate(self._run_usage),
+            # Code without a `RunContext` traces to this run only while its span is open, and this run's
+            # value is gone for an outer `wrap_run` once this one returns.
+            run_telemetry_scope(ctx, span),
         ):
             otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
             otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
             otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id or '', context=otel_ctx)
             token = _otel_attach(otel_ctx)
-            # Inside the run's span, so a helper given this run's telemetry never writes to a span around the run.
-            publish_run_telemetry(ctx)
             result: AgentRunResult[Any] | None = None
             try:
                 result = await handler()
@@ -759,10 +759,16 @@ class Instrumentation(AbstractCapability[Any]):
             # backends can recognize the session tree; the tool span is shared with classic runs,
             # which stay unmarked.
             attributes['pydantic_ai.realtime'] = True
+
+        async def call_with_bound_span() -> Any:
+            # Runs inside the span `_run_tool_span` opened, so the current span is this call's `execute_tool`.
+            with bind_tool_call_span(get_current_span(), run_id=ctx.run_id):
+                return await handler(args)
+
         return await self._run_tool_span(
             span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=attributes,
-            action=lambda: handler(args),
+            action=call_with_bound_span,
             serialize_result=lambda value: tool_return_ta.dump_json(
                 redact_binary_content(value, self.settings)
             ).decode(),

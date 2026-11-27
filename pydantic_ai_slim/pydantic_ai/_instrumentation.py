@@ -965,16 +965,23 @@ def record_exception(
     if include_content:
         span.record_exception(error, attributes=attributes, escaped=escaped)
         return
-    error_type = type(error)
-    type_name = (
-        f'{error_type.__module__}.{error_type.__qualname__}'
-        if error_type.__module__ != 'builtins'
-        else error_type.__qualname__
-    )
     # The SDK stringifies `escaped`, so match its shape rather than mixing attribute types.
     span.add_event(
-        'exception', attributes={'exception.type': type_name, 'exception.escaped': str(escaped), **(attributes or {})}
+        'exception',
+        attributes={
+            'exception.type': exception_type_name(error),
+            'exception.escaped': str(escaped),
+            **(attributes or {}),
+        },
     )
+
+
+def exception_type_name(error: BaseException) -> str:
+    """`error`'s type as `module.QualName`, or just the name for a builtin, as OTel's `exception.type` and `error.type` use."""
+    error_type = type(error)
+    if error_type.__module__ == 'builtins':
+        return error_type.__qualname__
+    return f'{error_type.__module__}.{error_type.__qualname__}'
 
 
 def set_error_status(span: Span, error: BaseException, *, include_content: bool) -> None:
