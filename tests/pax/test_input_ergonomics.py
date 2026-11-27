@@ -795,6 +795,11 @@ async def test_delivery_mode_is_persistent_and_reachable_without_queued_messages
 async def test_busy_delivery_waits_for_tools_and_reaches_next_feasible_model_request(
     mode: BusyDelivery, older_entries: bool
 ) -> None:
+    """Not a VCR test: events hold each tool call open and release it at a chosen moment, which a recording cannot.
+
+    Delivery depends on when a busy prompt arrives relative to tool completion and the next model request; a cassette
+    replays responses but not that ordering.
+    """
     started, release, completed = anyio.Event(), anyio.Event(), anyio.Event()
     other_started, other_release, other_completed = anyio.Event(), anyio.Event(), anyio.Event()
     seen: list[list[ModelMessage]] = []
