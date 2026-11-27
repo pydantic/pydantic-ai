@@ -457,7 +457,8 @@ async def test_event_stream_batching_preserves_model_delta_backpressure() -> Non
     observed_deltas: list[str] = []
 
     async def observe(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
-        async for event in stream:
+        # Yielding to the scheduler after each event gives a producer without backpressure the chance to run ahead.
+        async for event in stream:  # real-wait: the scheduler yield is what this test proves backpressure against
             await asyncio.sleep(0)
             if isinstance(event, PartDeltaEvent):
                 assert isinstance(event.delta, TextPartDelta)
