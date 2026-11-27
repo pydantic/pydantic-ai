@@ -564,7 +564,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return None
         reduction = await self._apply(ctx, call, action, unit)
         if isinstance(reduction, _Unreduced):
-            self._record_unreduced(ctx, unit, reduction)
+            tool_call_span(ctx).set_attribute(f'{unit.attribute_prefix}.fallback_from', reduction.fallback_from)
             return None
         # A `Truncate` whose `max_chars` the text already fits returns it unchanged: nothing was cut. A
         # fallback is still recorded: that the band's own action failed is what an operator needs to see.
@@ -602,10 +602,6 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         if reduction.fallback_from is not None:
             attributes[f'{prefix}.fallback_from'] = reduction.fallback_from
         span.set_attributes(attributes)
-
-    def _record_unreduced(self, ctx: RunContext[AgentDepsT], unit: _Unit, unreduced: _Unreduced) -> None:
-        """Say on the call's `execute_tool` span that the band's action failed and the unit was kept as is."""
-        tool_call_span(ctx).set_attribute(f'{unit.attribute_prefix}.fallback_from', unreduced.fallback_from)
 
     async def _reduce_content(
         self,
