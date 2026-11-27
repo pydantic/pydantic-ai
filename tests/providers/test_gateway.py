@@ -1,6 +1,7 @@
 import json
 import os
 import re
+from dataclasses import dataclass
 from decimal import Decimal
 from types import SimpleNamespace
 from typing import Any, Literal, cast
@@ -10,11 +11,21 @@ from urllib.parse import urlparse
 import httpx
 import httpx2
 import pytest
+from genai_prices import calc_price
 
-from pydantic_ai import Agent, ModelMessagesTypeAdapter, ModelResponse, UserError
+from pydantic_ai import (
+    Agent,
+    CompactionPart,
+    ModelMessagesTypeAdapter,
+    ModelRequest,
+    ModelResponse,
+    RequestUsage,
+    RunContext,
+    UserError,
+)
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.models import infer_model
+from pydantic_ai.capabilities import AbstractCapability, CompactionRequest, CompactionResult, Instrumentation
+from pydantic_ai.models import ModelRequestContext, infer_model
 
 from .._inline_snapshot import raises, snapshot
 from ..conftest import TestEnv, try_import
@@ -369,6 +380,44 @@ async def test_gateway_route_for_another_providers_models_is_priced_as_that_prov
     # It survives a round-trip through stored history.
     [stored] = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python([response]))
     assert isinstance(stored, ModelResponse) and stored.pricing_provider == 'doubleword'
+
+
+@dataclass
+class _CompactsOnce(AbstractCapability[Any]):
+    """Compacts the history before the first request, reporting the compaction's usage without a cost."""
+
+    usage: RequestUsage
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if ctx.run_step == 1:
+            ctx.request_compaction(reason='threshold')
+        return request_context
+
+    async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult:
+        part = CompactionPart(content='summary')
+        return CompactionResult(
+            messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='h', usage=self.usage
+        )
+
+
+@pytest.mark.vcr(ignore_hosts=['*'])
+async def test_gateway_route_prices_a_compaction_as_that_provider(allow_model_requests: None):
+    """A compaction's usage is priced like a request to the same model, so as Doubleword on the `doubleword` route.
+
+    Not a cassette test, for the same reason as the test above.
+    """
+    compaction_usage = RequestUsage(input_tokens=1000, output_tokens=100)
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(_chat_completion)) as http_client:
+        provider = gateway_provider('doubleword', http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL)
+        model = OpenAIChatModel('deepseek-ai/DeepSeek-V4.1-Flash', provider=provider)
+        result = await Agent(model, capabilities=[_CompactsOnce(compaction_usage)]).run('Hi')
+
+    response = result.all_messages()[-1]
+    assert isinstance(response, ModelResponse)
+    compaction_price = calc_price(compaction_usage, response.model_name or '', provider_id='doubleword').total_price
+    assert result.usage.cost == response.cost().total_price + compaction_price
 
 
 @pytest.mark.vcr(ignore_hosts=['*'])

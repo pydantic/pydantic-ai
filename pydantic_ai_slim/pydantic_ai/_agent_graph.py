@@ -4762,6 +4762,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             model_name=model.model_name,
             provider_name=model.system,
             provider_url=model.base_url,
+            pricing_provider=model._pricing_provider_stamp,  # pyright: ignore[reportPrivateUsage]
             timestamp=_compaction_timestamp(holder, self.request),
         )
         self._record_response_usage(ctx, compaction.billed, request_context=request_context)
