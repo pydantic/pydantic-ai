@@ -31,6 +31,9 @@ __all__ = (
     'tool_call_span',
 )
 
+# Raised to defer, skip or replace a call, not because it failed.
+_CONTROL_FLOW = (CallDeferred, ApprovalRequired, SkipToolExecution, SkipModelRequest)
+
 
 class _TracedRun(NamedTuple):
     """The tracer and content flag of a run that is traced.
@@ -118,10 +121,6 @@ def _open_span(
             record_exception(span, error, include_content=traced_run.include_content, escaped=False)
             set_error_status(span, error, include_content=traced_run.include_content)
             raise
-
-
-# Raised to defer, skip or replace a call, not because it failed.
-_CONTROL_FLOW = (CallDeferred, ApprovalRequired, SkipToolExecution, SkipModelRequest)
 
 
 def record_decision(
