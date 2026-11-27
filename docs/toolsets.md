@@ -1077,6 +1077,12 @@ agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 # ...
 ```
 
+### ClickHouse Loom {#loom-tools}
+
+[`clickhouse-loom`](https://pypi.org/project/clickhouse-loom/) provides `loom_toolset`, a [`FunctionToolset`][pydantic_ai.toolsets.FunctionToolset] for saving, searching and fetching memories in a self-hosted Loom deployment.
+
+Install `clickhouse-loom[pydantic-ai]==1.3.0rc1` and the Pydantic AI extra for your model provider. The [integration guide](https://github.com/ClickHouse/loom/blob/v1.3.0-rc.1/docs/features/integrations/frameworks.md#pydantic-ai) shows how to connect an asynchronous Loom agent and pass `loom_toolset(loom_agent, user_id='alice')` to `Agent(toolsets=[...])`. Configure a reachable Loom endpoint and a token with grants limited to the application's namespace. Tool calls use that deployment and its access grants.
+
 ### pydantic-ai-ejentum {#ejentum-tools}
 
 [`pydantic-ai-ejentum`](https://pypi.org/project/pydantic-ai-ejentum/) wraps the [Ejentum Reasoning Harness](https://ejentum.com) as a `FunctionToolset` subclass. `EjentumToolset` registers four agent-callable tools (`harness_reasoning`, `harness_code`, `harness_anti_deception`, `harness_memory`). The agent calls one before generating; each call returns a structured cognitive scaffold (named failure pattern, executable procedure, suppression vectors, falsification test) that the model reads internally to shape its next response.
