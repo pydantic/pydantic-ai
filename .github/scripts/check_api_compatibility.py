@@ -163,9 +163,9 @@ def main() -> None:
                 continue
             waiver = waivers.get(finding.fingerprint)
             path = args.waivers / f'{finding.fingerprint}.json'
-            # A waiver against an older release that the `--against` release doesn't hold was written before that
-            # release and hasn't shipped, as when its PR waits in the merge queue across a release. One the release
-            # holds shipped with its change, so the finding firing again is a new change that needs a new waiver.
+            # A waiver against an older release that the `--against` release doesn't hold is new since that release, as
+            # when its PR waited in the merge queue across it. One the release holds shipped with its change, so the
+            # finding firing again is a new change that needs a new waiver.
             unreleased = (
                 waiver is not None
                 and release_version(waiver.against) < release_version(args.against)

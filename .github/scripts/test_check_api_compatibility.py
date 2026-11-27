@@ -448,10 +448,11 @@ def test_main_checks_the_waiver_against_the_baseline_release(
     finding = Finding('pydantic_ai', 'messages.py', 12, 'RequestPart: Attribute value was changed: Old -> New')
     waivers = {} if waived_against is None else {f'{finding.fingerprint}.json': {**WAIVER, 'against': waived_against}}
     allowlist = _write_allowlist(tmp_path)
-    _write_waivers(tmp_path, waivers if released else {})
+    if released:
+        _write_waivers(tmp_path, waivers)
     _release(tmp_path, 'v2.32.1')
-    for name, waiver in waivers.items():
-        (tmp_path / 'waivers' / name).write_text(json.dumps(waiver), encoding='utf-8')
+    if not released:
+        _write_waivers(tmp_path, waivers)
     monkeypatch.chdir(tmp_path)
 
     def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
