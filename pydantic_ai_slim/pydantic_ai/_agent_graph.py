@@ -974,8 +974,8 @@ class GraphAgentState:
     [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index]. The result's
     `conversation` finds them in the history to tell its store where the unsaved messages start.
     """
-    conversation_loaded: list[_messages.ModelMessage] | None = None
-    """Internal: the messages of the conversation this run was given, before a `before_run` hook changed them."""
+    conversation_loaded: _messages.ModelMessage | None = None
+    """Internal: the last message of the history this run was given, before a `before_run` hook changed it, or `None` if it was empty."""
     conversation_deferred_tool_requests: DeferredToolRequests | None = None
     """The [`deferred_tool_requests`][pydantic_ai.conversation.Conversation.deferred_tool_requests] of the conversation this run was given, if any.
 
@@ -6224,14 +6224,15 @@ def _set_resumed_history(
 
 
 def _mark_added_before_run_unsaved(state: GraphAgentState) -> None:
-    """Count the messages a `before_run` hook added after a loaded conversation's messages as unsaved, since the store doesn't have them either.
+    """Count the messages a `before_run` hook added after a loaded conversation's last message as unsaved, since the store doesn't have them either.
 
-    A message it inserted before one of them can't be appended to what's stored, so it isn't saved.
+    If the hook removed that message or replaced it with a copy, nothing is counted: what it added can't be told
+    apart from what's stored, so it isn't saved.
     """
-    unsaved, history = state.conversation_unsaved, state.message_history
-    known = {id(message) for message in state.conversation_loaded or ()}
-    start = next((index + 1 for index in range(len(history) - 1, -1, -1) if id(history[index]) in known), 0)
-    if unsaved is not None and start < len(history):
+    unsaved, history, last = state.conversation_unsaved, state.message_history, state.conversation_loaded
+    found = (index + 1 for index in range(len(history) - 1, -1, -1) if history[index] is last)
+    start = 0 if last is None else next(found, None)
+    if unsaved is not None and start is not None and start < len(history):
         state.conversation_unsaved = [*unsaved, *history[start:]]
 
 

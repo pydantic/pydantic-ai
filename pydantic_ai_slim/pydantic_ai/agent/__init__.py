@@ -1848,7 +1848,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             conversation_unchecked=conversation_unchecked,
             conversation_deferred_tool_requests=conversation_deferred_tool_requests,
         )
-        state.conversation_loaded = state.message_history[:]
+        state.conversation_loaded = next(reversed(state.message_history), None)
 
         # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability
         # capability supplies a replay-safe clock and start time, so a replayed or recovered run keeps
