@@ -4,8 +4,9 @@ Each case's `calls` run with every capability it builds lowered to `with_authori
 (the native route) and once through each other route in `ROUTES`. What a call returns travels in a carrier of the
 route's own, such as the `run_code` result or a background result, so the check compares everything else the calls
 put in the history, including the content a carrier keeps with what a call returned (`ToolReturnPart.attachments`),
-as the parts it reaches the model as: each part's type, source, capability id, authority and frame must be the native
-route's. The same tools must run, too, so a call a route never makes can't pass.
+as the parts it reaches the model as: each part's type, source, capability id, authority, frame and scope must be the
+native route's, and for `PROBES`, whose calls put fixed content there, its content too. The same tools must run, so a
+call a route never makes can't pass.
 
 A route that breaks this for a case is a known finding, marked `xfail(strict=True)` in `KNOWN` with what fixes it, so
 the fix fails the suite until its entry is removed. A route that doesn't apply to a case is skipped with its reason.
