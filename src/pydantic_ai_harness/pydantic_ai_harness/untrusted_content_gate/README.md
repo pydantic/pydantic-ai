@@ -48,8 +48,9 @@ A `send_email` call made before `read_email` runs. After it, the call ends the r
 
 ## What taints a run
 
-- A tool result, unless the tool is selected by `trusted_tools`. A tool the run can no longer resolve counts as untrusted. Results the framework wrote rather than the tool (`outcome` `'denied'`, `'interrupted'` or `'retried'`) do not taint.
+- A tool result, unless the tool is selected by `trusted_tools`. A tool the run can no longer resolve counts as untrusted. Results the framework wrote rather than the tool (`outcome` `'denied'` or `'interrupted'`) do not taint. A retry taints when the tool raised `ModelRetry`, since its message can carry outside text, such as an MCP server's error, and does not when the model's own arguments failed validation.
 - A provider-native tool result, such as a web search the provider ran.
+- The instructions of a capability lowered to `'none'` authority, such as an MCP server's after `with_authority('none')`. They are in the run's first request, so its gated calls ask from the start.
 - A [capability part](https://pydantic.dev/docs/ai/capabilities/overview/) whose source has `'none'` [authority](https://pydantic.dev/docs/ai/core-concepts/message-history/), such as a background tool's late result or another model's text. One whose source is a tool in `trusted_tools` does not taint.
 
 A tool in `trusted_tools` is trusted with everything it returns, including text it relays from someone else. A wiki or shared drive that anyone can edit, or a server that passes on what it fetched, returns that text without tainting the run. "Trusted" means its results don't make calls ask; it does not mean their content is safe. List only tools whose results come from the person or your own application.
@@ -60,7 +61,7 @@ A call is judged on the history before the model response that made it. A call m
 
 ## Which calls are held
 
-`gated_tools` is a [`ToolSelector`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/). The default, `None`, holds every tool not marked read-only, where read-only means the tool's metadata carries `{'annotations': {'readOnlyHint': True}}`, the annotation MCP servers publish. Mark your own read-only tools the same way. A tool that only reads can still send data out through its arguments, such as a URL fetch, so leave such a tool unmarked.
+`gated_tools` is a [`ToolSelector`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/). The default, `None`, holds every tool not marked read-only, where read-only means the tool's metadata carries `{'annotations': {'readOnlyHint': True}}`, the annotation MCP servers publish. Mark your own read-only tools the same way. A tool that only reads can still send data out through its arguments, such as a URL fetch, so leave such a tool unmarked. An MCP server sets its own tools' annotations, so the server whose results taint the run also decides which of its tools the default holds: select an MCP server's tools that take URLs or free text in `gated_tools` yourself.
 
 Harness capabilities' own tools are not marked read-only, so the default holds them too, including tools that change only the run's own state, such as [Planning](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/planning/)'s. Some of them reach past the run, such as a memory write a later run reads, or a sub-agent that can act. Pass a `gated_tools` selector to hold only the tools you choose.
 
@@ -79,13 +80,15 @@ for call in requests.approvals:
 
 Show it to the person next to the call. An approval UI that shows only its own capability's metadata does not show it. `Permissions`' approver (`approval_ask` or `ask_permissions`) gets it at the end of `PermissionRequest.reason`.
 
-An approval request raised by a tool's own argument validator (`args_validator`) is the exception. For a `requires_approval=True` tool the gate's request replaces it, and its metadata is not kept. For any other tool it does not carry the gate's reason, and approving it runs the call.
+A `requires_approval=True` tool, or one with an argument validator (`args_validator`), can ask during validation, before any capability's execute hook runs. In a tainted run the gate asks there instead: its request replaces the tool's own, whose metadata is not kept, and one approval covers both.
 
 ## Code Mode
 
-Inside a [Code Mode](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/code_mode/) script, each nested call is gated on its own, and `run_code` itself is not. A nested call is judged on the whole history and on every untrusted tool that ran earlier in this run, including earlier calls in the same script. That record is kept in process: a durable run that resumes in the middle of a script rebuilds taint from history only. Approvals inside a script need a [Handle Deferred Tool Calls](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/) handler.
+Inside a [Code Mode](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/code_mode/) script, each nested call is gated on its own, and `run_code` itself is not, unless `gated_tools` selects it. A nested call is judged on the whole history and on every untrusted tool that ran earlier in this run, including earlier calls in the same script. That record is kept in process: a durable run that resumes in the middle of a script rebuilds taint from history only. Approvals inside a script need a [Handle Deferred Tool Calls](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/) handler.
 
-A call made through [Tool Bridge](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/tool_bridge/)'s `tool_call` is held under the bridged tool's own name and judged like a direct call, and `tool_call` itself is not held, so an approval covers the tool the person saw. That approval needs a [Handle Deferred Tool Calls](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/) handler: without one, Tool Bridge ends the run with a `UserError`. Tool Bridge's `tool_search` and `tool_describe` are not marked read-only, so a tainted run holds them too.
+A script's own file and OS access through Code Mode's `mount` or `os_access` does not go through tool calls, so the gate does not see it. For an agent that reads untrusted content, keep mounts read-only, or select `run_code` in `gated_tools` to hold every script in a tainted run.
+
+A call made through [Tool Bridge](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/tool_bridge/)'s `tool_call` is held under the bridged tool's own name and judged like a direct call, and `tool_call` itself is not held, so an approval covers the tool the person saw. That approval needs a [Handle Deferred Tool Calls](https://pydantic.dev/docs/ai/capabilities/handle-deferred-tool-calls/) handler: without one, Tool Bridge ends the run with a `UserError`. Tool Bridge's `tool_search` and `tool_describe` are not marked read-only, so a tainted run holds them too. A bridged tool's result is recorded as `tool_call`'s, so `trusted_tools` does not reach it, and it taints the run: keep a tool you trust native with `ToolBridge(tools=...)`.
 
 ## Letting a model answer
 

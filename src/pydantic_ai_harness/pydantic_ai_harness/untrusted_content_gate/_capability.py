@@ -12,8 +12,11 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, Wra
 from pydantic_ai.exceptions import ApprovalRequired, SkipToolExecution
 from pydantic_ai.messages import (
     CapabilityPart,
+    InstructionDeltaPart,
     ModelMessage,
+    ModelRequestPart,
     ModelResponse,
+    ModelResponsePart,
     NativeToolReturnPart,
     ToolCallPart,
     ToolResultSource,
@@ -33,14 +36,15 @@ UntrustedContentAction = Literal['ask', 'block']
 _KEY = 'untrusted_content_gate'
 
 # `CodeMode`'s `run_code` and `ToolBridge`'s `tool_call` tool kinds, by id: importing them would make the gate need
-# their extras. The calls they make are gated one by one, under the tools' own names, so these tools are not: an
-# approval of `tool_call` would cover whichever tool the model named.
+# their extras. The calls they make are gated one by one, under the tools' own names. `tool_call` is never gated
+# itself, since an approval of it would cover whichever tool the model named; `run_code` is gated only when
+# `gated_tools` selects it, since a script can also write through Code Mode's `mount` or `os_access`.
 _RUN_CODE_KIND_ID = 'code_mode.run_code'
 _TOOL_CALL_KIND_ID = 'tool_bridge.tool_call'
-_UNGATED_KIND_IDS = frozenset({_RUN_CODE_KIND_ID, _TOOL_CALL_KIND_ID})
 
-# Tool results the framework wrote itself, rather than the tool, carry nothing from outside the run.
-_FRAMEWORK_OUTCOMES = frozenset({'denied', 'interrupted', 'retried'})
+# Tool results the framework wrote itself, rather than the tool, carry nothing from outside the run. A retry
+# carries the tool's own text when the tool raised `ModelRetry`, such as an MCP server's error message.
+_FRAMEWORK_OUTCOMES = frozenset({'denied', 'interrupted'})
 
 
 class _Source(BaseModel):
@@ -64,7 +68,7 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
     A run is tainted once its history holds a result written outside the run: a tool result (unless the tool
     is in `trusted_tools`), a provider-native tool result such as a web search, or a
     [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose source has `'none'`
-    [authority][pydantic_ai.messages.Authority]. From then on, a call to a gated tool asks a person first
+    [authority][pydantic_ai.messages.Authority], or the instructions of a capability lowered to `'none'`. From then on, a call to a gated tool asks a person first
     (`on_tainted='ask'`) or does not run (`'block'`). Calls to gated tools made before anything untrusted was
     read run normally.
 
@@ -159,8 +163,12 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
         tool_def: ToolDefinition,
         args: dict[str, Any],
     ) -> dict[str, Any]:
-        """Put the gate's reason on a `requires_approval=True` call, which asks before any execute hook runs."""
-        if tool_def.kind != 'unapproved' or ctx.tool_call_approved or self.on_tainted == 'block':
+        """Ask during validation about a call that may ask there before any execute hook runs.
+
+        That is a `requires_approval=True` tool, or one with an `args_validator`, which can raise `ApprovalRequired`
+        itself. The gate's request then replaces the tool's own, so an approval of it covers the gate too.
+        """
+        if ctx.tool_call_approved or self.on_tainted == 'block' or not _asks_at_validation(ctx, tool_def):
             return args
         asked = await self._decide(ctx, call=call, tool_def=tool_def)
         if asked is not None:
@@ -228,10 +236,10 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
         return _Asked(reason=reason, tainted_by=sources)
 
     async def _gates(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> bool:
-        if tool_def.tool_kind in _UNGATED_KIND_IDS:
+        if tool_def.tool_kind == _TOOL_CALL_KIND_ID:
             return False
         if self.gated_tools is None:
-            return not is_read_only(tool_def)
+            return tool_def.tool_kind != _RUN_CODE_KIND_ID and not is_read_only(tool_def)
         return await matches_tool_selector(self.gated_tools, ctx, tool_def)
 
     async def _untrusted_sources(self, ctx: RunContext[AgentDepsT], call: ToolCallPart) -> list[_Source]:
@@ -245,17 +253,32 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
     async def _scan(self, ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage]) -> AsyncIterator[_Source]:
         for message in messages:
             for part in message.parts:
-                if isinstance(part, NativeToolReturnPart):
-                    yield _Source(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
-                elif isinstance(part, ToolReturnPart):
-                    if part.outcome not in _FRAMEWORK_OUTCOMES and not await self._trusts(ctx, part.tool_name):
-                        yield _Source(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
-                elif isinstance(part, CapabilityPart) and part.source.authority == 'none':
-                    source = part.source
-                    if not isinstance(source, ToolResultSource):
-                        yield _Source(tool_name=None, tool_call_id=None)
-                    elif not await self._trusts(ctx, source.tool_name):
-                        yield _Source(tool_name=source.tool_name, tool_call_id=source.tool_call_id)
+                source = await self._source_of(ctx, part)
+                if source is not None:
+                    yield source
+
+    async def _source_of(
+        self, ctx: RunContext[AgentDepsT], part: ModelRequestPart | ModelResponsePart
+    ) -> _Source | None:
+        """Where `part`'s content came from, when it came from outside the run; `None` when it did not."""
+        if isinstance(part, NativeToolReturnPart):
+            return _Source(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
+        if isinstance(part, ToolReturnPart):
+            return await self._tool_source(ctx, part.tool_name, part.tool_call_id) if _tool_wrote(part) else None
+        if isinstance(part, InstructionDeltaPart):
+            # The instructions of a capability lowered to `'none'`, such as an MCP server's.
+            return _Source(tool_name=None, tool_call_id=None) if _untrusted_instructions(part) else None
+        if not isinstance(part, CapabilityPart) or part.source.authority != 'none':
+            return None
+        source = part.source
+        if not isinstance(source, ToolResultSource):
+            return _Source(tool_name=None, tool_call_id=None)
+        return await self._tool_source(ctx, source.tool_name, source.tool_call_id)
+
+    async def _tool_source(
+        self, ctx: RunContext[AgentDepsT], tool_name: str, tool_call_id: str | None
+    ) -> _Source | None:
+        return None if await self._trusts(ctx, tool_name) else _Source(tool_name=tool_name, tool_call_id=tool_call_id)
 
     async def _trusts(self, ctx: RunContext[AgentDepsT], tool_name: str) -> bool:
         """Whether `trusted_tools` selects the tool; a tool the run can no longer resolve is untrusted."""
@@ -271,6 +294,26 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
             'untrusted_content_gate.source_tool_names': names,
         }
         ctx.tracer.start_span('untrusted content gate', attributes=attributes).end()
+
+
+def _asks_at_validation(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
+    """Whether the call may ask for approval during validation: `requires_approval=True`, or an `args_validator`."""
+    if tool_def.kind == 'unapproved':
+        return True
+    tools = ctx.tool_manager.tools if ctx.tool_manager is not None else None
+    tool = tools.get(tool_def.name) if tools is not None else None
+    return tool is not None and tool.args_validator_func is not None
+
+
+def _tool_wrote(part: ToolReturnPart) -> bool:
+    """Whether the tool, rather than the framework, wrote the result's content."""
+    if part.outcome == 'retried':
+        return part.retry is not None and part.retry.cause == 'model_retry'
+    return part.outcome not in _FRAMEWORK_OUTCOMES
+
+
+def _untrusted_instructions(part: InstructionDeltaPart) -> bool:
+    return part.authority == 'none' and part.content is not None
 
 
 def _making_response(messages: Sequence[ModelMessage], tool_call_id: str) -> int | None:

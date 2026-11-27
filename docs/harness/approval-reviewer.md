@@ -285,7 +285,7 @@ from pydantic_ai_harness import ApprovalReviewer, UntrustedContentGate
 capabilities = [
     UntrustedContentGate(),
     ApprovalReviewer(
-        'anthropic:claude-haiku-5-5',
+        '{{ anthropic:small }}',
         question='Could this call send data outside the company, move money, or delete something the person still needs?',
         review_untrusted_content=True,
     ),

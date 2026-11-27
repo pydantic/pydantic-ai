@@ -456,8 +456,12 @@ Gotchas:
   at the end of `PermissionRequest.reason`.
 - `trusted_tools` trusts everything a tool returns, including text it relays (an editable wiki, a
   fetched page). List only tools whose results come from the person or the application.
-- `CodeMode`'s `run_code` is not gated; each nested call is, judged on history plus the untrusted
-  tools that ran earlier in the run (in-process record).
+- `CodeMode`'s `run_code` is not gated unless `gated_tools` selects it; each nested call is, judged on
+  history plus the untrusted tools that ran earlier in the run (in-process record). Writes through
+  `mount` or `os_access` are not tool calls, so the gate doesn't see them: keep mounts read-only.
+- Tool-raised retries (`ModelRetry`, such as an MCP error) taint; argument validation retries don't.
+  Instructions of a capability lowered to `'none'` taint from the first request.
+- MCP servers set their own `readOnlyHint`: select their URL or free-text tools in `gated_tools`.
 - `ApprovalReviewer` leaves its asks to the person unless `review_untrusted_content=True`.
 
 ## Permissions

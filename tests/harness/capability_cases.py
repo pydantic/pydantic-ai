@@ -780,6 +780,9 @@ CASES: dict[str, CapabilityCase] = {
     'Permissions': CapabilityCase(
         Anonymous('each mode holds the calls it asks about, so stacked ones ask when any of them would')
     ),
+    'UntrustedContentGate': CapabilityCase(
+        Anonymous('each holds the calls it gates, so stacked gates hold a call when any of them would')
+    ),
     'ManagedPrompt': CapabilityCase(
         Anonymous(
             'one per prompt name; the name derives its `id`, so two of one prompt are rejected when the agent is built'
