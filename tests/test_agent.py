@@ -2996,7 +2996,10 @@ def test_output_type_union_text_fallback_invalid_kind_exhausts_retries():
 
 
 def test_output_type_structured_dict_validates_against_schema():
-    """Output that doesn't match the `StructuredDict` schema is sent back to the model, which can then fix it."""
+    """Output that doesn't match the `StructuredDict` schema is sent back to the model, which can then fix it.
+
+    No provider can be made to send output that breaks the schema on demand, so this is a unit test, not a VCR test.
+    """
     Verdict = StructuredDict(
         {
             'type': 'object',
@@ -3034,7 +3037,10 @@ def test_output_type_structured_dict_validates_against_schema():
 
 
 def test_output_type_structured_dict_does_not_convert_values():
-    """`StructuredDict` returns the JSON the model sent, so a string where the schema wants an integer is an error."""
+    """`StructuredDict` returns the JSON the model sent, so a string where the schema wants an integer is an error.
+
+    No provider can be made to send output that breaks the schema on demand, so this is a unit test, not a VCR test.
+    """
     Count = StructuredDict(
         {'type': 'object', 'properties': {'count': {'type': 'integer'}}, 'required': ['count']}, validate=True
     )
@@ -3045,7 +3051,10 @@ def test_output_type_structured_dict_does_not_convert_values():
 
 
 def test_output_type_structured_dict_is_not_validated_by_default():
-    """Without `validate=True`, `StructuredDict` accepts any object, as it always has."""
+    """Without `validate=True`, `StructuredDict` accepts any object, as it always has.
+
+    No provider can be made to send output that breaks the schema on demand, so this is a unit test, not a VCR test.
+    """
     Count = StructuredDict({'type': 'object', 'properties': {'count': {'type': 'integer'}}, 'required': ['count']})
     agent = Agent(TestModel(custom_output_args={'total': 'many'}), output_type=Count)
 
@@ -3053,10 +3062,79 @@ def test_output_type_structured_dict_is_not_validated_by_default():
 
 
 def test_structured_dict_validate_requires_jsonschema(monkeypatch: pytest.MonkeyPatch):
+    """`validate=True` without the `jsonschema` extra names the extra to install.
+
+    It simulates a missing optional dependency, which a recorded request can't, so this is a unit test.
+    """
     monkeypatch.setitem(sys.modules, 'jsonschema.validators', None)
 
     with pytest.raises(UserError, match=r'requires the `jsonschema` package'):
         StructuredDict({'type': 'object'}, validate=True)
+
+
+def test_output_type_structured_dict_validates_ref_siblings():
+    """A `$ref`'s sibling keywords still apply when validating, though the schema sent to the model inlines `$defs`.
+
+    No provider can be made to send output that breaks the schema on demand, so this is a unit test, not a VCR test.
+    """
+    Payment = StructuredDict(
+        {
+            'type': 'object',
+            '$defs': {'Limit': {'type': 'integer', 'maximum': 100}},
+            'properties': {'amount': {'$ref': '#/$defs/Limit', 'maximum': 10}},
+            'required': ['amount'],
+        },
+        validate=True,
+    )
+    agent = Agent(TestModel(custom_output_args={'amount': 50}), output_type=Payment, retries=0)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        agent.run_sync('Pay')
+
+
+def test_output_type_structured_dict_refuses_non_finite_numbers():
+    """NaN passes `minimum` and `maximum` checks, so `validate=True` refuses non-finite numbers itself.
+
+    No provider can be made to send output that breaks the schema on demand, so this is a unit test, not a VCR test.
+    """
+    Score = StructuredDict(
+        {'type': 'object', 'properties': {'score': {'type': 'number', 'minimum': 0, 'maximum': 1}}}, validate=True
+    )
+    retry_messages: list[str] = []
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            args: dict[str, Any] = {'score': float('nan')}
+        else:
+            retry = messages[-1].parts[-1]
+            assert isinstance(retry, ToolReturnPart)
+            retry_messages.append(retry.model_response_str())
+            args = {'score': 0.5}
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+    result = Agent(FunctionModel(call_tool), output_type=Score).run_sync('Score')
+
+    assert result.output == snapshot({'score': 0.5})
+    assert retry_messages == snapshot(
+        [
+            '{"error":[{"type":"json_schema_mismatch","loc":[],"msg":"Output does not match the JSON schema: at `score`: nan is not a finite number","input":{"score":null}}]}'
+        ]
+    )
+
+
+def test_structured_dict_validate_does_not_fetch_remote_refs():
+    """A reference to a remote schema is never fetched; validating against one is a configuration error.
+
+    It checks that no request is made, which a recorded request can't show, so this is a unit test.
+    """
+    Remote = StructuredDict(
+        {'type': 'object', 'properties': {'item': {'$ref': 'http://127.0.0.1:9/private.json'}}}, validate=True
+    )
+    agent = Agent(TestModel(custom_output_args={'item': {}}), output_type=Remote)
+
+    with pytest.raises(UserError, match='can only resolve references inside the schema'):
+        agent.run_sync('Fetch')
 
 
 def test_output_type_structured_dict_nested():

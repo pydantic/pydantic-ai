@@ -1,7 +1,9 @@
 from __future__ import annotations
 
+import copy
 import inspect
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+import math
+from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, cast, overload
 
@@ -439,6 +441,9 @@ def StructuredDict(
     ```
     """
     json_schema = _utils.check_object_json_schema(json_schema)
+    # Validation uses the schema as given: inlining `$defs` below overwrites a `$ref`'s sibling keywords, which
+    # Draft 2020-12 applies alongside the referenced schema.
+    validate_json_schema = _json_schema_validator(copy.deepcopy(json_schema)) if validate else None
 
     # Pydantic `TypeAdapter` fails when `object.__get_pydantic_json_schema__` has `$defs`, so we inline them
     # See https://github.com/pydantic/pydantic/issues/12145
@@ -454,8 +459,6 @@ def StructuredDict(
 
     if description:
         json_schema['description'] = description
-
-    validate_json_schema = _json_schema_validator(json_schema) if validate else None
 
     class _StructuredDict(JsonSchemaValue):
         __is_model_like__ = True
@@ -485,29 +488,54 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
     """Build a function that checks a value against `json_schema` and raises a validation error listing what's wrong."""
     try:
         from jsonschema.validators import validator_for
+        from referencing import Registry
+        from referencing.exceptions import Unresolvable
     except ImportError as e:
         raise exceptions.UserError(
             '`StructuredDict(validate=True)` requires the `jsonschema` package. '
             'Install it with `pip install "pydantic-ai-slim[jsonschema]"`.'
         ) from e
 
-    validator = validator_for(json_schema)(json_schema)
+    # An empty registry resolves references inside the schema and never fetches a remote one.
+    validator = validator_for(json_schema)(json_schema, registry=Registry())
 
     def validate(value: dict[str, Any]) -> dict[str, Any]:
-        errors = sorted(validator.iter_errors(value), key=lambda error: [str(part) for part in error.absolute_path])
-        if errors:
-            problems = '; '.join(
-                f'at `{".".join(str(part) for part in error.absolute_path)}`: {error.message}'
-                if error.absolute_path
-                else error.message
-                for error in errors
-            )
+        # JSON has no NaN or infinity, and they pass `minimum`/`maximum` checks, so they're refused first.
+        problems = [f'at `{path}`: {number!r} is not a finite number' for path, number in _non_finite_numbers(value)]
+        try:
+            errors = sorted(validator.iter_errors(value), key=lambda error: [str(part) for part in error.absolute_path])
+        except Unresolvable as e:
+            raise exceptions.UserError(
+                f'`StructuredDict(validate=True)` can only resolve references inside the schema, not {e.ref!r}.'
+            ) from e
+        problems.extend(
+            f'at `{".".join(str(part) for part in error.absolute_path)}`: {error.message}'
+            if error.absolute_path
+            else error.message
+            for error in errors
+        )
+        if problems:
             raise PydanticCustomError(
-                'json_schema_mismatch', 'Output does not match the JSON schema: {problems}', {'problems': problems}
+                'json_schema_mismatch',
+                'Output does not match the JSON schema: {problems}',
+                {'problems': '; '.join(problems)},
             )
         return value
 
     return validate
+
+
+def _non_finite_numbers(value: Any, path: str = '') -> list[tuple[str, float]]:
+    """The NaN and infinite floats anywhere in `value`, with their dotted paths."""
+    if isinstance(value, float):
+        return [] if math.isfinite(value) else [(path, value)]
+    if isinstance(value, dict):
+        items: Iterable[tuple[Any, Any]] = cast(dict[Any, Any], value).items()
+    elif isinstance(value, list):
+        items = enumerate(cast(list[Any], value))
+    else:
+        return []
+    return [found for key, item in items for found in _non_finite_numbers(item, f'{path}.{key}' if path else str(key))]
 
 
 @dataclass(init=False)
