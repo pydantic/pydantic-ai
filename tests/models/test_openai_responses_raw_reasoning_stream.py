@@ -7,12 +7,13 @@ next entry or before the first. `test_openai_responses_stream_parity.py` replays
 
 from __future__ import annotations as _annotations
 
-from collections.abc import Callable, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, replace
 from typing import Any
 
 import pytest
 
+from pydantic_ai._parts_manager import ModelResponsePartsManager
 from pydantic_ai.messages import (
     FinalResultEvent,
     ModelRequest,
@@ -22,9 +23,11 @@ from pydantic_ai.messages import (
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    ProviderDetailsDelta,
     TextPart,
     ThinkingPart,
     ThinkingPartDelta,
+    ToolCallPart,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestParameters
@@ -44,10 +47,28 @@ with try_import() as imports_successful:
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='openai not installed')
 
 
+def _text_delta(item_id: str, text: str) -> responses.ResponseTextDeltaEvent:
+    return responses.ResponseTextDeltaEvent(
+        content_index=0,
+        delta=text,
+        item_id=item_id,
+        output_index=1,
+        logprobs=[],
+        type='response.output_text.delta',
+        sequence_number=0,
+    )
+
+
 def _raw_reasoning_stream(
-    deltas: Sequence[tuple[int, str]], *, encrypted_content: str | None = None, text: str | None = None
+    deltas: Sequence[tuple[int, str] | responses.ResponseStreamEvent],
+    *,
+    encrypted_content: str | None = None,
+    text: str | None = None,
 ) -> list[responses.ResponseStreamEvent]:
-    """A reasoning item `rs_1` that streams `(content_index, delta)` pairs, then an optional message with `text`."""
+    """A reasoning item `rs_1`, then an optional message with `text`.
+
+    Each `(content_index, delta)` pair in `deltas` is a raw reasoning delta of `rs_1`; each event is sent as it is.
+    """
     reasoning = responses.ResponseReasoningItem(id='rs_1', summary=[], type='reasoning')
     events: list[responses.ResponseStreamEvent] = [
         responses.ResponseOutputItemAddedEvent(
@@ -55,14 +76,16 @@ def _raw_reasoning_stream(
         ),
         *(
             responses.ResponseReasoningTextDeltaEvent(
-                content_index=content_index,
-                delta=delta,
+                content_index=delta[0],
+                delta=delta[1],
                 item_id='rs_1',
                 output_index=0,
                 type='response.reasoning_text.delta',
                 sequence_number=0,
             )
-            for content_index, delta in deltas
+            if isinstance(delta, tuple)
+            else delta
+            for delta in deltas
         ),
         responses.ResponseOutputItemDoneEvent(
             item=reasoning.model_copy(update={'encrypted_content': encrypted_content}),
@@ -72,17 +95,7 @@ def _raw_reasoning_stream(
         ),
     ]
     if text is not None:
-        events.append(
-            responses.ResponseTextDeltaEvent(
-                content_index=0,
-                delta=text,
-                item_id='msg_1',
-                output_index=1,
-                logprobs=[],
-                type='response.output_text.delta',
-                sequence_number=0,
-            )
-        )
+        events.append(_text_delta('msg_1', text))
     response = response_message([])
     return [
         responses.ResponseCreatedEvent(response=response, type='response.created', sequence_number=0),
@@ -100,11 +113,11 @@ class _Recorded:
     events: list[ModelResponseStreamEvent]
     """The events as yielded, each delta's `provider_details` updater replaced by what it gives the consumer's part."""
     raw_content: list[object]
-    """`raw_content` of the thinking part in `get()` after each event."""
+    """`raw_content` of the thinking part in `get()` after each event, when it's read while streaming."""
     response: ModelResponse
 
 
-async def _record(stream: list[responses.ResponseStreamEvent]) -> _Recorded:
+async def _record(stream: list[responses.ResponseStreamEvent], *, read_while_streaming: bool = True) -> _Recorded:
     model = OpenAIResponsesModel(
         'gpt-oss-120b', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock_stream(stream))
     )
@@ -123,16 +136,17 @@ async def _record(stream: list[responses.ResponseStreamEvent]) -> _Recorded:
                 if isinstance(event.delta, ThinkingPartDelta) and callable(event.delta.provider_details):
                     event = replace(event, delta=replace(event.delta, provider_details=consumer_part.provider_details))
             events.append(event)
-            raw_content.append(
-                next(
-                    (
-                        (p.provider_details or {}).get('raw_content')
-                        for p in streamed.get().parts
-                        if isinstance(p, ThinkingPart)
-                    ),
-                    None,
+            if read_while_streaming:
+                raw_content.append(
+                    next(
+                        (
+                            (p.provider_details or {}).get('raw_content')
+                            for p in streamed.get().parts
+                            if isinstance(p, ThinkingPart)
+                        ),
+                        None,
+                    )
                 )
-            )
     response = streamed.get()
     assert list(consumer_parts.values()) == response.parts
     return _Recorded(events, raw_content, response)
@@ -234,16 +248,40 @@ async def test_negative_content_index(allow_model_requests: None):
     )
 
 
+async def test_item_reusing_the_reasoning_item_id(allow_model_requests: None):
+    """A function call that reuses the reasoning item's id gets a part of its own, and the reasoning part keeps its text.
+
+    Nothing reads the parts until the stream ends, so the reasoning part's raw text is still waiting to be written
+    when the call takes over the id.
+    """
+    call = responses.ResponseFunctionToolCall(
+        id='rs_1', call_id='call_1', name='lookup', arguments='{}', type='function_call'
+    )
+    added = responses.ResponseOutputItemAddedEvent(
+        item=call, output_index=1, type='response.output_item.added', sequence_number=0
+    )
+    recorded = await _record(_raw_reasoning_stream([(0, 'a'), (0, 'b'), added]), read_while_streaming=False)
+    assert recorded.response.parts == snapshot(
+        [
+            ThinkingPart(content='', id='rs_1', provider_name='openai', provider_details={'raw_content': ['ab']}),
+            ToolCallPart(tool_name='lookup', args='{}', tool_call_id='call_1', id='rs_1', provider_name='openai'),
+        ]
+    )
+
+
+@pytest.mark.parametrize('between_parts', [False, True], ids=['deltas', 'deltas-between-new-parts'])
 @pytest.mark.parametrize('deltas', [10, 100])
 async def test_raw_content_is_not_rebuilt_per_delta(
-    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, deltas: int
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, deltas: int, between_parts: bool
 ):
-    """The stream applies only the first delta's updater and joins the rest when the part is read, so it takes linear time.
+    """The stream applies only the first delta's updater and writes the rest into the part once, so it takes linear time.
 
-    Each delta event still carries an updater, which a consumer that rebuilds the parts applies itself. The count stays
-    1 at both sizes, where rebuilding `raw_content` for each delta would make it the number of deltas.
+    Each delta event still carries an updater, which a consumer that rebuilds the parts applies itself. Both counts
+    stay put at both sizes, also when another part starts after each delta, where rebuilding `raw_content` for each
+    delta or each new part would make them grow with the number of deltas.
     """
     calls = 0
+    written = 0
     make_updater = responses_streaming.make_raw_content_updater
 
     def counting_updater(delta: str, index: int) -> Callable[[dict[str, Any] | None], dict[str, Any]]:
@@ -256,8 +294,24 @@ async def test_raw_content_is_not_rebuilt_per_delta(
 
         return counted
 
+    handle_thinking_delta = ModelResponsePartsManager.handle_thinking_delta
+
+    def counting_handle_thinking_delta(
+        self: ModelResponsePartsManager, *, provider_details: ProviderDetailsDelta = None, **kwargs: Any
+    ) -> Iterator[ModelResponseStreamEvent]:
+        nonlocal written
+        if provider_details is not None and not callable(provider_details):
+            raw_content: list[str] = provider_details['raw_content']
+            written += sum(len(entry) for entry in raw_content)
+        return handle_thinking_delta(self, provider_details=provider_details, **kwargs)
+
     monkeypatch.setattr(responses_streaming, 'make_raw_content_updater', counting_updater)
-    stream = _raw_reasoning_stream([(0, 'x')] * deltas)
+    monkeypatch.setattr(ModelResponsePartsManager, 'handle_thinking_delta', counting_handle_thinking_delta)
+    stream = _raw_reasoning_stream(
+        [delta for i in range(deltas) for delta in ((0, 'x'), _text_delta(f'msg_{i}', 'y'))]
+        if between_parts
+        else [(0, 'x')] * deltas
+    )
     model = OpenAIResponsesModel(
         'gpt-oss-120b', provider=OpenAIProvider(openai_client=MockOpenAIResponses.create_mock_stream(stream))
     )
@@ -266,7 +320,7 @@ async def test_raw_content_is_not_rebuilt_per_delta(
     ) as streamed:
         async for _ in streamed:
             pass
-    assert streamed.get().parts == [
-        ThinkingPart(content='', id='rs_1', provider_name='openai', provider_details={'raw_content': ['x' * deltas]})
-    ]
-    assert calls == 1
+    assert streamed.get().parts[0] == ThinkingPart(
+        content='', id='rs_1', provider_name='openai', provider_details={'raw_content': ['x' * deltas]}
+    )
+    assert (calls, written) == (1, deltas)

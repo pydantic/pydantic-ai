@@ -117,6 +117,10 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _raw_content_entries: dict[tuple[str, int], int] = field(default_factory=dict[tuple[str, int], int], init=False)
     _unwritten_raw_content: set[str] = field(default_factory=set[str], init=False)
     """The reasoning items whose thinking part doesn't show all of their raw CoT deltas yet."""
+    _raw_content_items: dict[int, str] = field(default_factory=dict[int, str], init=False)
+    """The reasoning item whose raw CoT each thinking part shows, by part index."""
+    _last_started_part: int = field(default=-1, init=False)
+    """The index of the part the latest `PartStartEvent` started."""
     _finalized_function_calls: set[str] = field(default_factory=set[str], init=False)
     _status: ResponseStatus | None = field(default=None, init=False)
     """The response's latest status, which decides whether its computer calls may run."""
@@ -126,7 +130,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _is_websocket: bool = False
 
     def get(self) -> ModelResponse:
-        self._write_raw_content()
+        self._write_raw_content(*self._unwritten_raw_content)
         response = super().get()
         if self._status not in (None, 'completed'):
             # OpenAI says not to run the actions of a response that didn't complete. A stream learns its status only
@@ -200,11 +204,9 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name):
                 for event in self._map_event(chunk):
                     if isinstance(event, PartStartEvent):
-                        # `StreamedResponse.__aiter__` reads the part before it from the parts manager, for its
-                        # `PartEndEvent`, as it does the last part once the stream ends.
-                        self._write_raw_content()
+                        self._start_part(event)
                     yield event
-            self._write_raw_content()
+            self._write_raw_content(*self._unwritten_raw_content)
 
             if refusal := ''.join(self._refusal_deltas):
                 self.provider_details = {**(self.provider_details or {}), 'refusal': refusal}
@@ -218,6 +220,14 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
 
     def _map_event(self, chunk: responses.ResponseStreamEvent) -> Iterator[ModelResponseStreamEvent]:  # noqa: C901
         self._last_sequence_number = chunk.sequence_number
+        if (
+            isinstance(chunk, responses.ResponseOutputItemAddedEvent | responses.ResponseOutputItemDoneEvent)
+            and not isinstance(chunk.item, responses.ResponseReasoningItem)
+            and (item_id := chunk.item.id) in self._unwritten_raw_content
+        ):
+            # An item that reuses a reasoning item's id can take over that id's part in the parts manager, so the
+            # reasoning part gets its raw CoT first.
+            self._write_raw_content(item_id)
         if isinstance(
             chunk,
             (
@@ -732,12 +742,15 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         updater = make_raw_content_updater(chunk.delta, entry)
         if first_delta:
             # The part has no `raw_content` yet, so applying the updater to it costs nothing.
-            yield from self._parts_manager.handle_thinking_delta(
+            for event in self._parts_manager.handle_thinking_delta(
                 vendor_part_id=chunk.item_id,
                 id=chunk.item_id,
                 provider_name=self.provider_name,
                 provider_details=updater,
-            )
+            ):
+                assert isinstance(event, PartStartEvent | PartDeltaEvent)
+                self._raw_content_items[event.index] = chunk.item_id
+                yield event
             return
         self._unwritten_raw_content.add(chunk.item_id)
         for event in self._parts_manager.handle_thinking_delta(
@@ -748,9 +761,20 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # `_write_raw_content`.
             yield replace(event, delta=replace(event.delta, provider_details=updater))
 
-    def _write_raw_content(self) -> None:
-        """Give each thinking part the raw CoT deltas it doesn't show yet, joining each entry's deltas once."""
-        for item_id in self._unwritten_raw_content:
+    def _start_part(self, event: PartStartEvent) -> None:
+        """Record the part `event` starts, after giving the part that started before it all of its raw CoT.
+
+        `StreamedResponse.__aiter__` reads that part from the parts manager for its `PartEndEvent`, as it does the last
+        part once the stream ends.
+        """
+        if (item_id := self._raw_content_items.get(self._last_started_part)) in self._unwritten_raw_content:
+            self._write_raw_content(item_id)
+        self._last_started_part = event.index
+
+    def _write_raw_content(self, *item_ids: str) -> None:
+        """Give each item's thinking part the raw CoT deltas it doesn't show yet, joining each entry's deltas once."""
+        for item_id in item_ids:
+            self._unwritten_raw_content.remove(item_id)
             entries = self._raw_content_deltas[item_id]
             for deltas in entries:
                 deltas[:] = [''.join(deltas)]
@@ -759,7 +783,6 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 vendor_part_id=item_id, provider_details={'raw_content': [joined[0] for joined in entries]}
             ):
                 pass
-        self._unwritten_raw_content.clear()
 
     def _map_reasoning_summary_delta(
         self, item_id: str, summary_index: int, content: str
