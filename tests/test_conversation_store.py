@@ -656,7 +656,7 @@ async def test_a_streamed_run_ending_on_its_streamed_response_keeps_what_a_capab
 
 
 @pytest.mark.parametrize('output_type', [str, int])
-async def test_a_streamed_run_on_a_loaded_conversation_saves_after_it(output_type: type[Any]) -> None:
+async def test_a_streamed_run_on_a_loaded_conversation_saves_after_it(output_type: type[str] | type[int]) -> None:
     """The settled result of a streamed run keeps what saving the conversation it was given needs, like its revision, and the next run can go on from it once saved."""
     store = InMemoryConversationStore()
     agent = Agent(TestModel(), output_type=output_type)
