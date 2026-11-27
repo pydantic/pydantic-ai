@@ -26,6 +26,8 @@ If you're upgrading across several V2 minor releases at once, these are the chan
 
 Release notes have had a Compatibility Notes section since v2.33.0, so for v2.1.0 through v2.32.2, read each release's notes on GitHub Releases. Later releases not listed below have no compatibility notes.
 
+To find which of these notes affect your code, and what the releases in between add that could replace code you wrote, have your coding agent run the bundled [`advising-pydantic-ai-repos` skill](coding-agent-skills.md#review-your-repository).
+
 ### [v2.75.0](https://github.com/pydantic/pydantic-ai/releases/tag/v2.75.0)
 
 - Keep workspace files below `'operator'` authority out of the instructions in [`RepoContext`][pydantic_ai_harness.repo_context.RepoContext], [`Skills`][pydantic_ai_harness.skills.Skills] and [`Memory`][pydantic_ai_harness.memory.Memory], and add [`lowest_authority_under`][pydantic_ai.workspaces.lowest_authority_under]. Text from a workspace file below `'operator'` authority no longer reaches the instructions: `RepoContext` names the working directory's file for the model to read with its file tools and sends an ancestor's file as framed data, `Skills` offers such skills through `list_skills` and `load_skill` tools instead of `load_capability`, and `Memory` attributes such a snapshot to its `MEMORY.md`. Files at `'operator'`, the default, are unchanged. Durable runs now record extra `realpath` workspace calls at run start, so let in-flight runs finish, or use Temporal worker versioning or a new DBOS app version, before upgrading. `RepoContext(autoload_instructions=False)` with nested instruction files misses the prompt cache once on the first request after upgrading ([#11837](https://github.com/pydantic/pydantic-ai/pull/11837))
