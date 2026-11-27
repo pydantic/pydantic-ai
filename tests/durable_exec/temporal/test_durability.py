@@ -1997,8 +1997,14 @@ async def test_durability_request_timeout_cancels_the_model_activity(client: Cli
     ).replay_workflow(history)
 
 
+async def _stream_then_hang_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'The partial reply'
+    await asyncio.Event().wait()
+    yield 'unreachable'  # pragma: no cover
+
+
 opted_in_run_timeout_agent = Agent(
-    FunctionModel(stream_function=_hanging_stream_fn, model_name='hanging'),
+    FunctionModel(stream_function=_stream_then_hang_fn, model_name='hanging'),
     name='durability_opted_in_run_timeout',
     deps_type=type(None),
     capabilities=[
@@ -2021,15 +2027,19 @@ class OptedInRunTimeoutWorkflow:
     @workflow.run
     async def run(self) -> str:
         try:
-            await opted_in_run_timeout_agent.run('hello', timeout=0.2)
-        except RunTimedOut:
-            return 'RunTimedOut'
+            # Long enough for the activity to stream its text before the deadline.
+            await opted_in_run_timeout_agent.run('hello', timeout=1)
+        except RunTimedOut as exc:
+            last = exc.all_messages()[-1]
+            assert isinstance(last, ModelResponse)
+            return f'RunTimedOut {last.state} {[part.content for part in last.parts if isinstance(part, TextPart)]}'
         raise AssertionError('unreachable')  # pragma: no cover
 
 
 async def test_durability_opted_in_run_timeout_waits_for_the_model_activity(client: Client):
     """A run's `timeout=` waits for its cancelled streamed model activity, as any cancellation does under an opted-in
-    `WAIT_CANCELLATION_COMPLETED`: the activity's cancellation is recorded before the workflow completes."""
+    `WAIT_CANCELLATION_COMPLETED`, and keeps what it streamed: the activity returns it for the cancellation, so it
+    completes, rather than being recorded as cancelled, before the workflow does."""
     async with Worker(
         client,
         task_queue=TASK_QUEUE,
@@ -2044,10 +2054,11 @@ async def test_durability_opted_in_run_timeout_waits_for_the_model_activity(clie
         output = await handle.result()
         history = await handle.fetch_history()
 
-    assert output == 'RunTimedOut'
+    assert output == "RunTimedOut interrupted ['The partial reply']"
     event_types = [event.WhichOneof('attributes') for event in history.events]
-    canceled = event_types.index('activity_task_canceled_event_attributes')
-    assert canceled < event_types.index('workflow_execution_completed_event_attributes')
+    assert 'activity_task_canceled_event_attributes' not in event_types
+    completed = event_types.index('activity_task_completed_event_attributes')
+    assert completed < event_types.index('workflow_execution_completed_event_attributes')
 
 
 _pausing_model_fresh_starts = 0
