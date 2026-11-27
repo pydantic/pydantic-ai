@@ -230,7 +230,7 @@ def _chat_completion(request: httpx2.Request) -> httpx2.Response:
     """A Chat Completions or Responses reply with usage and no Gateway-reported cost, so the cost is estimated locally."""
     body = json.loads(request.content)
     if request.url.path.endswith('/responses'):
-        message = {
+        message: dict[str, Any] = {
             'type': 'message',
             'id': 'msg_1',
             'role': 'assistant',
@@ -257,7 +257,7 @@ def _chat_completion(request: httpx2.Request) -> httpx2.Response:
         }
         if not body.get('stream'):
             return httpx2.Response(200, json=response)
-        created = {**response, 'status': 'in_progress', 'output': [], 'usage': None}
+        created: dict[str, Any] = {**response, 'status': 'in_progress', 'output': [], 'usage': None}
         return _sse(
             [
                 {'type': 'response.created', 'sequence_number': 0, 'response': created},
