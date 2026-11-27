@@ -13,7 +13,7 @@ from pydantic import TypeAdapter
 
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec._capability_operation import capability_operation_result_type
-from pydantic_ai.exceptions import ModelAPIError, UsageLimitExceeded
+from pydantic_ai.exceptions import ModelAPIError, ModelContextWindowExceededError, UsageLimitExceeded
 from pydantic_ai.messages import (
     CompactionPart,
     ModelMessage,
@@ -34,6 +34,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.system_one import SystemOneModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
@@ -43,6 +44,7 @@ from pydantic_ai_harness.compaction import (
     SlidingWindowCompaction,
     SummarizingCompaction,
     compact_now,
+    estimate_token_count,
     pin,
 )
 from pydantic_ai_harness.compaction._summary import SUMMARY_METADATA_KEY
@@ -850,6 +852,42 @@ Say more.
             'text done',
             'user next please',
         ]
+
+    @pytest.mark.skipif(not logfire_installed(), reason='logfire not installed')
+    async def test_a_summarizer_with_a_small_window_summarizes_in_chunks(self, capfire: CaptureLogfire) -> None:
+        """The reduced steps don't fit one request to the summarizer, so they're summarized in window-sized chunks."""
+        window = 2_000
+        request_tokens: list[int] = []
+
+        def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            tokens = estimate_token_count(messages)
+            if tokens > window:
+                raise ModelContextWindowExceededError(model_name='small-summarizer', message='prompt is too long')
+            request_tokens.append(tokens)
+            return ModelResponse(parts=[TextPart(f'summary {len(request_tokens)}')])
+
+        summarizer = SummarizingCompaction(
+            model=FunctionModel(summarize, profile=ModelProfile(context_window=window)),
+            max_messages=1,
+            tool_return_max_chars=None,
+        )
+        compaction = RelevanceCompaction(
+            _Judge().model, summarizer=summarizer, max_tokens=2_500, target_tokens=1_000, keep_tokens=10
+        )
+        history = _history('GIST a ', 'GIST b ', 'GIST c ', 'GIST d ', 'last e ')
+        agent = Agent(
+            FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')])),
+            capabilities=[compaction],
+        )
+        agent.instrument = InstrumentationSettings()
+
+        await agent.run('go', message_history=history[:-1])
+
+        assert len(request_tokens) == snapshot(4)
+        assert all(tokens <= window for tokens in request_tokens)
+        spans = capfire.exporter.exported_spans_as_dict()
+        compact = next(span for span in spans if span['name'] == 'compact_messages')
+        assert compact['attributes']['compaction.summary_calls'] == len(request_tokens)
 
     @pytest.mark.skipif(not logfire_installed(), reason='logfire not installed')
     async def test_records_the_selection(self, capfire: CaptureLogfire) -> None:

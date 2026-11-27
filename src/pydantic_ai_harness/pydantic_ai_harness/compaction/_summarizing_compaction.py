@@ -11,7 +11,7 @@ from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import UTC, datetime
 from string import Formatter
-from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias, TypeGuard, cast
+from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, TypeAlias, TypeGuard, cast
 
 # `EventStreamHandler` holds the forward reference `'AsyncIterable[_messages.AgentStreamEvent]'`, which the
 # `AgentSpec` schema resolves against this module's globals.
@@ -1185,15 +1185,18 @@ async def write_summary(
         messages,
         skip_previous_summary=previous_summary is not None,
     )
+    # The most requests a summary is written in. A history that needs more raises, as a request over the window
+    # would: before any request when the estimate alone needs more, otherwise once the rest can't fit those left.
+    max_requests = 32
     summary = previous_summary
     start = 0
     calls = 0
     while True:
-        if requests.needs_more_requests_than(start, summary, _MAX_SUMMARY_REQUESTS - calls):
+        if requests.needs_more_requests_than(start, summary, max_requests - calls):
             raise ModelContextWindowExceededError(
                 model_name=_model_name(model) or 'summarizer',
                 message=(
-                    f'The history to summarize needs more than {_MAX_SUMMARY_REQUESTS} summary requests to fit '
+                    f'The history to summarize needs more than {max_requests} summary requests to fit '
                     "the summarizer model's context window. Summarize with a model with a larger window."
                 ),
             )
@@ -1222,44 +1225,22 @@ def record_summary_calls(written: WrittenSummary | str) -> None:
         record_span_attributes({'compaction.summary_calls': written.summary_calls})
 
 
-_DEFAULT_SUMMARY_RESERVE_TOKENS = 8_192
-"""The most tokens a summary request leaves for the summary when the summarizer's `max_tokens` setting isn't set.
-
-Without that setting, a quarter of the summarizer's context window is left for it, up to this many tokens.
-"""
-
-
 def _summary_input_budget(
     summarizer: SummarizingCompaction[AgentDepsT], model: Model | AbstractModel | str
 ) -> int | None:
     """The tokens a summary request's prompt can take in the summarizer's context window, or `None` when it isn't known.
 
     The window is the summarizer model's own (its profile's, else the pricing registry's). What's left for the
-    summary is the summarizer's `max_tokens` setting, else `_DEFAULT_SUMMARY_RESERVE_TOKENS` or a quarter of the
-    window, whichever is smaller. The instructions are sent with every request, so they're taken off too.
+    summary is the summarizer's `max_tokens` setting, else 8,192 tokens or a quarter of the window, whichever is
+    smaller. The instructions are sent with every request, so they're taken off too.
     """
+    default_reserve = 8_192
     window = resolve_context_window(model)
     if window is None:
         return None
     settings = merge_model_settings(model.settings if isinstance(model, Model) else None, summarizer.model_settings)
-    reserve = (settings or {}).get('max_tokens') or min(_DEFAULT_SUMMARY_RESERVE_TOKENS, window // 4)
+    reserve = (settings or {}).get('max_tokens') or min(default_reserve, window // 4)
     return window - reserve - estimate_text_tokens(summarizer.instructions, summarizer.tokenizer)
-
-
-_MAX_SUMMARY_REQUESTS = 32
-"""The most requests a summary is written in when the history doesn't fit the summarizer's context window.
-
-A history that needs more raises `ModelContextWindowExceededError`, as a request over the window would, before the
-request that would go over this bound, and before any request when the estimate alone shows it needs more.
-"""
-
-_PROBE_SLACK = 2
-"""How many times the budget a chunk can take by the per-message estimate and still be measured exactly.
-
-The estimate adds up each message's tokens, which is close to the rendered prompt's count but not equal to it, so a
-chunk is measured on its rendered prompt within this margin and taken not to fit beyond it. That bounds the text
-each request renders to about twice the budget, however long the history.
-"""
 
 
 @dataclass
@@ -1272,6 +1253,14 @@ class _SummaryRequests(Generic[AgentDepsT]):
 
     Each message is rendered and estimated once, so a chunk is sized from running token totals and only its own
     candidates are rendered, never the rest of the history.
+    """
+
+    _PROBE_SLACK: ClassVar[int] = 2
+    """How many times the budget a chunk can take by the per-message estimate and still be measured exactly.
+
+    The estimate adds up each message's tokens, which is close to the rendered prompt's count but not equal to it, so
+    a chunk is measured on its rendered prompt within this margin and taken not to fit beyond it. That bounds the text
+    each request renders to about twice the budget, however long the history.
     """
 
     summarizer: SummarizingCompaction[AgentDepsT]
@@ -1333,7 +1322,7 @@ class _SummaryRequests(Generic[AgentDepsT]):
         count = len(self.messages)
         if self.budget is None or not self._fits(self._render(start, start, summary)):
             return self._render(start, count, summary), count
-        limit = self.budget * _PROBE_SLACK
+        limit = self.budget * self._PROBE_SLACK
         if self._estimate(start, count) <= limit and self._fits(whole := self._render(start, count, summary)):
             return whole, count
         lo = bisect_right(self._boundaries, start)
