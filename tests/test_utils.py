@@ -8,6 +8,7 @@ import functools
 import importlib.util
 import itertools
 import os
+import re
 import sys
 import threading
 import warnings
@@ -48,6 +49,7 @@ from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .conftest import no_leaked_tasks, undrivable_event_loop
+from .harness._regex_steps import Scan, StepCounter
 from .models.mock_async_stream import MockAsyncStream
 from .realtime.simulation._loop import SimulatedLoop
 
@@ -1418,6 +1420,47 @@ def test_strip_markdown_fences():
         strip_markdown_fences('```json\n{"result": "pass"}\n```\nThis matches schema {"type": "object"}')
         == '{"result": "pass"}'
     )
+
+
+class _StepCountingPattern:
+    """Stands in for a compiled pattern, adding the steps each `search` or `match` takes to `calls`."""
+
+    def __init__(self, pattern: re.Pattern[str], calls: list[int]) -> None:
+        self._pattern = pattern
+        self._counter = StepCounter(pattern.pattern, pattern.flags)
+        self._calls = calls
+
+    def search(self, text: str, pos: int = 0) -> re.Match[str] | None:
+        return self._count(self._counter.search(text, 1_000_000, pos), self._pattern.search(text, pos))
+
+    def match(self, text: str, pos: int = 0) -> re.Match[str] | None:
+        return self._count(self._counter.match(text, 1_000_000, pos), self._pattern.match(text, pos))
+
+    def _count(self, scan: Scan, match: re.Match[str] | None) -> re.Match[str] | None:
+        assert scan.spans == ([match.span()] if match else [])
+        self._calls.append(scan.steps)
+        return match
+
+
+def test_strip_markdown_fences_is_linear_in_unclosed_fences(monkeypatch: pytest.MonkeyPatch):
+    """Each doubling of the unclosed fences adds fewer than three times the regex steps the previous doubling added.
+
+    The steps are counted rather than timed, so the result is the same on any runner.
+    """
+    calls: list[int] = []
+    for name in ('_MARKDOWN_FENCE_OPENING_PATTERN', '_MARKDOWN_FENCES_PATTERN'):
+        pattern: re.Pattern[str] = getattr(utils_module, name)
+        assert isinstance(pattern, re.Pattern)
+        monkeypatch.setattr(utils_module, name, _StepCountingPattern(pattern, calls))
+
+    steps: list[int] = []
+    for n in (32, 64, 128):
+        text = 'x' + '```\n{' * n
+        assert strip_markdown_fences(text) == text
+        steps.append(sum(calls))
+        calls.clear()
+
+    assert steps[2] - steps[1] < 3 * (steps[1] - steps[0])
     # Nested JSON objects should still be fully captured
     assert strip_markdown_fences('```json\n{"nested": {"key": "value"}}\n```') == '{"nested": {"key": "value"}}'
     assert strip_markdown_fences('```json\n{"a": {"b": {"c": 1}}}\n```') == '{"a": {"b": {"c": 1}}}'
