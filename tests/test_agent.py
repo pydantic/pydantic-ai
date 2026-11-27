@@ -5192,6 +5192,34 @@ def test_tool_exceeds_token_limit_error():
         agent.run_sync('Hello')
 
 
+def test_tool_exceeds_token_limit_with_empty_args():
+    """A function tool call with no arguments at the token limit was cut off: Anthropic sends `{}` for one.
+
+    `FunctionModel` scripts the cut-off response: what's under test is how the agent graph handles a function tool
+    call like that, while `test_anthropic_tool_output_cut_off_by_max_tokens` records what Anthropic sends.
+    """
+    requests = 0
+
+    def return_empty_args(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        return ModelResponse(parts=[ToolCallPart('dummy_tool', args={})], finish_reason='length')
+
+    agent = Agent(FunctionModel(return_empty_args), output_type=str)
+
+    @agent.tool_plain
+    def dummy_tool(foo: str) -> str:
+        return 'tool-ok'  # pragma: no cover
+
+    with pytest.raises(
+        IncompleteToolCall,
+        match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments\.',
+    ):
+        agent.run_sync('Hello')
+    # A function tool call keeps its retry, as for arguments that don't parse.
+    assert requests == 2
+
+
 def test_tool_exceeds_token_limit_but_complete_args():
     def return_complete_tool_but_hit_limit(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -5414,16 +5442,20 @@ def test_text_output_function_validation_error_with_finish_reason_length_is_retr
 
 
 @pytest.mark.parametrize('mode', ['run', 'iter'])
-async def test_truncated_output_tool_call_raises_without_retry(mode: str):
+@pytest.mark.parametrize(
+    'args',
+    ['{"name": "Paris", "popu', {}, ''],
+    # Anthropic sends `{}` for a tool call it cut off, and no input when streamed.
+    ids=['partial_json', 'empty_dict', 'empty_str'],
+)
+async def test_truncated_output_tool_call_raises_without_retry(mode: str, args: str | dict[str, str]):
     """Output tool arguments the token limit cut off would be cut off again on a retry with the same limit."""
     calls = 0
 
     def truncated(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         nonlocal calls
         calls += 1
-        return ModelResponse(
-            parts=[ToolCallPart(info.output_tools[0].name, '{"name": "Paris", "popu')], finish_reason='length'
-        )
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)], finish_reason='length')
 
     agent = Agent(FunctionModel(truncated), output_type=ToolOutput(_City), retries=3)
     settings = ModelSettings(max_tokens=10)
@@ -5443,10 +5475,12 @@ async def test_truncated_output_tool_call_raises_without_retry(mode: str):
 
 @pytest.mark.parametrize(
     'first',
-    ['{"name": "Paris"}', '["Paris", 2]', '{"name": "Paris", "population": 2}'],
-    ids=['schema', 'non_object', 'output_validator'],
+    ['{"name": "Paris"}', {'name': 'Paris'}, '["Paris", 2]', '{"name": "Paris", "population": 2}'],
+    ids=['schema', 'schema_dict', 'non_object', 'output_validator'],
 )
-def test_output_tool_args_that_parse_but_are_rejected_with_finish_reason_length_are_retried(first: str):
+def test_output_tool_args_that_parse_but_are_rejected_with_finish_reason_length_are_retried(
+    first: str | dict[str, str],
+):
     """Only arguments cut off before they're complete are blamed on the token limit: arguments that parse are retried."""
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -5464,6 +5498,48 @@ def test_output_tool_args_that_parse_but_are_rejected_with_finish_reason_length_
         return output
 
     assert agent.run_sync('Hello').output == _City(name='Paris', population=3)
+
+
+class _LengthFunctionModel(FunctionModel):
+    """A `FunctionModel` whose streamed responses end at the token limit, which a stream function can't say."""
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as response:
+            response.finish_reason = 'length'
+            yield response
+
+
+@pytest.mark.parametrize('last', [True, False], ids=['last', 'not_last'])
+async def test_streamed_output_tool_call_with_empty_args_is_cut_off_only_when_last(last: bool):
+    """In `run_stream()`, as in `run()`, only the tool call the response ended on can have been cut off by the token limit.
+
+    Not a VCR test: no provider reliably ends a response at `max_tokens` with an empty-args output tool call followed by
+    another part, so the stream is scripted; `test_anthropic_tool_output_cut_off_by_max_tokens` records the last-part case.
+    """
+
+    async def stream(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='')}
+        if not last:
+            yield {1: DeltaToolCall(name='other_tool', json_args='{"a": ')}
+
+    agent = Agent(_LengthFunctionModel(stream_function=stream), output_type=ToolOutput(_City))
+
+    with pytest.raises(UnexpectedModelBehavior) as exc_info:
+        async with agent.run_stream('Hello') as result:
+            await result.get_output()
+    if last:
+        assert isinstance(exc_info.value, IncompleteToolCall)
+    else:
+        assert str(exc_info.value) == snapshot(
+            'Output validation failed during streaming, and retries are not supported in `run_stream()`'
+        )
 
 
 def test_truncated_output_tool_call_does_not_override_valid_output_in_same_response():
