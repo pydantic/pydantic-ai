@@ -1414,13 +1414,14 @@ only the history from earlier runs, use a [context-aware processor](#runcontext-
 the messages whose [`run_id`][pydantic_ai.messages.ModelRequest.run_id] equals
 [`ctx.run_id`][pydantic_ai.tools.RunContext.run_id].
 
-!!! note "`ProcessHistory` is a thin wrapper over `before_model_request`"
-    [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] is a migration-friendly wrapper
-    around the [`before_model_request`](hooks.md) lifecycle hook. If you want richer control
-    over the message history — access to the full [`RunContext`][pydantic_ai.tools.RunContext]
-    and [`ModelRequestContext`][pydantic_ai.models.ModelRequestContext], the ability to short-circuit
-    the model call, etc. — hook the event directly via
-    `capabilities=[Hooks(before_model_request=fn)]`.
+!!! note "History processors are a `process_history` hook"
+    [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] runs its processor as the
+    [`process_history`][pydantic_ai.capabilities.AbstractCapability.process_history] capability hook, once per request
+    step and right before that capability's `before_model_request`. A capability of your own can implement
+    `process_history` directly (see [processing history](capabilities/custom.md#processing-history)), or register a
+    function with `capabilities=[Hooks(process_history=fn)]`. To change only what one request sends, or to
+    short-circuit the model call, use [`before_model_request`](hooks.md#model-request-hooks) instead.
+    [Which hook to use for the history](hooks.md#which-hook-when) compares the options, including compaction.
 
 !!! note "Clear the ID when you edit a response's text"
     If a processor changes a [`TextPart`][pydantic_ai.messages.TextPart]'s `content`, set its [`id`][pydantic_ai.messages.TextPart.id] to `None` too, or [OpenAI Responses](models/openai.md#referencing-earlier-responses) ignores the edit.

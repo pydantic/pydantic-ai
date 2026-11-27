@@ -1291,8 +1291,8 @@ class RunContext(Generic[RunContextAgentDepsT]):
         The next attempt runs the capabilities' [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history]
         hooks for the model that will serve it, in capability order, and sends the history the first one
         returns. Called from a `prepare_model_request` hook, that's the attempt being prepared; from
-        `before_model_request`, the step's first attempt; from a tool or `after_model_request`, the next
-        request's. A suspended response being resumed is never compacted, so the request waits for the
+        `process_history` or `before_model_request`, the step's first attempt; from a tool or
+        `after_model_request`, the next request's. A suspended response being resumed is never compacted, so the request waits for the
         step after it.
 
         The request stays pending until an attempt is sent with it: if the attempt it was made for fails
