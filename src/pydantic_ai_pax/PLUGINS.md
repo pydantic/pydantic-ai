@@ -79,9 +79,10 @@ separately.
   loopback callback, behind a waiting screen that Esc cancels. Connecting never
   opens the browser. A server that is not signed in shows as `error` with
   `Not signed in to NAME. Run /mcp auth NAME to sign in.`, and the prompt goes on
-  without it. The access and refresh tokens and the registered client go to your
-  OS keyring (the `mcp-NAME` entry under `pydantic-clai2`, or a private
-  `credentials-mcp-NAME.json` when no keyring exists), so restarting Pax reuses
+  without it. The access and refresh tokens and the registered client are saved
+  encrypted in `credentials-mcp-NAME.enc`, whose key Pax keeps in your OS keyring
+  (service `pydantic-ai-pax`), or in a private `credentials-mcp-NAME.json` when no
+  keyring exists, so restarting Pax reuses
   or refreshes them instead of signing in again. Tokens belong to the URL they
   were issued for: after changing the URL, sign in again. OAuth needs `https`,
   except for loopback servers.
@@ -654,7 +655,7 @@ credentials file was found. Scripts can replace the declaration instead:
 /plugins add observability pydantic_ai_pax.builtin_plugins.logfire '{"include_content": true, "include_binary_content": true}'
 ```
 
-Options are `service_name` (default `pydantic-clai2`), `include_content` and
+Options are `service_name` (default `pydantic-ai-pax`), `include_content` and
 `include_binary_content` (both default `false`, so credentials alone never export
 prompts, results, or files; settings saved before that default that never set them
 also leave content out), `httpx` (default `false`), and `send_to_logfire` (default
