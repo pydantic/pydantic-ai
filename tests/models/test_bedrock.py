@@ -8915,10 +8915,14 @@ async def test_bedrock_leading_assistant_message_prepended_for_nova(bedrock_prov
 
 @pytest.mark.parametrize('model_name', ['mistral.mistral-large-3-675b-instruct', 'mistral.ministral-3-8b-instruct'])
 @pytest.mark.vcr(additional_matchers=['body'])
-async def test_bedrock_mistral_3_leading_assistant_and_tool_result_with_text(
-    allow_model_requests: None, bedrock_provider: BedrockProvider, vcr: Cassette, model_name: str
+async def test_bedrock_mistral_3_leading_assistant_and_tool_result_with_text_and_image(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    vcr: Cassette,
+    image_content: BinaryContent,
+    model_name: str,
 ):
-    """Mistral Large 3 and Ministral 3 accept a leading assistant turn and text next to a `toolResult`.
+    """Mistral Large 3 and Ministral 3 accept a leading assistant turn, and text and an image next to a `toolResult`.
 
     So the history is sent without a synthetic leading user turn, and the tool result and the next prompt share one
     user turn instead of being split by a synthetic assistant turn. Pixtral Large still needs both.
@@ -8930,7 +8934,7 @@ async def test_bedrock_mistral_3_leading_assistant_and_tool_result_with_text(
         return '18C and sunny'  # pragma: no cover
 
     result = await agent.run(
-        'Should I bring a jacket? Answer in one sentence.',
+        ['Should I bring a jacket, and what fruit is in this image? Answer in one sentence.', image_content],
         message_history=[
             ModelResponse(parts=[TextPart(content='Hi! I can look up the weather for you.')]),
             ModelRequest(parts=[UserPromptPart(content='What is the weather in Paris?')]),
@@ -8961,12 +8965,21 @@ async def test_bedrock_mistral_3_leading_assistant_and_tool_result_with_text(
                             'status': 'success',
                         }
                     },
-                    {'text': 'Should I bring a jacket? Answer in one sentence.'},
+                    {'text': 'Should I bring a jacket, and what fruit is in this image? Answer in one sentence.'},
+                    {'image': {'format': 'jpeg', 'source': {'bytes': IsStr()}}},
                 ],
             },
         ]
     )
-    assert 'jacket' in result.output.lower()
+    expected_outputs = {
+        'mistral.mistral-large-3-675b-instruct': snapshot(
+            "You don't necessarily need a jacket in Paris right now as it's **18°C and sunny**, and the fruit in the image is a kiwi."
+        ),
+        'mistral.ministral-3-8b-instruct': snapshot(
+            "No, you don't need a jacket since it's sunny at **18°C in Paris**, and the fruit in the image is a **kiwi**."
+        ),
+    }
+    assert result.output == expected_outputs[model_name]
 
 
 async def test_bedrock_empty_history_prepended_for_anthropic(bedrock_provider: BedrockProvider):
