@@ -4156,10 +4156,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         original_request_context: ModelRequestContext,
     ) -> ModelRequestContext:
-        """Apply `before_model_request` and finalize the step's persistent state inside the wrapped lifecycle.
+        """Apply `process_history` and `before_model_request`, and finalize the step's persistent state, inside the wrap.
 
-        This runs once per request step. Everything that depends on which model serves the request
-        runs per attempt, in `_prepare_attempt`.
+        This runs once per request step, so the history the processors write back is in place before any attempt
+        compacts it. Everything that depends on which model serves the request runs per attempt, in `_prepare_attempt`.
         """
         persistent_messages_before_processing = len(ctx.state.message_history)
         mirrored_messages = HistoryMirroringMessages(
@@ -4167,9 +4167,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         )
         request_context.messages = mirrored_messages
         try:
-            # A load from code in `before_model_request` is recorded on the request being prepared, below.
+            # A load from code in `process_history` or `before_model_request` is recorded on the request being
+            # prepared, below.
             with capability_load_window(run_context.pending_messages):
-                processed_context = await ctx.deps.root_capability.before_model_request(run_context, request_context)
+                processed_context = await ctx.deps.root_capability._before_model_request_step(  # pyright: ignore[reportPrivateUsage]
+                    run_context, request_context
+                )
         finally:
             # Only the before-chain keeps the old write-back; wrap and after hooks get a request-only list.
             mirrored_messages.detach()

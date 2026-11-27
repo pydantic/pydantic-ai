@@ -19,7 +19,7 @@ from pydantic_ai._instructions import (
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry, RetryModelRequest
-from pydantic_ai.messages import AgentStreamEvent, Authority, ModelResponse, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, Authority, ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -269,6 +269,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     @property
     def _has_prepare_model_request(self) -> bool:
         return any(c._has_prepare_model_request for c in self._dispatch)
+
+    @property
+    def _has_process_history(self) -> bool:
+        return any(c._has_process_history for c in self._dispatch)
 
     def _handles_model_request_error(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> bool:
         return any(
@@ -774,6 +778,23 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             await aclose_all(reversed(wrapped_streams))
 
     # --- Model request lifecycle hooks ---
+
+    async def process_history(self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]) -> list[ModelMessage]:
+        for capability in self._dispatch:
+            if capability._has_process_history and (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                messages = await capability.process_history(cap_ctx, messages)
+        return messages
+
+    async def _before_model_request_step(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        # Each child's `process_history` runs at its own position in the chain, right before its `before_model_request`.
+        for capability in self._dispatch:
+            if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
+                messages = request_context.messages
+                request_context = await capability._before_model_request_step(cap_ctx, request_context)
+                keep_mirroring(messages, request_context)
+        return request_context
 
     async def before_model_request(
         self,

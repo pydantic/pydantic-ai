@@ -13,6 +13,7 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.messages import (
     AgentStreamEvent,
     Authority,
+    ModelMessage,
     ModelResponse,
     ToolCallPart,
     _lower_authority,  # pyright: ignore[reportPrivateUsage]
@@ -220,6 +221,10 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             type(self).prepare_model_request is not WrapperCapability.prepare_model_request
             or self.wrapped._has_prepare_model_request
         )
+
+    @property
+    def _has_process_history(self) -> bool:
+        return type(self).process_history is not WrapperCapability.process_history or self.wrapped._has_process_history
 
     @property
     def _has_compact_history(self) -> bool:
@@ -492,6 +497,21 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
             await aclose_all((wrapped_stream, stream))
 
     # --- Model request lifecycle hooks ---
+
+    async def process_history(self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]) -> list[ModelMessage]:
+        return await self.wrapped.process_history(ctx, messages)
+
+    async def _before_model_request_step(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if (
+            type(self).process_history is WrapperCapability.process_history
+            and type(self).before_model_request is WrapperCapability.before_model_request
+        ):
+            # A transparent wrapper keeps the wrapped capabilities' own order of the two hooks.
+            return await self.wrapped._before_model_request_step(ctx, request_context)
+        # A wrapper that overrides either hook runs its own, each delegating to `wrapped` as it chooses.
+        return await super()._before_model_request_step(ctx, request_context)
 
     async def before_model_request(
         self,

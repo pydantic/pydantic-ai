@@ -34,6 +34,7 @@ from pydantic_ai.capabilities import (
     NativeTool,
     PrefixTools,
     ProcessEventStream,
+    ProcessHistory,
     WebSearch,
     WrapperCapability,
 )
@@ -1904,6 +1905,21 @@ async def test_compact_hook_warns() -> None:
     with pytest.warns(UserWarning) as record:
         await _drain(Agent[None, str](capabilities=[_Compacts()], deps_type=type(None)), _RecordingModel())
     assert [str(warning.message) for warning in record] == [_uncalled_hooks_warning('`_Compacts`', '`compact_history`')]
+
+
+def _unchanged(messages: list[ModelMessage]) -> list[ModelMessage]:
+    return messages  # pragma: no cover
+
+
+async def test_process_history_hook_warns() -> None:
+    """A session doesn't process its history yet, so a history processor never runs."""
+    with pytest.warns(UserWarning) as record:
+        await _drain(
+            Agent[None, str](capabilities=[ProcessHistory(_unchanged)], deps_type=type(None)), _RecordingModel()
+        )
+    assert [str(warning.message) for warning in record] == [
+        _uncalled_hooks_warning('`ProcessHistory`', '`process_history`')
+    ]
 
 
 async def test_batching_warns_that_a_session_sends_no_model_requests() -> None:
