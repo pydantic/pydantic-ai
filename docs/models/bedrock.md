@@ -530,6 +530,8 @@ The model name determines the endpoint family:
 | GPT-OSS, e.g. `bedrock-mantle:openai.gpt-oss-120b` | OpenAI Responses at `/v1` |
 | GPT-OSS Safeguard, e.g. `bedrock-mantle:openai.gpt-oss-safeguard-20b` | OpenAI Chat Completions at `/v1` |
 
+GPT-OSS on the `/v1` Responses endpoint ignores the top-level `instructions` field and follows only the first system message, so its instructions and system prompt go out as one leading system message (see [`honors_only_first_system_message`][pydantic_ai.profiles.ModelProfile.honors_only_first_system_message]).
+
 To use a custom Mantle origin (for example a proxy), pass a `base_url` to [`BedrockMantleProvider`][pydantic_ai.providers.bedrock_mantle.BedrockMantleProvider]; its origin (with any `/openai/v1` or `/v1` suffix stripped) is used to route between the two endpoint families per model, just like `region_name`:
 
 ```python {test="skip"}

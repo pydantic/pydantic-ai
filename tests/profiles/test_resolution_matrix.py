@@ -155,6 +155,7 @@ _CANONICAL_DEFAULTS: dict[str, Any] = {
     'supports_json_object_output': False,
     'supports_image_output': False,
     'supports_inline_system_prompts': False,
+    'honors_only_first_system_message': False,
     'supports_request_scoped_system_prompts': False,
     'supports_mid_conversation_effort': False,
     'default_structured_output_mode': 'tool',

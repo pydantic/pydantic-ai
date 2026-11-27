@@ -346,7 +346,13 @@ class OpenAIModelProfile(ModelProfile, total=False):
     OpenAI itself and most compatible providers accept multiple system messages, so this defaults to `True`.
     Set to `False` for strict OpenAI-compatible backends (e.g. some LiteLLM/vLLM deployments) that require
     exactly one initial system message; consecutive system messages at the start will be merged into one
-    (joined with two newlines) before being sent."""
+    (joined with two newlines) before being sent. Supported by `OpenAIChatModel` only.
+
+    Use this key when only Chat Completions requests need the merge, as `VLLMProvider` sets it for every model and
+    the gpt-oss family profile does. When the host's Responses endpoint also follows only the first system message,
+    or ignores the top-level `instructions` field, set
+    [`honors_only_first_system_message`][pydantic_ai.profiles.ModelProfile.honors_only_first_system_message]
+    instead, which merges on both APIs and also sends the instructions in that one message on the Responses API."""
 
     openai_chat_streaming_requires_finish_reason: bool
     """Whether a streamed Chat Completions response must include a non-null `finish_reason`. Default: `False`.

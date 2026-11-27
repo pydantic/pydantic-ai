@@ -165,6 +165,7 @@ from ._caching import (
     has_dynamic_system_prompt,
     keep_implicit_cache_without_breakpoints,
     leading_system_message_count,
+    merge_leading_system_messages,
     move_leading_cache_breakpoints,
     openai_effective_cache_settings,
     resolve_legacy_cache_retention,
@@ -1028,8 +1029,15 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _sends_instructions_as_input(self, model_request_parameters: ModelRequestParameters) -> bool:
         """Whether a request's instructions go out as a system input message rather than the `instructions` field.
 
-        `json_object` output needs the word "JSON" in an input message, so prompted output moves them there.
+        `json_object` output needs the word "JSON" in an input message, so prompted output moves them there, and a
+        model whose profile sets `honors_only_first_system_message` gets them in its one leading system message. The
+        history digest then records them, so an `openai_previous_response_id='auto'` chain only continues while they
+        are unchanged.
         """
+        if self.profile.get('honors_only_first_system_message', False) and (
+            self.profile.get('openai_system_prompt_role', None) != 'user'
+        ):
+            return True
         return model_request_parameters.output_mode == 'prompted' and self.profile.get(
             'supports_json_object_output', False
         )
@@ -1638,6 +1646,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         text, instructions = self._responses_text_config(
             model_settings, model_request_parameters, profile, instructions, openai_messages, system_prompt_role
         )
+        if profile.get('honors_only_first_system_message', False):
+            openai_messages = merge_leading_system_messages(openai_messages, system_prompt_role, text_type='input_text')
 
         # When there are no input messages and we're not reusing server-side state,
         # the OpenAI API will reject a request without any input,
@@ -1696,7 +1706,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         Mutates `openai_messages`.
         """
         if chained_instructions and continues_chain:
-            # A continued chain's stored input already starts with the stable ones, as its history digest confirmed.
+            # A continued chain's stored input already starts with the stable ones, or with all of them on a model whose
+            # profile sets `honors_only_first_system_message`, as its history digest confirmed.
+            if profile.get('honors_only_first_system_message', False):
+                return OMIT
             _, rest = split_stable_instructions(self._get_instruction_parts(messages, model_request_parameters) or [])
             return InstructionPart.join(rest) or OMIT
         if chained_instructions or self._should_relocate_instructions(
@@ -1706,14 +1719,19 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             messages,
             openai_messages,
             uses_server_side_state=uses_server_side_state,
+            continues_chain=continues_chain,
         ):
+            single_system_message = profile.get('honors_only_first_system_message', False)
             return self._relocate_instructions(
                 instructions,
                 openai_messages,
                 self._get_instruction_parts(messages, model_request_parameters) or [],
                 system_prompt_role,
-                add_breakpoint=self._adds_instruction_breakpoint(model_settings, profile),
-                stable_only=profile.get('openai_responses_stable_instructions_as_input', False),
+                # Merging the leading system messages collapses the boundary the breakpoint marks.
+                add_breakpoint=self._adds_instruction_breakpoint(model_settings, profile) and not single_system_message,
+                stable_only=profile.get('openai_responses_stable_instructions_as_input', False)
+                and not single_system_message,
+                move_all=single_system_message,
             )
         return instructions
 
@@ -1784,28 +1802,39 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> list[str]:
         """The instructions an `openai_previous_response_id='auto'` chain keeps at the start of its stored input.
 
-        On a model whose profile sends the instructions that keep the prefix stable as leading input messages, a request
-        that starts the chain or resends the history sends them there, and a request that continues it leaves them out.
+        On a model whose profile sends the instructions that keep the prefix stable as leading input messages, or all
+        of them in its one leading system message (`honors_only_first_system_message`), a request that starts the
+        chain or resends the history sends them there, and a request that continues it leaves them out.
         Each response's history digest records them, so a request only continues while it would send the same ones.
         Empty where they stay in the top-level field: see `_instructions_stay_top_level`, and a compacted history,
         whose compaction item keeps the window's leading system items.
         """
         profile = self.profile
-        if (
-            model_settings.get('openai_previous_response_id') != 'auto'
-            or not profile.get('openai_responses_stable_instructions_as_input', False)
-            or self._instructions_stay_top_level(profile.get('openai_system_prompt_role', None) or 'system', messages)
-            or any(isinstance(part, CompactionPart) for message in messages for part in message.parts)
+        system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
+        if model_settings.get('openai_previous_response_id') != 'auto' or any(
+            isinstance(part, CompactionPart) for message in messages for part in message.parts
         ):
             return []
-        stable, _ = split_stable_instructions(self._get_instruction_parts(messages, model_request_parameters) or [])
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
+        if profile.get('honors_only_first_system_message', False):
+            # They move even next to a dynamic system prompt: see `_should_relocate_instructions`.
+            return [] if system_prompt_role == 'user' else [part.content for part in instruction_parts]
+        if not profile.get('openai_responses_stable_instructions_as_input', False) or self._instructions_stay_top_level(
+            system_prompt_role, messages
+        ):
+            return []
+        stable, _ = split_stable_instructions(instruction_parts)
         return [part.content for part in stable]
 
     @staticmethod
     def _instructions_stay_top_level(
         system_prompt_role: OpenAISystemPromptRole, messages: Sequence[ModelMessage]
     ) -> bool:
-        """Whether the instructions stay in the top-level field whatever the settings and server-side state."""
+        """Whether the instructions stay in the top-level field for the cache relocations, whatever the settings.
+
+        A model whose profile sets `honors_only_first_system_message` moves them next to a dynamic system prompt too:
+        see `_should_relocate_instructions`.
+        """
         # A `'user'` system prompt role can't be told apart from a real user turn, and a dynamic system prompt changes
         # between requests, so it can't sit in the cached prefix.
         return system_prompt_role == 'user' or has_dynamic_system_prompt(messages)
@@ -1819,19 +1848,37 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         openai_messages: list[responses.ResponseInputItemParam],
         *,
         uses_server_side_state: bool,
+        continues_chain: bool,
     ) -> bool:
-        """Whether the instructions move into the input, to be cached or to carry a cache breakpoint after them."""
+        """Whether the instructions move into the input, to be cached, carry a breakpoint or join the one system message.
+
+        A model whose profile sets `honors_only_first_system_message` follows only one leading system message.
+        """
+        if (
+            # A `'user'` system prompt role can't be told apart from a real user turn.
+            system_prompt_role == 'user'
+            # A compaction item retains the window's leading system items, so they aren't resent.
+            or any(isinstance(item, dict) and item.get('type') == 'compaction' for item in openai_messages)
+        ):
+            return False
+        if profile.get('honors_only_first_system_message', False):
+            # The host follows only the first leading system message and may ignore the top-level field (Bedrock
+            # Mantle's Responses endpoint does for gpt-oss), so they move even next to a dynamic system prompt, and on
+            # the request that starts an `openai_previous_response_id` chain: its stored input then starts with them.
+            # A request continuing a given response, or adding to a conversation, which may already hold items,
+            # doesn't resend them. One continuing an `'auto'` chain leaves them out: see `_chained_instructions`.
+            return not continues_chain and model_settings.get('openai_conversation_id') is None
+        # Instructions relocated into a stored response's input would be replayed to any request
+        # that continues it, next to that request's own instructions.
+        if uses_server_side_state:
+            return False
         return bool(
             (
                 self._adds_instruction_breakpoint(model_settings, profile)
                 or profile.get('openai_responses_stable_instructions_as_input', False)
             )
-            and not self._instructions_stay_top_level(system_prompt_role, messages)
-            # Instructions relocated into a stored response's input would be replayed to any request
-            # that continues it, next to that request's own instructions.
-            and not uses_server_side_state
-            # A compaction item retains the window's leading system items, so they aren't resent.
-            and not any(isinstance(item, dict) and item.get('type') == 'compaction' for item in openai_messages)
+            # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
+            and not has_dynamic_system_prompt(messages)
         )
 
     def _responses_text_config(
@@ -1883,12 +1930,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         *,
         add_breakpoint: bool,
         stable_only: bool,
+        move_all: bool = False,
     ) -> str | Omit:
         """Move instructions into leading input messages, with `add_breakpoint` marking the last static one for caching.
 
         The top-level `instructions` field cannot carry a breakpoint. With `stable_only`, the parts that rewrite the
-        prefix when they change stay in the top-level field, which the model reads after the input. Mutates
-        `openai_messages` and returns what's left of the top-level `instructions`.
+        prefix when they change stay in the top-level field, which the model reads after the input. With `move_all`,
+        they all move even when there's nothing to put a breakpoint on. Mutates `openai_messages` and returns what's
+        left of the top-level `instructions`.
         """
         # An `additional_tools` item also has the `'developer'` role, but it's not a system prompt. Kept
         # apart from `leading_system_message_count`: checking `type` there would also move where
@@ -1907,7 +1956,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             moved, kept = instruction_parts, []
         breakpoint_index = system_prompt_count + cacheable_instruction_count(moved) - 1
         # For the breakpoint alone, they move only when there's a static instruction or a system prompt to put it on.
-        if moved and (stable_only or breakpoint_index >= 0):
+        if moved and (stable_only or move_all or breakpoint_index >= 0):
             openai_messages[system_prompt_count:system_prompt_count] = [
                 responses.EasyInputMessageParam(role=system_prompt_role, content=part.content) for part in moved
             ]

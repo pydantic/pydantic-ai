@@ -654,7 +654,9 @@ Pydantic AI pairs each tool call with its result by the call's ID across the who
 
 Some models are served with a chat template (applied server-side, for example by [vLLM](https://docs.vllm.ai/), [LiteLLM](#litellm), or TGI) that accepts only a single system message at the start of the conversation and rejects additional ones. Sending more than one fails with a `400` error such as `System message must be at the beginning.` or `Conversation roles must alternate ...`, seen with some newer Qwen, Mistral, Gemma, and Command-R models. It's easy to hit without intending to, since more than one leading system message can be produced in several ways.
 
-Set `openai_chat_supports_multiple_system_messages=False` on the model's [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (as shown in [Model profile](#model-profile)) to merge the leading run of system messages into one, joined with two newlines, before the request is sent. The merge is lossless, so it's safe to enable whenever a backend rejects multiple system messages.
+Set `openai_chat_supports_multiple_system_messages=False` on the model's [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (as shown in [Model profile](#model-profile)) to merge the leading run of system messages into one, joined with two newlines, before the request is sent. The merge is lossless, so it's safe to enable whenever a backend rejects multiple system messages. It applies to `OpenAIChatModel` only.
+
+If the host also ignores the top-level `instructions` field on the Responses API, set [`honors_only_first_system_message=True`][pydantic_ai.profiles.ModelProfile.honors_only_first_system_message] instead. On both APIs, the request then starts with exactly one system message: the system prompts, the framing announcement and the instructions, in that order. [`BedrockMantleProvider`][pydantic_ai.providers.bedrock_mantle.BedrockMantleProvider] sets it for gpt-oss models, since its Responses endpoint ignores the `instructions` field for them and follows only one leading system message.
 
 ### Mid-conversation system messages
 

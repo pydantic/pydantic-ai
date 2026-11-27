@@ -114,6 +114,7 @@ from ._caching import (
     has_dynamic_system_prompt,
     keep_implicit_cache_without_breakpoints,
     leading_system_message_count,
+    merge_leading_system_messages,
     move_leading_cache_breakpoints,
     openai_effective_cache_settings,
     resolve_legacy_cache_retention,
@@ -167,34 +168,6 @@ class _ChatCompletionMessageFunctionToolCallParam(ChatCompletionMessageFunctionT
     """A Chat Completions tool call carrying the `extra_content` vendor extension, see `map_tool_call_provider_details`."""
 
     extra_content: JsonValue
-
-
-def merge_leading_system_messages(
-    openai_messages: list[chat.ChatCompletionMessageParam], system_prompt_role: str
-) -> list[chat.ChatCompletionMessageParam]:
-    """Merge consecutive messages with `system_prompt_role` at the start of the list into a single message.
-
-    Required by strict OpenAI-compatible backends (some LiteLLM/vLLM deployments) that reject more than one
-    initial system message with `System message must be at the beginning.`
-
-    Only applies when system prompts are sent as `'system'` or `'developer'` role; with `'user'` role we
-    can't distinguish a system prompt cast as user from an actual user turn.
-    """
-    if system_prompt_role not in ('system', 'developer'):
-        return openai_messages
-
-    leading_count = next(
-        (i for i, m in enumerate(openai_messages) if m.get('role') != system_prompt_role),
-        len(openai_messages),
-    )
-    if leading_count < 2:
-        return openai_messages
-
-    # Content is always `str` here: it originates from `SystemPromptPart.content` or instruction
-    # `TextPart.content`, both of which are typed as `str`.
-    merged_content = '\n\n'.join(m['content'] for m in openai_messages[:leading_count])  # type: ignore[misc]
-    merged: chat.ChatCompletionMessageParam = {**openai_messages[0], 'content': merged_content}  # type: ignore[typeddict-item]
-    return [merged, *openai_messages[leading_count:]]
 
 
 _CHAT_AUDIO_FORMATS: dict[str, Literal['wav', 'mp3']] = {
@@ -1299,6 +1272,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if send_back_thinking == 'auto':
             backfill_sent_thinking_field(openai_messages, profile.get('openai_chat_thinking_field', None))
         system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
+        # `openai_chat_supports_multiple_system_messages=False` asks for the same merge, on Chat Completions only.
+        merges_leading_system_messages = profile.get('honors_only_first_system_message', False) or not profile.get(
+            'openai_chat_supports_multiple_system_messages', True
+        )
         system_prompt_count = leading_system_message_count(openai_messages, system_prompt_role)
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
         openai_messages[system_prompt_count:system_prompt_count] = [
@@ -1311,7 +1288,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             # A `'user'` system prompt role can't be told apart from a real user turn, and merging
             # the leading messages collapses the boundary into one block, so neither can carry it.
             and system_prompt_role != 'user'
-            and profile.get('openai_chat_supports_multiple_system_messages', True)
+            and not merges_leading_system_messages
             # A dynamic system prompt changes between requests, so it can't sit in the cached prefix.
             and not has_dynamic_system_prompt(messages)
         ):
@@ -1330,10 +1307,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 )
                 add_openai_prompt_cache_breakpoint(content_parts)
                 target['content'] = content_parts
-        if not self.profile.get('openai_chat_supports_multiple_system_messages', True):
-            openai_messages = merge_leading_system_messages(openai_messages, system_prompt_role)
-        # After instructions are inserted and system messages merged: the breakpoint may land on a system
-        # message, whose string content it turns into a list, and the merge only joins strings.
+        if merges_leading_system_messages:
+            openai_messages = merge_leading_system_messages(openai_messages, system_prompt_role, text_type='text')
+        # Last, on the list as sent: the breakpoint goes on the item just before the leading `CachePoint`, which may
+        # be an inserted instruction or the merged system message.
         move_leading_cache_breakpoints(openai_messages, text_type='text')
         return openai_messages
 

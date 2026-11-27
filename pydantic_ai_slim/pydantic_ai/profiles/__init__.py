@@ -227,6 +227,33 @@ class ModelProfile(TypedDict, total=False):
     only place that knows the `<system>...</system>` fallback.
     """
 
+    honors_only_first_system_message: bool
+    """Whether the model or its host follows only the first system message at the start of the conversation. Default: `False`.
+
+    When `True`, the request starts with exactly one system message holding the standing system prompts, the
+    framing announcement and the instructions, in that order and joined with two newlines. On the Responses API, that
+    means the instructions go in that message instead of the top-level `instructions` field. A request that continues
+    an `openai_previous_response_id='auto'` chain leaves them out, since the chain's stored input already starts with
+    them, and the chain only continues while they're unchanged. A request that continues a given
+    `openai_previous_response_id`, adds to a conversation (`openai_conversation_id`) or continues a compacted history
+    sends them in the top-level field, since its stored input may already start with system messages. With the `'user'`
+    [`openai_system_prompt_role`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_system_prompt_role],
+    nothing is merged, as a system prompt sent as a user message can't be told apart from a real one.
+
+    Set by [`BedrockMantleProvider`][pydantic_ai.providers.bedrock_mantle.BedrockMantleProvider] for gpt-oss on its
+    Responses endpoint, which ignores the top-level `instructions` field for `gpt-oss-120b` and follows only one
+    leading system message.
+
+    Use this key when the host's Responses endpoint follows only the first system message or ignores the top-level
+    `instructions` field. When only Chat Completions requests need the merge, set
+    [`openai_chat_supports_multiple_system_messages=False`][pydantic_ai.profiles.openai.OpenAIModelProfile.openai_chat_supports_multiple_system_messages]
+    instead, as `VLLMProvider` does for every model, since some vLLM chat templates reject more than one, and as the
+    gpt-oss family profile does, since gpt-oss's reference chat template keeps only the first system message.
+
+    Supported by [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and
+    [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
+    """
+
     needs_sealed_system_blocks: bool
     """Whether the model follows the fallback's `<system>` blocks better sealed and after the user's words. Default: `False`.
 
@@ -709,6 +736,7 @@ DEFAULT_PROFILE: ModelProfile = {
     'supported_document_media_types': KNOWN_DOCUMENT_MEDIA_TYPES,
     'supports_audio_file_input': True,
     'supports_video_input': True,
+    'honors_only_first_system_message': False,
     'default_structured_output_mode': 'tool',
     'prompted_output_template': DEFAULT_PROMPTED_OUTPUT_TEMPLATE,
     'native_output_requires_schema_in_instructions': False,
