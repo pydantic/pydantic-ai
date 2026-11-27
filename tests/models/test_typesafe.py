@@ -2841,11 +2841,26 @@ async def test_a_streamed_fallback_takes_the_proposed_step(allow_model_requests:
     ]
 
 
-async def test_fallback_does_not_skip_a_user_error(allow_model_requests: None, typesafe_model: TypeSafeModel):
-    """An agent Jev cannot serve at all fails loudly, rather than quietly running on the next model every time."""
+async def test_fallback_moves_past_jev_when_the_output_needs_text(
+    allow_model_requests: None, typesafe_model: TypeSafeModel
+):
+    """An output Jev can't write, plain text, moves a fallback on to the next model, without sending Jev anything.
+
+    Jev's refusal is a `ModelFeatureUnsupportedError`, recorded on the answering response as a failed attempt.
+    """
     agent = Agent(FallbackModel(typesafe_model, TestModel()))
-    with pytest.raises(UserError, match='Text output is not supported'):
-        await agent.run('anything')
+    result = await agent.run('anything')
+    assert result.response.model_name == 'test'
+    assert [
+        (attempt.model_name, attempt.outcome, attempt.error) for attempt in result.response.failed_attempts or []
+    ] == [
+        (
+            'jev-latest',
+            'error',
+            'ModelFeatureUnsupportedError: Text output is not supported by this model. Give the agent one structured '
+            '`output_type`, such as a `BaseModel`, without `str`, `NativeOutput` or `PromptedOutput`.',
+        )
+    ]
 
 
 @pytest.mark.parametrize(
