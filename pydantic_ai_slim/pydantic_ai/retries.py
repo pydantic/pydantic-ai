@@ -45,7 +45,7 @@ except ImportError as _import_error:
         'you can use the `retries` optional group — `pip install "pydantic-ai-slim[retries]"`'
     ) from _import_error
 
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
 from typing import TYPE_CHECKING, Any
@@ -161,12 +161,12 @@ class HTTPX2TenacityTransport(httpx2.BaseTransport):
         wrapped: The underlying transport to wrap and add retry functionality to.
             Defaults to a new `httpx2.HTTPTransport` with the connection pool limits of the clients
             Pydantic AI creates: 1000 connections, of which up to 100 are kept alive while idle.
-        validate_response: Optional callable that takes a Response and can raise an exception
-            to be handled by the controller if the response should trigger a retry.
-            Common use case is to raise exceptions for certain HTTP status codes.
-            When it raises for a 4xx or 5xx status, the transport reads the response body before closing the
-            response, so an exception holding the response, like `httpx2.HTTPStatusError`, keeps the body.
-            If None, no response validation is performed.
+        validate_response: Optional synchronous callable that takes a `Response` and raises an exception
+            if the response should be rejected (for example, `lambda r: r.raise_for_status()`).
+            Runs before the response body is read. When it raises for a 4xx or 5xx status, the transport reads
+            the body before closing the response, so tenacity's `retry` predicate and callers inspecting
+            `httpx2.HTTPStatusError.response` can read it. When it raises for a 2xx or 3xx status, the response
+            is closed without reading its body. If `None`, no response validation is performed.
 
     Example:
         ```python
@@ -270,12 +270,12 @@ class AsyncHTTPX2TenacityTransport(httpx2.AsyncBaseTransport):
         wrapped: The underlying async transport to wrap and add retry functionality to.
             Defaults to a new `httpx2.AsyncHTTPTransport` with the connection pool limits of the clients
             Pydantic AI creates: 1000 connections, of which up to 100 are kept alive while idle.
-        validate_response: Optional callable that takes a Response and can raise an exception
-            to be handled by the controller if the response should trigger a retry.
-            Common use case is to raise exceptions for certain HTTP status codes.
-            When it raises for a 4xx or 5xx status, the transport reads the response body before closing the
-            response, so an exception holding the response, like `httpx2.HTTPStatusError`, keeps the body.
-            If None, no response validation is performed.
+        validate_response: Optional synchronous callable that takes a `Response` and raises an exception
+            if the response should be rejected (for example, `lambda r: r.raise_for_status()`).
+            Runs before the response body is read. When it raises for a 4xx or 5xx status, the transport reads
+            the body before closing the response, so tenacity's `retry` predicate and callers inspecting
+            `httpx2.HTTPStatusError.response` can read it. When it raises for a 2xx or 3xx status, the response
+            is closed without reading its body. If `None`, no response validation is performed.
 
     Example:
         ```python
@@ -593,35 +593,44 @@ def wait_retry_after(
     def wait_func(state: RetryCallState) -> float:
         exc = state.outcome.exception() if state.outcome else None
         # TODO(v3): remove the legacy `httpx` `HTTPStatusError` arm, leaving only `httpx2.HTTPStatusError`.
-        if isinstance(exc, HTTPStatusError | httpx2.HTTPStatusError):
-            # Like the OpenAI and Anthropic SDKs, prefer their more precise `retry-after-ms` over `Retry-After`.
-            if (retry_after_ms := _parse_retry_after_ms(exc.response.headers)) is not None:
-                return min(retry_after_ms, max_wait)
-            retry_after = exc.response.headers.get('retry-after')
-            if retry_after:
-                try:
-                    # Try parsing as seconds first
-                    wait_seconds = int(retry_after)
-                    if wait_seconds >= 0:
-                        return float(min(wait_seconds, max_wait))
-                except ValueError:
-                    # Try parsing as HTTP date
-                    try:
-                        retry_time = parsedate_to_datetime(retry_after)
-                        assert isinstance(retry_time, datetime)
-                        # asctime-date format (RFC 9110 §5.6.7) carries no timezone; treat as UTC.
-                        if retry_time.tzinfo is None:
-                            retry_time = retry_time.replace(tzinfo=UTC)
-                        now = datetime.now(UTC)
-                        wait_seconds = (retry_time - now).total_seconds()
-
-                        if wait_seconds > 0:
-                            return min(wait_seconds, max_wait)
-                    except (ValueError, TypeError, AssertionError, OverflowError):
-                        # If date parsing fails, fall back to fallback strategy
-                        pass
+        if isinstance(exc, HTTPStatusError | httpx2.HTTPStatusError) and (
+            (header_wait := _header_wait(exc.response.headers, max_wait)) is not None
+        ):
+            return header_wait
 
         # Use fallback strategy
         return fallback_strategy(state)
 
     return wait_func
+
+
+def _header_wait(headers: Mapping[str, str], max_wait: float) -> float | None:
+    """The wait `wait_retry_after` reads from the `retry-after-ms` or `Retry-After` header, or `None` to fall back."""
+    # Like the OpenAI and Anthropic SDKs, prefer their more precise `retry-after-ms` over `Retry-After`.
+    if (retry_after_ms := _parse_retry_after_ms(headers)) is not None:
+        return min(retry_after_ms, max_wait)
+    retry_after = headers.get('retry-after')
+    if not retry_after:
+        return None
+    try:
+        # Try parsing as seconds first
+        wait_seconds = int(retry_after)
+        if wait_seconds >= 0:
+            return float(min(wait_seconds, max_wait))
+    except (ValueError, OverflowError):
+        # Not an integer, or one too large for a float: try parsing as HTTP date, which rejects the latter
+        try:
+            retry_time = parsedate_to_datetime(retry_after)
+            assert isinstance(retry_time, datetime)
+            # asctime-date format (RFC 9110 §5.6.7) carries no timezone; treat as UTC.
+            if retry_time.tzinfo is None:
+                retry_time = retry_time.replace(tzinfo=UTC)
+            now = datetime.now(UTC)
+            wait_seconds = (retry_time - now).total_seconds()
+
+            if wait_seconds > 0:
+                return min(wait_seconds, max_wait)
+        except (ValueError, TypeError, AssertionError, OverflowError):
+            # If date parsing fails, fall back to fallback strategy
+            pass
+    return None

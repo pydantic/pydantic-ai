@@ -68,7 +68,7 @@ from pydantic_ai_harness.file_system._events import (
     FileWrittenEvent,
     SearchKind,
 )
-from pydantic_ai_harness.file_system._matching import glob_match, glob_parts, has_nested_quantifier, matching_lines
+from pydantic_ai_harness.file_system._matching import glob_match, glob_parts, linear_time_search, matching_lines
 from pydantic_ai_harness.file_system._ripgrep import Record, RipgrepNotFoundError, Unreadable, run_ripgrep
 from pydantic_ai_harness.file_system._tool_kinds import FILE_SYSTEM_TOOL_KINDS
 from pydantic_ai_harness.file_system._workspace_search import SEARCH_TIMEOUT, realpath_snippet
@@ -914,24 +914,31 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         return descended
 
     async def read_file(
-        self, path: str, *, offset: int = 0, limit: int | None = None, workspace: WorkspaceBackend
+        self, path: str, *, offset: int = 1, limit: int | None = None, workspace: WorkspaceBackend
     ) -> str | list[str | BinaryContent]:
         """Read a file in `workspace` directly, outside an agent run.
 
         An image or PDF comes back as its header followed by a `BinaryContent`;
         everything else is text.
+
+        Args:
+            path: File path relative to the working directory.
+            offset: Line number to start reading from (1-indexed, matching the printed line
+                numbers). An `offset` below 1 raises `ModelRetry`.
+            limit: Maximum number of lines to return; defaults to, and is capped at, the configured read limit.
+            workspace: The workspace backend to read from.
         """
         return await self._read_file(await self._scope(workspace), None, path, offset=offset, limit=limit)
 
     async def _read_file_tool(
-        self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 0, limit: int | None = None
+        self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 1, limit: int | None = None
     ) -> str | list[str | BinaryContent]:
         """Read a text file with line numbers, or view an image or PDF.
 
         Args:
             ctx: The current agent run context.
             path: File path relative to the working directory.
-            offset: Zero-based line offset to start reading from.
+            offset: Line number to start reading from (1-indexed).
             limit: Maximum number of lines to return; defaults to, and is capped at, the configured read limit.
 
         Returns:
@@ -945,10 +952,10 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
 
     @_recoverable
     async def _read_file(
-        self, scope: _Scope, ctx: RunContext[AgentDepsT] | None, path: str, *, offset: int = 0, limit: int | None = None
+        self, scope: _Scope, ctx: RunContext[AgentDepsT] | None, path: str, *, offset: int = 1, limit: int | None = None
     ) -> str | list[str | BinaryContent]:
-        if offset < 0:
-            raise ValueError('offset must be non-negative.')
+        if offset < 1:
+            raise ValueError('offset counts lines from 1; use offset=1 for the first line.')
         if limit is not None and limit < 1:
             raise ValueError('limit must be at least 1.')
         limit = self._max_read_lines if limit is None else min(limit, self._max_read_lines)
@@ -981,8 +988,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         header = self._read_header(path, total, content_hash)
         # Decode only the lines shown, from a view so the window is not copied first: a large
         # file is paged through one window at a time.
-        start = skip_lines(raw, offset)
-        end = len(raw) if offset + limit >= total else skip_lines(raw, limit, start)
+        start = skip_lines(raw, offset - 1)
+        end = len(raw) if offset - 1 + limit >= total else skip_lines(raw, limit, start)
         window = split_lines(str(memoryview(raw)[start:end], 'utf-8', 'replace'))
         # Format before emitting: an out-of-range offset is a failed read, and
         # a failed read must not look like a successful one to subscribers.
@@ -1471,7 +1478,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # matched files are filtered per-entry below.
         resolved = await self._safe_resolve(scope, path, check_allowed=False)
         try:
-            compiled = re.compile(pattern)
+            re.compile(pattern)
         # A repeat count past the regex engine's limit, such as `a{99999999999}`, raises `OverflowError`.
         except (re.error, OverflowError) as exc:
             raise ValueError(f'Invalid regex pattern: {exc}') from exc
@@ -1481,12 +1488,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # without commands, or when the command path itself fails.
         if entry is not None and await _searches_in_workspace(scope):
             return await self._command_search_files(scope, ctx, entry, resolved, pattern, include_glob)
-        if has_nested_quantifier(pattern, verbose=bool(compiled.flags & re.VERBOSE)):
-            raise ValueError(
-                'This regex repeats a group that itself repeats, such as `(a+)+`, which can take exponential time '
-                'in the Python regex engine this workspace searches with. Rewrite it without the nested '
-                'repetition, such as `a+`.'
-            )
+        # Searched here, the pattern is matched on the event loop, so it must run in linear time.
+        search = linear_time_search(pattern)
         include_hidden = bool(include_glob and _explicit_hidden(include_glob))
         files, walk_cut, hidden_count = await self._files_to_search(
             scope, entry, resolved, include_hidden=include_hidden
@@ -1502,7 +1505,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if text is None:
                 continue
             matches, capped = matching_lines(
-                text, compiled, scope.relative(file.path, scope.bounds.cwd), self._max_search_results - len(results)
+                text, search, scope.relative(file.path, scope.bounds.cwd), self._max_search_results - len(results)
             )
             results.extend(matches)
             if capped:

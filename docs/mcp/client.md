@@ -53,7 +53,9 @@ An [`MCPToolset`][pydantic_ai.mcp.MCPToolset] accepts any of the following as it
 
 Each `MCPToolset` instance is a [toolset](../toolsets.md) and can be registered with an [`Agent`][pydantic_ai.Agent] via the `toolsets` argument.
 
-You can use [`async with agent`][pydantic_ai.agent.Agent.__aenter__] to open and close connections to all registered MCP toolsets (and in the case of stdio servers, start and stop the subprocesses) around the context where they'll be used in agent runs. You can also use `async with toolset` to manage the lifecycle of a specific toolset directly, for example if you'd like to share it across multiple agents. If you don't explicitly enter one of these context managers, the toolset will be opened and closed automatically as needed.
+You can use [`async with agent`][pydantic_ai.agent.Agent.__aenter__] to open and close connections to all registered MCP toolsets around the context where they'll be used in agent runs. You can also use `async with toolset` to manage the lifecycle of a specific toolset directly, for example if you'd like to share it across multiple agents. If you don't explicitly enter one of these context managers, the toolset will be opened and closed automatically as needed.
+
+A stdio server's subprocess starts with the toolset's first connection. FastMCP's [`StdioTransport`](https://gofastmcp.com/clients/transports) keeps it running between connections by default, so later runs reuse it. It stops when the transport is closed or garbage-collected, for example once an agent you entered with `async with agent:` and its toolsets go out of scope. Before Python 3.13, an agent without `name=` can stay alive until the function that ran it returns, because Pydantic AI infers the agent's name from that function's local variables; passing `name=` avoids this. With `StdioTransport(..., keep_alive=False)`, the subprocess stops whenever its connection closes, however the toolset is used.
 
 Note that a shared `MCPToolset` instance connects to the server as a single identity; if your users have their own credentials for the MCP server, see [per-user authentication](#per-user-authentication).
 
@@ -381,7 +383,7 @@ toolset = MCPToolset('http://localhost:8000/mcp', id='docs', include_instruction
 agent = Agent('{{ openai:medium }}', toolsets=[toolset])
 ```
 
-On `MCPToolset` this is off by default because the server writes this text, and the model receives it with the same authority as the instructions you write yourself. Only enable it for servers you trust. The [`MCP`](../capabilities/mcp.md) capability turns it on for the local toolset it builds, so for a server you don't trust, pass [`include_instructions=False`](../capabilities/mcp.md#server-instructions) to the capability.
+On `MCPToolset` this is off by default because the server writes this text, and the model receives it with the same authority as the instructions you write yourself. Only enable it for servers you trust. The [`MCP`](../capabilities/mcp.md) capability turns it on for the local toolset it builds, so for a server you don't trust, [lower the capability](../capabilities/mcp.md#lowering-an-untrusted-server) with `with_authority('none')` to send its instructions as data, or pass [`include_instructions=False`](../capabilities/mcp.md#server-instructions) to the capability to leave them out.
 
 The instructions are read each time the toolset connects, which by default is once per agent run, and on a toolset with an [`id`][pydantic_ai.mcp.MCPToolset.id] they [append their changes](../agent.md#appending-instruction-changes). If the server sends different instructions on a later connection, as when it's redeployed between turns of a conversation, the new text is appended to the conversation rather than rewriting the instruction prefix that the provider has cached. The model receives them in a `<pyai:context id="toolset:<id>">` element, so it can tell which server they came from.
 

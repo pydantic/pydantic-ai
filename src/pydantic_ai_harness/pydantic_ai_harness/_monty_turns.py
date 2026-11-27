@@ -37,6 +37,7 @@ from pydantic_monty import (
     CollectString,
     ExcType,
     ExternalExceptionData,
+    ExternalModule,
     ExternalResult,
     ExternalReturnValue,
     ExternalSettledResult,
@@ -425,6 +426,7 @@ async def run_monty_turn(
     *,
     os_policy: OSPolicy,
     mount: MountDir | list[MountDir] | None,
+    external_modules: Mapping[str, ExternalModule] | None,
 ) -> MontyTurn:
     """Run one turn on a session checked out of `pool`, and store the state it leaves.
 
@@ -440,6 +442,9 @@ async def run_monty_turn(
         type_check=request.type_check_stubs is not None,
         type_check_stubs=request.type_check_stubs,
         os_policy=os_policy,
+        # Imports are answered here, in the turn. Calls into the modules leave it like tool calls,
+        # so the workflow runs them the same way whether or not turns are activities.
+        external_modules=external_modules,
         ephemeral=False,
     ) as session:
         turn = await _run_turn(session, request, mount=mount, capture=capture)
@@ -454,7 +459,7 @@ async def _run_turn(
     mount: MountDir | list[MountDir] | None,
     capture: CollectString,
 ) -> MontyTurn:
-    if await _session_id(session) is None:
+    if await session.get_session_id() is None:
         # Before anything ran, CodeMode falls back to workflow code. Later, this checkout reached a
         # server that cannot have the run's record, so CodeMode reports it as a dropped session.
         if request.state is None:
@@ -644,21 +649,6 @@ async def _load(
         await session.load_session(state)
         return None
     return await session.load_snapshot(state, mount=mount, print_callback=capture)
-
-
-async def _session_id(session: AsyncMontySession) -> bytes | None:
-    """The ID a storing server gave `session`, or `None` from a server that stores nothing.
-
-    Monty 1.6 opens a remote session on its first request, so its `session_id` property reads `None`
-    until then; `get_session_id()` opens the session to answer. Monty 1.5 has only the property, set
-    on checkout.
-    """
-    get_session_id = getattr(session, 'get_session_id', None)
-    # Monty 1.5; the tests' storing server models 1.6.
-    if get_session_id is None:  # pragma: no cover
-        return session.session_id
-    session_id: bytes | None = await get_session_id()
-    return session_id
 
 
 async def _dump(session: AsyncMontySession) -> str:

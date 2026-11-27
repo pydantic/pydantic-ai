@@ -120,6 +120,7 @@ from .conftest import (
     IsSameStr,
     IsStr,
     conversation_view,
+    history_with_server_system_prompts,
     iter_message_parts,
     legacy_retry_prompt_part,
     message,
@@ -14170,6 +14171,64 @@ async def test_server_message_history_follow_up(client_sends: str):
     assert conversation_view(stored) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok'])
 
 
+@pytest.mark.parametrize('held', ['message_history', 'server message_history', 'conversation_store'])
+async def test_server_system_prompt_keeps_trusted_history_system_prompts(held: str):
+    """`manage_system_prompt='server'` replaces only the stale prompt opening the trusted history (#13768).
+
+    The server's other system prompts reach the model, and the client's is still stripped.
+    """
+    agent, requests, _ = server_history_agent(system_prompt='Server prompt')
+    stored = history_with_server_system_prompts()
+    client_prompt = UIMessage(id='s1', role='system', parts=[TextUIPart(text='Client prompt')])
+    run_input = SubmitMessage(id='chat', messages=[client_prompt, _AND_NOW])
+    message_history: list[ModelMessage] | None = stored
+    if held == 'conversation_store':
+        store = InMemoryConversationStore()
+        await store.save(Conversation(messages=stored, conversation_id='chat'))
+        adapter = VercelAIAdapter(agent, run_input, conversation_store=store)
+        message_history = None
+    elif held == 'server message_history':
+        adapter = VercelAIAdapter(agent, run_input, manage_message_history='server')
+    else:
+        adapter = VercelAIAdapter(agent, run_input)
+    results: list[AgentRunResult[Any]] = []
+
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
+        async for _ in adapter.run_stream(message_history=message_history, on_complete=results.append):
+            pass
+
+    [result] = results
+    assert conversation_view(requests[-1]) == snapshot(
+        [
+            'system-prompt: Server prompt',
+            'user-prompt: where am I?',
+            'call loc-1',
+            'return loc-1: Paris',
+            'user-prompt: <system>Enqueued in an earlier run</system>',
+            'text: ok',
+            'user-prompt: <system>Server context</system>',
+            'user-prompt: hi',
+            'text: ok',
+            'user-prompt: and now?',
+        ]
+    )
+    assert conversation_view(result.all_messages()) == snapshot(
+        [
+            'system-prompt: Server prompt',
+            'user-prompt: where am I?',
+            'call loc-1',
+            'return loc-1: Paris',
+            'system-prompt: Enqueued in an earlier run',
+            'text: ok',
+            'system-prompt: Server context',
+            'user-prompt: hi',
+            'text: ok',
+            'user-prompt: and now?',
+            'text: ok',
+        ]
+    )
+
+
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')
 async def test_server_message_history_stale_regenerate_is_an_error_event():
     """A regenerate of a message the server doesn't have, as a retry after a failed run, reaches `useChat` as an error.
@@ -14583,6 +14642,8 @@ async def _answer_ok(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIte
 @pytest.mark.parametrize(
     ('prompt', 'trim', 'efforts', 'added'),
     [
+        # The system prompt the UI adapter reinjects goes on the trimmed history's first request, a copy of the turn
+        # that only adds to it, so the turn is stored as the history holds it, with the system prompt.
         pytest.param('system_prompt', True, [None, None, None], SystemPromptPart, id='trimmed'),
         pytest.param('instructions', True, ['low', 'low', 'low'], ModelSettingsDeltaPart, id='trimmed-effort'),
         pytest.param('system_prompt', False, ['low', 'low', 'high'], ModelSettingsDeltaPart, id='effort-change'),
@@ -14628,6 +14689,9 @@ async def test_conversation_store_appends_a_turn_the_run_adds_parts_to(
     last_turn = conversation.messages[-2]
     assert isinstance(last_turn, ModelRequest)
     assert any(isinstance(part, added) for part in last_turn.parts) if added else len(last_turn.parts) == 1
+    head = conversation.messages[0]
+    assert isinstance(head, ModelRequest)
+    assert isinstance(head.parts[0], SystemPromptPart) == (prompt == 'system_prompt')
 
 
 @pytest.mark.parametrize(

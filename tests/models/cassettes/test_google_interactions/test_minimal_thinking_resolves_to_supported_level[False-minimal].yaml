@@ -1,0 +1,75 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "202"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          thinking_level: low
+          thinking_summaries: auto
+        store: false
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Reply exactly OK.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=17749
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: completed
+        usage:
+          total_tokens: 6
+          total_input_tokens: 5
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 5
+          total_cached_tokens: 0
+          total_output_tokens: 1
+          total_tool_use_tokens: 0
+          total_thought_tokens: 0
+          initial_input_tokens: 4
+        created: 2026-11-05T23:26:55Z
+        updated: 2026-11-05T23:26:55Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EmkKZwFpFH0TlEBNw2mrhNSBHoXARiSbKskvmbeYaeoyvah02xISwBDHrOtC5X1vLj1W7g5uQd1sdI3yvjkn7wVoQkcvEKxqU4uu46KkyWmmk2USl+ckN2zUaafigEt+p8uomUaHiHDnBCU=
+          type: thought
+        - content:
+          - text: OK
+            type: text
+          type: model_output
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-05T23:26:55.948042+00:00

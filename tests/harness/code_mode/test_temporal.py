@@ -42,7 +42,8 @@ from uuid import uuid4
 
 import pytest
 from anyio.from_thread import start_blocking_portal
-from pydantic_monty import AsyncMontyRemote, MontyRefusedError, MountDir
+from pydantic import BaseModel
+from pydantic_monty import AsyncMontyRemote, ExternalModule, MontyRefusedError, MountDir
 
 try:
     from temporalio import workflow
@@ -246,7 +247,7 @@ code_mode_agent = Agent(
 _request_id: contextvars.ContextVar[str] = contextvars.ContextVar('request_id', default='unset')
 
 
-# Only the skipped relay test calls this `os_access` (#8824).
+# Only the skipped relay test calls this `os_access` (#14674).
 def _workflow_os(
     *, name: str, args: tuple[object, ...], kwargs: dict[str, object], **_: object
 ) -> object:  # pragma: lax no cover
@@ -699,6 +700,35 @@ snippet_agents = {
 }
 
 
+def lookup(key: str) -> str:
+    """Read `key` from a fixed table: a module function runs in the workflow, so it must return the same on replay."""
+    return {'region': 'eu', 'tier': 'gold'}[key]
+
+
+async def scaled(n: int) -> int:
+    """Scale `n`. It is async, so the sandbox can gather it with a tool call."""
+    return n * 100
+
+
+def _module_agent(name: str, monty_sandbox: Callable[[], AsyncMontyRemote] | None) -> Agent[object, str]:
+    """An agent whose sandbox imports the `catalog` host module, on the local pool or in remote turns."""
+    catalog = ExternalModule(
+        {'lookup': lookup, 'scaled': scaled},
+        stubs='def lookup(key: str) -> str: ...\nasync def scaled(n: int) -> int: ...',
+    )
+    return Agent(
+        FunctionModel(_snippet_model),
+        name=f'code_mode_temporal_modules_{name}_agent',
+        toolsets=[FunctionToolset(tools=[echo], id='echo')],
+        capabilities=[
+            CodeMode(id='code', monty_sandbox=monty_sandbox, external_modules={'catalog': catalog}),
+            TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+        ],
+    )
+
+
+module_agents = {'local': _module_agent('local', None), 'turns': _module_agent('turns', stored_session_pool)}
+
 AGENTS = {
     agent.name: agent
     for agent in [
@@ -709,6 +739,7 @@ AGENTS = {
         refusing_code_mode_agent,
         session_loss_code_mode_agent,
         *snippet_agents.values(),
+        *module_agents.values(),
     ]
 }
 """The agents `AgentWorkflow` runs, by name. Built at import, so the workflow sandbox's own import of this module
@@ -756,6 +787,32 @@ class RemoteCodeModeWorkflow:
         _request_id.set('req-42')  # pragma: no cover
         result = await remote_code_mode_agent.run(prompt)  # pragma: no cover
         return str(result.output)  # pragma: no cover
+
+
+class Total(BaseModel):
+    total: int
+
+
+def _submit_model(messages: list[ModelRequest | ModelResponse], info: AgentInfo) -> ModelResponse:
+    code = 'total = await add(a=40, b=2)\nfinal_result(total=total)'
+    return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code}, tool_call_id='submit')])
+
+
+submit_agent = Agent(
+    FunctionModel(_submit_model),
+    name='code_mode_temporal_submit_agent',
+    output_type=Total,
+    toolsets=[FunctionToolset(tools=[add], id='math')],
+    capabilities=[CodeMode(allow_final_output=True), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class SubmitWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> dict[str, int]:
+        result = await submit_agent.run(prompt)
+        return {'total': result.output.total, 'requests': result.usage.requests}
 
 
 @workflow.defn
@@ -1003,7 +1060,7 @@ async def test_remote_checkout_backoff_replays_without_workflow_timer(client: Cl
     assert not any(event.HasField('timer_started_event_attributes') for event in history.events)
 
 
-@pytest.mark.skip(reason='Hangs intermittently in CI: https://github.com/pydantic/pydantic-ai/issues/8824')
+@pytest.mark.skip(reason='Hangs in CI under xdist: https://github.com/pydantic/pydantic-ai/issues/14674')
 @pytest.mark.usefixtures('temporal_monty_relay')
 async def test_code_mode_runs_remotely_in_temporal_workflow(client: Client) -> None:
     """Remote workers run and replay in a workflow like local ones do.
@@ -1033,6 +1090,33 @@ async def test_code_mode_runs_remotely_in_temporal_workflow(client: Client) -> N
     assert any(e.HasField('timer_started_event_attributes') for e in history.events)
     replay_result = await Replayer(
         workflows=[RemoteCodeModeWorkflow],
+        plugins=[PydanticAIPlugin()],
+        workflow_runner=_workflow_runner(),
+    ).replay_workflow(history)
+    assert replay_result.replay_failure is None
+
+
+async def test_code_mode_submits_final_output_in_temporal_workflow(client: Client) -> None:
+    """`run_code` runs in the workflow under Temporal, so the code can submit the run's output, and the history replays."""
+    workflow_id = 'test_code_mode_temporal_submit'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SubmitWorkflow],
+        plugins=[AgentPlugin(submit_agent)],
+        workflow_runner=_workflow_runner(),
+    ):
+        result = await client.execute_workflow(
+            SubmitWorkflow.run,
+            args=['Add 40 and 2'],
+            id=workflow_id,
+            task_queue=TASK_QUEUE,
+        )
+    assert result == {'total': 42, 'requests': 1}
+
+    history = await client.get_workflow_handle(workflow_id).fetch_history()
+    replay_result = await Replayer(
+        workflows=[SubmitWorkflow],
         plugins=[PydanticAIPlugin()],
         workflow_runner=_workflow_runner(),
     ).replay_workflow(history)
@@ -1135,6 +1219,31 @@ async def test_remote_turns_run_as_activities(
     assert output == expected_output
     history = await _history(client, workflow_id)
     assert _activity_types(history) == expected_activities
+
+
+@pytest.mark.parametrize(
+    'sandbox,expected_activities',
+    [
+        pytest.param('local', ['model_request', 'call_tool', 'model_request'], id='local'),
+        # The turns answer the import, then pause at each call: the module calls run in the workflow
+        # between turns, and only the tool call is scheduled as an activity.
+        pytest.param(
+            'turns',
+            ['model_request', *['monty_turn'] * 4, 'call_tool', 'monty_turn', 'model_request'],
+            id='turns',
+        ),
+    ],
+)
+async def test_external_modules_run_in_the_workflow(
+    client: Client, workflow_id: str, sandbox: str, expected_activities: list[str]
+) -> None:
+    """Module functions run in the workflow and replay with it: only the tool call is an activity."""
+    code = (
+        'import asyncio, catalog\nfrom catalog import lookup\n'
+        '[lookup("region"), await asyncio.gather(catalog.scaled(n=2), echo(value="tool"))]'
+    )
+    assert await _run(client, workflow_id, module_agents[sandbox], code) == "['eu', [200, 'tool']]"
+    assert _activity_types(await _history(client, workflow_id)) == expected_activities
 
 
 async def test_remote_turns_fail_when_the_server_refuses_to_store(client: Client, workflow_id: str) -> None:

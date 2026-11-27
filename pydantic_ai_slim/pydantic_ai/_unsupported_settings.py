@@ -39,9 +39,37 @@ SUPPRESSED_WARNINGS: ContextVar[frozenset[ModelSettingName]] = ContextVar(
 )
 """The settings `Model.prepare_request` doesn't warn about, set by `suppress_warnings`.
 
-For `thinking`, the suppressed warning is that a provider-specific setting from the model's `settings` takes precedence
-over it; for the others, that the model ignores them.
+For `thinking` and `thinking_summary`, the suppressed warning is that a provider-specific setting from the model's
+`settings` takes precedence over them; for the others, that the model ignores them.
 """
+
+
+_RAISED: ContextVar[bool] = ContextVar('unsupported_setting_warnings_raised', default=False)
+"""Whether `warn_unsupported_settings` raises the `UnsupportedSettingWarning` instead of emitting it, set by `raise_warnings`."""
+
+
+_RAISED_FOR_FALLBACK = '_pydantic_ai_raised_for_fallback'
+"""The attribute that marks an `UnsupportedSettingWarning` `raise_warnings` had raised, rather than a warnings filter."""
+
+
+def raised_for_fallback(warning: UnsupportedSettingWarning) -> bool:
+    """Whether `warning` was raised by `raise_warnings`, for a `fallback_on` that names it, rather than by a filter."""
+    return getattr(warning, _RAISED_FOR_FALLBACK, False) is True
+
+
+@contextmanager
+def raise_warnings() -> Generator[None]:
+    """Raise the `UnsupportedSettingWarning` a model would emit for a request inside this block, instead of emitting it.
+
+    For a fallback whose `fallback_on` names `UnsupportedSettingWarning`: the raised warning is the attempt's error, so
+    the fallback moves on to the next model, as the warnings filter `'error'` would make it, but only for its own
+    attempts. A suppressed warning (see `suppress_warnings`) isn't raised either.
+    """
+    token = _RAISED.set(True)
+    try:
+        yield
+    finally:
+        _RAISED.reset(token)
 
 
 DEPRECATED_MODEL_WARNING_SUPPRESSED: ContextVar[bool] = ContextVar('deprecated_model_warning_suppressed', default=False)
@@ -53,15 +81,15 @@ def suppress_warnings(settings: Iterable[ModelSettingName] | None = None) -> Gen
     """Don't warn about `settings` in `Model.prepare_request` calls inside this block.
 
     Without `settings`, don't emit any warning `prepare_request` emits: about each of the `GUARANTEE_SETTINGS` a model
-    may ignore, about `thinking`, which a provider-specific setting from the model's `settings` may take precedence over,
-    and about a model its provider deprecated.
+    may ignore, about `thinking` and `thinking_summary`, which a provider-specific setting from the model's `settings`
+    may take precedence over, and about a model its provider deprecated.
 
     For framework code that prepares a request without sending it (to resolve the output mode, count its tokens, or
     describe it on a span, possibly in a Temporal workflow), so a request warns once, when the model that sends it
     prepares it; and, with `settings`, for settings the user didn't choose, like the `stop_sequences` an MCP server's
     sampling request sends.
     """
-    names = (*GUARANTEE_SETTINGS, 'thinking') if settings is None else settings
+    names = (*GUARANTEE_SETTINGS, 'thinking', 'thinking_summary') if settings is None else settings
     token = SUPPRESSED_WARNINGS.set(SUPPRESSED_WARNINGS.get() | frozenset(names))
     deprecation_token = DEPRECATED_MODEL_WARNING_SUPPRESSED.set(
         settings is None or DEPRECATED_MODEL_WARNING_SUPPRESSED.get()
@@ -95,8 +123,9 @@ def warn_unsupported_settings(
         # For these, only `False` is a guarantee, and only one about how function tools are called.
         if name in _TOOL_CALL_GUARANTEES and (settings.get(name) is not False or not has_function_tools):
             continue
-        warnings.warn(
-            f'The `{name}` setting is not supported by model {model_id!r} and will be ignored.{hint}',
-            UnsupportedSettingWarning,
-            stacklevel=stacklevel,
-        )
+        message = f'The `{name}` setting is not supported by model {model_id!r} and will be ignored.{hint}'
+        if _RAISED.get():
+            warning = UnsupportedSettingWarning(message)
+            setattr(warning, _RAISED_FOR_FALLBACK, True)
+            raise warning
+        warnings.warn(message, UnsupportedSettingWarning, stacklevel=stacklevel)

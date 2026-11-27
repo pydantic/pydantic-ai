@@ -21,6 +21,8 @@ from pydantic_ai.capabilities import (
     ProcessHistory,
     ToolSearch,
 )
+from pydantic_ai.conversation import Conversation
+from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.exceptions import (
     ModelRetry,
     PydanticAIDeprecationWarning,
@@ -648,6 +650,58 @@ async def test_loaded_capability_tool_survives_a_stripped_reveal_marker() -> Non
     assert result.output == 'EXECUTED'
     refusals = [str(part.content) for part in _iter_refusals(result.all_messages())]
     assert refusals == []
+
+
+async def test_the_reveal_markers_the_run_adds_are_saved_when_a_capability_strips_them() -> None:
+    """The run records each delta it adds for a load from before tool definitions, whatever a capability then drops.
+
+    The capability strips the delta from the history each request, so the next request reveals the tool, and adds a
+    delta, again: one for each of the two requests, each saved once.
+    """
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        returns = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.tool_name == 'secret_op']
+        if returns:
+            return make_text_response('EXECUTED')
+        return ModelResponse(parts=[ToolCallPart(tool_name='secret_op', args={}, tool_call_id='c1')])
+
+    def strip_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [
+            replace(message, parts=[p for p in message.parts if not isinstance(p, ToolAvailabilityDeltaPart)])
+            if isinstance(message, ModelRequest)
+            else message
+            for message in messages
+        ]
+
+    toolset = FunctionToolset[Any]()
+    toolset.add_function(secret_op, defer_loading=True)
+    guarded = Capability[Any](id='guarded', description='Guarded tools.', toolsets=[toolset], defer_loading=True)
+    agent = Agent(FunctionModel(model_fn), capabilities=[guarded, ProcessHistory(strip_deltas)])
+    store = InMemoryConversationStore()
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='load it')]),
+        ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'guarded'}, tool_call_id='l1')]),
+        ModelRequest(parts=[LoadCapabilityReturnPart(content={}, tool_call_id='l1')]),
+    ]
+
+    result = await agent.run('use the tool', conversation=Conversation(messages=history, conversation_id='c'))
+    await store.save(result)
+
+    def deltas(messages: Sequence[ModelMessage]) -> list[list[str]]:
+        return [
+            list(part.tools_added)
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolAvailabilityDeltaPart)
+        ]
+
+    assert result.output == 'EXECUTED'
+    assert deltas(result.all_messages()) == []
+    assert deltas(result.conversation.messages) == [['secret_op'], ['secret_op']]
+    stored = await store.load('c')
+    assert stored is not None
+    assert stored.messages == result.conversation.messages
 
 
 async def test_stripped_reveal_marker_survives_a_boundary_the_wire_skipped() -> None:

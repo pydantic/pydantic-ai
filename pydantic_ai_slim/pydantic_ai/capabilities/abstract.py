@@ -51,6 +51,7 @@ from ._on_event import collect_on_event_methods, marked_listens_to
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
+    from pydantic_ai.capabilities.compaction import CompactionRequest, CompactionResult
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
     from pydantic_ai.models import (
         KnownModelName,
@@ -158,6 +159,7 @@ _REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
     'after_model_request',
     'wrap_model_request',
     'on_model_request_error',
+    'compact_history',
     'get_wrapper_model',
     'before_output_validate',
     'after_output_validate',
@@ -321,14 +323,22 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     _safe_at_runtime: ClassVar[bool] = False
     """Whether this capability can be added per-run when a durability capability is bound.
 
-    Internal, in-tree only. [`Instrumentation`][pydantic_ai.capabilities.Instrumentation]
-    is the only built-in capability that sets this to `True`; the bundled `durable_exec`
-    integrations read it to allow `Instrumentation` to attach per-run despite the
-    blanket restriction on runtime capability additions.
+    Internal, in-tree only. Built-in capabilities that are safe to attach per-run, such as
+    [`Instrumentation`][pydantic_ai.capabilities.Instrumentation], set this to `True`; the bundled
+    `durable_exec` integrations read it to allow them despite the blanket restriction on runtime
+    capability additions.
 
     A first-class extension point that derives this from a capability's overridden
     hooks (so third-party capabilities don't need to set a flag manually) is tracked
     in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
+    """
+
+    _durable_unsupported_reason: ClassVar[str | None] = None
+    """Why this capability cannot run under durable execution, or `None` when it can.
+
+    Internal, in-tree only. A capability that sets it refuses a durability capability in its own
+    `for_agent`. The deprecated wrapper agents (`TemporalAgent`, `DBOSAgent`, `PrefectAgent`) add no
+    durability capability for it to find, so they read this to refuse the capability when they wrap the agent.
     """
 
     @property
@@ -512,6 +522,17 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     @property
     def _has_prepare_model_request(self) -> bool:
         return type(self).prepare_model_request is not AbstractCapability.prepare_model_request
+
+    @property
+    def _has_compact_history(self) -> bool:
+        return type(self).compact_history is not AbstractCapability.compact_history
+
+    def _handles_compact_history(self, ctx: RunContext[AgentDepsT]) -> bool:
+        """Whether a `compact_history` hook can run in this run: one is overridden and, if deferred, loaded.
+
+        The agent only retries a context overflow with compaction, and primes streamed requests for it, when one can.
+        """
+        return self._has_compact_history
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
@@ -1303,8 +1324,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     ) -> ModelRequestContext:
         """Called before each *attempt* at a model request, once the serving model is known.
 
-        This is the hook for work that depends on which model is about to run: compaction,
-        context-window fitting, per-profile message translation. Unlike
+        This is the hook for work that depends on which model is about to run: context-window fitting,
+        per-profile message translation. Compaction has a hook of its own,
+        [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history], which runs after this one.
+        Unlike
         [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request],
         which runs once per request step while the model may still change,
         `request_context.model` here is the model that will actually serve the request, and
@@ -1318,7 +1341,9 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
         Changes to `request_context` shape the request that goes on the wire for this attempt and are
         not persisted to the agent's message history; the next attempt starts again from what
-        `before_model_request` produced. Changes made through
+        `before_model_request` produced, also when the attempt compacts the history: see
+        [request-only changes and compaction](../capabilities/custom.md#request-only-changes-and-compaction).
+        Changes made through
         [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], the run's persistent history,
         do persist, and are not rolled back for a further attempt. Use them for state that doesn't
         depend on the attempt, such as a record an attempt makes that later requests and turns should
@@ -1397,6 +1422,41 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
         """
         raise error
+
+    async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
+        """Compact the message history for the model that will serve the next request, or return `None` to leave it to the next capability.
+
+        Called for an attempt at a model request when compaction was asked for with
+        [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction], or with reason
+        `'context_overflow'` when the model rejected the attempt for exceeding its context window, to send it to
+        that model once more. It runs after the
+        [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] hooks, with
+        [`request.conversation_request.model`][pydantic_ai.capabilities.CompactionModelRequest.model] set to the
+        model about to serve the attempt. Capabilities are asked in order and the first result is used, so
+        capability order is the fallback chain: a capability that can't compact for this model, or this request,
+        returns `None`.
+
+        The returned [`CompactionResult.messages`][pydantic_ai.capabilities.CompactionResult.messages] are sent in
+        place of [`request.messages`][pydantic_ai.capabilities.CompactionRequest.messages], and replace the run's
+        message history once a response to them is accepted. What's committed has the persistent originals of the
+        messages it kept, and what's sent has this request's own changes to them; see
+        [`CompactionRequest.messages`][pydantic_ai.capabilities.CompactionRequest.messages]. A compaction for a model
+        that then fails is discarded, and its usage is counted like a failed attempt's. A
+        [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] raised here fails the attempt like an error from the
+        model itself, so it reaches
+        [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] and
+        [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] can move on to another model.
+
+        Core emits the [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent] and
+        [`CompactionEndEvent`][pydantic_ai.messages.CompactionEndEvent] around the hooks, and checks the result:
+        it has to contain its [`part`][pydantic_ai.capabilities.CompactionResult.part], with a summary or a
+        provider's encrypted content, and end with the request being answered. A summary in a `ModelRequest` has to
+        come after the standing system prompt the history it was given opens with, which the result keeps first.
+        Under durable execution this runs in workflow code; requests through
+        `request.conversation_request.model` are durable model operations, and other I/O belongs in a
+        [`durable_operation`][pydantic_ai.capabilities.durable_operation].
+        """
+        return None
 
     # --- Tool validate lifecycle hooks ---
 
@@ -1943,21 +2003,11 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     earlier, and reading "last" off the tree would turn a run-level override into the agent-level
     capability winning.
     """
-    from .wrapper import WrapperCapability
-
     # `CombinedCapability` may sort top-level branches, but it retains each branch it doesn't flatten
     # (see `_combination_roots`) as the object supplied by its source layer. Associate provenance
     # with that branch before walking its leaves: a wrapper can move ahead of an earlier layer while
     # the same leaf object appears both inside that wrapper and on its own.
-    root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]] = {}
-    position = 0
-    for layer_index, layer in enumerate(layers):
-        for root in chain.from_iterable(map(_combination_roots, layer)):
-            leaf_positions: dict[int, list[int]] = {}
-            for leaf in leaf_capabilities(root):
-                leaf_positions.setdefault(id(leaf), []).append(position)
-                position += 1
-            root_locations.setdefault(id(root), []).append((layer_index, leaf_positions))
+    root_locations = _root_locations(layers)
 
     visited: list[tuple[AbstractCapability[AgentDepsT], int, int]] = []
     for root in _combination_roots(capability):
@@ -1983,32 +2033,7 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     # per visit lines the decisions up with the occurrences they were made for.
     replacements: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
     for capability_id, duplicates in duplicate_groups.items():
-        # Only the last layer to state this id has a say; everything an earlier layer said under it
-        # is overridden, not merged in. `combine` then settles what the survivors within that one
-        # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
-        _reject_derived_id_collision(capability_id, [duplicate.capability for duplicate in duplicates])
-        last_layer = max(duplicate.layer_index for duplicate in duplicates)
-        surviving = [duplicate.capability for duplicate in duplicates if duplicate.layer_index == last_layer]
-        # Transparent wrappers name the same capability across layers, not the same mergeable class
-        # within a layer, so a group confined to one layer is compared as written: there, a wrapper
-        # and what it wraps are two capabilities claiming one id. Across layers they are one
-        # capability named twice, so the wrappers come off and the comparison is between what they
-        # hold. Explicitly renamed wrappers keep their own identity either way.
-        spans_layers = last_layer != duplicates[0].layer_index
-        identity_types: set[type[AbstractCapability[AgentDepsT]]] = set()
-        for duplicate in duplicates:
-            identity = duplicate.capability
-            while spans_layers and isinstance(identity, WrapperCapability) and identity.id == identity.wrapped.id:
-                identity = identity.wrapped
-            identity_types.add(type(identity))
-        _reject_class_crossing_id(capability_id, identity_types)
-        # With a single survivor there is nothing to settle, so `combine` isn't called.
-        combined_duplicate = surviving[-1]
-        if len(surviving) > 1:
-            _reject_class_crossing_id(capability_id, {type(survivor) for survivor in surviving})
-            if not _declares_default_id(type(combined_duplicate)):
-                raise UserError(_repeated_id_message(capability_id, surviving))
-            combined_duplicate = combined_duplicate.combine(surviving)
+        combined_duplicate = _resolve_duplicates(capability_id, duplicates)
         replacements.update(
             {id(duplicate.capability): [None] * occurrence_counts[id(duplicate.capability)] for duplicate in duplicates}
         )
@@ -2028,6 +2053,57 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     # Every duplicated id keeps one occurrence, so the tree can never be emptied.
     assert combined is not None, 'combining duplicate capabilities cannot empty the tree'
     return combined
+
+
+def _root_locations(
+    layers: Sequence[Sequence[AbstractCapability[AgentDepsT]]],
+) -> dict[int, list[tuple[int, dict[int, list[int]]]]]:
+    """Where each branch a layer supplies sits: its layer, and the application position of each of its leaves."""
+    root_locations: dict[int, list[tuple[int, dict[int, list[int]]]]] = {}
+    position = 0
+    for layer_index, layer in enumerate(layers):
+        for root in chain.from_iterable(map(_combination_roots, layer)):
+            leaf_positions: dict[int, list[int]] = {}
+            for leaf in leaf_capabilities(root):
+                leaf_positions.setdefault(id(leaf), []).append(position)
+                position += 1
+            root_locations.setdefault(id(root), []).append((layer_index, leaf_positions))
+    return root_locations
+
+
+def _resolve_duplicates(
+    capability_id: str, duplicates: Sequence[_CapabilityOccurrence[AgentDepsT]]
+) -> AbstractCapability[AgentDepsT]:
+    """The one capability the occurrences sharing `capability_id`, in application order, resolve to."""
+    from .wrapper import WrapperCapability
+
+    # Only the last layer to state this id has a say; everything an earlier layer said under it
+    # is overridden, not merged in. `combine` then settles what the survivors within that one
+    # layer mean -- and with a single survivor there is nothing to settle, so it isn't called.
+    _reject_derived_id_collision(capability_id, [duplicate.capability for duplicate in duplicates])
+    last_layer = max(duplicate.layer_index for duplicate in duplicates)
+    surviving = [duplicate.capability for duplicate in duplicates if duplicate.layer_index == last_layer]
+    # Transparent wrappers name the same capability across layers, not the same mergeable class
+    # within a layer, so a group confined to one layer is compared as written: there, a wrapper
+    # and what it wraps are two capabilities claiming one id. Across layers they are one
+    # capability named twice, so the wrappers come off and the comparison is between what they
+    # hold. Explicitly renamed wrappers keep their own identity either way.
+    spans_layers = last_layer != duplicates[0].layer_index
+    identity_types: set[type[AbstractCapability[AgentDepsT]]] = set()
+    for duplicate in duplicates:
+        identity = duplicate.capability
+        while spans_layers and isinstance(identity, WrapperCapability) and identity.id == identity.wrapped.id:
+            identity = identity.wrapped
+        identity_types.add(type(identity))
+    _reject_class_crossing_id(capability_id, identity_types)
+    # With a single survivor there is nothing to settle, so `combine` isn't called.
+    combined_duplicate = surviving[-1]
+    if len(surviving) > 1:
+        _reject_class_crossing_id(capability_id, {type(survivor) for survivor in surviving})
+        if not _declares_default_id(type(combined_duplicate)):
+            raise UserError(_repeated_id_message(capability_id, surviving))
+        combined_duplicate = combined_duplicate.combine(surviving)
+    return combined_duplicate
 
 
 def _repeated_id_message(capability_id: str, capabilities: Sequence[AbstractCapability[Any]]) -> str:

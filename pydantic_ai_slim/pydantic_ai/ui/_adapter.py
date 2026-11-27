@@ -48,6 +48,8 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     ModelSettingsDeltaPart,
+    NativeToolCallPart,
+    NativeToolReturnPart,
     RetryFeedbackPart,
     RetryInfo,
     StructuredContent,
@@ -55,24 +57,35 @@ from pydantic_ai.messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolRetryCause,
+    ToolUIVisibility,
     UserPromptPart,
     _dangling_tool_calls_by_response,  # pyright: ignore[reportPrivateUsage]
     _drop_compaction_parts,  # pyright: ignore[reportPrivateUsage]
     _is_tool_result_part,  # pyright: ignore[reportPrivateUsage]
     _sanitize_messages,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.models import KnownModelName, Model
+from pydantic_ai.models import (
+    KnownModelName,
+    Model,
+    ModelRequestContext,
+    _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.output import OutputDataT, OutputSpec
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
 
 from ._event_stream import NativeEvent, OnCancelFunc, OnCompleteFunc, UIEventStream, dispatch_callback
 from ._messages_builder import MessagesBuilder
-from ._utils import get_ui_message_id, set_ui_message_id, without_ui_message_id
+from ._utils import (
+    get_ui_message_id,
+    set_ui_message_id,
+    warn_client_held_history_with_hidden_tools,
+    without_ui_message_id,
+)
 
 if TYPE_CHECKING:
     from starlette.requests import Request
@@ -753,6 +766,34 @@ def _report_store_failure(action: str, error: Exception) -> None:
         pass
 
 
+@dataclass
+class _ServerSystemPromptReinjector(ReinjectSystemPrompt[AgentDepsT]):
+    """The reinjector `manage_system_prompt='server'` adds, which keeps the server's own system prompts in the history.
+
+    The adapter strips every system prompt from the client's messages, so the ones left in the history a run starts
+    with came from the trusted `message_history` or `conversation_store`. Of those, it replaces the standing prompt
+    that opens the history, which can be a stale copy of the agent's own, and every rendering of a dynamic system
+    prompt, which the agent renders again. The base class also replaces any of the rest that repeats the agent's
+    configured prompt. A server-authored part in that standing prompt, like context right after the agent's prompt,
+    is replaced with it: nothing tells it apart from a stale prompt.
+    """
+
+    def _spared_history_parts(self, messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
+        first_request = next((message for message in messages if isinstance(message, ModelRequest)), None)
+        standing: Sequence[ModelRequestPart] = (
+            first_request.parts[: _standing_system_prompt_count(first_request)] if first_request else []
+        )
+        return [
+            part
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, SystemPromptPart)
+            and part.dynamic_ref is None
+            and not any(part is standing_part for standing_part in standing)
+        ]
+
+
 def pending_tool_calls(message_history: Sequence[ModelMessage]) -> list[ToolCallPart]:
     """The tool calls of `message_history`'s last response that no request after it answers."""
     history = list(message_history)
@@ -772,6 +813,50 @@ def warn_dropped_tool_results(dropped: int, *, stacklevel: int) -> None:
         UserWarning,
         stacklevel=stacklevel,
     )
+
+
+@dataclass
+class _DefaultUIVisibility(AbstractCapability[AgentDepsT]):
+    """Writes an adapter's non-public `default_ui_visibility` onto the tools and tool parts that have no `ui_visibility`.
+
+    The parts are then stamped with the default itself, so a reload that dumps them without it is sent what the
+    stream sent.
+    """
+
+    # It adds no toolsets or durable operations, so a durable workflow has nothing to register for it.
+    _safe_at_runtime: ClassVar[bool] = True
+
+    visibility: ToolUIVisibility
+
+    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        return [
+            replace(tool_def, ui_visibility=self.visibility) if tool_def.ui_visibility is None else tool_def
+            for tool_def in tool_defs
+        ]
+
+    async def prepare_output_tools(
+        self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]
+    ) -> list[ToolDefinition]:
+        # An output tool's arguments are the run's answer.
+        return [
+            replace(tool_def, ui_visibility='public') if tool_def.ui_visibility is None else tool_def
+            for tool_def in tool_defs
+        ]
+
+    async def after_model_request(
+        self, ctx: RunContext[AgentDepsT], *, request_context: ModelRequestContext, response: ModelResponse
+    ) -> ModelResponse:
+        # A call to a tool the run doesn't know, and a native tool's parts, have no definition to take the default
+        # from. The stream already sent them by its own default, which is this one.
+        parts = [
+            replace(part, ui_visibility=self.visibility)
+            if isinstance(part, (ToolCallPart, NativeToolCallPart, NativeToolReturnPart)) and part.ui_visibility is None
+            else part
+            for part in response.parts
+        ]
+        if all(new is old for new, old in zip(parts, response.parts)):
+            return response
+        return replace(response, parts=parts)
 
 
 @runtime_checkable
@@ -848,6 +933,13 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     requests), and the agent's own system prompt is reinjected at the head of the
     first request via the
     [`ReinjectSystemPrompt`][pydantic_ai.capabilities.ReinjectSystemPrompt] capability.
+    When the history comes from the server (a `message_history` passed to a run method, or the
+    conversation loaded from the
+    [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store]), the reinjector replaces
+    the system prompt that history opens with, which can be a stale copy of the agent's own, plus
+    any other copy or dynamic rendering of the agent's prompt. It keeps the history's other system
+    prompts, such as one an earlier run enqueued. A system prompt the server put right after the
+    agent's, in the opening request, is replaced along with it.
     Request-level [`instructions`][pydantic_ai.messages.ModelRequest.instructions] on
     frontend messages are reset to `None` as well.
 
@@ -895,6 +987,24 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
     - The new turn is sanitized as usual.
 
     See [Keeping the history on the server](https://pydantic.dev/docs/ai/integrations/ui/overview/#keeping-the-history-on-the-server).
+    """
+
+    default_ui_visibility: ToolUIVisibility = 'public'
+    """What the client is sent for a tool with no [`ui_visibility`][pydantic_ai.tools.ToolDefinition.ui_visibility] of its own.
+
+    `'public'` (default) sends every call and result. `'redacted'` sends the calls and a placeholder instead of
+    each result, and `'private'` sends neither. A run writes this onto the tools without a setting, so their call
+    and return parts are stamped with it and a conversation reloaded from the stored history with `dump_messages`
+    is sent the way it was streamed. The protocols don't carry the stamps, so a history the client sends back has
+    none. External (frontend) tools and output tools are always `'public'`, and native tools and calls to tools
+    the run doesn't know take this default. The stored history always keeps the full results.
+
+    A non-public tool needs the history held on the server, with
+    [`manage_message_history='server'`][pydantic_ai.ui.UIAdapter.manage_message_history] or a
+    [`conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store]: a client holding the history would send
+    back the placeholder as the result. Under client-held history, a run warns.
+
+    See [Tool visibility](../../ui/overview.md#tool-visibility).
     """
 
     conversation_store: ConversationStore | None = None
@@ -1027,6 +1137,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         agent: AbstractAgent[AgentDepsT, OutputDataT],
         manage_system_prompt: Literal['server', 'client'] = 'server',
         manage_message_history: Literal['client', 'server'] = 'client',
+        default_ui_visibility: ToolUIVisibility = 'public',
         conversation_store: ConversationStore | None = None,
         conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -1049,6 +1160,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             manage_message_history: Who owns the conversation history. Ignored with a `conversation_store`,
                 which always holds it on the server. See
                 [`UIAdapter.manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history].
+            default_ui_visibility: What the client is sent for a tool with no `ui_visibility` of its own. See
+                [`UIAdapter.default_ui_visibility`][pydantic_ai.ui.UIAdapter.default_ui_visibility].
             conversation_store: A store to load and save the conversation with. See
                 [`UIAdapter.conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store].
             conversation_scope: The scope to load and save the conversation with, such as the authenticated user. See
@@ -1077,6 +1190,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             accept=request.headers.get('accept'),
             manage_system_prompt=manage_system_prompt,
             manage_message_history=manage_message_history,
+            default_ui_visibility=default_ui_visibility,
             conversation_store=conversation_store,
             conversation_scope=conversation_scope,
             allowed_file_url_schemes=allowed_file_url_schemes,
@@ -1436,7 +1550,18 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """
         if self.conversation_store is not None:
             on_complete = self._announce_saved_entries(on_complete)
-        return self.build_event_stream().transform_stream(stream, on_complete=on_complete, on_cancel=on_cancel)
+        event_stream = self.build_event_stream()
+        event_stream.default_ui_visibility = self.default_ui_visibility
+        # A run with a non-public default warns when it starts. Events this adapter didn't run, such as those of a
+        # durable run in another process, are encoded like a stream used on its own: they don't warn.
+        event_stream._warns_on_hidden_tools = (  # pyright: ignore[reportPrivateUsage]
+            self._client_holds_history and self.default_ui_visibility == 'public'
+        )
+        return event_stream.transform_stream(stream, on_complete=on_complete, on_cancel=on_cancel)
+
+    @property
+    def _client_holds_history(self) -> bool:
+        return self.conversation_store is None and self.manage_message_history == 'client'
 
     def _announce_saved_entries(self, on_complete: OnCompleteFunc[EventT] | None) -> OnCompleteFunc[EventT]:
         """Wrap `on_complete` so the stored entries reach the client before whatever it sends."""
@@ -1582,8 +1707,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             # occupies the `reinject_system_prompt` slot a user's own reinjector may hold. Keeping the
             # default here would make a user reinjector supplied for this run a hard duplicate-id
             # error, and silently supersede an agent-level one. Server mode stays authoritative
-            # either way: this instance always runs, deriving a distinct id when it has to.
-            run_capabilities.append(ReinjectSystemPrompt(replace_existing=True, id=None))
+            # either way: this instance always runs, deriving a distinct id when it has to. It replaces
+            # the history's standing prompt and any other copy or rendering of the agent's own, and
+            # keeps the server's other system prompts, since `sanitize_messages` already stripped the
+            # client's.
+            run_capabilities.append(_ServerSystemPromptReinjector(replace_existing=True, id=None))
+        run_capabilities.extend(self._ui_visibility_capabilities())
         if capabilities:
             run_capabilities.extend(capabilities)
 
@@ -1614,6 +1743,17 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     yield event
 
         return stream_events()
+
+    def _ui_visibility_capabilities(self) -> list[AbstractCapability[AgentDepsT]]:
+        """The run capability that writes a non-public `default_ui_visibility` onto the tools without a setting.
+
+        Warns when the client holds the history.
+        """
+        if self.default_ui_visibility == 'public':
+            return []
+        if self._client_holds_history:
+            warn_client_held_history_with_hidden_tools(stacklevel=4)
+        return [_DefaultUIVisibility(self.default_ui_visibility)]
 
     def run_stream(
         self,
@@ -1724,6 +1864,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         on_cancel: OnCancelFunc[EventT] | None = None,
         manage_system_prompt: Literal['server', 'client'] = 'server',
         manage_message_history: Literal['client', 'server'] = 'client',
+        default_ui_visibility: ToolUIVisibility = 'public',
         conversation_store: ConversationStore | None = None,
         conversation_scope: str | None = None,
         allowed_file_url_schemes: frozenset[str] = frozenset({'http', 'https'}),
@@ -1774,6 +1915,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             manage_message_history: Who owns the conversation history. Ignored with a `conversation_store`,
                 which always holds it on the server. See
                 [`UIAdapter.manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history].
+            default_ui_visibility: What the client is sent for a tool with no `ui_visibility` of its own. See
+                [`UIAdapter.default_ui_visibility`][pydantic_ai.ui.UIAdapter.default_ui_visibility].
             conversation_store: A store to load and save the conversation with. See
                 [`UIAdapter.conversation_store`][pydantic_ai.ui.UIAdapter.conversation_store].
             conversation_scope: The scope to load and save the conversation with, such as the authenticated user. See
@@ -1811,6 +1954,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                     agent=cast(AbstractAgent[AgentDepsT, OutputDataT], agent),
                     manage_system_prompt=manage_system_prompt,
                     manage_message_history=manage_message_history,
+                    default_ui_visibility=default_ui_visibility,
                     conversation_store=conversation_store,
                     conversation_scope=conversation_scope,
                     allowed_file_url_schemes=allowed_file_url_schemes,

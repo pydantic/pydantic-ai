@@ -21,6 +21,7 @@ from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
+from pydantic_ai_pax.models import model_catalog
 from pydantic_ai_pax.models.model_catalog import catalog, genai_prices_models, runnable_providers
 from pydantic_ai_pax.models.model_settings import ModelSettingsForm, model_settings_from_json
 from pydantic_ai_pax.runtime.session_runtime import create_shell
@@ -560,16 +561,21 @@ async def test_select_model_whose_provider_extra_is_installed(tmp_path: Path, mo
             'typesafe_sdk',
             [
                 'Cannot use typesafe:jev-latest: the `typesafe` extra is not installed in the Python Pax runs on',
+                "uv tool install 'pydantic-ai-pax[typesafe]'",
                 'pip install "pydantic-ai-slim[typesafe]"',
                 'uv run --package pydantic-ai-pax --extra typesafe pax',
             ],
             id='clai2-extra',
         ),
         pytest.param(
-            'groq:llama-3.3-70b-versatile',
+            'gateway/groq:llama-3.3-70b-versatile',
             'groq',
-            ['Cannot use groq:llama-3.3-70b-versatile with the Python Pax runs on', 'pydantic-ai-slim[groq]'],
-            id='slim-extra',
+            [
+                'Cannot use gateway/groq:llama-3.3-70b-versatile: the `groq` extra is not installed',
+                "uv tool install 'pydantic-ai-pax[groq]'",
+                'uv run --package pydantic-ai-pax --extra groq pax',
+            ],
+            id='extra-named-by-core',
         ),
     ],
 )
@@ -577,7 +583,8 @@ async def test_select_model_whose_provider_sdk_is_missing_fails_before_saving(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, model: str, sdk: str, expected: list[str]
 ) -> None:
     monkeypatch.setitem(sys.modules, sdk, None)
-    monkeypatch.delitem(sys.modules, f'pydantic_ai.providers.{model.partition(":")[0]}', raising=False)
+    provider_module = model.partition(':')[0].rpartition('/')[2]
+    monkeypatch.delitem(sys.modules, f'pydantic_ai.providers.{provider_module}', raising=False)
     context, applied = make_context(tmp_path)
     original = context.settings.model
     context.store.add_model(name=model)
@@ -591,6 +598,27 @@ async def test_select_model_whose_provider_sdk_is_missing_fails_before_saving(
     assert model_row.key == 'model'
     assert SettingsSource(context).problem(model_row, model) == message
     assert SettingsSource(context).apply(model_row, model) == f'model: {message}'
+
+
+@pytest.mark.parametrize(
+    'error',
+    ['Please install the SDK for groq.', 'Please install `groq` to use it: `pip install "pydantic-ai-slim[cli]"`.'],
+    ids=['no-extra-named', 'extra-pax-does-not-offer'],
+)
+def test_missing_sdk_without_a_pax_extra_reports_core_error(monkeypatch: pytest.MonkeyPatch, error: str) -> None:
+    """Without a Pax extra to name, Pax passes core's error on instead of suggesting a `pydantic-ai-pax[...]` install.
+
+    A unit test, not a VCR test: an installed SDK is what makes a recorded request possible, so the missing-SDK
+    error, and an extra Pax does not offer such as `cli`, can only be produced by raising it here.
+    """
+
+    def missing(provider: str) -> type:
+        raise ImportError(error)
+
+    monkeypatch.setattr(model_catalog, 'infer_provider_class', missing)
+    with pytest.raises(ValueError) as exc_info:
+        model_catalog.check_installed('groq:llama')
+    assert str(exc_info.value) == f'Cannot use groq:llama with the Python Pax runs on ({sys.executable}): {error}'
 
 
 async def test_shell_registers_model_subcommands_and_deprecated_aliases(tmp_path: Path) -> None:

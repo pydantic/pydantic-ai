@@ -1,0 +1,5 @@
+{
+  "against": "v2.75.0",
+  "reason": "Pax 0.x: a plugin status segment may also return a `StatusLink`, which the status row shows as a clickable link; a segment that returns `str` works as before.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14564"
+}
