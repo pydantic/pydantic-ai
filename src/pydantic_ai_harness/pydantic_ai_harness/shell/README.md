@@ -353,6 +353,24 @@ many capabilities bring it, and starts a sandbox that isn't running to ask for i
 
 The model sees a capped preview of command output. For large output, redirect it to a file in the workspace, then use `grep` or `tail` to inspect bounded portions rather than printing the whole file.
 
+## Two `Shell`s on one agent
+
+`Shell` has the default `id` `'shell'`, so a second `Shell` on the same agent, including the one inside `Coder()`,
+doesn't add a second set of tools. The two combine into one that applies every restriction either states, so adding
+one only ever narrows: `Shell(allowed_commands=['pytest'])` beside `Coder()` restricts `Coder`'s `shell` tool to
+`pytest`.
+
+- `denied_commands`, `denied_operators` and `denied_env_patterns` add up, each instance's defaults included.
+- `allowed_commands`, `tools`, timeouts and output, log and file limits count only when an instance was constructed
+  with them: lists intersect, and limits take the smaller value. Two lists with nothing in common raise a `UserError`.
+- `allow_interactive` applies only if both allow it, and `persist_cwd` if either sets it.
+- `env` and `secret_env` keys add up, and one key given two values raises.
+
+To keep two apart, give the second its own `id`, as in `Shell(id='background_shell', tools=['start_command',
+'check_command'])`. Wrapping one in `PrefixTools` doesn't: the wrapper keeps the id. Two instances also raise when
+they load at different times, such as one inside a deferred capability beside an always-on one. A `Shell` passed to
+`agent.run(capabilities=[...])` replaces the agent's whole instead of combining with it.
+
 ## Configuration
 
 ```python {names="defined"}

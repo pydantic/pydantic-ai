@@ -127,6 +127,101 @@ def test_a_declared_id_merges_without_an_override() -> None:
     assert (merged.effort, merged.budget) == ('low', 10)
 
 
+@pytest.mark.parametrize('deferred_first', [True, False], ids=['deferred_first', 'always_on_first'])
+@pytest.mark.parametrize('deferred_alone', [False, True], ids=['inside_a_deferred_group', 'deferred_itself'])
+def test_a_deferred_capability_does_not_combine_with_an_always_on_one(
+    deferred_alone: bool, deferred_first: bool
+) -> None:
+    """The combined capability is built with the agent, so it can't take a deferred one's settings only once loaded.
+
+    A regression test: combining them anyway took the place of whichever came last. With the always-on one last,
+    the deferred group silently disappeared, `load_capability` with it, so its setting never applied; with the
+    deferred one last, the always-on setting was silently off until the group loaded. Not a VCR test: the error
+    is raised while the `Agent` is built, before any model request a recording could observe.
+    """
+    deferred = (
+        Thinking(effort='high', defer_loading=True)
+        if deferred_alone
+        else CombinedCapability[Any]([Thinking(effort='high')], id='reasoning', defer_loading=True)
+    )
+    always_on = Thinking(effort='low')
+    with pytest.raises(UserError, match="share the id 'thinking'") as raised:
+        Agent(TestModel(), capabilities=[deferred, always_on] if deferred_first else [always_on, deferred])
+    assert ('inside deferred capability' in str(raised.value)) is not deferred_alone
+    assert '(always on)' in str(raised.value)
+    assert 'give one of them its own `id`' in str(raised.value)
+
+
+async def test_a_run_layer_combines_without_its_overridden_deferred_namesake() -> None:
+    """A run's two always-on capabilities combine even when the agent's namesake they override is deferred.
+
+    Each layer combines on its own before the run's overrides the agent's, so the deferred copy is never compared
+    with them. The run's two combine as one configuration stated twice, the later winning, which reaches the model.
+    Not a VCR test: combining is provider-independent, and `FunctionModel` sees the exact settings the model is
+    handed, where a cassette's default `method` + `uri` match would replay green with any temperature in the body.
+    """
+
+    @dataclass
+    class Temperature(AbstractCapability[Any]):
+        value: float
+
+        _: KW_ONLY
+
+        id: str | None = 'temperature'
+
+        def get_model_settings(self) -> ModelSettings:
+            return ModelSettings(temperature=self.value)
+
+    temperatures: list[float | None] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        temperatures.append((info.model_settings or {}).get('temperature'))
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond), capabilities=[Temperature(0.1, defer_loading=True)])
+    await agent.run('Hi', capabilities=[Temperature(0.5), Temperature(0.9)])
+    assert temperatures == [0.9]
+
+
+def test_capabilities_in_two_deferred_groups_do_not_combine() -> None:
+    """A regression test: combined, the later group's `Thinking` replaced the earlier's, so its setting never applied.
+
+    Not a VCR test: the error is raised while the `Agent` is built, before any model request a recording could observe.
+    """
+    first = CombinedCapability[Any]([Thinking(effort='high')], id='careful', defer_loading=True)
+    second = CombinedCapability[Any]([Thinking(effort='low')], id='quick', defer_loading=True)
+    with pytest.raises(
+        UserError, match="inside deferred capability 'careful' and `Thinking` inside deferred capability 'quick'"
+    ):
+        Agent(TestModel(), capabilities=[first, second])
+    deferred_itself = Thinking(effort='low', defer_loading=True, id='thinking')
+    with pytest.raises(UserError, match=r'\(deferred itself\)'):
+        Agent(TestModel(), capabilities=[first, deferred_itself])
+
+
+def test_capabilities_in_one_deferred_group_still_combine() -> None:
+    """Two `Thinking`s inside the same deferred group still combine into one, since they load together.
+
+    The counterpart of the tests above that refuse to combine across a deferred boundary. Not a VCR test: the
+    combining happens while the `Agent` is built, before any model request a recording could observe.
+    """
+    group = CombinedCapability[Any]([Thinking(effort='high'), Thinking(effort='low')], id='careful', defer_loading=True)
+    agent = Agent(TestModel(), capabilities=[group])
+    assert [leaf.id for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Thinking)] == ['thinking']
+
+
+def test_capabilities_each_deferred_themselves_under_one_id_still_combine() -> None:
+    """Two `Thinking`s that are each deferred themselves, under the same id, still combine: loading the id loads both.
+
+    Not a VCR test: the combining happens while the `Agent` is built, before any model request a recording could observe.
+    """
+    agent = Agent(
+        TestModel(),
+        capabilities=[Thinking(effort='high', defer_loading=True), Thinking(effort='low', defer_loading=True)],
+    )
+    assert [leaf.id for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Thinking)] == ['thinking']
+
+
 async def test_one_instance_registered_twice_survives_once() -> None:
     """The same object on the agent and passed again for the run keeps exactly one occurrence.
 

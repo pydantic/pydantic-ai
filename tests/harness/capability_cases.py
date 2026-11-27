@@ -10,16 +10,19 @@ taken once, here, as the case's `combine`. The answers, and what picks between t
   a `ToolOutputLimits` compose instead of colliding.
 - `Narrows` -- a default `id` and a `combine` method that narrows rather than unions, so two that
   disagree raise: the configuration is an access boundary.
+- `Conjoins` -- a default `id` and a `combine` method under which every instance's restrictions apply:
+  allowlists intersect, denylists add up, limits take the smaller value, so adding one only narrows.
+  `FileSystem` and `Shell`, including the instances inside `Coder`.
 - `Anonymous` -- no default `id`, and two really do coexist.
 - `Collides` -- no default `id`, and two never coexist anyway, because the toolset registers fixed
-  tool names. A fact rather than a preference, and pinned by
-  `test_two_of_a_colliding_capability_still_raise` so it cannot drift back into an `Anonymous`
-  reason describing a configuration ("one per rooted directory") that is unreachable.
+  tool names. A fact rather than a preference, recorded so it cannot drift back into an `Anonymous`
+  reason describing a configuration ("one per rooted directory") that is unreachable;
+  `test_capability_combine_policy_holds` checks the class still declares no default `id`.
 - `Rejected` -- no default `id`, and something else rejects a second one, as a durable engine does.
 
-Declaring a default `id` is the whole policy: there is no `combine` method to override unless the
-merge needs something the field-by-field default cannot express, such as a budget that should take the
-*smaller* value.
+Declaring a default `id` is the whole policy for `Combines`: there is no `combine` method to override unless
+the merge needs something the field-by-field default cannot express, such as a budget that should take the
+*smaller* value, or an access boundary, as for `Narrows` and `Conjoins`.
 """
 
 from __future__ import annotations
@@ -102,6 +105,7 @@ from pydantic_ai_harness import (
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
+from pydantic_ai_harness.file_system import READ_ONLY_TOOL_NAMES
 from pydantic_ai_harness.github import GitHub
 from pydantic_ai_harness.linear import Linear
 from pydantic_ai_harness.logfire_mcp import LogfireMCP
@@ -125,6 +129,7 @@ from ..capability_cases import (
     CapabilityCase,
     Collides,
     Combines,
+    Conjoins,
     Contract,
     Narrows,
     Rejected,
@@ -266,6 +271,62 @@ def _kubernetes_sandbox() -> KubernetesSandbox:
     from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
 
     return KubernetesSandbox(warm_pool='python-pool')
+
+
+_PATHS = (
+    'src/app.py',
+    'src/generated/models.py',
+    'docs/guide.md',
+    'secrets/key.txt',
+    'build/out.bin',
+    'notes.txt',
+    '.env',
+)
+_COMMANDS = (
+    'pytest -q',
+    'git status',
+    'ls',
+    'cat notes.txt',
+    'echo hi | wc',
+    'echo hi > out.txt',
+    'vim notes.txt',
+    'rm -rf build',
+)
+
+
+def _file_system_allows(file_system: FileSystem[None]) -> frozenset[object]:
+    """The tools, path accesses, and limits `file_system` allows, out of fixed probes."""
+    # The unfiltered toolset, whose tools `read_only` narrows below as `FileSystem.get_toolset` does.
+    toolset = file_system._file_system_toolset()  # pyright: ignore[reportPrivateUsage]
+    tools = {name for name in toolset.tools if not file_system.read_only or name in READ_ONLY_TOOL_NAMES}
+    allowed: set[object] = {('tool', name) for name in tools}
+    for path in _PATHS:
+        for write in (False, True):
+            # The allow, deny and read-only check every file tool runs before touching a path.
+            try:
+                toolset._patterns.check(path, write=write)  # pyright: ignore[reportPrivateUsage]
+            except PermissionError:
+                continue
+            allowed.add(('write' if write else 'read', path))
+    allowed |= {('read_lines', n) for n in (100, 500, 2000) if n <= file_system.max_read_lines}
+    allowed |= {('list_results', n) for n in (10, 100, 1000) if n <= file_system.max_list_results}
+    return frozenset(allowed)
+
+
+def _shell_allows(shell: Shell[None]) -> frozenset[object]:
+    """The tools, commands, and limits `shell` allows, out of fixed probes."""
+    toolset = shell.get_toolset()
+    allowed: set[object] = {('tool', name) for name in toolset.tools}
+    for command in _COMMANDS:
+        # The allow, deny, operator and interactive check every command tool runs before spawning.
+        try:
+            toolset._check_command(command)  # pyright: ignore[reportPrivateUsage]
+        except PermissionError:
+            continue
+        allowed.add(('command', command))
+    allowed |= {('timeout', t) for t in (10.0, 30.0, 120.0, 270.0) if t <= shell.default_timeout}
+    allowed |= {('output_chars', n) for n in (1_000, 10_000, 50_000) if n <= shell.max_output_chars}
+    return frozenset(allowed)
 
 
 def _ipython_code_mode() -> AbstractCapability[None]:
@@ -874,9 +935,26 @@ CASES: dict[str, CapabilityCase] = {
     ),
     # -- No default `id`, but two never coexist anyway: their tool names collide. --
     'FileSystem': CapabilityCase(
-        Collides(
-            'its toolset registers `read_file` and friends under fixed names',
-            lambda cls: (cls(str(COMBINE_ROOT_A)), cls(str(COMBINE_ROOT_A.parent))),
+        Conjoins(
+            'one `read_file` and friends per id, and its patterns and root are an access boundary, so every '
+            "instance's restrictions apply and adding one only narrows",
+            lambda cls: (
+                cls(
+                    allowed_patterns=['src/**', 'docs/**', '.env'],
+                    denied_patterns=['secrets/**'],
+                    read_only_patterns=['docs/**'],
+                    tools=['read_file', 'write_file', 'edit_file', 'list_directory'],
+                    max_read_lines=500,
+                ),
+                # Leaves `read_only_patterns` at its default, which still protects `.env`.
+                cls(
+                    denied_patterns=['build/**'],
+                    tools=['read_file', 'write_file', 'list_directory', 'find_files'],
+                    max_list_results=100,
+                    content_hashes=False,
+                ),
+            ),
+            _file_system_allows,
         ),
         build=_workspace(FileSystem),
         calls=Calls(
@@ -913,9 +991,24 @@ CASES: dict[str, CapabilityCase] = {
         build=lambda _: Peers(network=InMemoryPeerNetwork().join(handle='a')),
     ),
     'Shell': CapabilityCase(
-        Collides(
-            'its toolset registers `run_command` and friends under fixed names',
-            lambda cls: (cls(default_timeout=10.0), cls(default_timeout=20.0)),
+        Conjoins(
+            'one `run_command` and friends per id, and its command lists are a guardrail, so every '
+            "instance's restrictions apply and adding one only narrows",
+            lambda cls: (
+                cls(
+                    allowed_commands=['pytest', 'git', 'ls', 'echo', 'vim', 'rm'],
+                    default_timeout=270.0,
+                    tools=['run_command', 'shell'],
+                ),
+                # Leaves `denied_commands` at its default, which still denies `rm`.
+                cls(
+                    denied_operators=['|'],
+                    default_timeout=120.0,
+                    allow_interactive=True,
+                    tools=['run_command', 'start_command'],
+                ),
+            ),
+            _shell_allows,
         ),
         build=_workspace(Shell),
         calls=Calls((('run_command', {'command': 'echo hi'}),), _workspace(Shell)),

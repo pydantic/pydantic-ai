@@ -141,7 +141,7 @@ Look up a capability by the problem it solves. The Capabilities section below li
 
 ## Capabilities
 
-Every capability is a self-contained unit you drop into `capabilities=[...]`, and they all compose, with each other and with your own. Some come with [`pydantic-ai`](../index.md) itself, the rest with this package; the **Package** column says which. 100+ in all, grouped by what they give your agent:
+Every capability is a self-contained unit you drop into `capabilities=[...]`, and they all compose, with each other and with your own. Two that share an `id`, such as a second [`Shell`](shell.md) or [`FileSystem`](filesystem.md) beside the one in `Coder`, combine into one instead of adding their tools twice. Some come with [`pydantic-ai`](../index.md) itself, the rest with this package; the **Package** column says which. 100+ in all, grouped by what they give your agent:
 
 ### Harnesses
 

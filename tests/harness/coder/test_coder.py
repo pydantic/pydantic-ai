@@ -10,7 +10,14 @@ from typing import NoReturn
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import LocalWorkspace, local_workspace
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    CombinedCapability,
+    LocalWorkspace,
+    PrefixTools,
+    local_workspace,
+)
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import ModelHTTPError, UserError
 from pydantic_ai.messages import (
     BinaryContent,
@@ -32,6 +39,7 @@ from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.sub_agents import SubAgents, TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
 from tests.harness._strict_requests import PROVIDERS, capturing_model, strict_tools
+from tests.harness._tool_calls import call_tools
 
 
 def test_coder_agent_is_model_less_and_composed() -> None:
@@ -177,6 +185,150 @@ async def test_no_workspace_fails_the_run_naming_coder() -> None:
         await Agent(TestModel(), capabilities=[Coder()]).run('go')
     assert 'from pydantic_ai.capabilities import LocalWorkspace' in str(raised.value)
     assert '- LocalWorkspace: .' in str(raised.value)
+
+
+CODER_DEFAULT_TOOLS = ['delegate_task', 'edit_file', 'grep', 'list_files', 'read_file', 'shell', 'write_file']
+
+
+async def _offered_tools(tmp_path: Path, *capabilities: AbstractCapability[None]) -> list[str]:
+    model = TestModel(call_tools=[])
+    await Agent(model, deps_type=type(None), capabilities=[LocalWorkspace(tmp_path), *capabilities]).run('go')
+    assert model.last_model_request_parameters is not None
+    return sorted(tool.name for tool in model.last_model_request_parameters.function_tools)
+
+
+async def test_a_shell_beside_coder_restricts_coders_shell(tmp_path: Path) -> None:
+    """https://github.com/pydantic/pydantic-ai/issues/14515: it used to add `run_command` beside an unrestricted `shell`."""
+    assert await _offered_tools(tmp_path, Coder(), Shell(allowed_commands=['pytest'])) == CODER_DEFAULT_TOOLS
+
+    capabilities: list[AbstractCapability[None]] = [LocalWorkspace(tmp_path), Coder(), Shell(allowed_commands=['echo'])]
+    denied, allowed = await call_tools(capabilities, [('shell', {'command': 'ls'}), ('shell', {'command': 'echo hi'})])
+    assert "Command 'ls' is not in the allowed list." in denied
+    assert 'hi' in allowed
+
+
+@pytest.mark.parametrize('placement', ['before', 'after'])
+async def test_a_shell_before_or_after_coder_narrows_it(tmp_path: Path, placement: str) -> None:
+    shell = Shell(allowed_commands=['pytest'])
+    capabilities = [shell, Coder()] if placement == 'before' else [Coder(), shell]
+    assert await _offered_tools(tmp_path, *capabilities) == CODER_DEFAULT_TOOLS
+
+
+def test_a_wrapped_shell_beside_coder_raises() -> None:
+    """`PrefixTools` keeps the wrapped `Shell`'s id, and a wrapper and a `Shell` can't be combined."""
+    with pytest.raises(UserError, match="Capability id 'shell' is used by capabilities of different types"):
+        Agent(
+            TestModel(),
+            deps_type=type(None),
+            capabilities=[Coder[None](), PrefixTools(Shell(allowed_commands=['pytest']), prefix='p')],
+        )
+
+
+async def test_a_run_level_shell_replaces_coders_whole(tmp_path: Path) -> None:
+    """A known limit: a capability passed for a run replaces its agent-level namesake rather than combining with it."""
+    model = TestModel(call_tools=[])
+    agent = Agent(model, deps_type=type(None), capabilities=[LocalWorkspace(tmp_path), Coder[None]()])
+    await agent.run('go', capabilities=[Shell(allowed_commands=['pytest'])])
+    assert model.last_model_request_parameters is not None
+    tools = {tool.name for tool in model.last_model_request_parameters.function_tools}
+    assert 'shell' not in tools and {'run_command', 'start_command'} <= tools
+
+
+def test_combining_keeps_the_lowest_authority() -> None:
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[Coder[None](), Shell().with_authority('none')])
+    [shell] = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Shell)]
+    assert shell._effective_authority == 'none'  # pyright: ignore[reportPrivateUsage]
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[FileSystem().with_authority('user'), Coder[None]()])
+    [files] = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, FileSystem)]
+    assert files._effective_authority == 'user'  # pyright: ignore[reportPrivateUsage]
+
+
+async def test_a_file_system_beside_coder_restricts_coders_file_tools(tmp_path: Path) -> None:
+    """https://github.com/pydantic/pydantic-ai/issues/14515: it used to fail on the `read_file` name."""
+    assert await _offered_tools(tmp_path, Coder(), FileSystem(allowed_patterns=['src/**'])) == CODER_DEFAULT_TOOLS
+
+    (tmp_path / 'src').mkdir()
+    (tmp_path / 'src' / 'app.py').write_text('print(1)\n')
+    (tmp_path / 'README.md').write_text('Hello.\n')
+    capabilities: list[AbstractCapability[None]] = [
+        LocalWorkspace(tmp_path),
+        Coder(),
+        FileSystem(allowed_patterns=['src/**']),
+    ]
+    denied, allowed = await call_tools(
+        capabilities, [('read_file', {'path': 'README.md'}), ('read_file', {'path': 'src/app.py'})]
+    )
+    assert 'does not match any allowed pattern' in denied
+    assert 'print(1)' in allowed
+
+
+def test_what_coder_widens_only_through_its_own_parameters() -> None:
+    """`Coder(unrestricted_filesystem=True)` widens its own `FileSystem`; one added beside it can only narrow."""
+    unrestricted = Agent(TestModel(), capabilities=[Coder(unrestricted_filesystem=True), FileSystem(root_dir='/')])
+    [files] = [leaf for leaf in leaf_capabilities(unrestricted.root_capability) if isinstance(leaf, FileSystem)]
+    assert files.root_dir == '/'
+    narrowed = Agent(TestModel(), capabilities=[Coder(), FileSystem(root_dir='/')])
+    [files] = [leaf for leaf in leaf_capabilities(narrowed.root_capability) if isinstance(leaf, FileSystem)]
+    assert files.root_dir is None
+    protected = Agent(TestModel(), capabilities=[Coder(), FileSystem(read_only_patterns=['docs/**'])])
+    [files] = [leaf for leaf in leaf_capabilities(protected.root_capability) if isinstance(leaf, FileSystem)]
+    assert '**/.git' in files.read_only_patterns and 'docs/**' in files.read_only_patterns
+
+
+def test_a_shell_stating_the_default_timeout_beside_coder_lowers_coders() -> None:
+    """`30.0` is `Shell`'s class default, but it was passed, so it narrows `Coder`'s 270 seconds."""
+    agent = Agent(TestModel(), capabilities=[Coder(), Shell(default_timeout=30.0)])
+    [shell] = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Shell)]
+    assert (shell.default_timeout, list(shell.tools)) == (30.0, ['shell'])
+
+
+def _deferred_coder(*extra: AbstractCapability[None]) -> CombinedCapability[None]:
+    return CombinedCapability[None]([Coder[None](), *extra], id='coding', description='Coding.', defer_loading=True)
+
+
+def test_a_shell_beside_a_deferred_coder_raises_naming_both_and_the_remedies() -> None:
+    """`Coder`'s `Shell` can't be reconfigured when `coding` loads, so it isn't combined with one outside it."""
+    with pytest.raises(UserError) as raised:
+        Agent(TestModel(), deps_type=type(None), capabilities=[_deferred_coder(), Shell(allowed_commands=['pytest'])])
+    message = str(raised.value)
+    assert "`Shell` inside deferred capability 'coding' and `Shell` (always on) share the id 'shell'" in message
+    assert 'give one of them its own `id`' in message and 'in the same deferred capability' in message
+
+
+def test_shells_in_two_deferred_groups_raise_before_comparing_their_lists() -> None:
+    """The lists overlap, so only loading at different times stops the combination, and it's what the error says."""
+    first = CombinedCapability[None]([Shell(allowed_commands=['pytest', 'ls'])], id='tests', defer_loading=True)
+    second = CombinedCapability[None]([Shell(allowed_commands=['ls', 'git'])], id='vcs', defer_loading=True)
+    with pytest.raises(
+        UserError, match="inside deferred capability 'tests' and `Shell` inside deferred capability 'vcs'"
+    ):
+        Agent(TestModel(), deps_type=type(None), capabilities=[first, second])
+
+
+def test_a_shell_with_its_own_id_leaves_a_deferred_coders_shell_alone() -> None:
+    agent = Agent(
+        TestModel(),
+        deps_type=type(None),
+        capabilities=[_deferred_coder(), Shell(id='pytest_shell', allowed_commands=['pytest'])],
+    )
+    shells = {leaf.id: leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Shell)}
+    assert (list(shells['shell'].tools), list(shells['shell'].allowed_commands)) == (['shell'], [])
+    assert list(shells['pytest_shell'].allowed_commands) == ['pytest']
+
+
+def test_a_shell_inside_the_deferred_group_narrows_its_coder() -> None:
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[_deferred_coder(Shell(allowed_commands=['pytest']))])
+    [shell] = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Shell)]
+    assert (list(shell.tools), list(shell.allowed_commands)) == (['shell'], ['pytest'])
+
+
+@pytest.mark.parametrize(
+    ('shell', 'field'),
+    [(Shell(max_file_bytes=1_000_000), 'max_file_bytes'), (Shell(persist_cwd=True), 'persist_cwd')],
+)
+def test_a_shell_option_coders_shell_tool_cannot_apply_raises(shell: Shell[None], field: str) -> None:
+    with pytest.raises(UserError, match=f'does not support `{field}`'):
+        Agent(TestModel(), deps_type=type(None), capabilities=[Coder[None](), shell])
 
 
 async def test_coder_read_file_returns_a_large_image_as_a_file(tmp_path: Path) -> None:

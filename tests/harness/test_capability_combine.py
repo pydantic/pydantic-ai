@@ -24,7 +24,7 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent
-from pydantic_ai.capabilities import CombinedCapability, Thinking
+from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Thinking
 from pydantic_ai.capabilities.abstract import (
     _combine_duplicate_capabilities as combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
     _declares_default_id as declares_default_id,  # pyright: ignore[reportPrivateUsage]
@@ -32,7 +32,6 @@ from pydantic_ai.capabilities.abstract import (
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.workspaces import LocalWorkspaceBackend
 from pydantic_ai_harness import (
     CodeMode,
     Coder,
@@ -45,8 +44,8 @@ from pydantic_ai_harness import (
 from pydantic_ai_harness.sub_agents import AgentOverride
 from pydantic_ai_harness.system_reminders import LLMReminder
 
-from ..capability_cases import Anonymous, Collides, Narrows, Rejected, shipped_capability_types
-from .capability_cases import CASES, COMBINE_ROOT_A, HARNESS_CAPABILITY_PACKAGES
+from ..capability_cases import Anonymous, Collides, Conjoins, Narrows, Rejected, shipped_capability_types
+from .capability_cases import CASES, HARNESS_CAPABILITY_PACKAGES
 
 
 def test_the_capability_walk_hides_a_missing_extra_and_nothing_else(monkeypatch: pytest.MonkeyPatch) -> None:
@@ -124,6 +123,15 @@ def test_capability_combine_policy_holds(name: str) -> None:
     assert declares_default_id(capability_type), (
         f'{name} is declared `{type(policy).__name__}` but its class declares no default id, so two never meet'
     )
+    if isinstance(policy, Conjoins):
+        first, second = policy.make(capability_type)
+        assert first.id is not None and first.id == second.id
+        assert policy.allows(capability_type.combine([first, first])) == policy.allows(first)
+        both = policy.allows(first) & policy.allows(second)
+        assert both < policy.allows(first) and both < policy.allows(second), 'the pair must restrict differently'
+        for pair in ([first, second], [second, first]):
+            assert policy.allows(capability_type.combine(pair)) == both
+        return
     if isinstance(policy, Narrows):
         first, second = policy.make(capability_type)
         assert first.id is not None and first.id == second.id
@@ -138,28 +146,40 @@ def test_capability_combine_policy_holds(name: str) -> None:
     policy.check(type(first).combine([first, second]))
 
 
-# Asyncio only: `Agent.run` reaches `asyncio.create_task` for its lifecycle hooks.
-@pytest.mark.parametrize('anyio_backend', ['asyncio'])
-@pytest.mark.parametrize(
-    'name', sorted(n for n, c in CASES.items() if isinstance(c.combine, Collides) and c.combine.make is not None)
+def _conjoins(capability_type: type[AbstractCapability[None]]) -> Conjoins | None:
+    """The `Conjoins` policy `CASES` declares for `capability_type`, if any."""
+    case = CASES.get(capability_type.__name__)
+    return case.combine if case is not None and isinstance(case.combine, Conjoins) else None
+
+
+_CODER_CONJOINING_LEAF_TYPES = sorted(
+    {type(leaf) for leaf in leaf_capabilities(Coder()) if _conjoins(type(leaf)) is not None},
+    key=lambda capability_type: capability_type.__name__,
 )
-async def test_two_of_a_colliding_capability_still_raise(name: str, anyio_backend: str) -> None:
-    """A `Collides` entry states a fact about the capability, so the fact is checked.
+"""The classes of `Coder`'s own leaves that `CASES` declares `Conjoins`."""
 
-    Each pair here is built with *different* configuration -- two roots, two timeouts --
-    because that is exactly the shape the reasons in this table used to claim was supported. It is
-    not: the toolset's tool names are fixed, so the second registration conflicts with the first.
+
+@pytest.mark.parametrize(
+    'capability_type', _CODER_CONJOINING_LEAF_TYPES, ids=lambda capability_type: capability_type.__name__
+)
+def test_a_conjoining_capability_beside_coder_narrows_coders_own(
+    capability_type: type[AbstractCapability[None]],
+) -> None:
+    """One added beside `Coder` combines with `Coder`'s own, which then allows only what both allow.
+
+    `Coder` states all of its own configuration, defaults included, so a field the added one leaves unset keeps
+    `Coder`'s value rather than falling back to the class default. Until #14515, a `Shell` beside `Coder` instead
+    added the `run_command` tools next to `Coder`'s unrestricted `shell`.
     """
-    shipped, _ = shipped_capability_types(HARNESS_CAPABILITY_PACKAGES)
-    if name not in shipped:  # pragma: no cover
-        pytest.skip(f'{name} needs an optional dependency group that is not installed')
-    policy = CASES[name].combine
-    assert isinstance(policy, Collides) and policy.make is not None
+    policy = _conjoins(capability_type)
+    assert policy is not None
+    added, _ = policy.make(capability_type)
+    coder = Coder()
+    [own] = [leaf for leaf in leaf_capabilities(coder) if isinstance(leaf, capability_type)]
 
-    first, second = policy.make(shipped[name])
-    agent = Agent(TestModel(), deps_type=type(None), capabilities=[first, second])
-    with pytest.raises(UserError, match='conflicts with existing tool'):
-        await agent.run('hello', workspace=LocalWorkspaceBackend(COMBINE_ROOT_A))
+    agent = Agent(TestModel(), deps_type=type(None), capabilities=[coder, added])
+    [merged] = [leaf for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, capability_type)]
+    assert policy.allows(merged) == policy.allows(own) & policy.allows(added)
 
 
 @pytest.mark.parametrize(

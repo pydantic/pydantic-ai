@@ -14,6 +14,7 @@ from pydantic_ai.messages import InstructionPart, ToolCallPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
+from pydantic_ai_harness._conjoin import state_all
 from pydantic_ai_harness._warn import warn_argument_ignored
 from pydantic_ai_harness._workspace import RequireWorkspace
 from pydantic_ai_harness.coder._instructions import (
@@ -207,8 +208,9 @@ def _file_system(*, unrestricted: bool, max_image_side: int | None) -> FileSyste
     )
     if unrestricted:
         # `/` is the filesystem root, or on Windows the working directory's drive.
-        return replace(file_system, root_dir='/', read_only_patterns=[])
-    return file_system
+        file_system = replace(file_system, root_dir='/', read_only_patterns=[])
+    # Its defaults are part of what `Coder` gives, so a `FileSystem` added beside it can't drop them.
+    return state_all(file_system)
 
 
 @dataclass(init=False)
@@ -324,12 +326,15 @@ class Coder(CombinedCapability[AgentDepsT]):
                 ),
             ),
             _file_system(unrestricted=unrestricted_filesystem, max_image_side=max_image_side),
-            Shell[AgentDepsT](
-                denied_commands=[],
-                default_timeout=MAX_FOREGROUND_WAIT,
-                allow_interactive=True,
-                # No env patterns: the workspace, not the host process, supplies the command environment.
-                tools=['shell'],
+            # Its defaults are part of what `Coder` gives, so a `Shell` added beside it can't drop them.
+            state_all(
+                Shell[AgentDepsT](
+                    denied_commands=[],
+                    default_timeout=MAX_FOREGROUND_WAIT,
+                    allow_interactive=True,
+                    # No env patterns: the workspace, not the host process, supplies the command environment.
+                    tools=['shell'],
+                )
             ),
         ]
         if bundled_repo_context is not None:

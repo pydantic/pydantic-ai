@@ -142,7 +142,8 @@ The instructions name the working directory through [`AnnounceWorkingDirectory`]
 many capabilities bring it, and starts a sandbox that isn't running to ask for it.
 
 [`PrefixTools`](https://pydantic.dev/docs/ai/capabilities/prefix-tools/) renames the tools so the model can tell two
-`FileSystem`s apart (`FileSystem().prefix_tools('wiki')` offers `wiki_read_file`), but it
+`FileSystem`s apart, but it keeps the wrapped `id`, so give the second its own as well:
+`FileSystem(id='wiki').prefix_tools('wiki')` offers `wiki_read_file` beside a plain `FileSystem()`. It
 doesn't scope them to a folder. Every `FileSystem` in a run works in the run's one
 workspace, under a `root_dir` that contains its working directory, so two prefixed
 `FileSystem`s reach the same files.
@@ -155,6 +156,25 @@ access patterns, and event paths retain their `root_dir` basis, as does
 `search_files`'s `include_glob` filter.
 
 `include_glob` is matched with `fnmatch`, where `*` also spans `/`, so `src/*.py` covers subdirectories of `src` too. With `rg`, a glob without a `/` matches file names at any depth, and a glob using syntax only `rg` has (`**`, `{a,b}`, `!`, a leading `/`) is passed to `rg --glob`.
+
+### Two `FileSystem`s on one agent
+
+`FileSystem` has the default `id` `'file_system'`, so a second `FileSystem` on the same agent, including the one
+inside `Coder()`, doesn't add a second set of tools. The two combine into one that applies every restriction either
+states, so adding one only ever narrows:
+
+- `denied_patterns` and `read_only_patterns` add up, each instance's defaults included.
+- `tools` and the read, list and search limits count only when an instance was constructed with them: tool lists
+  intersect, and limits take the smaller value. Two `tools` lists with nothing in common raise a `UserError`.
+- `read_only` applies if either sets it, and `content_hashes` only if both do.
+- `root_dir` is the innermost of `.` and `..` chains, and `/` gives way to any other root. Any other absolute
+  `root_dir` beside a different root raises, since only the workspace can compare them.
+- Two different `allowed_patterns` lists raise, as do patterns written for a `root_dir` other than the combined one,
+  and two different `max_retries`.
+
+To keep two apart, give the second its own `id`. Two instances also raise when they load at different times, such as
+one inside a deferred capability beside an always-on one. A `FileSystem` passed to `agent.run(capabilities=[...])`
+replaces the agent's whole instead of combining with it.
 
 ### Tool kinds
 
