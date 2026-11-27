@@ -1797,16 +1797,17 @@ class TestSearchFiles:
         # exponential or high polynomial time on these patterns and has no timeout. Patterns `re` compiles
         # here fail the test if they're used to search.
         class UnsearchablePattern:
-            def __init__(self, compiled: re.Pattern[str]) -> None:
-                self.flags = compiled.flags
-
             def search(self, *args: object) -> None:  # pragma: no cover
                 raise AssertionError('searched with Python `re`')
+
+        def compile_without_search(pattern: str, flags: int = 0) -> UnsearchablePattern:
+            re.compile(pattern, flags)  # keep the invalid-pattern check
+            return UnsearchablePattern()
 
         guarded_re = SimpleNamespace(
             **{name: getattr(re, name) for name in dir(re) if not name.startswith('__')},
         )
-        guarded_re.compile = lambda pattern, *args: UnsearchablePattern(re.compile(pattern, *args))  # type: ignore[attr-defined]
+        guarded_re.compile = compile_without_search
         monkeypatch.setattr('pydantic_ai_harness.file_system._toolset.re', guarded_re)
 
         (fs_root / 'long.txt').write_text(line + '\n')
@@ -1819,7 +1820,9 @@ class TestSearchFiles:
     async def test_patterns_the_linear_engine_cannot_compile_are_refused_in_python(
         self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend, pattern: str
     ) -> None:
-        with pytest.raises(ModelRetry, match='such as a lookaround'):
+        with pytest.raises(
+            ModelRetry, match="syntax the linear-time engine this workspace searches with doesn't support"
+        ):
             await toolset.search_files(pattern, workspace=ReadOnlyWorkspace(Workspace(ws)))
 
     async def test_previously_refused_nested_groups_search_in_python(

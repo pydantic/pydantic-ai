@@ -86,7 +86,7 @@ For remote workspaces, use the file tools (`grep`, `find_files`, `read_file`) ra
 
 Without `rg`, command-capable POSIX workspaces use one in-sandbox git/grep/find command for `grep`, `list_files`, and `search_files` (after an initial `rg` probe).
 
-Filesystem-only and read-only workspaces use slower, bounded file walks in Python. They match the regex with a linear-time engine (pydantic-core's Rust regex), so no pattern, such as `(a+)+$` or `a*a*a*a*b`, can stall the run. That engine doesn't support lookarounds (`(?=`, `(?!`, `(?<=`, `(?<!`) or backreferences (`\1`), so a pattern that uses them is refused there with a message asking the model to rewrite it.
+Filesystem-only and read-only workspaces use slower, bounded file walks in Python. They match the regex with a linear-time engine (pydantic-core's Rust regex), so no pattern, such as `(a+)+$` or `a*a*a*a*b`, can stall the run. That engine doesn't support some of Python's syntax, such as lookarounds (`(?=`, `(?<!`), backreferences (`\1`), `\Z`, atomic groups and possessive quantifiers, and limits how large a compiled pattern can be, so such a pattern is refused there with a message asking the model to rewrite it.
 
 The POSIX fallback honors nested `.gitignore` in repositories and search-root `.ignore` with git available; nested `.ignore` rules are not applied by the POSIX fallback, and rg-specific regex features require `rg`. Without git, the POSIX fallback cannot apply ignore files. With git, it also searches files git tracks even though `.gitignore` lists them, which `rg` skips. The first search that falls back in a workspace logs one debug message saying so.
 

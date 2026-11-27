@@ -34,14 +34,16 @@ def linear_time_search(pattern: str) -> Callable[[str], bool]:
 
     It uses pydantic-core's Rust regex engine rather than Python's backtracking `re`, which can take exponential
     time on patterns like `(a|a)*b` and has no timeout, so one model-chosen pattern could stall the event loop.
-    Raises `ValueError` for a pattern that engine can't compile, such as one with a lookaround or a backreference.
+    Raises `ValueError` for a pattern that engine can't compile, such as one with a lookaround, a backreference or
+    an atomic group, or one too large for it.
     """
     try:
         validator = SchemaValidator(core_schema.str_schema(pattern=pattern, regex_engine='rust-regex'))
     except SchemaError as exc:
         raise ValueError(
-            'This regex uses a feature this workspace cannot search with, such as a lookaround (`(?=`, `(?!`, `(?<=`, '
-            f'`(?<!`) or a backreference (`\\1`). Rewrite it without them. Details: {exc}'
+            "This regex uses syntax the linear-time engine this workspace searches with doesn't support (for "
+            'example lookarounds such as `(?=`, backreferences such as `\\1`, `\\Z`, atomic groups or possessive '
+            f'quantifiers), or is too large for it. Rewrite it without them. Details: {exc}'
         ) from exc
     return validator.isinstance_python
 
