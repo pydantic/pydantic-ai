@@ -1485,10 +1485,12 @@ class PlaywrightBrowserSession:
         empty. A `beforeunload` does not consume that decision; it stays armed for
         the next `alert`, `confirm` or `prompt`.
         """
-        decision = self.dialog_decision
-        if dialog.type != 'beforeunload':
-            self.dialog_decision = None
-        accepted = dialog.type == 'beforeunload' or (decision is not None and decision.accept)
+        if dialog.type == 'beforeunload':
+            accepted, prompt_text = True, None
+        else:
+            decision, self.dialog_decision = self.dialog_decision, None
+            accepted = decision is not None and decision.accept
+            prompt_text = decision.prompt_text if decision is not None else None
         self.record(
             BrowserEvent(
                 kind='dialog',
@@ -1496,15 +1498,13 @@ class PlaywrightBrowserSession:
                 message=f'{dialog.type} {"accepted" if accepted else "dismissed"}: {dialog.message}',
             )
         )
-        self._spawn(self._answer_dialog(dialog, decision))
+        self._spawn(self._answer_dialog(dialog, accepted, prompt_text))
 
-    async def _answer_dialog(self, dialog: _Dialog, decision: _DialogDecision | None) -> None:
+    async def _answer_dialog(self, dialog: _Dialog, accepted: bool, prompt_text: str | None) -> None:
         """Accept or dismiss a dialog. Errors are swallowed: the page may already be gone."""
         try:
-            if dialog.type == 'beforeunload':
-                await dialog.accept()
-            elif decision is not None and decision.accept:
-                await dialog.accept(decision.prompt_text)
+            if accepted:
+                await dialog.accept(prompt_text)
             else:
                 await dialog.dismiss()
         except PlaywrightError:
