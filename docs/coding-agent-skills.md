@@ -65,7 +65,7 @@ The `advising-pydantic-ai-repos` skill has your coding agent review an applicati
 - what upgrading to the latest release would add that replaces code you have;
 - which notes in the [upgrade guide](changelog.md#catching-up-across-v2-minor-releases) affect your code.
 
-Each finding cites the file and line, the built-in that replaces it, the version that has it, and when to keep your own code instead. The skill only reports: ask your coding agent to apply the findings you choose. For example:
+It works from the current documentation, release notes, and upgrade guide, read when it runs, so its advice follows the latest release. Each finding cites the file and line, the built-in that replaces it, the version that has it, and when to keep your own code instead. The skill only reports: ask your coding agent to apply the findings you choose. For example:
 
 ```text
 Use the advising-pydantic-ai-repos skill to review this repository.

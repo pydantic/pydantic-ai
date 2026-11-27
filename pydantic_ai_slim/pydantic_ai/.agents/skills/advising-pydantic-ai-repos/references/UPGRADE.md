@@ -28,6 +28,14 @@ For each note, search the repository for the APIs, settings, message parts, or p
 
 Changes that affect stored data come first: message histories saved before the upgrade, and durable workflows that are mid-run when the new version deploys. Say whether the repository stores either.
 
-## Combine with the catalog
+## Read the release notes for what the code could use
 
-Catalog rows whose minimum version is above the installed version and at or below the target are UPGRADE findings. List each under the release that brings it, next to the compatibility notes for that release, so the user sees in one place what a release adds and what it changes.
+Each release's notes on [GitHub Releases](https://github.com/pydantic/pydantic-ai/releases) list its changes, one line per pull request, under **Compatibility Notes**, **Features** and **Bug Fixes**. Fetch the releases between the installed version and the target, for example from `https://api.github.com/repos/pydantic/pydantic-ai/releases?per_page=100` (paged; newest first). Pydantic AI Harness releases from before it joined that repository, up to 0.36.0, are on [its own releases page](https://github.com/pydantic/pydantic-ai-harness/releases).
+
+1. **Compatibility Notes:** check every one, as above.
+2. **Features and Bug Fixes:** a jump across many releases holds hundreds of lines, most about providers, integrations or packages the repository doesn't use. Keep only the lines that name something on the surface from the inventory (a provider it calls, a module it imports, an integration it has) or that fix a symptom its code works around. Then search the code for what each kept line would replace or change, and confirm at the call site.
+3. List each finding under the release that brings it, next to that release's compatibility notes, so the user sees in one place what a release adds and what it changes.
+
+## Find the release that first has an API
+
+For an adoption finding whose replacement the repository can't import yet, the release that brings it is the earliest release whose notes name it. Search the release notes, newest first, for the API's name, and take the oldest match; then confirm it on that release's docs or source at `https://github.com/pydantic/pydantic-ai/tree/v<version>`. If no note names it, say "in the latest release" rather than guessing an older one.
