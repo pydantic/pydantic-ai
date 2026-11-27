@@ -9,9 +9,10 @@ from typing import Any, Literal
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapToolExecuteHandler
-from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, SkipToolExecution
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, SkipToolExecution, UserError
 from pydantic_ai.messages import (
     CapabilityPart,
+    CompactionPart,
     InstructionDeltaPart,
     ModelMessage,
     ModelRequestPart,
@@ -68,9 +69,10 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
     A run is tainted once its history holds a result written outside the run: a tool result (unless the tool
     is in `trusted_tools`), a provider-native tool result such as a web search, or a
     [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] whose source has `'none'`
-    [authority][pydantic_ai.messages.Authority], or the instructions of a capability lowered to `'none'`. From then on, a call to a gated tool asks a person first
-    (`on_tainted='ask'`) or does not run (`'block'`). Calls to gated tools made before anything untrusted was
-    read run normally.
+    [authority][pydantic_ai.messages.Authority], or the instructions of a capability lowered to `'none'`, or a
+    compaction summary, which can carry what the parts it replaced said. From then on, a call to a gated tool
+    asks a person first (`on_tainted='ask'`) or does not run (`'block'`). Calls to gated tools made before
+    anything untrusted was read run normally.
 
     The gate does not try to detect prompt injection. It holds the calls an injection would need, whether or
     not a detector would have flagged the content, so it still holds when detection misses.
@@ -78,17 +80,20 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
     A call is judged on the history before the model response that made it, plus any provider-native tool result
     in that response: a call made in the same response as a function tool's untrusted read was chosen before that
     read's result existed. A call made through [`ToolBridge`][pydantic_ai_harness.tool_bridge.ToolBridge]'s
-    `tool_call` is judged the same way, under the bridged tool's name, and `tool_call` itself is not gated. A call no model response made, such as one a
-    [`CodeMode`][pydantic_ai_harness.code_mode.CodeMode] script makes, is judged on the whole history and on every
-    untrusted tool that has run in this run, including earlier calls in the same script. That record is kept in
-    process, so a durable run that resumes mid-script rebuilds taint from history only.
+    `tool_call` is judged the same way, under the bridged tool's name, and `tool_call` itself is not gated; its
+    result is judged under that name too, when the bridged call ran in this run. A call no model response made,
+    such as one a [`CodeMode`][pydantic_ai_harness.code_mode.CodeMode] script makes, is judged on the whole history
+    and on every untrusted tool that has run in this run, including earlier calls in the same script. That record
+    is kept in process, so a durable run that resumes mid-script rebuilds taint from history only.
 
     In `'ask'` mode the gate's reason goes in the approval request's metadata, under `'untrusted_content_gate'`
     (read it back with [`untrusted_content_reason`][pydantic_ai_harness.untrusted_content_gate.untrusted_content_reason]).
     When another capability asks about the same call, such as
     [`Permissions`][pydantic_ai_harness.permissions.Permissions] or a `requires_approval=True` tool, the gate
     adds its reason to that request instead of asking separately, so one answer covers both. An approval
-    covers that one call; the run stays tainted and later gated calls ask again.
+    covers that one call; the run stays tainted and later gated calls ask again. A gated call to an external tool,
+    which the application runs, reaches the application with the gate's reason in its metadata instead; `'block'`
+    can't stop such a call, so it refuses a gated external tool before the run's first request.
 
     By default every tool not marked read-only is gated, where read-only means the tool's metadata carries
     `{'annotations': {'readOnlyHint': True}}`, as MCP servers publish it.
@@ -105,7 +110,10 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
     trusted_tools: ToolSelector[AgentDepsT] = ()
     """Tools whose results do not taint the run, such as a tool that reads the person's own files."""
 
-    _ran: list[_Source] = field(default_factory=list[_Source], init=False, repr=False, compare=False)
+    _ran: list[tuple[int, _Source]] = field(
+        default_factory=list[tuple[int, _Source]], init=False, repr=False, compare=False
+    )
+    _trusted_by_name: dict[str, bool] = field(default_factory=dict[str, bool], init=False, repr=False, compare=False)
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> UntrustedContentGate[AgentDepsT]:
         """A fresh instance per run, with its own record of the untrusted tools that ran."""
@@ -120,9 +128,22 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         result: Any,
     ) -> Any:
-        """Record an untrusted tool that ran, for calls that no model response made."""
-        await self._record(ctx, call)
+        """Record an untrusted tool that ran, for calls no model response made and results compaction removed."""
+        await self._record(ctx, call, tool_def)
         return result
+
+    async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
+        """Refuse a gated external tool in `'block'` mode, which can't stop it: the application runs its calls."""
+        if self.on_tainted == 'block':
+            for tool_def in tool_defs:
+                if tool_def.kind == 'external' and await self._gates(ctx, tool_def):
+                    raise UserError(
+                        f"`UntrustedContentGate(on_tainted='block')` can't stop calls to external tool "
+                        f"{tool_def.name!r}, which your application runs. Use `on_tainted='ask'`, where the call "
+                        "reaches your application with the gate's reason in its metadata, or leave the tool out of "
+                        '`gated_tools`.'
+                    )
+        return tool_defs
 
     def get_ordering(self) -> CapabilityOrdering:
         """Run last among `before_tool_execute` hooks, so other capabilities' approval requests come first."""
@@ -165,15 +186,23 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
         """Ask during validation about a call that may ask there before any execute hook runs.
 
         That is a `requires_approval=True` tool, or one with an `args_validator`, which can raise `ApprovalRequired`
-        itself. The gate's request then replaces the tool's own, so an approval of it covers the gate too.
+        itself. The gate's request then replaces the tool's own, so an approval of it covers the gate too. An external
+        tool's call reaches no execute hook, so the gate defers it here to the application, with its reason.
         """
-        if ctx.tool_call_approved or self.on_tainted == 'block' or not _asks_at_validation(ctx, tool_def):
+        external = tool_def.kind == 'external'
+        if ctx.tool_call_approved or not (external or _asks_at_validation(ctx, tool_def)):
+            return args
+        if self.on_tainted == 'block' and not external:
             return args
         asked = await self._decide(ctx, call=call, tool_def=tool_def)
-        if asked is not None:
-            self._trace(ctx, call, asked)
-            raise ApprovalRequired(metadata=_with_reason(None, asked))
-        return args
+        if asked is None:
+            return args
+        self._trace(ctx, call, asked)
+        if external:
+            # Core can't approve an external call inside the run, so the call goes to the application that runs it,
+            # with the gate's reason for it to check (`prepare_tools` refuses this tool in `'block'` mode).
+            raise CallDeferred(metadata=_with_reason(None, asked))
+        raise ApprovalRequired(metadata=_with_reason(None, asked))
 
     async def before_tool_execute(
         self,
@@ -223,7 +252,7 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
                 raise SkipToolExecution(ToolDenied(_block_message(call.tool_name))) from error
             raise ApprovalRequired(metadata=_with_reason(error.metadata, asked)) from error
         except Exception:
-            await self._record(ctx, call)
+            await self._record(ctx, call, tool_def)
             raise
 
     async def _decide(
@@ -254,25 +283,40 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
         index = _making_response(ctx.messages, call.tool_call_id)
         if index is None:
             found = [source async for source in self._scan(ctx, ctx.messages)]
-            return [*found, *(source for source in self._ran if source not in found)]
-        found = [source async for source in self._scan(ctx, ctx.messages[:index])]
-        return [*found, *_native_reads(ctx.messages[index])]
+            ran = [source for _, source in self._ran]
+        else:
+            found = [source async for source in self._scan(ctx, ctx.messages[:index])]
+            found += _native_reads(ctx.messages[index])
+            # Tools that ran in this step answer the response that made the call, so the model chose the call
+            # before their results existed. Earlier ones count even when compaction removed their results.
+            ran = [source for step, source in self._ran if step < ctx.run_step]
+        for source in ran:
+            if source not in found:
+                found.append(source)
+        return found
 
     async def _scan(self, ctx: RunContext[AgentDepsT], messages: Sequence[ModelMessage]) -> AsyncIterator[_Source]:
+        calls: dict[str, ToolCallPart] = {}
         for message in messages:
             for part in message.parts:
-                source = await self._source_of(ctx, part)
+                if isinstance(part, ToolCallPart):
+                    # The latest call with an ID is the one its next result answers: some models reuse short IDs.
+                    calls[part.tool_call_id] = part
+                source = await self._source_of(ctx, part, calls)
                 if source is not None:
                     yield source
 
     async def _source_of(
-        self, ctx: RunContext[AgentDepsT], part: ModelRequestPart | ModelResponsePart
+        self, ctx: RunContext[AgentDepsT], part: ModelRequestPart | ModelResponsePart, calls: dict[str, ToolCallPart]
     ) -> _Source | None:
         """Where `part`'s content came from, when it came from outside the run; `None` when it did not."""
         if isinstance(part, NativeToolReturnPart):
             return _Source(tool_name=part.tool_name, tool_call_id=part.tool_call_id)
         if isinstance(part, ToolReturnPart):
-            return await self._tool_source(ctx, part.tool_name, part.tool_call_id) if _tool_wrote(part) else None
+            return await self._tool_return_source(ctx, part, calls) if _tool_wrote(part) else None
+        if isinstance(part, CompactionPart):
+            # A summary can carry what the tainting parts it replaced said, and doesn't say which they were.
+            return _Source(tool_name=None, tool_call_id=None)
         if isinstance(part, InstructionDeltaPart):
             # The instructions of a capability lowered to `'none'`, such as an MCP server's.
             return _Source(tool_name=None, tool_call_id=None) if _untrusted_instructions(part) else None
@@ -283,14 +327,42 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
             return _Source(tool_name=None, tool_call_id=None)
         return await self._tool_source(ctx, source.tool_name, source.tool_call_id)
 
+    async def _tool_return_source(
+        self, ctx: RunContext[AgentDepsT], part: ToolReturnPart, calls: dict[str, ToolCallPart]
+    ) -> _Source | None:
+        """Where a result the tool wrote came from: under the bridged tool's name for `ToolBridge`'s `tool_call`."""
+        if (bridged := self._bridged_name(ctx, part, calls)) is not None:
+            trusted = self._trusted_by_name.get(bridged, False)
+            return None if trusted else _Source(tool_name=bridged, tool_call_id=part.tool_call_id)
+        return await self._tool_source(ctx, part.tool_name, part.tool_call_id)
+
     async def _tool_source(
         self, ctx: RunContext[AgentDepsT], tool_name: str, tool_call_id: str | None
     ) -> _Source | None:
         return None if await self._trusts(ctx, tool_name) else _Source(tool_name=tool_name, tool_call_id=tool_call_id)
 
-    async def _record(self, ctx: RunContext[AgentDepsT], call: ToolCallPart) -> None:
-        if not await self._trusts(ctx, call.tool_name):
-            self._ran.append(_Source(tool_name=call.tool_name, tool_call_id=call.tool_call_id))
+    async def _record(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, tool_def: ToolDefinition) -> None:
+        if tool_def.tool_kind == _TOOL_CALL_KIND_ID:
+            return  # The bridged call it ran was recorded under the bridged tool's name.
+        trusted = await self._trusts(ctx, call.tool_name)
+        self._trusted_by_name[call.tool_name] = trusted
+        if not trusted:
+            self._ran.append((ctx.run_step, _Source(tool_name=call.tool_name, tool_call_id=call.tool_call_id)))
+
+    def _bridged_name(
+        self, ctx: RunContext[AgentDepsT], part: ToolReturnPart, calls: dict[str, ToolCallPart]
+    ) -> str | None:
+        """The tool `ToolBridge`'s `tool_call` ran for this result, or `None` when `part` isn't `tool_call`'s.
+
+        Its trust is known only when it ran in this run, which recorded it under its own name: a result from an
+        earlier run taints.
+        """
+        tool_def = ctx.tool_manager.get_tool_def(part.tool_name) if ctx.tool_manager is not None else None
+        call = calls.get(part.tool_call_id)
+        if tool_def is None or tool_def.tool_kind != _TOOL_CALL_KIND_ID or call is None:
+            return None
+        name = call.args_as_dict().get('name')  # Malformed arguments read as `{}`.
+        return name if isinstance(name, str) else part.tool_name
 
     async def _trusts(self, ctx: RunContext[AgentDepsT], tool_name: str) -> bool:
         """Whether `trusted_tools` selects the tool; a tool the run can no longer resolve is untrusted."""
