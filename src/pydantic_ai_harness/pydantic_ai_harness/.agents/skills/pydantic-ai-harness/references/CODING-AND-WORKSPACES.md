@@ -193,6 +193,10 @@ Path-scoped file tools. `tools=` defaults to `read_file`, `write_file`, `edit_fi
 `grep` must be named in `tools` (a sandbox image needs its own `rg`, else a POSIX git/grep/find
 fallback runs).
 
+Default `id='file_system'`: a second `FileSystem` on the agent (including `Coder`'s) combines with the first and only
+narrows it. Denylists and `read_only_patterns` add up, stated tool lists and limits intersect, and the innermost
+`root_dir` wins. Give it its own `id` to keep it apart; `PrefixTools` keeps the wrapped id.
+
 ```python
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
@@ -296,6 +300,11 @@ agent = Agent('test', capabilities=[LocalWorkspace('.'), SmartSearch(model='test
 
 Default tools `run_command`, `start_command`, `check_command`, `stop_command`; `tools=['shell']`
 registers only the persistent `shell` tool instead.
+
+Default `id='shell'`: a second `Shell` on the agent (including `Coder`'s) combines with the first and only narrows it.
+Denylists add up, stated allowlists, tool lists and limits intersect, so `Shell(allowed_commands=['pytest'])` beside
+`Coder()` restricts `Coder`'s `shell` tool. Keep two apart with their own ids:
+`Shell(id='background_shell', tools=['start_command', 'check_command'])`.
 
 ```python
 from pydantic_ai_harness import LLM_API_KEY_ENV_PATTERNS, Shell

@@ -167,6 +167,7 @@ print(result.output)
 ### Add Capabilities Next to Coder
 
 Capabilities stack: list more of them, harness or core, beside `Coder`.
+A `FileSystem` or `Shell` listed beside it doesn't add tools: it combines with `Coder`'s own and only narrows it.
 
 ```python {test="skip"}
 from pydantic_ai import Agent
@@ -256,6 +257,7 @@ These mistakes cause confusing errors or wrong behavior at run time.
 
 - **Missing extra.** For most extras, importing the capability without it raises `ImportError` with the install line; install `pydantic-ai-harness[<extra>]`, not just the bare package. Some dependencies are executables or drivers that the import does not check: the `coder` extra installs `ripgrep` (without it, file search falls back to slower POSIX tools), `PlaywrightBrowser` needs `playwright install chromium`, and `CDPBrowser` needs Chrome or Chromium installed (or `CHROME_PATH`). Those gaps show only when a run starts or a tool runs.
 - **`Coder(workspace=...)` is ignored.** The project directory comes from the workspace capability: use `LocalWorkspace('./repo')` next to `Coder()`.
+- **A second `Shell` or `FileSystem` combines with the first.** Both have a default `id`, so one next to `Coder()` on the agent narrows `Coder`'s own (`Shell(allowed_commands=['pytest'])` restricts its `shell` tool), while one passed to `agent.run(capabilities=[...])` replaces it. Give an instance its own `id` to keep it apart; `PrefixTools` keeps the wrapped id.
 - **`FileSystem(root_dir=...)` limits only the file tools.** `Shell` commands can still reach any path the workspace can.
 - **`Coder` must be bound on the agent for delegation.** `delegate_task` re-runs the agent `Coder` is attached to; pass `Coder()` in `Agent(capabilities=[...])`, not to `agent.run(...)`.
 - **Harness files live in the workspace.** Shell job logs and tool-output spills go in `.pydantic-ai-harness/` in the workspace's working directory; in a sandbox they are in the sandbox, not on the host.
