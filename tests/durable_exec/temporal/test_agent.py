@@ -3871,6 +3871,7 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
             'run_id',
             'tool_manager',
             'tool_name',
+            'trace_include_content',
             'usage',
             'usage_limits',
             'workspace',
