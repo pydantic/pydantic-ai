@@ -1,5 +1,6 @@
 """Workspace API, backend protocols, and implementations."""
 
+from ._file_links import file_links
 from .authority import AuthorityWorkspace
 from .local import LocalWorkspaceBackend
 from .protocol import (
@@ -50,5 +51,6 @@ __all__ = (
     'SupportsRealpath',
     'SupportsRunInDirectory',
     'UnavailableWorkspace',
+    'file_links',
     'lowest_authority_under',
 )

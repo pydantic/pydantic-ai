@@ -753,6 +753,15 @@ class Workspace(WorkspaceBackend):
         media_type = _media_type_from_file_name(self.paths.basename(path))
         return BinaryContent.narrow_type(BinaryContent(data=data, media_type=media_type))
 
+    async def in_working_dir(self, path: str) -> bool:
+        """Whether `path` is inside the working directory, once its symlinks are resolved.
+
+        Check a path you didn't choose, such as one from a model's reply, before you read it: an absolute
+        path, `..` or a symlink can otherwise name any file the environment can read.
+        """
+        target = await self.realpath(await self.resolve(path))
+        return is_within(target, await self.working_dir(), sep=self.paths.sep)
+
     async def write_text(self, path: str, content: str, *, encoding: str = 'utf-8') -> None:
         """Write text to a file."""
         await self.write_bytes(path, content.encode(encoding))
