@@ -31,7 +31,7 @@ flowchart TB
 
 ## The problem
 
-Long multi-turn runs suffer instruction fade: after many tool-use turns the model progressively ignores the guidance it was given at the start. A single start-of-session system prompt is not enough for extended work. The fix is to re-state targeted guidance mid-run -- on a fixed cadence, or reactively when a condition is detected.
+Long multi-turn runs suffer instruction fade: after many tool-use turns the model progressively ignores the guidance it was given at the start. A single start-of-session system prompt is not enough for extended work. The fix is to re-state targeted guidance mid-run -- on a fixed cadence, or reactively when a condition is detected. For a rule that changes rather than one that has to keep holding, see [keeping a rule in force over a long conversation](../agent.md#keeping-a-rule-in-force).
 
 ## The solution
 
