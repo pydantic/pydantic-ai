@@ -63,6 +63,7 @@ from .._canonical_system import accepts_stateless_artifact
 from .._capability_parts import (
     LookalikeNaming,
     is_downgraded_request_scoped,
+    lowered_instruction_statement,
     render_capability_part,
     render_capability_parts,
 )
@@ -96,8 +97,10 @@ from .._http import (
 from .._instructions import (
     InstructionValues,
     LoadedInstructionValues,
+    LoweredInstructions,
     advance_instruction_window,
     instruction_window_start,
+    is_lowered_statement,
     window_boundary_index,
 )
 from .._json_schema import (
@@ -116,12 +119,14 @@ from .._special_tokens import (
     restore_special_tokens_in_response,
     restore_special_tokens_in_stream,
 )
+from .._tool_status import TOOL_STATUS_TEXTS
 from .._unsupported_settings import (
     DEPRECATED_MODEL_WARNING_SUPPRESSED,
     SUPPRESSED_WARNINGS,
     warn_unsupported_settings,
 )
 from .._warnings import PydanticAIDeprecationWarning as PydanticAIDeprecationWarning
+from ..computer_use import COMPUTER_KIND
 from ..exceptions import DeprecatedModelWarning, ModelAPIError, UserError
 from ..messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
@@ -161,6 +166,8 @@ from ..messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolKind,
+    ToolKindLike,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -181,7 +188,7 @@ from ..messages import (
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
-from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, ComputerTool
 from ..native_tools._tool_search import TOOL_SEARCH_FUNCTION_TOOL_NAME, ToolSearchTool
 from ..output import OutputMode, OutputObjectDefinition, StructuredOutputMode
 from ..profiles import (
@@ -215,6 +222,7 @@ from ._speech import assistant_speech_text
 from ._tool_call_ids import hashed_tool_call_id, response_tool_call_id_scopes, with_unqualified_tool_call_ids
 
 if TYPE_CHECKING:
+    from google.genai import Client
     from httpx import AsyncClient
 
     from ..agent.abstract import AbstractAgent
@@ -545,6 +553,23 @@ class ModelRequestParameters:
         # per-tool loops.
         tool_def = self.tool_defs.get(tool_name)
         return 'withheld' if tool_def is not None and tool_def.defer_loading else 'visible'
+
+    def available_tool_names_for_kind(self, kind: ToolKindLike) -> list[str]:
+        """The names of the function tools of this [`tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] that the model can call on this request.
+
+        A tool with `defer_loading=True` is included only once the message history has revealed it.
+        [`RunContext.tool_name_for_kind`][pydantic_ai.tools.RunContext.tool_name_for_kind] also returns a deferred tool,
+        so instructions that name it don't change when it is revealed.
+
+        Args:
+            kind: The [`ToolKind`][pydantic_ai.messages.ToolKind], or its id.
+        """
+        kind_id = kind.id if isinstance(kind, ToolKind) else kind
+        return [
+            t.name
+            for t in self.function_tools
+            if t.tool_kind == kind_id and (not t.defer_loading or t.name in self.revealed_tool_names)
+        ]
 
     @cached_property
     def tool_defs(self) -> dict[str, ToolDefinition]:
@@ -1524,6 +1549,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
     _honors_compaction_boundaries: ClassVar[bool] = False
     """Whether the adapter drops the history before a compaction part it sends, with `_trim_before_compaction`."""
 
+    @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        """Whether this model reads dynamic rewrite-mode instructions outside the cached prompt prefix.
+
+        A change to one then doesn't end the instruction window (see `update_instruction_history`).
+        """
+        return False
+
     def _model_for_response(self, response: ModelResponse) -> Model:
         """The model that produced `response`, for a model that delegates requests to others."""
         return self
@@ -1957,7 +1990,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         deprecation = self.profile.get('deprecation')
         if deprecation is None or DEPRECATED_MODEL_WARNING_SUPPRESSED.get():
             return
-        retirement = f', with a retirement date of {deprecation.retirement_date}' if deprecation.retirement_date else ''
+        retirement_date, rerouted_to = deprecation.retirement_date, deprecation.rerouted_to
+        retirement = f', with a retirement date of {retirement_date}' if retirement_date else ''
+        if rerouted_to:
+            retirement += (
+                f', from which it routes requests to {rerouted_to!r}'
+                if retirement_date
+                else f', and it routes requests to {rerouted_to!r}'
+            )
         replacement = f' It recommends {deprecation.replacement!r} instead.' if deprecation.replacement else ''
         # Attributed to this line, so the default filters don't repeat it for a model until something changes the filters.
         warnings.warn(
@@ -2063,7 +2103,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         tool results in each request in the order of the calls they answer, so the request bytes
         (and the provider's prompt cache) don't depend on the order a history happened to store
         them in. When the profile sets `tool_call_id_length`, tool call IDs that don't fit it are
-        replaced with stable hashes that do.
+        replaced with stable hashes that do. When it sets `needs_json_string_tool_returns`, a successful
+        tool return of a string goes out as a `{"tool_output": ...}` JSON string field.
 
         Subclasses normally don't need to override this; the framework calls it on the
         agent's behalf in `_agent_graph._make_request` so per-adapter message-prep code
@@ -2123,6 +2164,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             # Without a system role, a retry that would join the standing prompt is a `<system>` block like the rest.
             sealed=self._seals_system_blocks,
         )
+        # Ahead of the file replacement, so a note the framework puts in place of an unreadable file isn't wrapped.
+        messages = _tool_returns_as_json_strings(messages, self.profile)
         messages = _replace_unsupported_tool_return_files(messages, self.profile)
         # After retry feedback becomes user text, and before any step below renders the application's own text.
         messages = break_special_tokens_in_messages(messages, self.profile, self.accepts_stateless_artifacts)
@@ -2841,6 +2884,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if (provider := self.provider) is None:
             return {}
         return provider._configured_model_profile(self.model_name) or {}  # pyright: ignore[reportPrivateUsage]
+
+    def _classifies_schema_too_complex(self) -> bool:
+        """Whether this model raises `ModelSchemaTooComplexError` when the provider can't compile a request's strict schemas.
+
+        Only for such a model does a run attempt a request again in Tool Output when the provider rejects the Native
+        Output schema the model inferred, and open a stream that sends one before handing it over, to see the rejection.
+        """
+        return False
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Adjust the provider's profile defaults for this model instance, before the user's `profile=` is applied.
@@ -3740,6 +3791,11 @@ def infer_model_profile(model: str) -> ModelProfile:
         context_window = lookup_context_window(model_name, provider_name=provider)
         if context_window is not None:
             profile = merge_profile(profile, ModelProfile(context_window=context_window))
+    if provider == 'google-interactions':
+        from ..profiles.google import google_interactions_model_profile
+
+        # The overrides `GoogleInteractionsModel._instance_profile_defaults` applies over the `GoogleProvider` profile.
+        profile = merge_profile(profile, google_interactions_model_profile(model_name))
     return profile
 
 
@@ -3866,10 +3922,8 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-cloud'):
-        from .google import GoogleModel
-
-        return GoogleModel(model_name, provider=provider)
+    elif model_kind in ('google', 'google-cloud', 'google-interactions'):
+        return _infer_google_model(model_kind, model_name, provider)
     elif model_kind == 'groq':
         from .groq import GroqModel
 
@@ -3913,6 +3967,20 @@ def infer_model(  # noqa: C901
         return XaiModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
+
+
+def _infer_google_model(
+    kind: Literal['google', 'google-cloud', 'google-interactions'],
+    model_name: str,
+    provider: Provider[Client],
+) -> Model:
+    if kind == 'google-interactions':
+        from .google_interactions import GoogleInteractionsModel
+
+        return GoogleInteractionsModel(model_name, provider=provider)
+    from .google import GoogleModel
+
+    return GoogleModel(model_name, provider=provider)
 
 
 def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> AsyncClient:
@@ -4156,6 +4224,32 @@ def _needs_tool_resolution(params: ModelRequestParameters) -> bool:
     )
 
 
+def _drop_unrunnable_computer_tool(
+    params: ModelRequestParameters, natives: list[AbstractNativeTool]
+) -> list[AbstractNativeTool]:
+    """The native tools, keeping a `ComputerTool` only when the request has exactly one `computer` tool to run its calls."""
+    # A tool that is left out because a native tool is sent in its place can't run any calls.
+    native_tool_ids = {t.unique_id for t in natives}
+    computer_tool_names = [
+        name
+        for name in params.available_tool_names_for_kind(COMPUTER_KIND)
+        if params.tool_defs[name].unless_native not in native_tool_ids
+    ]
+    kept: list[AbstractNativeTool] = []
+    for native_tool in natives:
+        if isinstance(native_tool, ComputerTool) and not computer_tool_names:
+            if native_tool.optional:
+                continue
+            raise UserError('`ComputerTool` needs a `computer` tool the model can call, and this request has none.')
+        if isinstance(native_tool, ComputerTool) and len(computer_tool_names) > 1:
+            # Which of them ran a call would depend on the order of the tools.
+            raise UserError(
+                '`ComputerTool` needs a `computer` tool the model can call, and this request has more than one.'
+            )
+        kept.append(native_tool)
+    return kept
+
+
 def _supported_native_tools(
     params: ModelRequestParameters,
     supported_types: frozenset[type[AbstractNativeTool]],
@@ -4246,17 +4340,19 @@ def resolve_request_tools(
        into `tool_visibility` exactly once. A caller without a `can_withhold_tool_schemas` answer
        (the realtime session path) can't withhold schemas at all.
 
-    On top of the filter, two narrower drops apply, kept independent:
+    On top of the filter, three narrower drops apply, kept independent. `optional=True` decides
+    the outcome of each one:
 
-    * `optional=True` only governs the *unsupported-on-this-model* path: an unsupported
-      optional native tool is silently dropped (no error raised). It does NOT govern the
-      corpus-empty drop.
+    * An optional native tool that this model doesn't support is silently dropped (no error raised).
     * The corpus-empty drop is specific to the framework-managed tool-search native tool's
       corpus-management role: an *optional* `ToolSearchTool` is dropped when nothing is
       searchable, since sending it with no corpus to search would waste a tool slot. A
-      non-optional `ToolSearchTool` stays — the user asked explicitly. Other native tools
-      don't have a corpus and aren't subject to this drop, so making `optional` a base-class
+      non-optional `ToolSearchTool` stays, because the user asked for it explicitly. Other native
+      tools don't have a corpus and aren't subject to this drop, so making `optional` a base-class
       field doesn't accidentally cause e.g. `WebSearchTool(optional=True)` to be dropped here.
+    * An optional `ComputerTool` is dropped when the request has no `computer` tool to run its
+      calls. A required `ComputerTool` in that case raises `UserError`, as does any `ComputerTool`
+      when the request has more than one `computer` tool.
 
     This is a module-level function rather than a `Model` method so both the classic agent-run
     path (via `Model._resolve_request_tools`, which passes its profile-derived
@@ -4275,6 +4371,8 @@ def resolve_request_tools(
     supported_natives = [
         t for t in supported_natives if not (isinstance(t, ToolSearchTool) and t.optional) or t.unique_id in corpus_ids
     ]
+    # After the tool search drop, so a tool kept because tool search isn't sent can run a `ComputerTool`'s calls.
+    supported_natives = _drop_unrunnable_computer_tool(params, supported_natives)
 
     # Computed after the drop above so it names the native tools this request really sends:
     # rule 1 must not drop a local fallback for a native tool that just left.
@@ -5142,6 +5240,39 @@ def _text_file_content(item: object) -> str | None:
     return None
 
 
+def _tool_returns_as_json_strings(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
+    """Send each successful string tool return as a JSON string field, where the profile asks for it.
+
+    See [`needs_json_string_tool_returns`][pydantic_ai.profiles.ModelProfile.needs_json_string_tool_returns]. Parts are
+    replaced one for one, and only in the outgoing copy. The status text Pydantic AI writes for an output tool or a
+    skipped call isn't a tool's output, so it's left as is. Returns the original list when nothing changed.
+    """
+    if not profile.get('needs_json_string_tool_returns', False):
+        return messages
+    new_messages: list[ModelMessage] = []
+    changed = False
+    for message in messages:
+        if isinstance(message, ModelRequest):
+            parts = [_as_json_string_tool_return(part) for part in message.parts]
+            if _parts_changed(parts, message.parts):
+                message = replace(message, parts=parts)
+                changed = True
+        new_messages.append(message)
+    return new_messages if changed else messages
+
+
+def _as_json_string_tool_return(part: ModelRequestPart) -> ModelRequestPart:
+    """`part` with its content as `{"tool_output": ...}` JSON when it's a successful string return of a tool's text."""
+    if (
+        not isinstance(part, ToolReturnPart)
+        or part.outcome != 'success'
+        or not isinstance(part.content, str)
+        or part.content in TOOL_STATUS_TEXTS
+    ):
+        return part
+    return replace(part, content=json.dumps({'tool_output': part.content}, ensure_ascii=False))
+
+
 def _replace_unsupported_tool_return_files(messages: list[ModelMessage], profile: ModelProfile) -> list[ModelMessage]:
     """Replace each file a tool returned that the profile says the model can't read with a note naming it.
 
@@ -5244,6 +5375,10 @@ def _project_instruction_state(
     statements are rendered until the compaction that ends the load, each change as a diff against the text an
     earlier statement delivered.
 
+    So is a statement of a block below `'operator'` authority, a lowered capability's instructions: it's rendered until
+    the latest compaction as a capability part at its authority, framed data on the user channel that the lookalike
+    pass renders like any other (`lowered_instruction_statement`), never in the application's voice.
+
     The baseline parts themselves are dropped. Every request in the current window was sent the same prefix,
     `prefix` (the request's instruction parts), so those requests get their `instructions` rendered from it,
     tagged, for the adapters that read a request's instructions from history rather than from the request
@@ -5254,6 +5389,7 @@ def _project_instruction_state(
     window: InstructionBaselinePart | None = None
     values = InstructionValues.at(None)
     loaded = LoadedInstructionValues()
+    lowered = LoweredInstructions()
     # Loads are folded over the post-compaction window alone, as everywhere else they're derived from history.
     loads_start = _post_compaction_window_start(messages)
     projected: list[ModelMessage] = []
@@ -5273,22 +5409,23 @@ def _project_instruction_state(
         opened_at = window_boundary_index(message) if index == current_start else -1
         for part_index, part in enumerate(message.parts):
             in_loads_window = (index, part_index) >= loads_start
-            if in_loads_window and loaded.tracks(part):
+            if is_lowered_statement(part):
+                parts.extend(_project_lowered_statement(part, lowered, in_window=in_loads_window, message=message))
+            elif in_loads_window and loaded.tracks(part):
                 # A statement of a loaded capability's block, which no instruction window restates, so it stays in
                 # effect until the compaction that ends the load.
                 text = part.render(inline_system=inline_system, previous=loaded.apply(part))
                 parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
-            elif isinstance(part, InstructionDeltaPart):
-                # A change a newer version wrote, which this one can't address, is superseded by the window
-                # the next request opens.
-                if index >= current_start and part_index > opened_at and part.id is not None:
-                    text = part.render(inline_system=inline_system, previous=values.apply(part))
-                    parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
-            else:
+            elif not isinstance(part, InstructionDeltaPart):
                 if in_loads_window:
                     loaded.observe(part)
                 if not isinstance(part, InstructionBaselinePart):
                     parts.append(part)
+            # A change a newer version wrote, which this one can't address, is superseded by the window the next
+            # request opens.
+            elif index >= current_start and part_index > opened_at and part.id is not None:
+                text = part.render(inline_system=inline_system, previous=values.apply(part))
+                parts.append(SystemPromptPart(content=text, timestamp=message.timestamp or _utils.now_utc()))
         instructions = message.instructions
         if (
             window is not None
@@ -5302,6 +5439,21 @@ def _project_instruction_state(
             message = replace(message, parts=parts, instructions=instructions)
         projected.append(message)
     return projected
+
+
+def _project_lowered_statement(
+    part: InstructionDeltaPart, lowered: LoweredInstructions, *, in_window: bool, message: ModelRequest
+) -> list[SystemPromptPart | CapabilityPart]:
+    """What a statement of a block below operator authority in `message` is projected as.
+
+    No instruction window restates such a block, so its statements stay in effect until the latest compaction, before
+    which they're dropped (`in_window` is `False`). Each is a capability part at the block's authority.
+    """
+    if not in_window:
+        return []
+    return lowered_instruction_statement(
+        part, restated=lowered.apply(part), timestamp=message.timestamp or _utils.now_utc()
+    )
 
 
 def _drop_capability_load_deltas(messages: list[ModelMessage]) -> list[ModelMessage]:

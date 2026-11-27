@@ -225,7 +225,8 @@ jobs:
         # is capped at 300 entries (and `--paginate` only pages commits, not
         # files), so a >300-file PR could hide an agent-config edit. The diff
         # emits a `diff --git a/<old> b/<new>` header for every changed file,
-        # including renames, so matching those lines cannot miss a path.
+        # including renames. The matcher is the douwebot agent-config guard's in
+        # `bots.yml`; change both together.
         run: |
           case "$AUTHOR_PERMISSION" in
             write | admin)
@@ -235,8 +236,8 @@ jobs:
           esac
 
           CHANGED=$(gh api "repos/${{ github.repository }}/compare/${BASE_SHA}...${HEAD_SHA}" -H 'Accept: application/vnd.github.v3.diff' | grep '^diff --git ')
-          if echo "$CHANGED" | grep -qiE '/(AGENTS\.md|CLAUDE\.md)( |$)|/\.claude/'; then
-            echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, or .claude/). Skipping for security."
+          if echo "$CHANGED" | grep -qiE '/(AGENTS\.md|CLAUDE\.md|CLAUDE\.local\.md|\.mcp\.json)( |"|$)|/(\.claude|\.agents|agent_docs)/'; then
+            echo "::error::PR modifies agent config files (AGENTS.md, CLAUDE.md, CLAUDE.local.md, .mcp.json, .claude/, .agents/, agent_docs/). Skipping for security."
             exit 1
           fi
         env:

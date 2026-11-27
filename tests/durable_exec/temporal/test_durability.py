@@ -41,10 +41,12 @@ from pydantic_ai import (
     FunctionToolset,
     ImageGenerationTool,
     ImageGenerator,
+    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestTimeout,
     ModelResponse,
+    ModelSettingsDeltaEvent,
     MultiModalContent,
     NativeOutput,
     PartDeltaEvent,
@@ -61,6 +63,7 @@ from pydantic_ai import (
     SystemPromptPart,
     TextPart,
     Tool,
+    ToolAvailabilityDeltaEvent,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolReturn,
@@ -70,6 +73,7 @@ from pydantic_ai import (
     UserPromptPart,
     WebSearchTool,
     WebSearchUserLocation,
+    XSearchTool,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import WrapperAgent
@@ -77,7 +81,6 @@ from pydantic_ai.capabilities import (
     BatchModelRequests,
     Capability,
     DynamicCapability,
-    HandleDeferredToolCalls,
     Hooks,
     ImageGeneration,
     Instrumentation,
@@ -91,6 +94,7 @@ from pydantic_ai.capabilities import (
     SetToolMetadata,
     Toolset,
     WrapperCapability,
+    XSearch,
     durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
@@ -103,12 +107,15 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelAuthenticationError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
+    ModelInvalidResponseError,
     ModelNotFoundError,
     ModelOverloadedError,
     ModelQuotaExceededError,
     ModelRateLimitError,
     ModelRetry,
+    ModelSchemaTooComplexError,
     ModelTimeoutError,
     ModelUnavailableError,
     SkipModelRequest,
@@ -157,6 +164,7 @@ from ..._inline_snapshot import snapshot
 from ...batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, FailingBatchTestModel, SlowBatchTestModel
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ...realtime_connections import InferredConnection
+from ...schema_too_complex_utils import CompilingModel
 from ..override_rebind_cases import REBIND_CASES, RebindCase
 from ..span_utils import drop_fastmcp_client_spans
 
@@ -166,7 +174,7 @@ try:
     from temporalio.api.enums.v1 import EventType
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
-    from temporalio.exceptions import ActivityError, ApplicationError
+    from temporalio.exceptions import ActivityError, ApplicationError, RetryState
     from temporalio.worker import (
         Interceptor,
         Replayer,
@@ -177,9 +185,10 @@ try:
         WorkflowInterceptorClassInput,
         WorkflowOutboundInterceptor,
     )
-    from temporalio.workflow import ActivityConfig, ActivityHandle, ChildWorkflowConfig
+    from temporalio.workflow import ActivityConfig, ActivityHandle, ChildWorkflowConfig, NondeterminismError
 
     import pydantic_ai.durable_exec.temporal._toolset as temporal_toolset
+    from pydantic_ai.durable_exec._base import MODEL_RESPONSE_STREAM_EVENT_TYPES
     from pydantic_ai.durable_exec._toolset import unwrap_tool_call_result
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
@@ -324,6 +333,75 @@ class RunSyncDurableAgentWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         return simple_durable_agent.run_sync(prompt).output
+
+
+async def _submit_output_tool(ctx: RunContext[None]) -> str:
+    await ctx.submit_output('final_result', {'response': 'submitted'})
+    return 'done'
+
+
+def _call_submit_output_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('_submit_output_tool', {})])
+
+
+def _submit_output_agent(name: str, metadata: dict[str, Any] | None) -> Agent[None, str]:
+    toolset = FunctionToolset[None](id=f'{name}_tools')
+    toolset.add_function(_submit_output_tool, metadata=metadata)
+    return Agent(
+        FunctionModel(_call_submit_output_tool),
+        name=name,
+        deps_type=NoneType,
+        toolsets=[toolset],
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+
+
+submit_output_in_activity_agent = _submit_output_agent('durability_submit_output_in_activity', None)
+submit_output_in_workflow_agent = _submit_output_agent('durability_submit_output_in_workflow', {'temporal': False})
+
+
+@workflow.defn
+class SubmitOutputInActivityWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await submit_output_in_activity_agent.run(prompt)).output
+
+
+@workflow.defn
+class SubmitOutputInWorkflowWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await submit_output_in_workflow_agent.run(prompt)).output
+
+
+async def test_durability_submit_output_needs_the_tool_in_the_workflow(client: Client):
+    """`submit_output()` can't reach the run from a tool's activity, but works from a tool opted out of one."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SubmitOutputInActivityWorkflow, SubmitOutputInWorkflowWorkflow],
+        plugins=[AgentPlugin(submit_output_in_activity_agent), AgentPlugin(submit_output_in_workflow_agent)],
+    ):
+        output = await client.execute_workflow(
+            SubmitOutputInWorkflowWorkflow.run,
+            args=['Finish'],
+            id=SubmitOutputInWorkflowWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        assert output == 'submitted'
+
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                SubmitOutputInActivityWorkflow.run,
+                args=['Finish'],
+                id=SubmitOutputInActivityWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert isinstance(activity_error.cause, ApplicationError)
+    assert activity_error.cause.type == 'UserError'
+    assert 'in the same process as the run itself' in activity_error.cause.message
 
 
 async def test_durability_run_sync_in_workflow_fails_the_workflow(client: Client):
@@ -515,6 +593,73 @@ async def test_durability_fallback_attempts_run_as_activities(client: Client):
     # The response records the candidate that answered, which is what the workflow resumes a continuation on.
     assert output == ('from fallback', 'fallback_target')
     # The failed attempt on the agent's model and the one on the fallback model.
+    assert _scheduled_activity_count(history) == 2
+
+
+# --- Durability when the provider can't compile an inferred Native Output schema ---
+
+
+_schema_too_complex_modes: list[str] = []
+
+
+def _schema_too_complex_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    mode = info.model_request_parameters.output_mode
+    _schema_too_complex_modes.append(mode)
+    if mode == 'native':
+        raise ModelHTTPError.for_category(ModelSchemaTooComplexError, status_code=400, model_name='compiler')
+    return ModelResponse(parts=[ToolCallPart('final_result', {'label': 'survey', 'answer': 'answered'})])
+
+
+schema_too_complex_durable_agent = Agent(
+    CompilingModel(
+        _schema_too_complex_fn,
+        model_name='compiler',
+        profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),
+    ),
+    name='durability_schema_too_complex_agent',
+    output_type=Answer,
+    capabilities=[
+        TemporalDurability(
+            # The rejection isn't retried in its activity, by default, even when the retry policy would.
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        ),
+    ],
+)
+
+
+@workflow.defn
+class SchemaTooComplexDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await schema_too_complex_durable_agent.run(prompt)).output.answer
+
+
+@pytest.mark.moves_cache_prefix(
+    reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
+)
+async def test_durability_too_complex_inferred_native_output_is_attempted_in_tool_output(client: Client):
+    """The rejected Native Output attempt fails its activity once, and workflow code attempts the request in Tool
+    Output in another activity."""
+    _schema_too_complex_modes.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SchemaTooComplexDurableAgentWorkflow],
+        plugins=[AgentPlugin(schema_too_complex_durable_agent)],
+    ):
+        wf = await client.start_workflow(
+            SchemaTooComplexDurableAgentWorkflow.run,
+            args=['hello'],
+            id=SchemaTooComplexDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        output = await wf.result()
+        history = await wf.fetch_history()
+    assert output == 'answered'
+    assert _schema_too_complex_modes == ['native', 'tool']
     assert _scheduled_activity_count(history) == 2
 
 
@@ -1334,6 +1479,10 @@ def _non_retryable_model_fn(messages: list[ModelMessage], info: AgentInfo) -> Mo
         raise ModelHTTPError.for_category(ModelAuthenticationError, status_code=401, model_name='test-model')
     if prompt.content == 'not_found':
         raise ModelHTTPError.for_category(ModelNotFoundError, status_code=404, model_name='test-model')
+    if prompt.content == 'empty_response':
+        raise ModelEmptyResponseError('test-model', 'Streamed response ended without content or tool calls')
+    if prompt.content == 'invalid_response':
+        raise ModelInvalidResponseError('test-model', 'Invalid response', body='<html>Bad gateway</html>')
     if prompt.content == 'quota':
         raise ModelHTTPError.for_category(ModelQuotaExceededError, status_code=402, model_name='test-model')
     if prompt.content == 'request_timeout':
@@ -1414,6 +1563,21 @@ class NonRetryableModelErrorWorkflow:
             3,
             'ModelNotFoundError ModelHTTPError non_retryable=False',
             id='unlisted-rejection-category',
+        ),
+        pytest.param(
+            # An unusable response used to be a plain `UnexpectedModelBehavior`, which the framework adds to every
+            # retry policy. It still reports that name, so Temporal doesn't retry it, and the workflow gets the model
+            # error for a `ModelFallback` or retry capability to handle.
+            'empty_response',
+            1,
+            'ModelEmptyResponseError UnexpectedModelBehavior non_retryable=False',
+            id='empty-response',
+        ),
+        pytest.param(
+            'invalid_response',
+            1,
+            'ModelInvalidResponseError UnexpectedModelBehavior non_retryable=False',
+            id='invalid-response',
         ),
     ],
 )
@@ -1682,6 +1846,138 @@ async def test_durability_non_retryable_error_subclasses(
         )
     assert output == f'{error_type}: {message}'
     assert _subclass_attempts == [kind]
+
+
+# --- A usage limit a tool's delegate trips inside its activity isn't retried ---
+
+
+_delegation_attempts: list[str] = []
+_delegate_agent = Agent(TestModel(), name='durability_usage_limit_delegate')
+
+
+async def delegate(ctx: RunContext[None], query: str) -> str:
+    _delegation_attempts.append(query)
+    return (await _delegate_agent.run(query, usage=ctx.usage, usage_limits=ctx.usage_limits)).output
+
+
+def _delegating_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('delegate', {'query': 'pydantic'})])
+
+
+delegating_agent = Agent(
+    FunctionModel(_delegating_model_fn),
+    name='durability_delegated_usage_limit',
+    deps_type=type(None),
+    toolsets=[FunctionToolset(tools=[delegate], id='delegate_toolset')],
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class DelegatedUsageLimitWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            return (await delegating_agent.run('search', usage_limits=UsageLimits(request_limit=1))).output
+        except ActivityError as error:
+            application_error = error.cause
+            assert isinstance(application_error, ApplicationError)
+            return f'{application_error.type}: {application_error.message}'
+
+
+async def test_durability_delegated_usage_limit_is_not_retried(client: Client):
+    """A tool that delegates with the run's `usage` and `usage_limits` trips the limit inside its activity, which
+    fails on its first attempt: every retry would check the limit against the same usage.
+    """
+    _delegation_attempts.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DelegatedUsageLimitWorkflow],
+        plugins=[AgentPlugin(delegating_agent)],
+    ):
+        output = await client.execute_workflow(
+            DelegatedUsageLimitWorkflow.run, id=DelegatedUsageLimitWorkflow.__name__, task_queue=TASK_QUEUE
+        )
+    assert output == snapshot(
+        'UsageLimitExceeded: The next request would exceed the request_limit of 1. Consider raising the limit, '
+        'or see the docs on usage limits for budget-aware patterns: '
+        'https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
+    )
+    assert _delegation_attempts == ['pydantic']
+
+
+# --- A usage limit the `XSearch` fallback subagent trips inside its activity isn't retried ---
+
+
+_x_search_fallback_attempts: list[str | None] = []
+
+
+def _x_search_fallback_model(ctx: RunContext[None]) -> Model:
+    _x_search_fallback_attempts.append(ctx.tool_name)
+    return TestModel(profile=ModelProfile(supported_native_tools=frozenset({XSearchTool})))
+
+
+def _x_search_calling_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('x_search', {'query': 'pydantic'})])
+
+
+x_search_fallback_agent = Agent(
+    FunctionModel(_x_search_calling_model_fn, profile=ModelProfile(supported_native_tools=frozenset())),
+    name='durability_x_search_fallback_usage_limit',
+    deps_type=type(None),
+    capabilities=[
+        XSearch(fallback_subagent_model=_x_search_fallback_model),
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        ),
+    ],
+)
+
+
+@workflow.defn
+class XSearchFallbackUsageLimitWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            return (await x_search_fallback_agent.run('search', usage_limits=UsageLimits(request_limit=1))).output
+        except ActivityError as error:
+            application_error = error.cause
+            assert isinstance(application_error, ApplicationError)
+            non_retryable = error.retry_state is RetryState.NON_RETRYABLE_FAILURE
+            return f'{application_error.type} (non-retryable: {non_retryable}): {application_error.message}'
+
+
+async def test_durability_x_search_fallback_usage_limit_is_not_retried(client: Client):
+    """The `XSearch` fallback subagent runs under the run's usage limits, so a limit the run has used up stops the
+    subagent before its first request, inside the tool's activity. The activity fails on its first attempt.
+    """
+    _x_search_fallback_attempts.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[XSearchFallbackUsageLimitWorkflow],
+        plugins=[AgentPlugin(x_search_fallback_agent)],
+    ):
+        output = await client.execute_workflow(
+            XSearchFallbackUsageLimitWorkflow.run, id=XSearchFallbackUsageLimitWorkflow.__name__, task_queue=TASK_QUEUE
+        )
+    assert output == snapshot(
+        'UsageLimitExceeded (non-retryable: True): The next request would exceed the request_limit of 1. '
+        'Consider raising the limit, or see the docs on usage limits for budget-aware patterns: '
+        'https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
+    )
+    assert _x_search_fallback_attempts == ['x_search']
 
 
 # --- `ModelSettings['request_timeout']` runs on the workflow's clock ---
@@ -2409,60 +2705,6 @@ async def test_durability_wrap_run_disables_threads(client: Client):
         assert output == 'Echo: test'
 
 
-# --- Durability wrap_run refuses external-event waits ---
-
-
-def _approval_needed_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[ToolCallPart('delete', {'path': 'a.txt'}, tool_call_id='call-1')])
-
-
-def _ask_in_process(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> None:
-    raise AssertionError('unreachable')  # pragma: no cover
-
-
-_external_event_agent = Agent(
-    FunctionModel(_approval_needed_fn),
-    name='external_event_test',
-    deps_type=type(None),
-    capabilities=[
-        TemporalDurability[None](activity_config=BASE_ACTIVITY_CONFIG),
-        HandleDeferredToolCalls[None](_ask_in_process),
-    ],
-)
-
-
-@_external_event_agent.tool_plain(name='delete', requires_approval=True)
-def _delete_needs_approval(path: str) -> str:
-    raise AssertionError('unreachable')  # pragma: no cover
-
-
-@workflow.defn
-class ExternalEventWaitWorkflow:
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        result = await _external_event_agent.run(prompt)
-        return result.output  # pragma: no cover
-
-
-async def test_durability_wrap_run_refuses_external_event_waits(client: Client):
-    """A workflow can't record a wait for an external event yet, so the engine fails the workflow clearly instead of waiting in process."""
-    async with Worker(
-        client,
-        task_queue=TASK_QUEUE,
-        workflows=[ExternalEventWaitWorkflow],
-        plugins=[AgentPlugin(_external_event_agent)],
-    ):
-        with pytest.raises(WorkflowFailureError) as exc_info:
-            await client.execute_workflow(
-                ExternalEventWaitWorkflow.run,
-                args=['clean up'],
-                id=ExternalEventWaitWorkflow.__name__,
-                task_queue=TASK_QUEUE,
-            )
-
-    assert 'does not support waiting for external events yet' in str(exc_info.value.cause)
-
-
 # --- Durability validation ---
 
 
@@ -2694,8 +2936,8 @@ def test_durability_temporal_activities():
     agent = Agent(_durability_fn_model, name='test', capabilities=[TemporalDurability()])
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 5 base activities + call/validation activities for the agent's <agent> FunctionToolset
-    assert len(bound.temporal_activities) == 7
+    # 5 base activities + call/validation activities for the agent's <agent> FunctionToolset + the external-event `ask`
+    assert len(bound.temporal_activities) == 8
 
 
 def test_durability_temporal_registrations_before_binding():
@@ -2713,8 +2955,8 @@ def test_durability_temporal_activities_with_toolsets():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 5 base activities + call/validation activities for both function toolsets
-    assert len(bound.temporal_activities) == 9
+    # 5 base activities + call/validation activities for both function toolsets + the external-event `ask`
+    assert len(bound.temporal_activities) == 10
 
 
 def test_durability_temporal_activities_rejects_omitting_child_workflows():
@@ -2794,8 +3036,8 @@ def test_durability_same_toolset_instance_reused():
     )
     bound = TemporalDurability.from_agent(agent)
     assert bound is not None
-    # 5 base activities + call/validation activities for <agent> and the shared toolset (once)
-    assert len(bound.temporal_activities) == 9
+    # 5 base activities + call/validation activities for <agent> and the shared toolset (once) + the external-event `ask`
+    assert len(bound.temporal_activities) == 10
 
 
 def test_durability_activity_config_not_mutated():
@@ -2822,6 +3064,7 @@ def test_durability_activity_config_not_mutated():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'UsageLimitExceeded',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -2869,6 +3112,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'UsageLimitExceeded',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -2888,6 +3132,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'UsageLimitExceeded',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -2915,6 +3160,7 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'UsageLimitExceeded',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -4840,22 +5086,22 @@ async def test_durability_complex_agent_logfire_span_tree(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_start"}'
+                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": "tool-call", "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 1, "delta": {"tool_name_delta": null, "args_delta": "{}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
+                                                    content='{"index": 1, "part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
@@ -4871,7 +5117,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                            content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -4885,7 +5131,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                            content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -4912,7 +5158,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_country", "content": "Mexico", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -4940,7 +5186,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_product_name", "content": "Pydantic AI", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -4957,7 +5203,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "{\\"", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
@@ -4978,7 +5224,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "\\"}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
@@ -4994,7 +5240,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
+                                            content='{"part": {"tool_name": "get_weather", "args": "{\\"city\\":\\"Mexico City\\"}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -5021,7 +5267,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
+                                            content='{"part": {"tool_name": "get_weather", "content": "sunny", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "content": null, "event_kind": "function_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -5038,7 +5284,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
+                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "previous_part_kind": null, "canonical_system": null, "event_kind": "part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"tool_name": "final_result", "tool_call_id": null, "event_kind": "final_result"}'
@@ -5164,7 +5410,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                                     content='{"index": 0, "delta": {"tool_name_delta": null, "args_delta": "]}", "tool_call_id": null, "provider_name": null, "provider_details": null, "part_delta_kind": "tool_call"}, "event_kind": "part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
+                                                    content='{"index": 0, "part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "next_part_kind": null, "canonical_system": null, "event_kind": "part_end"}'
                                                 ),
                                             ],
                                         )
@@ -5180,7 +5426,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
+                                            content='{"part": {"tool_name": "final_result", "args": "{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product Name\\",\\"answer\\":\\"Pydantic AI\\"}]}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "output_tool_call"}'
                                         ),
                                     ],
                                 )
@@ -5194,7 +5440,7 @@ async def test_durability_complex_agent_logfire_span_tree(
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
+                                            content='{"part": {"tool_name": "final_result", "content": "Final result processed.", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "metadata": null, "timestamp": null, "outcome": "success", "retry": null, "part_kind": "tool-return"}, "event_kind": "output_tool_result"}'
                                         ),
                                     ],
                                 )
@@ -6429,6 +6675,69 @@ async def test_durability_reprepares_reveal_history_for_different_model(client: 
         if isinstance(part, ToolReturnPart) and part.tool_name == 'cross_model_refund'
     )
     assert tool_return == 'refund available in activity: True'
+
+
+# --- A loaded capability's instruction block across workflows ---
+
+
+def _loaded_instructions_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if not any(isinstance(message, ModelResponse) for message in messages):
+        return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'loaded-notes'}, tool_call_id='load')])
+    return ModelResponse(parts=[TextPart('noted')])
+
+
+_loaded_instructions_agent = Agent(
+    FunctionModel(_loaded_instructions_model),
+    name='loaded_instructions_agent',
+    deps_type=type(None),
+    capabilities=[
+        Capability[None](id='loaded-notes', description='Notes.', instructions='Keep notes short.', defer_loading=True),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class LoadedInstructionsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str, message_history: list[ModelMessage] | None) -> list[ModelMessage]:
+        result = await _loaded_instructions_agent.run(prompt, message_history=message_history)
+        return result.all_messages()
+
+
+async def test_durability_loaded_capability_instructions_keep_their_id(client: Client):
+    """A loaded capability's instruction block keeps its `capability:<id>` id through the payload converter.
+
+    History returned from one workflow and passed to the next crosses the converter twice, so the next run's
+    instruction tracking sees the block as the capability's and doesn't state it again.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[LoadedInstructionsWorkflow],
+        plugins=[AgentPlugin(_loaded_instructions_agent)],
+    ):
+        first = await client.execute_workflow(
+            LoadedInstructionsWorkflow.run,
+            args=['take a note', None],
+            id=f'{LoadedInstructionsWorkflow.__name__}-first',
+            task_queue=TASK_QUEUE,
+        )
+        second = await client.execute_workflow(
+            LoadedInstructionsWorkflow.run,
+            args=['another note', first],
+            id=f'{LoadedInstructionsWorkflow.__name__}-second',
+            task_queue=TASK_QUEUE,
+        )
+
+    statements = [
+        (str(part.id), part.content)
+        for message in second
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, InstructionDeltaPart)
+    ]
+    assert statements == [('capability:loaded-notes', 'Keep notes short.')]
 
 
 # --- Loading a deferred capability from code with `ctx.load_capability` ---
@@ -8892,6 +9201,202 @@ async def test_population_change_delta_is_recorded_once_and_replays(client: Clie
     assert deltas == [['later']]
     replay = await Replayer(workflows=[PopulationChangeWorkflow], plugins=[PydanticAIPlugin()]).replay_workflow(history)
     assert replay.replay_failure is None
+
+
+# --- Delta events take an `event_stream_handler` activity of their own ---
+#
+# `ToolAvailabilityDeltaEvent` for a mid-run tool population change (2.60, #9405) and `ModelSettingsDeltaEvent` for a
+# named `thinking` level (2.62, #11111) are dispatched to the durability's `event_stream_handler` like any other
+# workflow-side event, so each adds an activity that histories recorded before those releases don't have.
+
+_delta_handler_events: list[str] = []
+
+
+async def _delta_event_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _delta_handler_events.append(type(event).__name__)
+
+
+async def _done_stream_fn(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'done'
+
+
+async def _population_change_stream_fn(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[str | DeltaToolCalls]:
+    """Stream what `_population_change_model_fn` returns: a handler makes every model request a streamed one."""
+    part = _population_change_model_fn(messages, info).parts[0]
+    if isinstance(part, ToolCallPart):
+        yield {0: DeltaToolCall(name=part.tool_name, json_args='{}', tool_call_id=part.tool_call_id)}
+    else:
+        yield 'done'
+
+
+thinking_level_handler_agent = Agent(
+    FunctionModel(stream_function=_done_stream_fn),
+    name='durability_thinking_level_handler',
+    model_settings={'thinking': 'low'},
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_delta_event_handler)],
+)
+
+population_change_handler_agent = Agent(
+    FunctionModel(stream_function=_population_change_stream_fn),
+    name='durability_population_change_handler',
+    toolsets=[
+        FunctionToolset(tools=[Tool(_unlock, name='unlock'), Tool(_later, name='later')], id='population_change')
+    ],
+    capabilities=[
+        PrepareTools(_admit_later_from_step_two),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_handler=_delta_event_handler),
+    ],
+)
+
+
+@workflow.defn
+class ThinkingLevelHandlerWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await thinking_level_handler_agent.run('go')).output
+
+
+@workflow.defn
+class PopulationChangeHandlerWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await population_change_handler_agent.run('go')).output
+
+
+async def _record_delta_event_history(
+    client: Client, workflow_type: type[Any], agent: Agent[None, str]
+) -> WorkflowHistory:
+    task_queue = f'{workflow_type.__name__}-{uuid.uuid4()}'
+    async with Worker(
+        client,
+        task_queue=task_queue,
+        workflows=[workflow_type],
+        plugins=[AgentPlugin(agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            workflow_type.__name__, id=task_queue, task_queue=task_queue, result_type=str
+        )
+        assert await handle.result() == 'done'
+        return await handle.fetch_history()
+
+
+def _scheduled_activity_kinds(history: WorkflowHistory) -> list[str]:
+    return [
+        event.activity_task_scheduled_event_attributes.activity_type.name.rsplit('__', 1)[-1]
+        for event in history.events
+        if event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
+    ]
+
+
+@pytest.mark.parametrize(
+    ('workflow_type', 'agent', 'delta_event_type', 'activities', 'earlier_activities', 'handled_events'),
+    [
+        pytest.param(
+            ThinkingLevelHandlerWorkflow,
+            thinking_level_handler_agent,
+            ModelSettingsDeltaEvent,
+            snapshot(['event_stream_handler', 'model_request_stream']),
+            snapshot(['model_request_stream']),
+            snapshot(['ModelSettingsDeltaEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']),
+            id='thinking-level',
+        ),
+        pytest.param(
+            PopulationChangeHandlerWorkflow,
+            population_change_handler_agent,
+            ToolAvailabilityDeltaEvent,
+            snapshot(
+                [
+                    'model_request_stream',
+                    'event_stream_handler',
+                    'call_tool',
+                    'event_stream_handler',
+                    'event_stream_handler',
+                    'model_request_stream',
+                    'event_stream_handler',
+                    'call_tool',
+                    'event_stream_handler',
+                    'model_request_stream',
+                ]
+            ),
+            snapshot(
+                [
+                    'model_request_stream',
+                    'event_stream_handler',
+                    'call_tool',
+                    'event_stream_handler',
+                    'model_request_stream',
+                    'event_stream_handler',
+                    'call_tool',
+                    'event_stream_handler',
+                    'model_request_stream',
+                ]
+            ),
+            snapshot(
+                [
+                    'PartStartEvent',
+                    'PartEndEvent',
+                    'FunctionToolCallEvent',
+                    'FunctionToolResultEvent',
+                    'ToolAvailabilityDeltaEvent',
+                    'PartStartEvent',
+                    'PartEndEvent',
+                    'FunctionToolCallEvent',
+                    'FunctionToolResultEvent',
+                    'PartStartEvent',
+                    'FinalResultEvent',
+                    'PartEndEvent',
+                ]
+            ),
+            id='tool-population-change',
+        ),
+    ],
+)
+async def test_delta_event_handler_activity_breaks_replay_of_earlier_histories(
+    client: Client,
+    monkeypatch: pytest.MonkeyPatch,
+    workflow_type: type[Any],
+    agent: Agent[None, str],
+    delta_event_type: type[AgentStreamEvent],
+    activities: list[str],
+    earlier_activities: list[str],
+    handled_events: list[str],
+):
+    """A delta event takes a handler activity of its own, so a history recorded without it fails replay with `TMPRL1100`.
+
+    Pins the activity sequence these events produce today: changing it breaks replay of in-flight workflows the
+    same way again, which `docs/durable_execution/temporal.md` documents for the upgrades that introduced them.
+
+    The earlier history is recorded with the event left out of handler dispatch, which is the activity sequence
+    the releases before it recorded, since they didn't emit it. Unsandboxed, so the patched dispatch is the one the
+    workflow runs.
+    """
+    _delta_handler_events.clear()
+    history = await _record_delta_event_history(client, workflow_type, agent)
+    assert _scheduled_activity_kinds(history) == activities
+    assert _delta_handler_events == handled_events
+
+    with monkeypatch.context() as patch_dispatch:
+        patch_dispatch.setattr(
+            'pydantic_ai.durable_exec._base.MODEL_RESPONSE_STREAM_EVENT_TYPES',
+            (*MODEL_RESPONSE_STREAM_EVENT_TYPES, delta_event_type),
+        )
+        earlier_history = await _record_delta_event_history(client, workflow_type, agent)
+    assert _scheduled_activity_kinds(earlier_history) == earlier_activities
+
+    replayer = Replayer(
+        workflows=[workflow_type], plugins=[PydanticAIPlugin()], workflow_runner=UnsandboxedWorkflowRunner()
+    )
+    assert (await replayer.replay_workflow(history)).replay_failure is None
+    replay = await replayer.replay_workflow(earlier_history, raise_on_replay_failure=False)
+    assert isinstance(replay.replay_failure, NondeterminismError)
+    assert (
+        f"[TMPRL1100] Nondeterminism error: Activity type of scheduled event 'agent__{agent.name}__model_request_stream'"
+        f" does not match activity type of activity command 'agent__{agent.name}__event_stream_handler'"
+    ) in str(replay.replay_failure)
 
 
 def _placement_model_fn(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:

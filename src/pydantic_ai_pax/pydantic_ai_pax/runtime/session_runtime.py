@@ -99,6 +99,7 @@ from pydantic_ai_pax.runtime.sessions import Sessions
 from pydantic_ai_pax.runtime.speculation import Speculation
 from pydantic_ai_pax.runtime.strict_schemas import NON_STRICT_SCHEMAS
 from pydantic_ai_pax.runtime.tasks import Tasks, question_row, resume_prompt
+from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust
 from pydantic_ai_pax.ui import telemetry
 from pydantic_ai_pax.ui.menus.dialogs import run_settings_menu
 from pydantic_ai_pax.ui.menus.key_menu import keys_command, keys_menu
@@ -209,6 +210,34 @@ def _fast_command(
     )
 
 
+def _attach_trust(
+    session: Session[DepsT, OutputT],
+    trust: WorkspaceTrust | None,
+    *,
+    process: ClaiProcess[DepsT],
+    status: Status,
+    commands: Commands,
+) -> None:
+    """Give `session` its folder's shared trust on `process`, with its footer indicator and `/trust`."""
+    session.trust = process.trust_for(Path(session.workspace), initial=trust)
+    session.resolve_trust = process.resolve_trust
+    status.trust = lambda: None if session.trust is None else session.trust.level
+    commands.register(
+        Command(
+            name='trust',
+            description="Show whether you trust this session's folder, or change it: /trust [yes|no]",
+            handler=lambda args: _trust_command(session, process, args),
+            complete=lambda args: ('yes', 'no') if len(args) <= 1 else (),
+        )
+    )
+
+
+async def _trust_command(session: Session[DepsT, OutputT], process: ClaiProcess[DepsT], args: list[str]) -> str:
+    """`/trust` for `session`, whose folder `create_shell` always gave a trust decision; it reads the folder's names."""
+    assert session.trust is not None, 'create_shell sets the trust of every session it builds'
+    return await process.run_trust_command(session.trust, Path(session.workspace), args)
+
+
 def create_shell(
     agent: AbstractAgent[DepsT, OutputT],
     *,
@@ -230,14 +259,16 @@ def create_shell(
     process: ClaiProcess[DepsT] | None = None,
     signals: bool = True,
     settings_for: Callable[[ProjectSettings], Settings] | None = None,
+    trust: WorkspaceTrust | None = None,
 ) -> 'SessionRuntime[DepsT, OutputT]':
     """Build one session's runtime, without attaching terminal input in headless mode.
 
     `workspace` is the directory the session works in, by default the current one. `process` holds
     what the session shares with the others in this Pax, its built-in plugins included; without one,
     it gets its own over `store` and `builtin_plugins`, which are otherwise unused.
-    `signals` lets Ctrl-C cancel this session's turns; only the session the terminal shows takes it.
+    `signals` lets Ctrl+C cancel this session's turns; only the session the terminal shows takes it.
     `settings_for` gives the settings Pax starts with beside a project file, which `/project` applies from.
+    `trust` is whether you trust the session's directory; by default, what you decided before, else untrusted.
     """
     settings = (
         Settings.model_validate(settings.model_dump(exclude_unset=True))
@@ -517,6 +548,7 @@ def create_shell(
     )
     screen = Screen()
     status = Status(fields=lambda: context.settings.footer_fields)
+    _attach_trust(session, trust, process=process, status=status, commands=commands)
     status.restore_text_age(session.messages)
     loader = SessionPlugins[DepsT](
         process=process.plugins,
@@ -977,6 +1009,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         child.model_chosen = model is not None or self.session.model_chosen
         child.tool_retries = self.session.tool_retries
         child.instructions = self.session.instructions
+        child.trust = self.session.trust
         child.resolve_model = self.session.resolve_model
         child.expand_model = self.session.expand_model
         child.model_settings = self.context.live_model_overrides(child.model or _model_label(self.agent))
@@ -1146,6 +1179,10 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                     # Reports a task left while no Pax ran are known once the owner opened.
                     if self.editor is not None and self.tasks.waiting(self.session.summary.id):
                         self.editor.wake()
+                    # The first window lookup imports the model's provider SDK, a fifth of a second for OpenAI's.
+                    # Done here on a worker thread, keys typed at the new prompt echo meanwhile.
+                    if (profiled := self._window_model()) is not None:
+                        await to_thread.run_sync(infer_model_profile, profiled)
                     reason = await self._read_loop()
                     return reason
         finally:
@@ -1155,7 +1192,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 self.terminal.ended(self, reason)
 
     def shown_in(self, terminal: 'Terminal[DepsT, OutputT] | None') -> None:
-        """Read the input of `terminal`, which shows this session now, and take its Ctrl-C; `None` stops that.
+        """Read the input of `terminal`, which shows this session now, and take its Ctrl+C; `None` stops that.
 
         The terminal hands its console output over itself.
         """
@@ -1177,9 +1214,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     def _retain_images(self) -> None:
         """Let go of images that neither the draft nor a queued prompt of this session uses."""
         self.images.retain(
-            [self.editor.buffer.text, *self.editor.queued_messages]
-            if self.editor is not None
-            else [entry.text for entry in self._inbox.entries]
+            self.editor.drafts if self.editor is not None else [entry.text for entry in self._inbox.entries]
         )
 
     def bind(self, editor: LivePrompt | None) -> None:
@@ -1320,13 +1355,22 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         if self.status.context_tokens is not None and model == self._measured_model:
             # A request left the window unresolved, as for a fallback model: the selected one's would be a guess.
             self.status.model_window = None
-        elif self.session.model is None and isinstance(agent_model, Model):
-            self.status.model_window = agent_model.context_window
-        else:
-            profiled = base_model(self.loader.settings_model(model))
+        elif (profiled := self._window_model()) is not None:
             self.status.model_window = infer_model_profile(profiled).get('context_window')
+        else:
+            assert isinstance(agent_model, Model), "only the agent's own `Model` gives no model to profile"
+            self.status.model_window = agent_model.context_window
         if self.status.context_tokens is None:
             self.status.context_tokens = _last_context_tokens(self.session.messages)
+
+    def _window_model(self) -> str | None:
+        """The model whose profile gives the selected model's window, a plugin model's `settings_from` one.
+
+        `None` when the agent's own `Model` runs the prompt and knows its window.
+        """
+        if self.session.model is None and isinstance(self.agent.model, Model):
+            return None
+        return base_model(self.loader.settings_model(self.session.model or _model_label(self.agent)))
 
     def _show_status_segments(self) -> None:
         """Paint the status segments of the plugins loaded now."""
@@ -1382,11 +1426,11 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         return None
 
     def _input_interrupted(self) -> SessionEndReason | None:
-        """Ctrl-C at the prompt: `'exit'` on a second press in time, else clear the input and say how to exit."""
+        """Ctrl+C at the prompt: `'exit'` on a second press in time, else clear the input and say how to exit."""
         if self.interrupts.press():
             return 'exit'
         self.console.print(
-            'Input cleared. Press Ctrl-C again within 2 seconds to exit.', style=theme.color(theme.MUTED)
+            'Input cleared. Press Ctrl+C again within 2 seconds to exit.', style=theme.color(theme.MUTED)
         )
         return None
 

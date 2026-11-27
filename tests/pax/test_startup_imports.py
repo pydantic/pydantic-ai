@@ -54,6 +54,7 @@ for name in ('pydantic', 'pydantic_ai_pax.config'):
 
 def test_prompt_ready_without_provider_or_model_menu_imports(tmp_path: Path) -> None:
     script = """
+import gc
 import sys
 from prompt_toolkit import PromptSession
 from prompt_toolkit.completion import CompleteEvent
@@ -81,6 +82,8 @@ async def read(self, *args, **kwargs):
     # The HTTPX instrumentors serve an opt-in setting.
     assert 'opentelemetry.instrumentation.httpx' not in sys.modules
     assert requested == [warm_imports.FIRST_USE_MODULES]
+    # Startup's imports are frozen out of later collections, and the collector runs again.
+    assert gc.isenabled() and gc.get_freeze_count() > 0
     print('PROMPT_READY')
     # Modules that only name provider settings types must not load the SDKs: test modules import them,
     # and loading the Anthropic SDK used to add about half a second to every collecting worker.

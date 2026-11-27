@@ -40,6 +40,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import (
     Advisor,
+    AnnounceWorkingDirectory,
     ApprovalReviewer,
     AskUser,
     BackgroundTools,
@@ -50,6 +51,7 @@ from pydantic_ai_harness import (
     ClearToolResults,
     Coder,
     CompactOnRequest,
+    ComputerUse,
     CurrentTime,
     DayAI,
     DeduplicateFileReads,
@@ -74,6 +76,7 @@ from pydantic_ai_harness import (
     Pylon,
     RelevanceCompaction,
     RepoContext,
+    ReportToolErrors,
     RequireVerification,
     Researcher,
     Shell,
@@ -90,7 +93,9 @@ from pydantic_ai_harness import (
     SystemReminders,
     TieredCompaction,
     ToolBridge,
+    ToolBudgets,
     ToolCallJudge,
+    ToolGuardrail,
     ToolOutputLimits,
     TrajectoryJudge,
     WarnNearLimits,
@@ -104,6 +109,8 @@ from pydantic_ai_harness.memory import InMemoryMemoryStore
 from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.peers import InMemoryPeerNetwork, Peers
 from pydantic_ai_harness.planning import SqlitePlanStore
+from pydantic_ai_harness.pydantic_ai_docs import PydanticAIDocs
+from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.skills import Skills
 from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
@@ -112,6 +119,7 @@ from pydantic_ai_harness.system_reminders import Reminder
 
 from ..append_only import CLOCK, Fixture, discover_capabilities
 from ..capability_cases import (
+    ECHO,
     Anonymous,
     Calls,
     CapabilityCase,
@@ -121,6 +129,7 @@ from ..capability_cases import (
     Narrows,
     Rejected,
     Unbuildable,
+    with_echo,
 )
 from ..function_model_prefix import COMPACTION_REWRITES_HISTORY
 from ._counting_clients import (
@@ -133,6 +142,7 @@ from ._counting_clients import (
     judge_relevant,
 )
 from ._mcp_server import MCPServer
+from .computer_use.display_fakes import ScreenProvider
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandbox
@@ -148,7 +158,7 @@ def hosted_server() -> MCPServer:
 
     @server.tool()
     def search() -> str:
-        return 'found'  # pragma: no cover
+        return 'found'
 
     return server
 
@@ -156,6 +166,11 @@ def hosted_server() -> MCPServer:
 def _hosted(cls: Callable[..., AbstractCapability[None]]) -> Fixture:
     """A hosted MCP integration, run against an in-process server through its `client` field."""
     return lambda _: cls(client=hosted_server())
+
+
+def _hosted_calls(cls: Callable[..., AbstractCapability[None]], tool: str) -> Calls:
+    """A call to the hosted stand-in's one tool, under the name `cls` gives it."""
+    return Calls(((tool, {}),), _hosted(cls))
 
 
 def _workspace(build: Callable[[], AbstractCapability[None]]) -> Fixture:
@@ -175,6 +190,12 @@ def _skills(tmp_path: Path) -> list[AbstractCapability[None]]:
     return [Skills(tmp_path / 'skills'), LocalWorkspace(tmp_path)]
 
 
+def _lowered_skills(tmp_path: Path) -> list[AbstractCapability[None]]:
+    # Below `'operator'`, so the skill is held back from the instructions and `list_skills` and `load_skill` offer it.
+    capabilities = _skills(tmp_path)
+    return [capabilities[0], LocalWorkspace(tmp_path, authority='none')]
+
+
 def _read_file_key(call: ToolCallPart) -> str | None:
     args = call.args_as_dict()
     return str(args['path']) if call.tool_name == 'read_file' else None
@@ -183,6 +204,20 @@ def _read_file_key(call: ToolCallPart) -> str | None:
 def _deduplicate_file_reads(tmp_path: Path) -> list[AbstractCapability[None]]:
     (tmp_path / 'notes.md').write_text('Sunny.\n')
     return [DeduplicateFileReads(file_key=_read_file_key), FileSystem(), LocalWorkspace(tmp_path)]
+
+
+def _pydantic_ai_docs(tmp_path: Path) -> list[AbstractCapability[None]]:
+    (tmp_path / 'docs').mkdir()
+    (tmp_path / 'docs' / 'hooks.md').write_text('# Hooks\n')
+    return [PydanticAIDocs(local_docs_path=tmp_path / 'docs', cache=False), LocalWorkspace(tmp_path)]
+
+
+def _macroscope(tmp_path: Path) -> list[AbstractCapability[None]]:
+    """`Macroscope` running a stand-in CLI that reports a finished review with no issues, on stderr as it does."""
+    command = tmp_path / 'macroscope'
+    command.write_text("#!/bin/sh\nprintf 'review_id=review\\nissue_status=completed\\n' >&2\n")
+    command.chmod(0o755)
+    return [Macroscope(command=str(command), base='main'), LocalWorkspace(tmp_path)]
 
 
 def _capability_creation(tmp_path: Path) -> list[AbstractCapability[None]]:
@@ -330,6 +365,10 @@ def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
     assert merged.id == 'benchmark_instructions'
 
 
+def _check_working_directory(merged: AnnounceWorkingDirectory[None]) -> None:
+    assert merged.id == 'announce_working_directory'
+
+
 def _check_current_time(merged: CurrentTime[None]) -> None:
     assert (merged.timezone, merged.precision) == ('Asia/Tokyo', 'hour')
 
@@ -341,6 +380,11 @@ def _check_label_cross_model_history(merged: LabelCrossModelHistory[None]) -> No
 def _check_sub_agents(merged: SubAgents[None]) -> None:
     # Rosters union: an agent either side could reach stays reachable through one delegate tool.
     assert [entry.agent.name for entry in merged.agents] == ['alpha', 'beta']
+
+
+def _check_computer_use(merged: ComputerUse[None]) -> None:
+    # One display: the later configuration wins, defaults included.
+    assert (merged.settle_seconds, merged.native) == (2, False)
 
 
 def _check_ssh_workspace(merged: SSHWorkspace[None]) -> None:
@@ -369,6 +413,7 @@ CASES: dict[str, CapabilityCase] = {
             _check_skills,
         ),
         build=_skills,
+        calls=Calls((('list_skills', {}), ('load_skill', {'name': 'weather'})), _lowered_skills),
     ),
     'Memory': CapabilityCase(
         Narrows(
@@ -436,7 +481,8 @@ CASES: dict[str, CapabilityCase] = {
             'one run identity per agent',
             lambda: (StepPersistence[None](agent_name='first'), StepPersistence[None](agent_name='second')),
             _check_step_persistence,
-        )
+        ),
+        calls=Calls(ECHO, with_echo(StepPersistence)),
     ),
     'RelevanceCompaction': CapabilityCase(
         Combines(
@@ -460,6 +506,16 @@ CASES: dict[str, CapabilityCase] = {
         ),
         build=lambda _: SummarizingCompaction(TestModel(), max_messages=6, keep_messages=2),
     ),
+    'ComputerUse': CapabilityCase(
+        Combines(
+            'an agent has one display: the later configuration wins',
+            # Both without the native tool, which reads the display's size, so each runs with no display.
+            lambda: (ComputerUse[None](native=False, settle_seconds=1), ComputerUse[None](native=False)),
+            _check_computer_use,
+        ),
+        # The fake screen never changes, so settling after an action would only wait out its interval.
+        build=lambda _: [ScreenProvider().capability(), ComputerUse(settle_seconds=0)],
+    ),
     'SystemReminders': CapabilityCase(
         Combines(
             'reminders are additive, so both sides keep firing',
@@ -481,6 +537,11 @@ CASES: dict[str, CapabilityCase] = {
             _check_compact_on_request,
         ),
         build=lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
+        calls=Calls(
+            (('compact_context', {}),),
+            lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
+            moves_cache_prefix=COMPACTION_REWRITES_HISTORY,
+        ),
     ),
     'PruneToolResults': CapabilityCase(
         Combines(
@@ -568,6 +629,13 @@ CASES: dict[str, CapabilityCase] = {
             _check_benchmark_instructions,
         )
     ),
+    'AnnounceWorkingDirectory': CapabilityCase(
+        Combines(
+            'one fixed line; `Shell` and `FileSystem` each bring a copy, which must state it once',
+            lambda: (AnnounceWorkingDirectory[None](), AnnounceWorkingDirectory[None]()),
+            _check_working_directory,
+        )
+    ),
     'CurrentTime': CapabilityCase(
         Combines(
             'one statement of the time per id; the later configuration wins',
@@ -586,7 +654,9 @@ CASES: dict[str, CapabilityCase] = {
         )
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
-    'RepairToolArguments': CapabilityCase(Anonymous('repairing valid arguments again is a no-op')),
+    'RepairToolArguments': CapabilityCase(
+        Anonymous('repairing valid arguments again is a no-op'), calls=Calls(ECHO, with_echo(RepairToolArguments))
+    ),
     'ServingModelRecorder': CapabilityCase(Anonymous('one per sub-agent run, added by the delegating toolset')),
     '_Skill': CapabilityCase(
         Anonymous('one per skill, with the skill name as its id; `Skills` rejects two with one name')
@@ -691,12 +761,15 @@ CASES: dict[str, CapabilityCase] = {
     'PromptInjectionDefender': CapabilityCase(
         Anonymous('one per `tool_filter`; several scopes compose'),
         requires='stackone_defender',
+        calls=Calls(ECHO, with_echo(lambda: pydantic_ai_harness.PromptInjectionDefender())),
     ),
     'StreamGuardrail': CapabilityCase(
         Anonymous('several guards is the design'),
         build=lambda _: StreamGuardrail(guard=lambda part: True),
     ),
-    'ToolGuardrail': CapabilityCase(Anonymous('several guards is the design')),
+    'ToolGuardrail': CapabilityCase(
+        Anonymous('several guards is the design'), calls=Calls(ECHO, with_echo(ToolGuardrail))
+    ),
     'ToolCallJudge': CapabilityCase(
         Anonymous('one per risk question; stacked judges must all allow a call'),
         build=lambda _: ToolCallJudge(TestModel(), question='Is this call safe?'),
@@ -720,6 +793,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(LogfireMCP),
+        calls=_hosted_calls(LogfireMCP, 'logfire_search'),
     ),
     'RepoContext': CapabilityCase(Anonymous('one per workspace root'), build=_repo_context),
     'ReportContextUsage': CapabilityCase(Anonymous('a passive observer; several callbacks compose')),
@@ -738,6 +812,7 @@ CASES: dict[str, CapabilityCase] = {
     'StackOne': CapabilityCase(
         Anonymous('one per linked account, and `account_id` is what names it'),
         build=lambda _: StackOne('account', client=hosted_server()),
+        calls=Calls((('search', {}),), lambda _: StackOne('account', client=hosted_server())),
     ),
     'TieredCompaction': CapabilityCase(
         Anonymous('drives other strategies; one per tier list'),
@@ -756,10 +831,12 @@ CASES: dict[str, CapabilityCase] = {
         Anonymous('only hooks; several detectors with their own thresholds and actions compose')
     ),
     'ReportToolErrors': CapabilityCase(
-        Anonymous('a wrapper toolset; the innermost (last listed) formats the error and outer ones see a ToolFailed')
+        Anonymous('a wrapper toolset; the innermost (last listed) formats the error and outer ones see a ToolFailed'),
+        calls=Calls(ECHO, with_echo(ReportToolErrors)),
     ),
     'ToolBudgets': CapabilityCase(
-        Anonymous('only a hook; each counts the calls it lets run, so stacked budgets all apply')
+        Anonymous('only a hook; each counts the calls it lets run, so stacked budgets all apply'),
+        calls=Calls(ECHO, with_echo(ToolBudgets)),
     ),
     'RefineOutput': CapabilityCase(
         Anonymous('only a hook; each counts its own rounds and adds its instructions to a round')
@@ -842,6 +919,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(default_timeout=10.0), cls(default_timeout=20.0)),
         ),
         build=_workspace(Shell),
+        calls=Calls((('run_command', {'command': 'echo hi'}),), _workspace(Shell)),
     ),
     'CapabilityCreation': CapabilityCase(
         Narrows(
@@ -863,7 +941,8 @@ CASES: dict[str, CapabilityCase] = {
         Narrows(
             'one `read_pyai_docs` tool per id; two that differ need their own ids and PrefixTools',
             lambda cls: (cls(), cls(cache=False)),
-        )
+        ),
+        calls=Calls((('read_pyai_docs', {'topic': 'hooks'}),), _pydantic_ai_docs),
     ),
     'Notion': CapabilityCase(
         Narrows(
@@ -871,6 +950,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(Notion),
+        calls=_hosted_calls(Notion, 'search'),
     ),
     'PyaiDocs': CapabilityCase(
         Narrows(
@@ -884,6 +964,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(timeout=10.0), cls(timeout=20.0)),
         ),
         build=_workspace(Macroscope),
+        calls=Calls((('run_macroscope_review', {}),), _macroscope),
     ),
     'LocalStack': CapabilityCase(
         Narrows(
@@ -902,6 +983,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(Linear),
+        calls=_hosted_calls(Linear, 'linear_search'),
     ),
     'Ordinal': CapabilityCase(
         Narrows(
@@ -909,6 +991,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(Ordinal),
+        calls=_hosted_calls(Ordinal, 'search'),
     ),
     'Grain': CapabilityCase(
         Narrows(
@@ -916,6 +999,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(Grain),
+        calls=_hosted_calls(Grain, 'grain_search'),
     ),
     'DayAI': CapabilityCase(
         Narrows(
@@ -923,6 +1007,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(DayAI),
+        calls=_hosted_calls(DayAI, 'day_ai_search'),
     ),
     'PostHog': CapabilityCase(
         Narrows(
@@ -930,6 +1015,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(PostHog),
+        calls=_hosted_calls(PostHog, 'posthog_search'),
     ),
     'Pylon': CapabilityCase(
         Narrows(
@@ -937,6 +1023,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(Pylon),
+        calls=_hosted_calls(Pylon, 'pylon_search'),
     ),
     'CodeMode': CapabilityCase(
         Narrows(
@@ -972,6 +1059,14 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(), cls(allowed_domains=['example.com'])),
         ),
         requires='playwright',
+    ),
+    'CDPBrowser': CapabilityCase(
+        Narrows(
+            'one browser per id, and its commands and egress settings are an access boundary',
+            lambda cls: (cls(), cls(allowed_methods=['Runtime.evaluate'])),
+        ),
+        build=Unbuildable('Launches Chrome when a run starts, which the offline suites have no binary for.'),
+        requires='websockets',
     ),
     'ConversationSearch': CapabilityCase(
         Narrows(
@@ -1034,6 +1129,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(GitHub),
+        calls=_hosted_calls(GitHub, 'github_search'),
     ),
     'YouResearch': CapabilityCase(
         Narrows(
@@ -1078,6 +1174,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(Slack),
+        calls=_hosted_calls(Slack, 'search'),
     ),
 }
 """Every Pydantic AI Harness capability, public or not, keyed by class name."""

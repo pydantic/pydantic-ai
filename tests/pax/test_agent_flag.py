@@ -18,7 +18,9 @@ from pydantic_ai_pax.cli.agent_import import import_agent
 from pydantic_ai_pax.config import PluginSettings, Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
+from pydantic_ai_pax.runtime import session_runtime
 from pydantic_ai_pax.runtime.session_runtime import create_shell
+from tests.pax.cli_runner import CliRunner
 
 _MODULE = 'clai_agent_flag_fixture'
 
@@ -164,6 +166,18 @@ def test_cli_chats_with_agent_and_no_plugins(
     assert settings is not None and settings.model == expected
     assert not load_plugins
     assert store.load().model == 'saved:model'
+
+
+def test_agent_model_window_needs_no_profile_lookup(
+    fixture_module: Path, run_cli: CliRunner, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The agent's own `Model` knows its window, so its name is never looked up as a provider's model."""
+    looked_up: list[str] = []
+    monkeypatch.delenv('CLAI_MODEL', raising=False)
+    monkeypatch.setattr(session_runtime, 'infer_model_profile', looked_up.append)
+    result = run_cli('--database', str(fixture_module / 'config.db'), '--agent', f'{_MODULE}:agent')
+    assert result.returncode == 0, result.stderr
+    assert looked_up == []
 
 
 class TestCodeMode:

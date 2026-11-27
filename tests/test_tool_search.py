@@ -5370,8 +5370,8 @@ async def test_tool_search_named_strategy_raises_on_unsupported_model():
         )
     assert str(exc_info.value) == snapshot(
         "Native tool(s) ['ToolSearchTool'] not supported by this model. "
-        "Supported: ['AdvisorTool', 'CodeExecutionTool', 'FileSearchTool', 'ImageGenerationTool', 'MCPServerTool', "
-        "'MemoryTool', 'WebFetchTool', 'WebSearchTool', 'XSearchTool']. "
+        "Supported: ['AdvisorTool', 'CodeExecutionTool', 'ComputerTool', 'FileSearchTool', 'ImageGenerationTool', "
+        "'MCPServerTool', 'MemoryTool', 'WebFetchTool', 'WebSearchTool', 'XSearchTool']. "
         'To use these tools with this model, provide a local fallback via NativeOrLocalTool(native=..., local=...) '
         "or the `local` parameter of the capability (e.g. WebSearch(local='duckduckgo'), WebFetch(local=True), "
         'MCP(local=True), ImageGeneration(local=my_func)). '
@@ -5800,7 +5800,7 @@ async def test_local_tool_search_dispatch_produces_typed_parts() -> None:
     agent = Agent(FunctionModel(model_function), toolsets=[toolset], capabilities=[ToolSearch()])
     result = await agent.run('find a mortgage tool')
 
-    # The framework-promoted call part is typed (via `_narrow_tool_call_parts` post-hook).
+    # The framework-promoted call part is typed (via `_apply_tool_defs_to_call_parts` post-hook).
     search_calls = [
         part
         for part in iter_message_parts(result.all_messages(), ModelResponse, ToolCallPart)

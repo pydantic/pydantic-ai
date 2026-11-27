@@ -1,19 +1,23 @@
-"""The models Anthropic and OpenAI have deprecated on their own APIs, for `ModelProfile.deprecation`.
+"""The models Anthropic, OpenAI and Google have deprecated on their own APIs, for `ModelProfile.deprecation`.
 
-Compiled from the providers' deprecation pages as fetched on 2026-11-19. This file is the source of truth: edit it by
-hand when a provider announces a deprecation, following `.agents/skills/add-new-model/SKILL.md`. Each entry follows
-these rules:
+Compiled from the providers' deprecation pages as fetched on 2026-11-19, Anthropic's again on 2026-11-24, and Google's on
+2026-11-26. Google's tables hold only `gemini-2.5-pro` and `gemini-2.5-flash` so far: the rest of Google's pages is
+https://github.com/pydantic/pydantic-ai/issues/14054. This file is the source of truth: edit it by hand when a provider
+announces a deprecation, following `.agents/skills/add-new-model/SKILL.md`. Each entry follows these rules:
 
 - Add a model only when the provider's notice gives it a deprecation or retirement date. A model the notice doesn't
   date gets no entry, such as the bare `gpt-4o` alias, whose dated snapshots are listed instead.
 - Cover only the schedule the provider sets for its own API: the Claude API for Anthropic, Chat Completions and
-  Responses for OpenAI. A platform that serves the same models on a schedule of its own, such as Amazon Bedrock or
-  Azure, is not covered.
+  Responses for OpenAI, and for Google both the Gemini API and Google Cloud, which date the same model differently. A
+  platform that serves the same models on a schedule of its own, such as Amazon Bedrock or Azure, is not covered.
 - Key the entry by every id the API accepts for the model, aliases included.
 - Set `source_url` to the section of the provider's page that lists the model.
 - Set `replacement` to the first model id the notice recommends, or leave it `None` when the notice names none. A
   qualifier the notice adds, such as a reasoning mode, stays on the linked page.
-- Keep an entry after its retirement date: the warning then explains the request's failure.
+- Set `rerouted_to` to the model the notice says the API answers the id with from its retirement date, or leave it
+  `None` when the notice says nothing of the kind.
+- Keep an entry after its retirement date: the warning then explains why the request fails, or, where the provider
+  routes the id to another model, why another model answers it.
 """
 
 from __future__ import annotations as _annotations
@@ -186,6 +190,17 @@ ANTHROPIC_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
                 source_url='https://platform.claude.com/docs/en/about-claude/model-deprecations#deprecation-history',
                 retirement_date=date(2026, 11, 30),
                 replacement='claude-sonnet-5-5',
+            ),
+        ),
+        (
+            (
+                'claude-opus-4-5-20251101',
+                'claude-opus-4-5',
+            ),
+            ModelDeprecation(
+                source_url='https://platform.claude.com/docs/en/about-claude/model-deprecations#deprecation-history',
+                retirement_date=date(2027, 1, 22),
+                replacement='claude-opus-5-5',
             ),
         ),
         (
@@ -947,3 +962,29 @@ OPENAI_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
     for model_id in model_ids
 }
 """Models deprecated on the OpenAI API: https://developers.openai.com/api/docs/deprecations."""
+
+GEMINI_API_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
+    'gemini-2.5-pro': ModelDeprecation(
+        source_url='https://aistudio.google.com/docs/deprecations#gemini-2.5-pro-models',
+        retirement_date=date(2026, 12, 1),
+        replacement='gemini-3.8-flash',
+        rerouted_to='gemini-3.8-flash',
+    ),
+    'gemini-2.5-flash': ModelDeprecation(
+        source_url='https://aistudio.google.com/docs/deprecations#gemini-2.5-flash-models',
+        retirement_date=date(2026, 12, 1),
+        replacement='gemini-3.5-flash-lite',
+        rerouted_to='gemini-3.5-flash-lite',
+    ),
+}
+"""Models deprecated on the Gemini API: https://aistudio.google.com/docs/deprecations."""
+
+GOOGLE_CLOUD_MODEL_DEPRECATIONS: dict[str, ModelDeprecation] = {
+    model_id: ModelDeprecation(
+        source_url='https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions#gemini-models',
+        retirement_date=date(2026, 10, 20),
+        replacement='gemini-3.8-flash',
+    )
+    for model_id in ('gemini-2.5-pro', 'gemini-2.5-flash')
+}
+"""Models deprecated on Google Cloud: https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/model-versions."""

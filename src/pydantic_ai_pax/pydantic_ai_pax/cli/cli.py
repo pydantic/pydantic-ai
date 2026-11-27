@@ -2,9 +2,11 @@
 
 import argparse
 import asyncio
+import gc
 import os
 import re
 import sys
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -14,7 +16,7 @@ from pydantic_ai_pax.ui.rendering.splash import Splash
 from pydantic_ai_pax.ui.stderr_relay import relay_stderr
 
 if TYPE_CHECKING:
-    from collections.abc import Callable
+    from collections.abc import Callable, Generator
 
     from pydantic_ai_pax.cli.self_update import Relaunch, WebHandoff
     from pydantic_ai_pax.config import Settings, UpdateChannel
@@ -126,11 +128,16 @@ def run(*, splash: Splash | None = None) -> None:
         action='store_true',
         help='Install the newest Pax from the updates.channel setting with uv, then exit',
     )
+    parser.add_argument('--version', action='store_true', help='Print the installed Pax version and exit')
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
     parser.add_argument('command', nargs='?', choices=('config', 'plugins', 'sessions', 'update'))
     parser.add_argument('arguments', nargs=argparse.REMAINDER)
     args = _parse_args(parser)
+    if args.version:
+        # Like argparse's own `version` action, this wins over every other argument.
+        print(_version())
+        return
     _resume_source(args)
     _validate_args(args, parser)
     if args.command == 'sessions':
@@ -143,13 +150,14 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
     """Run the parsed command, or start the session it asks for."""
     _resolve_paths(args)
     try:
-        from pydantic_ai.usage import UsageLimits
-        from pydantic_ai_pax.app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
-        from pydantic_ai_pax.cli.agent_import import import_agent
-        from pydantic_ai_pax.cli.self_update import Relaunch, hold_environment
-        from pydantic_ai_pax.config.project_settings import load_project_settings
-        from pydantic_ai_pax.config.settings_store import SettingsStore
-        from pydantic_ai_pax.runtime.worktrees import offer_worktree_cleanup
+        with _frozen_imports(enabled=splash is not None):
+            from pydantic_ai.usage import UsageLimits
+            from pydantic_ai_pax.app import DEFAULT_PLUGINS, STOCK_PLUGINS, chat, create_stock_agent as create_agent
+            from pydantic_ai_pax.cli.agent_import import import_agent
+            from pydantic_ai_pax.cli.self_update import Relaunch, hold_environment
+            from pydantic_ai_pax.config.project_settings import load_project_settings
+            from pydantic_ai_pax.config.settings_store import SettingsStore
+            from pydantic_ai_pax.runtime.worktrees import offer_worktree_cleanup
     finally:
         if splash is not None:
             splash.stop()
@@ -256,6 +264,26 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
             raise SystemExit(130) from None
 
 
+@contextmanager
+def _frozen_imports(*, enabled: bool) -> 'Generator[None]':
+    """Import with the garbage collector off, then freeze what was imported out of later collections.
+
+    Startup's imports create about 300,000 objects that live until exit; with the collector on, it walks them
+    again and again as they arrive. Freezing without collecting first keeps the few that are garbage, about
+    2 MB, for the life of the process: a collection here would cost the 70 ms this saves. Freezing takes
+    every object in the process, so only a launch from `main`, the one passing a splash, is `enabled`.
+    """
+    if not enabled or not gc.isenabled():
+        yield
+        return
+    gc.disable()
+    try:
+        yield
+    finally:
+        gc.freeze()
+        gc.enable()
+
+
 def _resolve_paths(args: argparse.Namespace) -> None:
     """Resolve `--database` and `--token-file` against the directory Pax was launched in."""
     if args.database is not None:
@@ -297,8 +325,18 @@ def _report_kept_worktree(worktree: 'Worktree | None') -> None:
 
 
 def _interrupt_fails(args: argparse.Namespace) -> bool:
-    """Whether Ctrl-C ends this launch with status 130: with `--prompt`, `--web`, or `--update`, not in the shell."""
+    """Whether Ctrl+C ends this launch with status 130: with `--prompt`, `--web`, or `--update`, not in the shell."""
     return args.prompt is not None or args.web or args.update
+
+
+def _version() -> str:
+    """`pax --version`: the command, its installed version, and the commit for a `main` install."""
+    from pydantic_ai_pax.cli.install import command_name
+    from pydantic_ai_pax.cli.self_update import installed
+
+    # `pydantic-clai2` pins `pydantic-ai-pax` exactly, so the version is Pax's under either name.
+    running = installed()
+    return f'{command_name()} {running.version}' + (f' ({running.label})' if running.commit else '')
 
 
 def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:

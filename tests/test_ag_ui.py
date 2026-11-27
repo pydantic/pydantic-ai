@@ -2787,6 +2787,52 @@ def test_load_dump_message_id_on_merged_and_split_messages() -> None:
     uuid.UUID(dumped[3].id)
 
 
+def test_load_dump_message_id_skips_activity_messages() -> None:
+    """The kept id goes on the last chat message dumped from a `ModelMessage`, never on a trailing activity.
+
+    A run records a `ModelSettingsDeltaPart` behind the user prompt that set a thinking effort, and a
+    `CompactionPart` in the response that compacted; both dump as activity messages after the chat message
+    the client sent. `@ag-ui/client` doesn't send activity messages back, so the id has to stay on the user
+    message for a regenerate or edit after a reload to find the stored turn. A message that dumps to
+    activities alone keeps the id on the last of them. Loading the dump again keeps every id: an activity
+    merged after a chat message doesn't replace the id the chat message kept.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/12691
+    """
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            parts=[
+                UserPromptPart('Think about it.'),
+                ModelSettingsDeltaPart(settings={'thinking': 'low'}, top_level=True),
+            ],
+            metadata={'__pydantic_ai__': {'ui_message_id': 'usr-1'}},
+        ),
+        ModelResponse(
+            parts=[TextPart('Done.'), CompactionPart(content='Summary of the conversation so far.')],
+            metadata={'__pydantic_ai__': {'ui_message_id': 'asst-1'}},
+        ),
+        ModelRequest(
+            parts=[ModelSettingsDeltaPart(settings={'thinking': 'high'})],
+            metadata={'__pydantic_ai__': {'ui_message_id': 'act-1'}},
+        ),
+    ]
+
+    dumped = AGUIAdapter.dump_messages(messages)
+
+    assert [(type(m).__name__, m.id) for m in dumped] == [
+        ('UserMessage', 'usr-1'),
+        ('ActivityMessage', IsStr()),
+        ('AssistantMessage', 'asst-1'),
+        ('ActivityMessage', IsStr()),
+        ('ActivityMessage', 'act-1'),
+    ]
+    uuid.UUID(dumped[1].id)
+    uuid.UUID(dumped[3].id)
+
+    reloaded = AGUIAdapter.load_messages(dumped)
+    assert [m.metadata for m in reloaded] == [m.metadata for m in messages]
+
+
 def test_dump_load_roundtrip_drops_message_level_recovery_metadata() -> None:
     """AG-UI does not trust a client round-trip with framework or provider response state.
 
@@ -12145,6 +12191,38 @@ async def test_server_message_history_drops_client_supplied_capability_loads():
     assert not any(isinstance(part, CapabilityLoadDeltaPart) for message in persisted for part in message.parts)
 
 
+async def test_server_message_history_regenerate_after_reload_with_settings_delta():
+    """A reload through `dump_messages` followed by a resend of the user message still replaces the turn.
+
+    The run records a `ModelSettingsDeltaPart` behind the first user prompt when the agent sets a thinking
+    effort, and it dumps as an activity message after the user message. The stored id has to stay on the
+    user message: the client resends it with the id it reloaded, and the server replaces the stored turn
+    only when that id matches, so a misplaced id appends the turn a second time instead.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/12691
+    """
+    agent = Agent(
+        FunctionModel(stream_function=simple_stream),
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        model_settings={'thinking': 'low'},
+    )
+    stored = await _server_history_turn(agent, create_input(UserMessage(id='u1', content='hi')), None)
+
+    reloaded = AGUIAdapter.dump_messages(stored)
+    assert [(type(m).__name__, m.id) for m in reloaded] == [
+        ('UserMessage', 'u1'),
+        ('ActivityMessage', IsStr()),
+        ('AssistantMessage', IsStr()),
+    ]
+
+    [user_message] = [m for m in reloaded if isinstance(m, UserMessage)]
+    persisted = await _server_history_turn(agent, create_input(user_message), stored)
+
+    prompts = [part for message in persisted for part in message.parts if isinstance(part, UserPromptPart)]
+    assert len(prompts) == 1
+
+
 @pytest.mark.parametrize('with_follow_up', [False, True])
 async def test_server_message_history_frontend_tool_result_from_a_new_turn_only_client(with_follow_up: bool):
     """A client that sends only its new messages returns a frontend tool's result without the call it answers.
@@ -12338,6 +12416,68 @@ async def test_conversation_store_rejects_a_resume_for_a_call_not_pending():
     assert [event.message for event in events if isinstance(event, RunErrorEvent)] == snapshot(
         [
             "The request answers 1 tool call(s) that the stored conversation is not waiting on: 'del-2'. An approval, denial or deferred tool result can only answer a tool call that is still waiting for that kind of answer at the end of the stored conversation. If the conversation changed since the client loaded it, reload it from the server."
+        ]
+    )
+
+
+async def test_conversation_store_saves_each_tool_return_once_after_a_frontend_tool_result():
+    """A response calls a server tool and a frontend tool; the store gets each return once after the client sends the frontend result.
+
+    See https://github.com/pydantic/pydantic-ai/issues/13547.
+    """
+    requests: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        if len(requests) == 1:
+            yield {0: DeltaToolCall(name='lookup', json_args='{}', tool_call_id='srv-1')}
+            yield {1: DeltaToolCall(name='pick_file', json_args='{}', tool_call_id='front-1')}
+        else:
+            yield 'ok'
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
+    )
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'server value'
+
+    store = InMemoryConversationStore()
+    tools = [Tool(name='pick_file', description='Pick a file.', parameters={'type': 'object', 'properties': {}})]
+    await _stored_turn(agent, store, create_input(UserMessage(id='u1', content='go'), tools=tools, thread_id='thread'))
+    called = AssistantMessage(
+        id='a1', tool_calls=[ToolCall(id='front-1', function=FunctionCall(name='pick_file', arguments='{}'))]
+    )
+    picked = ToolMessage(id='t1', tool_call_id='front-1', content='a.txt')
+    await _stored_turn(agent, store, create_input(called, picked, tools=tools, thread_id='thread'))
+
+    conversation = await store.load('thread')
+    assert conversation is not None
+    assert conversation_view(conversation.messages) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: ok',
+        ]
+    )
+
+    await _stored_turn(
+        agent, store, create_input(UserMessage(id='u2', content='and now?'), tools=tools, thread_id='thread')
+    )
+
+    assert conversation_view(requests[-1]) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: ok',
+            'user-prompt: and now?',
         ]
     )
 

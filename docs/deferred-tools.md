@@ -22,7 +22,7 @@ When the model calls a deferred tool, there are two ways to resolve it:
 
 The two flows compose: a handler can resolve a subset of calls and let the rest bubble up as `DeferredToolRequests` output for an outer caller to handle.
 
-To wait for an answer from outside the process without ending the run, give the [`HandleDeferredToolCalls`](capabilities/handle-deferred-tool-calls.md#two-forms-of-handler) handler a third parameter, a resume token. It either answers right away or hands the token to the approver, and your approval endpoint resolves the token with the decision. By default the wait happens in your process. In a [durable execution](durable_execution/overview.md) run on an engine that supports it, currently [AWS Lambda durable functions](harness/aws-lambda.md#approvals), the engine records the wait and suspends the run until the decision arrives.
+To wait for an answer from outside the process without ending the run, give the [`HandleDeferredToolCalls`](capabilities/handle-deferred-tool-calls.md#two-forms-of-handler) handler a third parameter, a resume token. It either answers right away or hands the token to the approver, and your approval endpoint resolves the token with the decision. By default the wait happens in your process. In a [durable execution](durable_execution/overview.md) run on an engine that supports it, currently [Temporal](durable_execution/temporal.md#waiting-for-approvals-and-answers) and [AWS Lambda durable functions](harness/aws-lambda.md#approvals), the engine records the wait and suspends the run until the decision arrives.
 
 Each pending call says what it waits for: [`DeferredToolRequests.kind()`][pydantic_ai.tools.DeferredToolRequests.kind] returns `'approval'` for a call in `approvals`, and `'question'` or `'external'` for one in `calls`. A tool marks a call as a question for the user, rather than work done elsewhere, with `raise CallDeferred(kind='question')`; Pydantic AI Harness's [`AskUser`](harness/ask-user.md) does. The answer can say who gave it in [`DeferredToolResults.answered_by`][pydantic_ai.tools.DeferredToolResults.answered_by], which Pydantic AI reports but doesn't check.
 
@@ -107,6 +107,8 @@ In a [realtime session](realtime/tools.md#deferred-and-approval-required-tools),
 If approval depends on the tool call's arguments or the agent [run context][pydantic_ai.tools.RunContext], such as [dependencies](dependencies.md) or message history, raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] from the tool function. The [`RunContext.tool_call_approved`][pydantic_ai.tools.RunContext.tool_call_approved] property will be `True` if the tool call has already been approved.
 
 You can also raise it from the tool's [`args_validator`](tools-advanced.md#args-validator), which runs before the tool function and lets you reject invalid arguments before asking a human to approve them.
+
+Base the decision on arguments and context your code can check, not on a confidence or risk score the model reports: see [Don't gate actions on model-reported confidence](output.md#model-reported-confidence).
 
 To require approval for calls to tools provided by a [toolset](toolsets.md) (like an [MCP server](mcp/client.md)), see the [`ApprovalRequiredToolset` documentation](toolsets.md#requiring-tool-approval).
 

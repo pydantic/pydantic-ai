@@ -121,6 +121,18 @@ The `finally` destroys the sandbox even when setup or the run fails. `aclose()` 
 
 `OpenSandbox`'s settings don't apply to a backend you pass as `workspace=`. Give the backend its own.
 
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
+`capabilities=[OpenSandbox(image='debian:bookworm-slim', desktop=True), ComputerUse()]`. The screen is 1280x800;
+pass a size such as `desktop=(1440, 900)` for another.
+
+- When the image's user is root, the first use installs [the display's programs](../computer_use/#what-the-display-needs) that are missing with `apt-get`, which needs the sandbox to reach the package repositories. Passwordless `sudo` works only where the server allows it: the Docker runtime's default `no_new_privileges = true` blocks it. Otherwise build them into the image: without the screen's programs the first use raises `WorkspaceUnavailableError` naming what is missing, and without the desktop's the screen works but stays black.
+- On the Docker runtime, set `network_mode = "bridge"` under `[docker]` in the server's configuration; see [Security model](#security-model).
+- Use execd 1.2 or later: on older versions every screen action is slow.
+- There's no web browser. Install one in the image or before the run, as in [Prepare a sandbox before the run](#prepare-a-sandbox-before-the-run) with `OpenSandboxBackend(..., desktop=True)`, or let the agent install it with `Shell`.
+- The agent can type only ASCII: an action that types or presses a character such as `é` fails, and the model is told why.
+
 ## Clean up
 
 Destroy a sandbox, files included, with the ref you stored. A sandbox that is already gone returns quietly:
@@ -282,6 +294,22 @@ Before you rely on it:
 - To swap the token, call `credential_vault.patch(credentials={'replace': [...]})` on `await backend.get_sandbox()`.
 - `allow_internet_access=False` already sets a policy that blocks everything, so pass it or `network_policy`, not both. For both, `OpenSandbox` raises `UserError` and `OpenSandboxBackend` raises `ValueError`.
 
+## Mount volumes into the sandbox
+
+A deleted sandbox takes its files with it. To keep a workspace's files after you delete its sandbox, pass `volumes` to `OpenSandboxBackend`: the SDK's own `Volume` objects, for a host directory, a named volume (a Kubernetes PVC or a Docker named volume) or an OSSFS bucket, passed to `Sandbox.create` unchanged. Mount the volume at the working directory and a later sandbox created with the same volume starts with the files the last one left:
+
+```python {test="skip"}
+from opensandbox.models.sandboxes import PVC, Volume
+
+backend = OpenSandboxBackend(
+    image='python:3.13-slim',
+    working_dir='/workspace',
+    volumes=[Volume(name='workspace', pvc=PVC(claimName='project-42'), mountPath='/workspace')],
+)
+```
+
+Your application picks the volume for each workspace and deletes it when it's done. `volumes` only shapes a new sandbox: attaching to a ref leaves its mounts as they are.
+
 ## Endpoint authentication
 
 `secure_access=True` asks the server to turn on [Secure Access](https://github.com/opensandbox-group/OpenSandbox/blob/main/docs/guides/secure-access.md) for a new sandbox. The gateway and the server proxy then reject requests to the sandbox's endpoints that lack its token. The SDK fetches the token with the server API key and sends it with every command and file request.
@@ -297,6 +325,7 @@ The sandbox is as isolated as the server's runtime makes it. A Docker container 
 - Requests to the server's API carry the server API key. Command and file requests carry commands, file contents and `env` values. Over plain `http`, all of them are unencrypted. A `ConnectionConfig` you pass is used as given, so set both an `https://` domain and `protocol='https'` on it.
 - The server API key, set as `api_key` under `[server]`, controls every sandbox on that server and can fetch their Secure Access tokens. Keep it out of the sandbox's `env`.
 - Without the server proxy, command and file requests go straight to the sandbox's endpoint, without the server API key. The endpoint checks only what the server configures for it, such as Secure Access. With `use_server_proxy=True`, they go through the server, which checks the API key.
+- With `desktop` on the Docker runtime, the default `network_mode = "host"` puts every sandbox on the host's network. The desktop doesn't start if the host or another sandbox already runs a second X server (a program that draws a screen) on display `:1`. One that starts there later can take the agent's clicks and screenshots instead of its own screen. Set `network_mode = "bridge"` under `[docker]` in the server's configuration to give each sandbox its own network.
 - `image` is pulled by tag; pin a digest, such as `python:3.13-slim@sha256:...`, to get the same image every time.
 
 ## Configuration
@@ -314,10 +343,11 @@ The sandbox is as isolated as the server's runtime makes it. A Docker container 
 | `sandbox_timeout` | Seconds a sandbox may go unused before the server deletes it, files included. Every operation restarts the countdown, and a single command must finish within it. Default: `None`, kept until destroyed. |
 | `working_dir` | Absolute directory commands start in and relative paths resolve against, created on first use if missing. Default: `/workspace`. `None` uses the image's own. |
 | `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The first use installs the screen's programs with `apt-get` when the image's user is root; passwordless `sudo` works only where the server allows it. The size applies when the display first starts. Default: `False`. |
 | `authority` | Who wrote the sandbox's files: `'none'` for files nobody on your side wrote, such as a cloned third-party repository, or `'user'` for the user's own. Capabilities that put a file into the prompt give it no more [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) than this. Default: `'operator'`, files you wrote. |
 | `path_authority` | An `authority` level for specific directories and files, overriding `authority` under them. The longest matching path wins. Paths are sandbox paths, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
 
-`image`, `resource`, `allow_internet_access`, `network_policy` and `secure_access` only shape a new sandbox. `working_dir`, `env`, `sandbox_timeout`, `authority` and `path_authority` also apply when you reattach.
+`image`, `resource`, `allow_internet_access`, `network_policy` and `secure_access` only shape a new sandbox. `working_dir`, `env`, `sandbox_timeout`, `desktop`, `authority` and `path_authority` also apply when you reattach.
 
 ## Limits
 
