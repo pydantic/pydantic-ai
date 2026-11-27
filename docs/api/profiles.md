@@ -55,4 +55,12 @@
 
 ::: pydantic_ai.profiles.inclusionai
 
+::: pydantic_ai.profiles.cohere
+
+::: pydantic_ai.profiles.harmony
+
+::: pydantic_ai.profiles.moonshotai
+
+::: pydantic_ai.profiles.typesafe
+
 ::: pydantic_ai.profiles.decision
