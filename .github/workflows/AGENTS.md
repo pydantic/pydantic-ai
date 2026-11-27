@@ -36,6 +36,8 @@ previous label-as-switch design left a window in which a push got *neither* revi
 checked again when `CI` passes; a label or dispatch must be repeated. Nothing removes the
 `final-review` label: to retry a skipped request, remove and reapply it. A head that
 already has a `CI Review` is not reviewed again.
+An approval or `final-review` label requests a review only on a pull request into the default
+branch.
 
 `CI Review` starts on `workflow_run`, `pull_request_review`, `pull_request` (the
 `final-review` label) and `workflow_dispatch`. `workflow_run` and `workflow_dispatch`
