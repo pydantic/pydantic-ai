@@ -2126,8 +2126,9 @@ def _needs_leading_user_turn(contents: list[ContentDict]) -> bool:
 
     Gemini rejects empty `contents` and a function call turn that doesn't come right after a user turn or a function
     response turn, and some models reject a request whose only turn is a model turn. It accepts `contents` that start
-    with a model turn of only text (and thoughts) when more turns follow. Verified on 2026-11-26 against the Gemini API and Vertex AI
-    with Gemini 2.5 Flash-Lite, 2.5 Flash, 2.5 Pro, 3 Flash Preview, 3.1 Pro Preview and 3.8 Flash.
+    with a model turn of only text (and thoughts) when more turns follow. Verified on 2026-11-26 against the Gemini API
+    and Vertex AI with Gemini 2.5 Flash-Lite, 2.5 Flash, 2.5 Pro, 3 Flash Preview, 3.1 Pro Preview and 3.8 Flash, and
+    on 2026-11-27 against the Gemini API with Gemma 4 31B and Gemma 4 26B A4B.
     """
     if not contents:
         return True
