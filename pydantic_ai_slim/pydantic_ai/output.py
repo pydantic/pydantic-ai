@@ -3,7 +3,7 @@ from __future__ import annotations
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, Protocol, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, Protocol, TypeGuard, cast, overload
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
@@ -820,7 +820,9 @@ apart in a message history, use [`is_output_tool_part`][pydantic_ai.output.is_ou
 """
 
 
-def is_output_tool_part(part: ModelRequestPart | ModelResponsePart) -> bool:
+def is_output_tool_part(
+    part: ModelRequestPart | ModelResponsePart,
+) -> TypeGuard[ToolCallPart | ToolReturnPart | RetryPromptPart]:  # pyright: ignore[reportDeprecated]
     """Whether `part` is the call to an output tool, or the result answering one, rather than a function tool's.
 
     Output tool parts carry `tool_kind='output'`, whatever the tool is named. Parts recorded before Pydantic AI
@@ -828,6 +830,9 @@ def is_output_tool_part(part: ModelRequestPart | ModelResponsePart) -> bool:
     [`DEFAULT_OUTPUT_TOOL_NAME`][pydantic_ai.output.DEFAULT_OUTPUT_TOOL_NAME], instead: an unmarked part of an
     output tool with a custom name or a suffixed default name isn't recognized, and a function tool you named
     `final_result` yourself is taken for an output tool.
+
+    A part it returns `True` for is narrowed to a tool call or return part, so its `tool_name` and `tool_call_id`
+    can be read without another `isinstance` check.
 
     See [Output tool parts in message history](../output.md#output-tool-parts-in-message-history).
     """

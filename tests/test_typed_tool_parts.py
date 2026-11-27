@@ -1302,12 +1302,11 @@ def test_is_output_tool_part_matches_a_function_tool_named_like_the_default_outp
         ('tool-call', 'final_result', None, ''),
         ('tool-return', 'final_result', None, 'success'),
     ]
-    assert all(
-        is_output_tool_part(part)
-        for message in messages
-        for part in message.parts
-        if isinstance(part, ToolCallPart | ToolReturnPart)
-    )
+    # `is_output_tool_part` narrows, so the filtered parts' tool fields can be read directly.
+    assert [part.tool_name for message in messages for part in message.parts if is_output_tool_part(part)] == [
+        'final_result',
+        'final_result',
+    ]
 
 
 async def test_streamed_function_call_named_after_an_output_tool_prefix_is_not_marked():
