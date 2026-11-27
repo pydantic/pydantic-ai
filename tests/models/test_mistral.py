@@ -4524,7 +4524,11 @@ _ADJACENT_ROLES = ['user', 'assistant', 'tool', 'tool', 'user']
 async def test_user_message_after_tool_message_separator(
     allow_model_requests: None, base_url: str, supports_user_after_tool: bool | None, expected_roles: list[str]
 ):
-    """Any host but Mistral's own API keeps the `'OK'` separator, and an explicit profile value wins either way."""
+    """Any host but Mistral's own API keeps the `'OK'` separator, and an explicit profile value wins either way.
+
+    Not a VCR test: the custom base URL has no real endpoint to record against, and the cassette matchers don't key on
+    the request body, so a recording wouldn't catch a change to the outbound message roles this asserts.
+    """
     bodies: list[dict[str, Any]] = []
 
     def handler(request: httpx2.Request) -> httpx2.Response:
@@ -4560,7 +4564,11 @@ async def test_user_message_after_tool_message_separator(
 
 
 def test_provider_profile_sets_user_message_after_tool_message():
-    """A provider whose profile sets the flag decides it, whatever the host."""
+    """A provider whose profile sets the flag decides it, whatever the host.
+
+    Not a VCR test: profile precedence is resolved when the model is built, before any request, so a cassette can't
+    observe it.
+    """
 
     class StrictMistralProvider(MistralProvider):
         @staticmethod
