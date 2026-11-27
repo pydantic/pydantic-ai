@@ -15,9 +15,10 @@ from itertools import takewhile
 from typing import TYPE_CHECKING, Literal, TypeAlias
 
 import anyio
+from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai._utils import ScopedTask
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapModelRequestHandler
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapModelRequestHandler, record_decision
 from pydantic_ai.exceptions import AgentRunError, ModelRetry
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -338,6 +339,9 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
     _counted_steps: int = field(default=0, init=False, repr=False, compare=False)
     """How many of `_steps` a reported loop already used up."""
 
+    _offered_tool_names: set[str] = field(default_factory=set[str], init=False, repr=False, compare=False)
+    """Tool names offered by any model request in this run."""
+
     _streaming: _ResponseCheck | None = field(default=None, init=False, repr=False, compare=False)
     """The checks on the response being streamed, while one is."""
 
@@ -402,6 +406,7 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
         """Record the results of the previous response's tool calls, then act on the first loop found."""
+        self._offered_tool_names.update(ctx.tools)
         if self._results_pending:
             _record_results(self._steps[-1], request_context.messages)
             self._results_pending = False
@@ -758,19 +763,28 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
 
     def _trace(self, ctx: RunContext[AgentDepsT], loop: DetectedLoop) -> None:
         action = self.action
-        attributes: dict[str, str | int | tuple[str, ...]] = {
-            'detect_loops.pattern': loop.pattern,
-            'detect_loops.action': action if isinstance(action, str) else 'handler',
-            'detect_loops.count': loop.count,
-            'detect_loops.window': loop.window,
+        # The names come from the model's tool calls, so one the run never offered is model output: the full
+        # list is content, and replaces the offered ones when content is recorded.
+        offered = tuple(name for name in loop.tool_names if name in self._offered_tool_names)
+        # Hashes of short arguments, such as a user id, can be reversed by trying candidate values.
+        content: dict[str, AttributeValue] = {
             'detect_loops.tool_names': loop.tool_names,
+            'detect_loops.fingerprints': loop.fingerprints,
         }
-        if ctx.trace_include_content:
-            # Hashes of short arguments, such as a user id, can be reversed by trying candidate values.
-            attributes['detect_loops.fingerprints'] = loop.fingerprints
-            if loop.passage is not None:
-                attributes['detect_loops.passage'] = loop.passage
-        ctx.tracer.start_span('loop detected', attributes=attributes).end()
+        if loop.passage is not None:
+            content['detect_loops.passage'] = loop.passage
+        record_decision(
+            ctx,
+            'loop detected',
+            attributes={
+                'detect_loops.pattern': loop.pattern,
+                'detect_loops.action': action if isinstance(action, str) else 'handler',
+                'detect_loops.count': loop.count,
+                'detect_loops.window': loop.window,
+                'detect_loops.tool_names': offered,
+            },
+            content=content,
+        )
 
 
 def _in_part_loop(part: _Part, repetition: Repetition, *, window: int) -> DetectedLoop:

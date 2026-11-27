@@ -264,7 +264,7 @@ A response streams inside the durable model request unit (activity, step or task
 
 ## Telemetry
 
-Each detection emits a zero-duration `loop detected` span through `ctx.tracer`, so it shows in the run's trace next to the model request it changed. It's a no-op unless the agent is [instrumented](../logfire.md).
+Each detection emits a zero-duration `loop detected` span, so it shows in the run's trace next to the model request it changed. It's a no-op unless the agent is [instrumented](../logfire.md).
 
 | Attribute | Value |
 |---|---|
@@ -272,7 +272,7 @@ Each detection emits a zero-duration `loop detected` span through `ctx.tracer`, 
 | `detect_loops.action` | `nudge`, `error`, or `handler` |
 | `detect_loops.count` | `DetectedLoop.count` |
 | `detect_loops.window` | `DetectedLoop.window` |
-| `detect_loops.tool_names` | The tools involved |
+| `detect_loops.tool_names` | The tools involved. Without `trace_include_content`, only the ones the run offers, since a made-up name is model output |
 | `detect_loops.fingerprints` | The hashes of the repeated calls or text, only when `trace_include_content` is enabled |
 | `detect_loops.passage` | The passage that repeated within a response, only when `trace_include_content` is enabled |
 

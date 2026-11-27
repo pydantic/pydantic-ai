@@ -865,7 +865,8 @@ except LoopDetectedError as error:
   and free of I/O. Subclass `LoopDetector` (`async detect(ctx, sample: StreamSample) ->
   Repetition | None`) for your own methodology.
 - Emits a `loop detected` span (`detect_loops.pattern`, `.action`, `.count`, `.window`,
-  `.tool_names`; `.fingerprints` and `.passage` only with `trace_include_content`); no
+  `.tool_names`, only the tools the run offers unless `trace_include_content` is set; `.fingerprints`
+  and `.passage` only with `trace_include_content`); no
   arguments or results otherwise. A failed judge emits `loop judge failed`
   (`error.type`). A `model=` judge isn't instrumented; its usage is added to the run's.
 

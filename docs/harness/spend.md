@@ -395,7 +395,7 @@ For a ceiling on one run only, Pydantic AI's own [`UsageLimits`](../agent.md#usa
 
 ## Tracing
 
-A refusal emits a `spend budget exhausted` span with `spend.budget` and `spend.window`. Accrual emits nothing: a span per model request would double a trace without recording a decision. `spend.scope` is attached only when `RunContext.trace_include_content` is set, since a scope is usually a tenant or user id and traces have a wider audience than the application.
+A refusal emits a `spend budget exhausted` span with `spend.budget`, `spend.window`, and the ceiling that refused, with a key per unit so each has one type: `spend.limit_usd` and `spend.spent_usd` as floats, or `spend.limit_tokens` and `spend.spent_tokens` as integers. When both ceilings of one budget are reached, its dollar one is checked first and is the one recorded. Budgets are checked in list order, so when two budgets share a counter, the first one listed refuses first, whatever its unit. Accrual emits nothing: a span per model request would double the size of a trace without adding a decision. `spend.scope` is attached only when `RunContext.trace_include_content` is set, since a scope key is usually a tenant or user id and a trace has a wider audience than the application that produced it.
 
 ## Specs
 
