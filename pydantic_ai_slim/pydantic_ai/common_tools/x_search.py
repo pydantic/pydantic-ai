@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import Awaitable, Callable
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from typing import Any, TypeAlias
 
 from pydantic_ai._utils import await_maybe
@@ -12,6 +12,7 @@ from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior
 from pydantic_ai.models import KnownModelName, Model
 from pydantic_ai.native_tools import XSearchTool
 from pydantic_ai.tools import AgentDepsT, RunContext, Tool
+from pydantic_ai.usage import UsageLimits
 
 XSearchFallbackModelFunc = Callable[
     [RunContext[Any]],
@@ -86,8 +87,11 @@ class XSearchSubagentTool:
             capabilities=[NativeTool(native_tool)],
             instructions=self.instructions,
         )
+        # The subagent counts into the parent run's usage, under its limits. Its xAI model has no
+        # `count_tokens`, so the token limits are checked against each response rather than up front.
+        usage_limits = replace(ctx.usage_limits or UsageLimits(), count_tokens_before_request=False)
         try:
-            result = await agent.run(query)
+            result = await agent.run(query, usage=ctx.usage, usage_limits=usage_limits)
         except UnexpectedModelBehavior as e:
             raise ModelRetry(str(e)) from e
         return result.output
