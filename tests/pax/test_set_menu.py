@@ -299,7 +299,9 @@ def test_space_hint_requires_multiple_choices(
     fields = FieldMenu(SettingsSource(context, keys=[key]), searchable=searchable)
     monkeypatch.setattr(field_menu, 'menu_key', lambda: 'escape')
     fields.build().run()
-    assert ('Space cycle' in capsys.readouterr().out) is cycling
+    output = capsys.readouterr().out
+    assert ('Space cycle' in output) is cycling
+    assert 'Esc close (changes are saved)' in output
 
 
 def test_choice_free_search_keeps_type_to_filter_and_literal_space(

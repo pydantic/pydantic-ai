@@ -24,7 +24,7 @@ CUSTOM = 'Type a value...'
 KEEP = 'Keep current'
 SAVE_AND_CLOSE = 'Save & close'
 SAVE_AND_CLOSE_DETAILS = 'Leave this menu. Each change was saved as you made it.'
-_LIST_HINT = 'Enter edit - R reset - Esc close'
+_LIST_HINT = 'Enter edit - R reset - Esc close (changes are saved)'
 _PREVIEW_LIST_WIDTH = 30
 
 
@@ -148,7 +148,7 @@ class FieldMenu:
             builder.searchable().on_key('R', self._reset_key).footer_hint('type to filter - ' + _LIST_HINT)
         else:
             builder.list_width(46).on_key('r', self._reset_key).footer_hint(
-                cycle_hint + 'Enter edit - r reset - Esc back'
+                cycle_hint + 'Enter edit - r reset - Esc close (changes are saved)'
             )
             if cycle_hint:
                 builder.on_key(' ', self.cycle)
