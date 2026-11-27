@@ -195,7 +195,8 @@ async def test_a_background_step_runs_through_an_approval_wait_and_recovery_does
         handle = await DBOS.start_workflow_async(background_workflow, 'go')
     with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         await _asked[-1].wait()
-        assert _research_calls == ['research'], 'the background step started before the wait'
+        # The background step has its step number, but its body may not have run yet: DBOS checks for a recorded
+        # result first. The recorded steps below show it was numbered before the wait.
         # The background step finishes while the run waits for the approval.
         _research_may_finish[-1].set()
         await _research_finished[-1].wait()
