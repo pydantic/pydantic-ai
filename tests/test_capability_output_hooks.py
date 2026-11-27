@@ -8,7 +8,7 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from typing import Annotated, Any
+from typing import Annotated, Any, NewType, TypedDict
 
 import pytest
 from opentelemetry.trace import NoOpTracer
@@ -3327,6 +3327,25 @@ class TestErrorHookCoveragePaths:
         assert result.output == 'recovered'
 
 
+# Shared union-member types live at module level because output-function parameter
+# annotations are strings that Python resolves in module globals.
+class HookUnionDict(TypedDict):
+    """`TypedDict` union member."""
+
+    name: str
+
+
+HookUnionInt = NewType('HookUnionInt', int)
+
+
+def hook_union_transform_dict(x: HookUnionDict) -> HookUnionDict:
+    return {'name': f'processed:{x["name"]}'}
+
+
+def hook_union_bump_int(y: HookUnionInt) -> HookUnionInt:
+    return HookUnionInt(y + 1)
+
+
 class TestUnionOutputWithHooks:
     """Tests for UnionOutputProcessor with output hooks — verifying clean validate/call decomposition."""
 
@@ -3735,6 +3754,74 @@ class TestUnionOutputWithHooks:
         )
         result = await agent.run('hello')
         assert result.output == 'not in union'
+
+    def test_union_native_output_runs_typeddict_arg_output_function(self):
+        """NativeOutput unions route a validated `TypedDict` member to its output function.
+
+        The function's return value becomes the run output; without TypedDict support in
+        `_isinstance_maybe_generic` the member matches nothing and the raw dict is returned.
+        """
+
+        class Other(BaseModel):
+            value: int
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[TextPart(content='{"result": {"kind": "HookUnionDict", "data": {"name": "hello"}}}')]
+            )
+
+        agent = Agent(FunctionModel(model_fn), output_type=NativeOutput([hook_union_transform_dict, Other]))
+        result = agent.run_sync('hello')
+        assert result.output == {'name': 'processed:hello'}
+
+    def test_union_native_output_runs_newtype_arg_output_function(self):
+        """NativeOutput unions route a validated `NewType` member to its output function.
+
+        Without NewType support in `_isinstance_maybe_generic` the member matches nothing
+        and the unprocessed semantic value is returned.
+        """
+
+        class Other(BaseModel):
+            value: int
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[TextPart(content='{"result": {"kind": "hook_union_bump_int", "data": {"y": 41}}}')]
+            )
+
+        agent = Agent(FunctionModel(model_fn), output_type=NativeOutput([hook_union_bump_int, Other]))
+        result = agent.run_sync('hello')
+        assert result.output == 42
+
+    def test_union_prompted_output_runs_typeddict_arg_output_function(self):
+        """PromptedOutput unions route a validated `TypedDict` member to its output function."""
+
+        class Other(BaseModel):
+            value: int
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[TextPart(content='{"result": {"kind": "HookUnionDict", "data": {"name": "hello"}}}')]
+            )
+
+        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput([hook_union_transform_dict, Other]))
+        result = agent.run_sync('hello')
+        assert result.output == {'name': 'processed:hello'}
+
+    def test_union_prompted_output_runs_newtype_arg_output_function(self):
+        """PromptedOutput unions route a validated `NewType` member to its output function."""
+
+        class Other(BaseModel):
+            value: int
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(
+                parts=[TextPart(content='{"result": {"kind": "hook_union_bump_int", "data": {"y": 41}}}')]
+            )
+
+        agent = Agent(FunctionModel(model_fn), output_type=PromptedOutput([hook_union_bump_int, Other]))
+        result = agent.run_sync('hello')
+        assert result.output == 42
 
 
 class TestTextFunctionOutputCallHook:

@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import partial
 from types import FunctionType, MethodType, NoneType
-from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_args, get_origin, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, NewType, Self, cast, get_args, get_origin, overload
 
 import pydantic_core
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
@@ -21,7 +21,7 @@ from pydantic_core import (
     SchemaValidator,
     to_json,
 )
-from typing_extensions import TypedDict, TypeForm, TypeVar
+from typing_extensions import TypedDict, TypeForm, TypeVar, is_typeddict
 
 from pydantic_ai._utils import get_function_type_hints
 
@@ -124,11 +124,20 @@ def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
     `isinstance(x, list[Bar])` raises `TypeError`; we fall back to the generic origin
     (here `list`), so union output resolution still matches the collection type when the
     element type can't be checked at runtime.
+
+    `TypedDict` and `NewType` similarly can't be checked with `isinstance`, so a
+    `TypedDict` matches dictionaries and a `NewType` matches its supertype.
     """
     type_ = _utils.unwrap_annotated(type_)
     if get_origin(type_) is Literal:
         # `isinstance` can't check a `Literal`, nor its origin; a value matches it if it's one of its values.
         return value in get_args(type_)
+    if is_typeddict(type_):
+        # `isinstance` can't check a `TypedDict`; its values are dictionaries.
+        return isinstance(value, dict)
+    if isinstance(type_, NewType):
+        # `isinstance` can't check a `NewType`; check the type it wraps (recursively handles chains).
+        return _isinstance_maybe_generic(value, type_.__supertype__)
     try:
         return isinstance(value, type_)
     except TypeError:
