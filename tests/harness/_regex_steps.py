@@ -369,6 +369,8 @@ class Shape:
 class _Walk:
     units: set[str] = field(default_factory=set[str])
     nodes: int = 0
+    admitting: bool = False
+    """Whether each one-character lookbehind carries a character it admits into the units after it."""
 
 
 def _representatives(node: Node, test: Callable[[str], bool]) -> list[str]:
@@ -429,14 +431,17 @@ def _walk(nodes: list[Node], flags: int, prefix: str, walk: _Walk) -> tuple[int,
             reach += body_reach if _int(direction) == 1 else 0
             unbounded |= body_unbounded
             # A one-character lookbehind lets an attempt start only after a character it admits, or at the start of
-            # the text, so the rest of the sequence is also walked with one carried in: `(?<!\S)#` restarts at each
-            # `#` of ` # # #`, not of `###`, while `(?<!\S)(?:ab)*(?:ab)*c` backtracks through `abab` from the start.
+            # the text. `(?<!\S)#` restarts at each `#` of ` # # #`, not of `###`, while `(?<!\S)(?:ab)*(?:ab)*c`
+            # backtracks through `abab` from the start. So the rest of the sequence is walked as is, and once more
+            # admitting from here on: one extra walk per lookbehind, not one per combination of them.
             behind = character_test(body_nodes[0], flags) if _int(direction) == -1 and len(body_nodes) == 1 else None
-            if behind is not None:
-                admitted = _Walk()
-                for character in [c for c in _SAMPLE if behind(c) == (node.name == 'ASSERT')][:1]:
-                    _walk(nodes[index + 1 :], flags, prefix + character, admitted)
-                walk.units |= admitted.units
+            admits = [c for c in _SAMPLE if behind(c) == (node.name == 'ASSERT')] if behind is not None else []
+            if admits and walk.admitting:
+                prefix += admits[0]
+            elif admits:
+                rest = _Walk(admitting=True)
+                _walk(nodes[index + 1 :], flags, prefix + admits[0], rest)
+                walk.units |= rest.units
     walk.units.add(prefix)
     walk.units.discard('')
     return reach, unbounded

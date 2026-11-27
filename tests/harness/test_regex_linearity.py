@@ -589,6 +589,11 @@ def test_the_step_counter_refuses_a_construct_it_does_not_model():
             snapshot(Shape(units=['-', 'a', 'aab', 'ab', 'ac', 'c', 'd'], reach=6, unbounded=False, nodes=12)),
             id='groups-and-lookarounds',
         ),
+        pytest.param(
+            r'(?<!\S)a(?<!\S)b',
+            snapshot(Shape(units=[' a b', 'a', 'a b', 'ab'], reach=2, unbounded=False, nodes=6)),
+            id='admitting-from-each-lookbehind-on',
+        ),
     ],
 )
 def test_the_pump_units(pattern: str, expected: Shape):
