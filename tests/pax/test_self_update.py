@@ -25,7 +25,7 @@ from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_ai_pax import app, chat, cli, paths
 from pydantic_ai_pax.cli import cli as cli_module, self_update
 from pydantic_ai_pax.cli.cli import relaunch_argv
@@ -784,7 +784,7 @@ async def test_update_in_a_pydantic_clai2_environment_restarts_as_pax_with_the_s
     store = SettingsStore()
     assert store.path.parent.name == 'pydantic-ai-pax'
     assert legacy.resolve() == store.path.parent.resolve(), 'an older `clai2` still finds the same files'
-    saved = await SqliteConversationStore(database=store.path.with_name('sessions.db')).get(conversation_id=session_id)
+    saved = await SqliteSessionStore(database=store.path.with_name('sessions.db')).get(conversation_id=session_id)
     assert saved.messages
 
 
@@ -972,7 +972,7 @@ async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: py
     assert (reloaded.session_id, reloaded.new_session_id) == (None, '0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f')
     resumed = await _relaunch_after(monkeypatch, tmp_path, ['hello'])
     assert resumed.session_id is not None
-    saved = await SqliteConversationStore(database=tmp_path / 'sessions.db').get(conversation_id=resumed.session_id)
+    saved = await SqliteSessionStore(database=tmp_path / 'sessions.db').get(conversation_id=resumed.session_id)
     assert saved.messages
 
 
