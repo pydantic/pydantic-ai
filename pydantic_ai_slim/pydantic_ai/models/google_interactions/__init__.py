@@ -228,7 +228,9 @@ class GoogleInteractionsModel(Model[Client]):
         return self._provider._configured_model_profile(model_name) or {}  # pyright: ignore[reportPrivateUsage]
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        return merge_profile(profile, google_interactions_model_profile(self.model_name))
+        """Add the Interactions API's profile, and `deprecation` from the schedule of the API the client reaches."""
+        profile = merge_profile(profile, google_interactions_model_profile(self.model_name))
+        return _google_common.with_deprecation(self.model_name, profile, google_cloud=bool(self.client.vertexai))
 
     @cached_property
     def profile(self) -> GoogleModelProfile:

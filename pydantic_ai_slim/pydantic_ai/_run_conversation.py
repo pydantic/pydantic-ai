@@ -191,8 +191,9 @@ def _merged_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages
     A capability can drop messages from the history or replace them with rewritten copies, say to keep what the
     model sees short. The full history then has the messages as the run was given or added them, and every other
     message the history holds, like a summary a capability put in place of the ones it dropped, right before the
-    message it comes before in the history. A message a capability only adds, and filling in or adding to a message
-    as `rewritten` allows, keeps the history whole, so this is `None`.
+    message it comes before in the history, or after the messages the run was given if that one is among them. A
+    message a capability only adds, and filling in or adding to a message as `rewritten` allows, keeps the history
+    whole, so this is `None`.
     """
     recorded = state.appended_messages.messages
     if recorded is None:
@@ -219,6 +220,8 @@ class _HistoryMerge:
     """Whether the history dropped or rewrote any of `recorded`."""
     _added: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
     """Messages of the history not in `recorded`, waiting for the recorded message they come before."""
+    _after_given: list[_messages.ModelMessage] = dataclasses.field(default_factory=list[_messages.ModelMessage])
+    """Messages of the history that came before one the run was given, waiting for the last of those."""
     _start: int = 0
     _positions: dict[int, int] = dataclasses.field(default_factory=dict[int, int])
     _held: set[int] = dataclasses.field(default_factory=set[int])
@@ -252,9 +255,21 @@ class _HistoryMerge:
         self.take(len(self.recorded))
 
     def take(self, index: int) -> None:
-        """Merge the recorded messages the history dropped before `index`, the added ones waiting, then the one at `index`."""
-        self._merge_recorded(range(self._start, index))
-        self.merged += self._added
+        """Merge the recorded messages the history dropped before `index`, the added ones waiting, then the one at `index`.
+
+        Added messages that come before a message the run was given wait until the last of those is merged: those
+        are stored already, and a store only adds after them, so a summary of some of them goes after all of them.
+        """
+        if index < self.given:
+            self._merge_recorded(range(self._start, index))
+            self._after_given += self._added
+        else:
+            given = max(self._start, self.given)
+            self._merge_recorded(range(self._start, given))
+            self.merged += self._after_given
+            self._after_given = []
+            self._merge_recorded(range(given, index))
+            self.merged += self._added
         self._added = []
         self._merge_recorded(range(index, min(index + 1, len(self.recorded))))
         self._start = index + 1

@@ -9,12 +9,15 @@ from typing import Any, cast
 from openai.types.responses.response_create_params import ContextManagement
 
 from ..._run_context import RunContext
+from ...capabilities._native_compaction import compact_with_model
 from ...capabilities.abstract import AbstractCapability
+from ...capabilities.compaction import CompactionRequest, CompactionResult
 from ...exceptions import UserError
 from ...messages import ModelMessage
 from ...settings import ModelSettings
 from ...tools import AgentDepsT
 from .. import ModelRequestContext
+from .._unwrap import unwrap_model
 from ._responses_model import OpenAIResponsesModel
 
 
@@ -39,14 +42,22 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
       If omitted, OpenAI picks a server-side default.
 
     - **Stateless mode** (`stateless=True`): calls the stateless
-      `/responses/compact` endpoint from a `before_model_request` hook when
-      your trigger condition is met. Use this in
+      `/responses/compact` endpoint when your trigger condition is met. Use this in
       [ZDR](https://openai.com/enterprise-privacy/) environments where
       OpenAI must not retain conversation data, when you set
       [`openai_store=False`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_store],
       or when you need explicit out-of-band control over when compaction runs.
 
-      Requires either `message_count_threshold` or a custom `trigger` callable.
+      Requires either `message_count_threshold` or a custom `trigger` callable. When it's met, a
+      `before_model_request` hook [requests compaction][pydantic_ai.tools.RunContext.request_compaction],
+      which this capability serves like [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction],
+      through the [compaction hook](../capabilities/compaction.md#the-compaction-hook), on any
+      `OpenAIResponsesModel` whatever its profile's `supports_compaction_on_demand` says. It serves
+      compaction another capability requests too. A focus the model's compaction can't take is
+      dropped, so a focus merged in from elsewhere never stops it compacting at its own trigger.
+      To compact on demand on any model that supports it,
+      not only OpenAI's, use [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction] with a
+      trigger of your own instead.
 
     If `stateless` is not set, it is inferred from which parameters you
     provide: passing any stateless-only parameter (`message_count_threshold`
@@ -170,35 +181,35 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
         if not self._should_compact(request_context.messages):
             return request_context
 
-        from ..wrapper import WrapperModel
-
-        model = request_context.model
-        while isinstance(model, WrapperModel):
-            model = model.wrapped
-        if not isinstance(model, OpenAIResponsesModel):
+        if not isinstance(unwrapped := unwrap_model(request_context.model), OpenAIResponsesModel):
             raise UserError(
-                f'OpenAICompaction requires OpenAIResponsesModel, got {type(model).__name__}. '
+                f'OpenAICompaction requires OpenAIResponsesModel, got {type(unwrapped).__name__}. '
                 f'Use the provider-specific compaction capability for your model.'
             )
-
-        # Need at least 2 messages (history + current request) to compact
-        if len(request_context.messages) < 2:  # pragma: no cover
-            return request_context
-
-        # Compact all messages except the last (current) request
-        compact_ctx = ModelRequestContext(
-            model=request_context.model,
-            messages=request_context.messages[:-1],
-            model_settings=request_context.model_settings,
-            model_request_parameters=request_context.model_request_parameters,
-        )
-        compacted_response = await request_context.model.compact_messages(compact_ctx)
-
-        # Replace message history with compaction + last request
-        messages = [compacted_response, request_context.messages[-1]]
-        request_context.messages = messages.copy()
-        ctx.messages[:] = messages
+        ctx.request_compaction(reason='threshold')
         return request_context
+
+    @property
+    def _has_compact_history(self) -> bool:
+        # Only the stateless mode compacts on request: the stateful one leaves it to OpenAI.
+        return self.stateless
+
+    async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
+        if not self.stateless:
+            return None
+        if not isinstance(unwrap_model(request.conversation_request.model), OpenAIResponsesModel):
+            # Another model serves this attempt, like a `ModelFallback` candidate: not OpenAI's to compact.
+            return None
+        # Unlike `NativeCompaction`, whatever the profile's `supports_compaction_on_demand` says: you chose an
+        # OpenAI capability, for a Responses API that may not be OpenAI's own, as with LiteLLM. A focus that can't be
+        # sent is dropped rather than declining: a focus merged in from elsewhere mustn't switch off this
+        # capability's own trigger and leave the context unbounded.
+        return await compact_with_model(
+            request,
+            request.conversation_request.model.profile.get('compaction_instructions'),
+            focus_as_system_prompt=False,
+            drop_unsendable_focus=True,
+        )
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

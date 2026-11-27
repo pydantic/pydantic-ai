@@ -1,15 +1,18 @@
 from __future__ import annotations
 
+import asyncio
 from collections import deque
-from collections.abc import Mapping
+from collections.abc import Callable, Coroutine, Mapping
 from contextlib import nullcontext
-from contextvars import ContextVar
+from contextvars import Context, ContextVar
 from dataclasses import dataclass, replace
 from datetime import datetime
 from typing import TYPE_CHECKING, Any, Literal, cast
 from weakref import WeakKeyDictionary
 
-from dbos import DBOS, SetWorkflowTimeout
+import anyio
+from dbos import DBOS, SetWorkflowID, SetWorkflowTimeout
+from dbos._context import DBOSContext, get_local_dbos_context
 from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 from pydantic import TypeAdapter, ValidationError
 
@@ -55,7 +58,20 @@ from ._utils import ChildWorkflowConfig, StepConfig, guard_enqueue_in_workflow, 
 
 if TYPE_CHECKING:
     from dbos import StepReservation
-    from dbos._context import DBOSContext
+
+_child_workflow_executions: WeakKeyDictionary[DBOSContext, dict[tuple[str | None, int, str | None], int]] = (
+    WeakKeyDictionary()
+)
+"""Executions of each tool call's child workflow, per workflow execution, to give each its own child ID."""
+
+_recorded_children_by_execution: WeakKeyDictionary[DBOSContext, dict[int, str | None]] = WeakKeyDictionary()
+"""The child workflow ID recorded at each step position, per workflow execution, listed when it first runs a child."""
+
+_children_taken: WeakKeyDictionary[DBOSContext, set[str]] = WeakKeyDictionary()
+"""The child workflows that took a step position, per workflow execution, so no call waits for one to take another."""
+
+_position_events: WeakKeyDictionary[DBOSContext, anyio.Event] = WeakKeyDictionary()
+"""Set when a child workflow call takes a step position, per workflow execution, to wake the calls waiting for theirs."""
 
 _default_run_ids_by_step: WeakKeyDictionary[DBOSContext, dict[int, int]] = WeakKeyDictionary()
 """Agent runs that drew a default `run_id` at each step position, per workflow execution.
@@ -270,8 +286,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def get_default_run_id(self) -> str | None:
         if not self.in_durable_context:
             return None
-        from dbos._context import get_local_dbos_context
-
         context = get_local_dbos_context()
         assert context is not None and context.workflow_id is not None
         step = context.function_id + 1
@@ -370,16 +384,17 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             config: Mapping[str, Any],
         ) -> Any:
             assert isinstance(tool, FunctionToolsetTool)  # `_child_workflow_config` admits only these
-            timeout = config.get('workflow_timeout_sec')
-            with SetWorkflowTimeout(timeout) if timeout is not None else nullcontext():
-                payload = await call_tool_workflow(
-                    name,
-                    tool_args,
-                    tool.tool_def,
-                    tool.original_name,
-                    DurableRunContext.serialize_run_context(ctx),
-                    ctx.deps,
-                )
+            args = (
+                name,
+                tool_args,
+                tool.tool_def,
+                tool.original_name,
+                DurableRunContext.serialize_run_context(ctx),
+                ctx.deps,
+            )
+            payload = await _call_child_workflow(
+                call_tool_workflow, args, ctx=ctx, timeout=config.get('workflow_timeout_sec')
+            )
             return self._unwrap_tool_result(payload)
 
         self._child_workflow_toolsets[toolset_id] = DurableFunctionToolset(
@@ -546,6 +561,71 @@ def _child_workflow_config(tool: ToolsetTool[Any] | None, name: str) -> ChildWor
             f'DBOS metadata for tool {name!r} selects a child workflow, but only async function tools can run as one.'
         )
     return child_config
+
+
+async def _call_child_workflow(
+    workflow: Callable[..., Coroutine[Any, Any, CallToolResult]],
+    args: tuple[Any, ...],
+    *,
+    ctx: RunContext[Any],
+    timeout: float | None,
+) -> CallToolResult:
+    """Run a tool call's child workflow, with an ID derived from the run and tool call, at its own step position.
+
+    DBOS records a child at the parent's next step position, and hands a recovered call whatever child is recorded
+    at the position it takes. Parallel calls can reach their positions in another order on recovery, so a call
+    waits while the next position holds another call's child: that call takes it in turn, and each call takes the
+    position its own child was recorded at, or a new one. The parent's history stays the same on every execution.
+    DBOS takes the position of the child's `DBOS.getResult` step together with its start, when `workflow` is called,
+    so only start positions need ordering.
+    """
+    parent_id = DBOS.workflow_id
+    context = get_local_dbos_context()
+    assert parent_id is not None and context is not None
+    # A capability can execute a tool call more than once, and each execution gets a child of its own.
+    executions = _child_workflow_executions.setdefault(context, {})
+    call_key = (ctx.run_id, ctx.run_step, ctx.tool_call_id)
+    execution = executions.get(call_key, 0)
+    executions[call_key] = execution + 1
+    siblings_prefix = f'{parent_id}-{ctx.run_id}-{ctx.run_step}-'
+    child_id = f'{siblings_prefix}{execution}-{ctx.tool_call_id}'
+
+    recorded = await _recorded_children(context, parent_id)
+    taken = _children_taken.setdefault(context, set())
+    while (
+        (sibling := recorded.get(context.function_id + 1)) is not None
+        and sibling != child_id
+        # Only a parallel call of the same run step can take the position in turn. Any other recorded child keeps
+        # DBOS's positional match: a child started before child IDs were derived, or under a `run_id` that changed.
+        and sibling.startswith(siblings_prefix)
+        and sibling not in taken
+    ):
+        await _position_events.setdefault(context, anyio.Event()).wait()
+    # The child takes the next position when `workflow` is called, with no wait before it, so wake the waiting
+    # calls now: they run once this call waits for its child, after it took the position.
+    taken.add(child_id)
+    _position_events.pop(context, anyio.Event()).set()
+    with SetWorkflowID(child_id), SetWorkflowTimeout(timeout) if timeout is not None else nullcontext():
+        return await workflow(*args)
+
+
+async def _recorded_children(context: DBOSContext, parent_id: str) -> dict[int, str | None]:
+    """The child workflow ID recorded at each of the parent's step positions before this workflow execution.
+
+    Listed once per workflow execution, when it first runs a child workflow. A position recorded since then was
+    recorded by the call that took it, with its own child.
+    """
+    recorded = _recorded_children_by_execution.get(context)
+    if recorded is None:
+        # DBOS has no public way to read from workflow code without recording a step, so this reads outside it.
+        steps = await asyncio.create_task(
+            DBOS.list_workflow_steps_async(parent_id, load_output=False, shard_key=context.shard_key),
+            context=Context(),
+        )
+        recorded = _recorded_children_by_execution.setdefault(
+            context, {step['function_id']: step['child_workflow_id'] for step in steps}
+        )
+    return recorded
 
 
 async def _reject_unregistered_child_workflow(
