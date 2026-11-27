@@ -3844,7 +3844,7 @@ A lowercase near-miss of a subcommand, such as `pax plugin list`, fails with a s
 instead; send it with `-p` or after `--` to run it as a prompt.
 A word that starts with `-` is read as an option even when quoted, so `pax "-m means model"`
 does not run that prompt: put the prompt after `--`, as in `pax [OPTIONS] -- PROMPT...`,
-and every word after `--` is prompt text. `-w`, `--resume`, `--resume-claude`, and
+and every word after `--` is prompt text, with or without `-p` before it. `-w`, `--resume`, `--resume-claude`, and
 `--resume-codex` take the next word as their value when one follows, so a prompt directly
 after one of them needs `--` or `-p`: `pax -w "fix the bug"` takes `fix the bug` as the
 worktree name and opens the interactive shell. `-p` with no text, or the prompt `-`

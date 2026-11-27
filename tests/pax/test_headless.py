@@ -160,6 +160,8 @@ async def test_missing_model(tmp_path: Path) -> None:
         ['-p', 'x', 'config'],
         ['-p', 'x', 'more'],
         ['x', '-p', 'more'],
+        ['-p', 'x', '--', 'more'],
+        ['x', '-p', '--', 'more'],
         ['--output-format', 'json'],
         ['--output-format', 'yaml', '-p', 'x'],
     ],
@@ -330,6 +332,7 @@ def test_cli_positional_prompt_runs_like_p(
         (['-a', 'echo', '--', 'explain', '--version'], 'echo: explain --version\n'),
         (['-a', 'echo', '--', 'review', '--agent=other:agent', '-p', 'x'], 'echo: review --agent=other:agent -p x\n'),
         (['-a', 'echo', '--', '-'], 'echo: -\n'),
+        (['-a', 'echo', '-p', '--', '-v', 'flags'], 'echo: -v flags\n'),
     ],
 )
 def test_cli_words_after_double_dash_are_prompt_text_not_options(

@@ -402,6 +402,9 @@ def _positional_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser
         words.append(args.command)
         # Like `update` above: options after a word parse as they would before it, and the next word is the next one.
         parser.parse_args(args.arguments, namespace=args)
+    if args.prompt == '-' and not words and literal:
+        # `pax -p -- TEXT`: a bare `-p` takes the words after `--`, so a prompt can start with `-`.
+        args.prompt = None
     if args.prompt is not None:
         parser.error('Give the prompt once: either with -p or after the options')
     # A lowercase near-miss of a subcommand, like `pax plugin list`, is a typo more likely than a prompt.
