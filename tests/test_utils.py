@@ -1420,6 +1420,9 @@ def test_strip_markdown_fences():
         strip_markdown_fences('```json\n{"result": "pass"}\n```\nThis matches schema {"type": "object"}')
         == '{"result": "pass"}'
     )
+    # Nested JSON objects should still be fully captured
+    assert strip_markdown_fences('```json\n{"nested": {"key": "value"}}\n```') == '{"nested": {"key": "value"}}'
+    assert strip_markdown_fences('```json\n{"a": {"b": {"c": 1}}}\n```') == '{"a": {"b": {"c": 1}}}'
 
 
 class _StepCountingPattern:
@@ -1461,9 +1464,6 @@ def test_strip_markdown_fences_is_linear_in_unclosed_fences(monkeypatch: pytest.
         calls.clear()
 
     assert steps[2] - steps[1] < 3 * (steps[1] - steps[0])
-    # Nested JSON objects should still be fully captured
-    assert strip_markdown_fences('```json\n{"nested": {"key": "value"}}\n```') == '{"nested": {"key": "value"}}'
-    assert strip_markdown_fences('```json\n{"a": {"b": {"c": 1}}}\n```') == '{"a": {"b": {"c": 1}}}'
 
 
 class _AmbiguousBool:
