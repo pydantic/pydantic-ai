@@ -55,6 +55,7 @@ _HARNESS_DOCS = (
     'grain',
     'guardrails',
     'kubernetes_sandbox',
+    'label_cross_model_history',
     'linear',
     'logfire_mcp',
     'modal_sandbox',

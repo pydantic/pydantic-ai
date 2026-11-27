@@ -348,6 +348,8 @@ def test_claude_code_transcript_continues_the_last_branch(tmp_path: Path) -> Non
     assert response.parts[2] == ToolCallPart('Read', {'file_path': 'a.py'}, tool_call_id='t1')
     assert response.parts[3] == ThinkingPart('', id='redacted_thinking', signature='x', provider_name='anthropic')
     assert response.model_name == 'claude-sonnet-4-5' and response.provider_name == 'anthropic'
+    # The model Claude Code asked for, so `label_cross_model_history` tells the model Pax runs on whose turns these are.
+    assert response.model_id == 'claude-sonnet-4-5'
     assert response.usage == RequestUsage(
         input_tokens=115, cache_read_tokens=100, cache_write_tokens=5, output_tokens=7
     )
@@ -778,6 +780,7 @@ def test_codex_import_keeps_what_the_model_saw(tmp_path: Path) -> None:
         ToolCallPart('apply_patch', {'input': '*** Begin Patch'}, tool_call_id='c2', provider_name='openai-codex'),
     ]
     assert response.model_name == 'gpt-6-astra' and response.provider_name == 'openai-codex'
+    assert response.model_id == 'gpt-6-astra'
     # The OpenAI API reads Codex's encrypted reasoning too.
     assert openai_model().accepts_stateless_artifacts(response, response.parts[0])
     assert response.usage == RequestUsage(input_tokens=50, cache_read_tokens=40, output_tokens=3)

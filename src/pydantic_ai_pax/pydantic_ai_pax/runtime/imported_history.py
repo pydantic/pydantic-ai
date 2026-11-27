@@ -319,6 +319,9 @@ class HistoryBuilder:
                 parts=turn.parts,
                 timestamp=turn.timestamp,
                 model_name=turn.model_name,
+                # The bare name the other agent sent its requests with: Pax selects models as `PROVIDER:NAME`,
+                # so `label_cross_model_history` labels these turns on whichever model the conversation continues.
+                model_id=turn.model_name,
                 provider_name=turn.provider_name,
                 provider_response_id=turn.response_id,
                 usage=turn.usage,
