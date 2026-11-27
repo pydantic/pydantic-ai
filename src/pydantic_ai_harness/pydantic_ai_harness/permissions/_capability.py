@@ -419,12 +419,16 @@ class Permissions(AbstractCapability[AgentDepsT]):
         mode = max(person, ceiling, key=_STRICTNESS.__getitem__)
         if mode != 'full' and (protected := await self._protected(ctx, subject, posix=posix)) is not None:
             return protected
+        # The ceiling before the person's own ask rules, so one of theirs can't drop its hold for a person only. Each
+        # layer's own allow skips only its own mode's blanket ask.
+        held = self._mode_asks(
+            ceiling, tool_def=tool_def, args=args, command=command, allowed=managed is not None, ceiling=True
+        )
+        if held is not None:
+            return held
         if rule is not None and rule.verdict == 'ask':
             return _rule_asks(ctx, rule, subject)
-        # Each layer's own allow skips only its own mode's blanket ask: the stricter answer of the two stands.
-        return self._mode_asks(
-            ceiling, tool_def=tool_def, args=args, command=command, allowed=managed is not None, ceiling=True
-        ) or self._mode_asks(person, tool_def=tool_def, args=args, command=command, allowed=rule is not None)
+        return self._mode_asks(person, tool_def=tool_def, args=args, command=command, allowed=rule is not None)
 
     async def _protected_asks(
         self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]
