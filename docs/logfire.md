@@ -346,6 +346,22 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_names=False))
 ```
 
+### Spans and attributes {#spans-and-attributes}
+
+With the default format (`version=5`), Pydantic AI emits these spans, all under the OpenTelemetry instrumentation scope `pydantic-ai`:
+
+| Span name | Emitted for | Main attributes |
+|---|---|---|
+| `invoke_agent {agent_name}` | Each agent run | `gen_ai.agent.name`, `gen_ai.conversation.id`, `pydantic_ai.all_messages`, `final_result`, `gen_ai.aggregated_usage.*` |
+| `chat {model}` | Each model request | `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.usage.*`, `operation.cost` (when a price is known) |
+| `execute_tool {tool_name}` | Each tool or output function call | `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result` |
+| `model request attempt {model}` | Each failed attempt during [retries](capabilities/retry-on-model-errors.md) or [fallback](capabilities/model-fallback.md) | `pydantic_ai.model_request.attempt` |
+| `decide {model}` | Each request a [decision model](#decision-model-spans) sends, under the `chat` span | See [Decision model spans](#decision-model-spans) |
+| `embeddings {model}` | Each embeddings request | `gen_ai.request.model`, `gen_ai.usage.*`, `operation.cost` (when a price is known) |
+| `image_generation {model}` | Each image generation request | `gen_ai.request.model`, `gen_ai.usage.*`, `operation.cost` (when a price is known) |
+
+`pydantic_ai.all_messages`, `gen_ai.input.messages` and `gen_ai.output.messages` hold a JSON array of OpenTelemetry GenAI messages (`{"role": ..., "parts": [...]}`), not the format of [`all_messages_json()`][pydantic_ai.agent.AgentRunResult.all_messages_json]. In a `tool_call` part, `arguments` keeps [`ToolCallPart.args`][pydantic_ai.messages.ToolCallPart.args] as the provider returned it: a JSON object from some providers, such as Google, and a JSON string from others, such as OpenAI. Code that reads these attributes should handle both. `gen_ai.tool.call.arguments` on `execute_tool` spans is always a JSON string.
+
 ### Configuring data format
 
 Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), specifically version 1.37.0 of the conventions. The instrumentation format can be configured using the `version` parameter of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
@@ -381,7 +397,6 @@ Builds on version 2 with the following improvements:
 - **Spec-compliant attribute names:**
     - `tool_arguments` becomes `gen_ai.tool.call.arguments`
     - `tool_response` becomes `gen_ai.tool.call.result`
-- **Thinking tokens support:** Captures thinking/reasoning tokens when available
 
 #### Version 4 (deprecated)
 
