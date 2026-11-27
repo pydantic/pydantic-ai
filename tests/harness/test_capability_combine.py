@@ -191,7 +191,7 @@ async def test_a_colliding_capability_beside_coder_raises(name: str, anyio_backe
 
     first, _ = policy.make(shipped[name])
     agent = Agent(TestModel(), deps_type=type(None), capabilities=[Coder(), first])
-    with pytest.raises(UserError):
+    with pytest.raises(UserError, match=r"conflicts with existing tool|rather than narrowing `Coder`'s"):
         await agent.run('hello', workspace=LocalWorkspaceBackend(COMBINE_ROOT_A))
 
 

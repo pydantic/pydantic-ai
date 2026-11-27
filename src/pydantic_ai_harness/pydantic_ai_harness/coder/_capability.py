@@ -118,8 +118,8 @@ class _CoderShell(Shell[AgentDepsT]):
     A `Shell` added beside `Coder` registers `run_command` and its siblings next to `Coder`'s
     unrestricted `shell` tool rather than narrowing it, so its `allowed_commands` restricts nothing.
     The tool names differ, so nothing else catches it: this checks the run's capabilities by type before
-    every request, which also covers a `Coder` loaded from a deferred group. A stopgap until a second `Shell` narrows `Coder`'s instead, tracked in
-    https://github.com/pydantic/pydantic-ai/issues/14515.
+    every request, which also covers a `Coder` loaded from a deferred group. A stopgap until a second
+    `Shell` narrows `Coder`'s instead, tracked in https://github.com/pydantic/pydantic-ai/issues/14515.
     """
 
     async def prepare_tools(self, ctx: RunContext[AgentDepsT], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
