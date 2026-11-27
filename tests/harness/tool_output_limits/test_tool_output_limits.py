@@ -1700,7 +1700,11 @@ class TestReadToolResultBytes:
             start = max(0, end - 11) if from_end else min(offset, len(data))
             body = data[start:end].decode('utf-8', errors='replace')
             header = f': bytes {start}-{end} of {len(data)} (end exclusive)'
-            assert f'{header}]\n{body}' in out if body else f'{header}; offset={offset} is past the end' in out
+            nearest = f"unit='bytes', offset={max(0, len(data) - 11)}, limit=11{', from_end=True' if from_end else ''}"
+            past = (
+                f"; offset={offset} is past the end; the nearest bytes are at {READ_TOOL_NAME}(handle='<h>', {nearest})"
+            )
+            assert out.endswith(f'{header}]\n{body}' if body else f'{header}{past}]')
 
     async def test_slice(self, tmp_path: Path) -> None:
         payload = '{"a":' + '1' * 100 + '}'
