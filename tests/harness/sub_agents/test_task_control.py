@@ -1098,6 +1098,53 @@ class TestSubAgentsTaskControl:
             result = await parent.run('Go.')
         assert '1 tasks are already running, the most allowed at once.' in tool_returns(result.all_messages())[1]
 
+    async def test_a_task_refused_by_max_running_tasks_does_not_use_a_max_calls_slot(self) -> None:
+        gate = Gate()
+        slow = Agent(scripted(call('pause'), text('first')), tools=[gate.pause])
+
+        def release(messages: list[ModelMessage]) -> ModelResponse:
+            gate.opened.set()
+            return text('Waiting.')
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='One.', background=True),
+                call('delegate_task', agent_name='researcher', task='Two.'),
+                release,
+                call('delegate_task', agent_name='researcher', task='Three.'),
+                echo_last_return,
+            ),
+            capabilities=[controlled(researcher(slow, max_calls=2), max_running_tasks=1)],
+        )
+        result = await parent.run('Go.')
+        returns = tool_returns(result.all_messages())
+        assert '1 tasks are already running, the most allowed at once.' in returns[1]
+        assert 'Delegate budget' not in returns[-1]
+
+    async def test_a_vetoed_task_does_not_use_a_max_calls_slot(self) -> None:
+        @dataclass
+        class Policy(AbstractCapability[Any]):
+            @on_event(TaskAssignedEvent)
+            async def assigned(self, ctx: RunContext[Any], event: TaskAssignedEvent) -> None:
+                if event.prompt == 'Forbidden.':
+                    event.veto('not allowed')
+
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='Forbidden.'),
+                call('delegate_task', agent_name='researcher', task='Allowed.'),
+                echo_last_return,
+            ),
+            capabilities=[
+                controlled(researcher(child('done'), max_calls=1)),
+                Policy(),
+            ],
+        )
+        result = await parent.run('Go.')
+        vetoed, allowed = tool_returns(result.all_messages())
+        assert 'The task was not sent' in vetoed
+        assert allowed.endswith('(ok):\ndone')
+
     async def test_max_running_tasks_counts_the_whole_delegation_tree(self) -> None:
         # The middle task holds the only slot, so the task it starts is refused, though it started none itself.
         middle = Agent(
