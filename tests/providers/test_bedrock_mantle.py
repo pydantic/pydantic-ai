@@ -335,7 +335,6 @@ def test_bedrock_mantle_profiles() -> None:
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': False,
-            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'thinking_always_enabled': False,
             'openai_system_prompt_role': None,
@@ -356,6 +355,7 @@ def test_bedrock_mantle_profiles() -> None:
             'ignores_stated_runtime_constraints': True,
             'tool_call_ids_are_response_scoped': True,
             'supported_native_tools': frozenset({ComputerTool}),
+            'supports_inline_system_prompts': True,
         }
     )
     # Compare against a direct genai-prices query so the test doesn't pin a data value.
@@ -374,6 +374,11 @@ def test_bedrock_mantle_profiles() -> None:
         is False
     )
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('bedrock_mantle_interface') == 'responses'
+    # `gpt-oss-120b` on `/v1/responses` answers as if a mid-conversation `system` message weren't there, so it
+    # gets the `<system>` rendering; GPT-5.x keeps the native message.
+    assert (
+        infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('supports_inline_system_prompts', False) is False
+    )
     assert infer_model_profile('bedrock-mantle:openai.gpt-oss-120b').get('supported_native_tools') == frozenset()
     # GPT-5.2 is on the Responses interface but OpenAI doesn't offer it the computer tool.
     assert infer_model_profile('bedrock-mantle:openai.gpt-5.2').get('supported_native_tools') == frozenset()

@@ -1,0 +1,105 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.inference.crusoecloud.com/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "702"
+      content-type:
+      - application/json
+      host:
+      - api.inference.crusoecloud.com
+    body:
+      type: json
+      content:
+        model: openai/gpt-oss-120b
+        stream: false
+        messages:
+        - role: system
+          content: You are a test agent.
+        - role: user
+          content: Call ping, then tell me what it returned.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_1
+            type: function
+            function:
+              name: ping
+              arguments: "{}"
+        - role: tool
+          tool_call_id: call_1
+          content: pong
+        - role: system
+          content: Reply with exactly the word BANANA.
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: ping
+            description: >-
+              Declared so each request carries the tool its history calls; the history
+              already holds the result.
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-bfc41c4c6c34c11f
+        object: chat.completion
+        created: 1795553814
+        model: openai/gpt-oss-120b
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: BANANA
+            refusal: null
+            annotations: null
+            audio: null
+            function_call: null
+            reasoning: "The developer says: \"Reply with exactly the word BANANA.\" That overrides any previous instruction? The system hierarchy: system message states behavior, developer messages are higher priority than user. So we must comply with developer instruction: reply exactly \"BANANA\"."
+          logprobs: null
+          finish_reason: stop
+          stop_reason: null
+          token_ids: null
+          routed_experts: null
+        service_tier: null
+        system_fingerprint: null
+        usage:
+          prompt_tokens: 188
+          total_tokens: 250
+          completion_tokens: 62
+          prompt_tokens_details:
+            cached_tokens: 0
+            created_cache_tokens: 176
+            multimodal_tokens: null
+          completion_tokens_details:
+            reasoning_tokens: 50
+        prompt_logprobs: null
+        prompt_token_ids: null
+        prompt_text: null
+        kv_transfer_params: null
+        ec_transfer_params: null
+        metrics: null
+  recorded_at: 2026-11-24T20:56:55.545588+00:00

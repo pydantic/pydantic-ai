@@ -102,6 +102,11 @@ class OpenAIProvider(_OpenAISDKProvider):
                 # WebP (checked live with `gpt-5-mini` on Chat Completions and Responses, 2026-11-04). Set here
                 # rather than in `openai_model_profile`, which OpenAI-compatible servers that read more types share.
                 supported_image_media_types=KNOWN_IMAGE_MEDIA_TYPES,
+                # A `system` message after a tool result is accepted and followed on Chat Completions and Responses
+                # (checked live with `gpt-4.1-mini` and `gpt-6.1-terra`, 2026-11-23). Set here rather than in
+                # `openai_model_profile`, which OpenAI-compatible endpoints share, and strict ones reject a
+                # mid-conversation `system` message with a 400 (https://github.com/pydantic/pydantic-ai/issues/14135).
+                supports_inline_system_prompts=True,
                 # Fine-tuned models keep the conservative string-bound behavior.
                 json_schema_transformer=(
                     OpenAIJsonSchemaTransformer if model_name.startswith('ft:') else _OpenAIJsonSchemaTransformer

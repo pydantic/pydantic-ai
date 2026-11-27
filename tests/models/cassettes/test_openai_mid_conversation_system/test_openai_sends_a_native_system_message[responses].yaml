@@ -1,0 +1,175 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "716"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-6.1-terra
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Call ping, then tell me what it returned.
+        - name: ping
+          arguments: "{}"
+          call_id: call_1
+          type: function_call
+        - type: function_call_output
+          call_id: call_1
+          output: pong
+        - role: system
+          content: Reply with exactly the word BANANA.
+        instructions: You are a test agent.
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: ping
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          type: function
+          description: >-
+            Declared so each request carries the tool its history calls; the history
+            already holds the result.
+          strict: false
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1759"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795744515
+        created_at: 1795744513
+        error: null
+        frequency_penalty: 0.0
+        id: resp_0756924b3774d9d7006b08e301d0c887d1958b76a32e1e28ac
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: You are a test agent.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-6.1-terra
+        moderation: null
+        object: response
+        output:
+        - content: []
+          encrypted_content: >-
+            gAAAAABrCOMCUTb8Nmg879Ixgw6jXb7GFTh1Vi8eyCOstbOcCdajKfyBg4lD7LX0b57Re-vAhIiIZxHRH1PSiz1xA7wC6A4en5mx8NGWkfxItbNEoEmG5sjly8bAycGFp2aRzNYaLgAbVCCScniXo0PpD2_6LYndI64tPg64g-ACZ-sjYatyGJRiQEshrcpcPTl7se-FSW8E_AkWjPbh16ise4vQncVEq9K3ioU0jTo_i6lOg_bIFAATYVacB3JjQAnt4B7XHIMjMvTQRb1IxWuV-nD5jrih6-SflLn_qJMPWNmELKCVDSJ9ESwVKInBN8xrp7MTjYFNi5LuRwq-YufGmBoHUGwGL4Ic4G1W_vad42RdQF8rZxsPCMWbwh7szZz40A7XRWbOc9K4rA11sgmHHeDP7mafJDZ4TEPU2ywFT5ehEopdsTNarNsm97EI2Qi38I8sHjYClu_R2H8xZSvif7XaPnEkJAGdi3AA0bE6vu9oaKJNH3AsZeYmThBtRr7iamG1S7j8LFwLSX4IFtAYBtTIYtLAgyQVO8SQ1nlTtD8UEW-1JGEgyR6dTCDtYcYKO0bqBC75TxpNWXUsSofpT_LRoQvGkPJIaRctMax-s7wr0cFDkZ9GuG1rlE2QOc6TM6-r6Rj9P-147cFaxapbrWQXamXnus6PEPnd4amFefiydqPkZuLHkqWZr1_biIQZD7l5tbIDWt-gZ5DaQGOR3W0VKZpUkrCAFxbxRg9gx7Pm1v-2T3i7cuirNqGTr4KkMz32PCiyTHUPtwB871cFgz7M63gKflYbrj4VNzehMUQdDYq0ZamvGgIOcK5j6iuWEYPUVp5nI2CAckv_am7MhzE4dSrIcaNEBg9SgpI-ZwiD9Gzmdep2SHnuiz_hW7KU1UgE7dQs85ba7qtt-WLqstvi-K_3Mxp4r4OVVQ6UxJoeC62ORC-4ufdIN2r7IcUCG0RBX3AGFBmxAFZTXQaT4wWG6xr7uVnWcE8n_GPBgszkBv5UifEdNNnWkj0b9Nv-Veb4ODn6tTe2KDAYigE7jyHV_F4SG2_6eWCLJ8kh2gtTrnd-kgawl6gYP9eprWVU3oFtPcvkHLFnSR5VTH7Rw5UcywQj4kAxB8338pm6NivCZlL11KUNvI6LURxO6EWioJ1uimcISFFmX-0tzE5M4z9begiQVuLL-7uy7sPo5COlwFR5_G_DLueZRf6Za_hO0cvOgDHxH5IeyLtYrApulPOk6CiE5ZjdREmlQifqCuKguTP8crBrVCVlYqEmuTV8GAy4sOuY1xQr8o0mpd5BjoyLZSE2O5VaNGAugOiH3XGMhoKpJ4VcjxiTG79gm6mPOg8LtouKDlt1Dgdqy_nQV8WMQ41fhDRMFOZJMLUYXOigbl-K-HptNczYiP4aHWoQVFXsJAFuQdS-S1V6Fzg2ELnxODYPfrH3A3OTNsjcBzUUMzDoQzIVCo1SihkfZ0qx3bdI9ZMH6zrXBZ7iwbMatn5-ex0Xmt4YqNZkCGq0uXcI5TMqeCAVgsI-ByiuLSnnG4u5kqgfvCXrVnUVmht6-rmEzyoTB4DflvPv2lRpyA_eLSUIyvQ80rU8cFHpD6ZvVPL6UZOwLnKjp2Ko3VEMM3zCHhssx8P6nCAN9yPIKuKSyrBY2hrwJMjuBGlISWAC3hiMfC4PJjHAGOaDSWNtP_aR0og6G0FxgXADH2loY-Ybmw2K1271IiPo5zHFkVCx2r_mbJEixrtIFGsr8Xtb1PVa9uCzRFspiCLLF-tvJWs6RgghWahPvxiZLkeC1wwxE9rY2jRs1HXXfCFDpG5OC5n6KOz8iGdnL3Vf1qXDSycBG9Get5dLD3CfytTwF5vEsRfIFnZk
+          id: rs_0756924b3774d9d7006b08e302b8f887d1b674f2b4a54cc58d
+          summary: []
+          type: reasoning
+        - content:
+          - annotations: []
+            logprobs: []
+            text: BANANA
+            type: output_text
+          id: msg_0756924b3774d9d7006b08e302b8f887d1841bbf00f3b6cb99
+          phase: final_answer
+          role: assistant
+          status: completed
+          type: message
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: medium
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        status: completed
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - description: >-
+            Declared so each request carries the tool its history calls; the history
+            already holds the result.
+          name: ping
+          output_schema: null
+          parameters:
+            additionalProperties: false
+            properties: {}
+            type: object
+          strict: false
+          type: function
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 106
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 25
+          output_tokens_details:
+            reasoning_tokens: 17
+          total_tokens: 131
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-27T01:55:15.275302+00:00

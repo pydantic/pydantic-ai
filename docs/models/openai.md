@@ -814,3 +814,5 @@ The model can decline a question, such as one asking it to infer a customer's ra
 ## OpenAI-compatible Models
 
 Many other services serve OpenAI-compatible APIs. See [Other compatible APIs](compatible-apis.md) for the ones Pydantic AI has a provider for, and for connecting to any other OpenAI-compatible endpoint.
+
+[`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sends a [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts) as a `system` message, which OpenAI's API accepts at any position on Chat Completions and Responses; see [Mid-conversation system messages](compatible-apis.md#mid-conversation-system-messages) for how other OpenAI-compatible servers get it and what to do if yours rejects it.

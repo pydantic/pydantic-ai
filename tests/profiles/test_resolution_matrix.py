@@ -1213,11 +1213,11 @@ def test_gateway_gpt_oss_inline_defs():
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'default_framing_announcement': 'always',
+            'openai_chat_supports_multiple_system_messages': False,
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'may_tokenize_special_tokens_in_content': True,
@@ -2350,7 +2350,6 @@ def test_github_copilot_openai_gpt_5_4():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': True,
-            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'openai_supports_encrypted_reasoning_content': True,
             'openai_supports_reasoning': True,
@@ -2632,7 +2631,6 @@ def test_azure_openai_gpt_5():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -2642,6 +2640,7 @@ def test_azure_openai_gpt_5():
             'openai_responses_supports_reasoning_context': True,
             'openai_supports_reasoning_effort_none': True,
             'openai_supports_phase': True,
+            'supports_inline_system_prompts': True,
             'delegates_unprompted': True,
             'reinterprets_malformed_inputs': True,
             'omits_handoff_evidence': True,
@@ -2654,6 +2653,28 @@ def test_azure_openai_gpt_5():
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
+def test_azure_openai_gpt_oss():
+    """Azure OpenAI — gpt-oss keeps the `<system>` rendering: the native mid-conversation role isn't checked there."""
+    profile = AzureProvider.model_profile('gpt-oss-120b')
+    assert profile is not None
+    assert 'supports_inline_system_prompts' not in profile
+    assert _normalize(profile) == snapshot(
+        {
+            'json_schema_transformer': _GptOssJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'supports_json_object_output': True,
+            'supported_native_tools': frozenset(
+                {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
+            ),
+            'default_framing_announcement': 'always',
+            'openai_chat_supports_multiple_system_messages': False,
+            'openai_chat_supports_document_input': False,
+            'openai_responses_supports_websocket': False,
+            'may_tokenize_special_tokens_in_content': True,
+        }
+    )
+
+
 def test_azure_mistral_prefix():
     profile = AzureProvider.model_profile('mistral-large-latest')
     assert _normalize(profile) == snapshot(
@@ -2844,6 +2865,7 @@ def test_groq_gpt_oss():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
+            'openai_chat_supports_multiple_system_messages': False,
             'default_framing_announcement': 'always',
             'supports_json_object_output': True,
             'supports_json_schema_output': True,
@@ -2979,9 +3001,9 @@ def test_ollama_gpt_oss():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
-            'supports_inline_system_prompts': True,
             'ignore_streamed_leading_whitespace': True,
             'default_framing_announcement': 'always',
+            'openai_chat_supports_multiple_system_messages': False,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -3042,7 +3064,6 @@ def test_vllm_gpt_oss_hf_namespace():
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -3187,7 +3208,6 @@ def test_litellm_openai_gpt():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -3234,7 +3254,6 @@ def test_litellm_mistral_small_latest():
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
@@ -3487,11 +3506,11 @@ def test_together_qwen():
                     'json_schema_transformer': _GptOssJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
-                    'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
                     'default_framing_announcement': 'always',
+                    'openai_chat_supports_multiple_system_messages': False,
                     'supports_forced_tool_choice': False,
                     'ignore_streamed_leading_whitespace': True,
                     'may_tokenize_special_tokens_in_content': True,
@@ -3505,11 +3524,11 @@ def test_together_qwen():
                     'json_schema_transformer': _GptOssJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
-                    'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
                     'default_framing_announcement': 'always',
+                    'openai_chat_supports_multiple_system_messages': False,
                     'supports_forced_tool_choice': False,
                     'ignore_streamed_leading_whitespace': True,
                     'may_tokenize_special_tokens_in_content': True,
@@ -3524,7 +3543,6 @@ def test_together_qwen():
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
                     'supports_image_output': True,
-                    'supports_inline_system_prompts': True,
                     'supports_thinking': True,
                     'openai_supports_encrypted_reasoning_content': True,
                     'openai_supports_reasoning': True,
@@ -3631,7 +3649,6 @@ def test_together_qwen():
                     'json_schema_transformer': OpenAIJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
-                    'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
@@ -3648,7 +3665,6 @@ def test_together_qwen():
                     'json_schema_transformer': OpenAIJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
-                    'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
@@ -3663,7 +3679,6 @@ def test_together_qwen():
                     'json_schema_transformer': OpenAIJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
-                    'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
@@ -3709,11 +3724,11 @@ def test_openai_compatible_groq_route_keeps_json_mode_unset():
                     'json_schema_transformer': _GptOssJsonSchemaTransformer,
                     'supports_json_schema_output': True,
                     'supports_json_object_output': True,
-                    'supports_inline_system_prompts': True,
                     'supported_native_tools': frozenset(
                         {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
                     ),
                     'default_framing_announcement': 'always',
+                    'openai_chat_supports_multiple_system_messages': False,
                     'supports_forced_tool_choice': False,
                     'ignore_streamed_leading_whitespace': True,
                     'may_tokenize_special_tokens_in_content': True,
@@ -4198,7 +4213,6 @@ def test_github_openai_bare_name():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -4326,7 +4340,6 @@ def test_vercel_openai_gpt():
             'supports_json_object_output': True,
             'supports_image_output': True,
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
-            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, ToolSearchTool, WebSearchTool}
@@ -4645,11 +4658,11 @@ def test_otari_gpt_oss_on_groq():
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'default_framing_announcement': 'always',
+            'openai_chat_supports_multiple_system_messages': False,
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'may_tokenize_special_tokens_in_content': True,
@@ -4714,11 +4727,11 @@ def test_stav_gpt_oss():
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'default_framing_announcement': 'always',
+            'openai_chat_supports_multiple_system_messages': False,
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'may_tokenize_special_tokens_in_content': True,
@@ -4735,7 +4748,6 @@ def test_stav_openai():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'supports_image_output': True,
-            'supports_inline_system_prompts': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
             'openai_supports_encrypted_reasoning_content': True,
@@ -4856,14 +4868,15 @@ def test_crusoe_harmony():
             'json_schema_transformer': _GptOssJsonSchemaTransformer,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
-            'supports_inline_system_prompts': True,
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
             'default_framing_announcement': 'always',
+            'openai_chat_supports_multiple_system_messages': False,
             'supports_forced_tool_choice': False,
             'ignore_streamed_leading_whitespace': True,
             'may_tokenize_special_tokens_in_content': True,
+            'supports_inline_system_prompts': True,
         }
     )
 

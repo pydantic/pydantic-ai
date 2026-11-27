@@ -60,12 +60,18 @@ class CrusoeProvider(_OpenAISDKProvider):
         }
 
         profile = None
+        route_profile: ModelProfile | None = None
 
         model_name = model_name.lower()
         if '/' in model_name:
             vendor, model_name = model_name.split('/', 1)
             if vendor in vendor_to_profile:
                 profile = vendor_to_profile[vendor](model_name)
+            if vendor == 'openai' and model_name.startswith('gpt-oss'):
+                # Crusoe's gpt-oss accepts a `system` message after a tool result, keeps it in place (the prompt-cache
+                # hit reaches past it) and follows it (checked live with `gpt-oss-120b`, 2026-11-24), unlike hosts
+                # whose chat template drops it, which is why `openai_model_profile` leaves the flag off.
+                route_profile = ModelProfile(supports_inline_system_prompts=True)
 
         # `json_schema_transformer` is a fallback (the model family's profile wins if it sets one), as
         # `CrusoeProvider` is always used with `OpenAIChatModel`, which used to unconditionally use
@@ -77,6 +83,7 @@ class CrusoeProvider(_OpenAISDKProvider):
             profile,
             ModelProfile(supports_json_schema_output=True, supports_json_object_output=True),
             special_token_route_profile('crusoe', model_name),
+            route_profile,
         )
 
     @overload

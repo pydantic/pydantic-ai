@@ -477,7 +477,7 @@ The name is recorded as the [`provider_name`][pydantic_ai.messages.ModelResponse
 
 Compatibility with one API does not imply support for the other or for every OpenAI feature. The provider picks a profile from the model name: a `vendor/model` name, as many gateways and Hugging Face repo ids use, gets the profile of the model family that vendor or organization makes, whatever its case, so `Qwen/Qwen3.8-27B` and `qwen/qwen3.8-27b` get the same profile and `openai/gpt-oss-120b` gets the gpt-oss one. Any other name gets the profile OpenAI-compatible APIs share, without the features only OpenAI's own API supports. If features such as `thinking` or structured output are ignored or rejected, configure the [model profile](#model-profile). A family profile can also leave out a feature the shared profile has: MiniMax documents no `response_format` on its [OpenAI-compatible API](https://platform.minimax.io/docs/api-reference/text-openai-api), so [`NativeOutput`](../output.md#native-output) raises a `UserError` for the MiniMax models the family profile describes, under `minimax/` and `MiniMaxAI/` names, here and on [LiteLLM](#litellm). Use [tool output](../output.md#tool-output) or [prompted output](../output.md#prompted-output) instead.
 
-[`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] also takes a `base_url`, but it's for OpenAI itself, or a transparent proxy to it: it assumes OpenAI's models and features, and sends OpenAI's encrypted reasoning and compaction items to the endpoint.
+[`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] also takes a `base_url`, but it's for OpenAI itself, or a transparent proxy to it: it assumes OpenAI's models and features, such as [`system` messages mid-conversation](#mid-conversation-system-messages), and sends OpenAI's encrypted reasoning and compaction items to the endpoint.
 
 ### Oracle Cloud Infrastructure (OCI) Generative AI {#oci-generative-ai}
 
@@ -655,3 +655,29 @@ Pydantic AI pairs each tool call with its result by the call's ID across the who
 Some models are served with a chat template (applied server-side, for example by [vLLM](https://docs.vllm.ai/), [LiteLLM](#litellm), or TGI) that accepts only a single system message at the start of the conversation and rejects additional ones. Sending more than one fails with a `400` error such as `System message must be at the beginning.` or `Conversation roles must alternate ...`, seen with some newer Qwen, Mistral, Gemma, and Command-R models. It's easy to hit without intending to, since more than one leading system message can be produced in several ways.
 
 Set `openai_chat_supports_multiple_system_messages=False` on the model's [`OpenAIModelProfile`][pydantic_ai.profiles.openai.OpenAIModelProfile] (as shown in [Model profile](#model-profile)) to merge the leading run of system messages into one, joined with two newlines, before the request is sent. The merge is lossless, so it's safe to enable whenever a backend rejects multiple system messages.
+
+### Mid-conversation system messages
+
+Many OpenAI-compatible servers accept a `system` message only at the start of the conversation, and reject one that comes later, such as after a tool result, with a `400` that may name no reason: `{'message': 'Invalid request', 'type': 'Bad Request', 'code': 400}`. So a [mid-conversation system prompt](../message-history.md#mid-conversation-system-prompts), such as a reminder a capability adds partway through a run, goes to these endpoints as a `<system>` block in a user message, and the system prompt says what the tag means. gpt-oss models get that explanation from the first request, as their [measurements](../message-history.md#what-each-rendering-gives-up) favor. The explanation is a system message of its own at the start of the conversation, so a Chat Completions endpoint that also accepts only one leading system message needs the merge described [above](#models-that-accept-only-one-leading-system-message). gpt-oss models get that merge by default, since their reference chat template keeps only the first system message.
+
+If your endpoint accepts a `system` message at any position, set [`supports_inline_system_prompts`][pydantic_ai.profiles.ModelProfile.supports_inline_system_prompts] to `True` in the model's profile to send the prompt as one:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+
+model = OpenAIChatModel(
+    'model_name',
+    provider=OpenAICompatibleProvider(
+        'my-service',
+        base_url='https://<openai-compatible-api-endpoint>',
+        api_key='your-api-key',
+    ),
+    profile=ModelProfile(supports_inline_system_prompts=True),
+)
+agent = Agent(model)
+```
+
+[`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] sends a `system` message, as OpenAI's API accepts one at any position, also when you give it another server's `base_url`. If that server rejects it, use [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider] as in [Other endpoints](#other-endpoints), or set the flag to `False`.

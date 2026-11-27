@@ -758,7 +758,6 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         supports_json_schema_output=True,
         supports_json_object_output=True,
         supports_image_output=supports_image_output,
-        supports_inline_system_prompts=True,
         supports_thinking=reasoning.supported,
         thinking_always_enabled=reasoning.always_enabled,
         openai_system_prompt_role=openai_system_prompt_role,
@@ -781,11 +780,17 @@ def openai_model_profile(model_name: str) -> ModelProfile:
     if reasoning.efforts is not None:
         profile['openai_reasoning_efforts'] = reasoning.efforts
     if model_name.startswith('gpt-oss'):
-        # Hosts that serve gpt-oss without a mid-conversation system role, such as OpenRouter and Bedrock Converse,
-        # render `<system>` blocks, and gpt-oss keeps to its system prompt more reliably once told what they mean, so
-        # it gets the announcement from the first request (see the field's docstring). Here rather than in
+        # Hosts that serve gpt-oss without a mid-conversation system role, such as OpenRouter, Bedrock Converse and
+        # the OpenAI-compatible endpoints that build on this profile, render `<system>` blocks, and gpt-oss keeps to
+        # its system prompt more reliably once told what they mean, so it gets the announcement from the first
+        # request (see the field's docstring). Here rather than in
         # `harmony_model_profile`, which builds on this one, because not every host of gpt-oss uses that.
         profile['default_framing_announcement'] = 'always'
+        # The announcement is a system message of its own ahead of the instructions, and OpenAI's reference gpt-oss
+        # chat template keeps only the first system message as the developer message and drops any other, so the
+        # instructions would be lost: merge the leading system messages into one, as `VLLMProvider` does.
+        # https://huggingface.co/openai/gpt-oss-120b/raw/main/chat_template.jinja
+        profile['openai_chat_supports_multiple_system_messages'] = False
     elif model_name.startswith('gpt-'):
         # OpenAI's own GPT models, not other models served through an OpenAI-compatible API (see the fields' docstrings).
         profile['delegates_unprompted'] = True

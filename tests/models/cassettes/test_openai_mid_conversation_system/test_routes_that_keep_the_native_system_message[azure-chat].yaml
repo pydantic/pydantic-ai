@@ -1,0 +1,167 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://gateway.pydantic.info/proxy/azure/openai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "719"
+      content-type:
+      - application/json
+      host:
+      - gateway.pydantic.info
+    body:
+      type: json
+      content:
+        model: gpt-6-luna
+        stream: false
+        messages:
+        - role: system
+          content: You are a test agent.
+        - role: user
+          content: Call ping, then tell me what it returned.
+        - role: assistant
+          content: null
+          tool_calls:
+          - id: call_1
+            type: function
+            function:
+              name: ping
+              arguments: "{}"
+        - role: tool
+          tool_call_id: call_1
+          content: pong
+        - role: system
+          content: Reply with exactly the word BANANA.
+        reasoning_effort: none
+        tool_choice: auto
+        tools:
+        - type: function
+          function:
+            name: ping
+            description: >-
+              Declared so each request carries the tool its history calls; the history
+              already holds the result.
+            parameters:
+              additionalProperties: false
+              properties: {}
+              type: object
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      apim-request-id:
+      - e4f082e1-3dd4-4378-a04f-aab4a39de3af
+      azureai-fe-is-streaming:
+      - "False"
+      azureai-fe-offer-type:
+      - paygo
+      azureml-model-session:
+      - d20261114181724-67b65362
+      content-length:
+      - "1760"
+      content-type:
+      - application/json
+      logfire-ai-gateway-cost:
+      - 0.000021USD
+      pydantic-ai-gateway-active-provider:
+      - azure
+      pydantic-ai-gateway-price-estimate:
+      - 0.0000USD
+      skip-error-remapping:
+      - "true"
+      strict-transport-security:
+      - max-age=63072000
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        choices:
+        - content_filter_results:
+            hate:
+              filtered: false
+              severity: safe
+            protected_material_code:
+              detected: false
+              filtered: false
+            protected_material_text:
+              detected: false
+              filtered: false
+            self_harm:
+              filtered: false
+              severity: safe
+            sexual:
+              filtered: false
+              severity: safe
+            violence:
+              filtered: false
+              severity: safe
+          finish_reason: stop
+          index: 0
+          logprobs: null
+          message:
+            annotations: []
+            content: BANANA
+            refusal: null
+            role: assistant
+        created: 1795553811
+        id: chatcmpl-EnrrHN8IJcUVUYALw8EFF770ofE2C
+        model: gpt-6-luna-2026-09-22
+        object: chat.completion
+        prompt_filter_results:
+        - prompt_index: 0
+          content_filter_results:
+            hate:
+              filtered: false
+              severity: safe
+            jailbreak:
+              detected: false
+              filtered: false
+            self_harm:
+              filtered: false
+              severity: safe
+            sexual:
+              filtered: false
+              severity: safe
+            violence:
+              filtered: false
+              severity: safe
+        routing:
+          serving_pipereplica: d20261114181724-67b65362-prefill-r0-dp0-prefill
+        service_tier: default
+        system_fingerprint: null
+        usage:
+          completion_tokens: 5
+          completion_tokens_details:
+            accepted_prediction_tokens: 0
+            audio_tokens: 0
+            reasoning_tokens: 0
+            rejected_prediction_tokens: 0
+          latency_checkpoint:
+            engine_tbt_ms: 8
+            engine_ttft_ms: 112
+            engine_ttlt_ms: 159
+            pre_inference_ms: 95
+            service_tbt_ms: 8
+            service_ttft_ms: 342
+            service_ttlt_ms: 382
+            user_visible_ttft_ms: 247
+          prompt_tokens: 185
+          prompt_tokens_details:
+            audio_tokens: 0
+            cache_write_tokens: 0
+            cached_tokens: 0
+          total_tokens: 190
+          logfire_ai_gateway:
+            cost: "0.000021"
+          pydantic_ai_gateway:
+            cost_estimate: "0.000021"
+  recorded_at: 2026-11-24T20:56:52.150612+00:00
