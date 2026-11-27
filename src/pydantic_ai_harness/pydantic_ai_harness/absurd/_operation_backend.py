@@ -23,6 +23,9 @@ _RAW_RESULT_KINDS = frozenset({'tool_return', 'tool_content_result'})
 _CONTROL_FLOW_KINDS = frozenset(
     {'approval_required', 'call_deferred', 'model_retry', 'validation_error', 'tool_failed', 'run_cancelled'}
 )
+# Nor is a `ToolReturn` whose `content` holds items that aren't `UserContent`, so the call runs again on replay.
+# Stored under the reserved key, it could not be told apart from a raw value an earlier version stored there.
+_UNCHECKPOINTED_KINDS = _CONTROL_FLOW_KINDS | {'tool_return_with_raw_content'}
 
 # Absurd steps take no per-operation options.
 _NO_CONFIG = RoleBasedOperationConfig[None](model=None, event=None, capability=None, tool=None)
@@ -125,7 +128,7 @@ class AbsurdOperationBackend(JournalCallableOperationBackend[None]):
         payload = await body()
         assert is_str_dict(payload)
         kind = payload.get('kind')
-        if kind in _CONTROL_FLOW_KINDS:
+        if kind in _UNCHECKPOINTED_KINDS:
             return payload
         # Fail on a result kind this backend doesn't know, rather than silently not checkpointing it.
         assert kind in _RAW_RESULT_KINDS, kind

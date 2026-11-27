@@ -5,11 +5,11 @@ import inspect
 import sys
 import textwrap
 from collections.abc import AsyncIterable, Awaitable, Callable
-from dataclasses import dataclass, fields
-from typing import Any, cast
+from dataclasses import dataclass, fields, replace
+from typing import Annotated, Any, cast
 
 import pytest
-from pydantic import TypeAdapter, ValidationError
+from pydantic import Discriminator, TypeAdapter, ValidationError
 
 from pydantic_ai import (
     Agent,
@@ -58,6 +58,7 @@ from pydantic_ai.durable_exec._toolset import (
     _CallDeferred,  # pyright: ignore[reportPrivateUsage]
     _ModelRetry,  # pyright: ignore[reportPrivateUsage]
     _RunCancelled,  # pyright: ignore[reportPrivateUsage]
+    _ToolContentResult,  # pyright: ignore[reportPrivateUsage]
     _ToolFailed,  # pyright: ignore[reportPrivateUsage]
     _ToolReturn,  # pyright: ignore[reportPrivateUsage]
     _ValidationError,  # pyright: ignore[reportPrivateUsage]
@@ -82,11 +83,13 @@ from pydantic_ai.messages import (
     DataCapabilityPart,
     DeferredToolRequestsEvent,
     DeferredToolResultsEvent,
+    DocumentUrl,
     EnqueuedMessagesEvent,
     FilePart,
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ImageUrl,
     InstructionBaselinePart,
     InstructionDeltaPart,
     InstructionPart,
@@ -130,9 +133,11 @@ from pydantic_ai.messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolCallPartDelta,
+    ToolReturn,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
+    UploadedFile,
     UserPromptPart,
 )
 from pydantic_ai.models import ModelRequestContext, ModelRequestParameters
@@ -1242,3 +1247,271 @@ async def test_run_cancelled_crosses_call_tool_result_boundary(exc_type: type[Ru
     with pytest.raises(exc_type, match='the sub-agent stopped') as exc_info:
         unwrap_recorded_tool_call_result(payload)
     assert type(exc_info.value) is exc_type
+
+
+_NON_USER_CONTENT_ITEMS = [
+    pytest.param({'kind': 'image-url', 'url': 'https://example.com/a.png'}, id='image-url'),
+    pytest.param(
+        {'kind': 'image-url', 'url': 'https://example.com/a.png', 'force_download': True}, id='image-url-download'
+    ),
+    pytest.param(
+        {'kind': 'image-url', 'url': 'https://example.com/a.png', 'force_download': False}, id='image-url-no-download'
+    ),
+    pytest.param({'kind': 'document-url', 'url': 'https://example.com/a.pdf'}, id='document-url'),
+    pytest.param({'kind': 'uploaded-file', 'file_id': 'file-abc', 'provider_name': 'openai'}, id='uploaded-file'),
+]
+
+
+@pytest.mark.parametrize('item', _NON_USER_CONTENT_ITEMS)
+async def test_durable_run_rejects_non_user_content_tool_return_content_like_plain_run(item: dict[str, Any]) -> None:
+    """A durable run rejects a `ToolReturn.content` item that isn't `UserContent` the same way a plain run does.
+
+    The recorded result keeps the item as the tool returned it, so the run checks the same `content`.
+    """
+
+    def tool() -> ToolReturn:
+        return ToolReturn('ok', content=[cast(Any, item)])
+
+    with pytest.raises(ValueError) as plain:
+        await Agent(TestModel(), name='compat', toolsets=[FunctionToolset([tool], id='functions')]).run('go')
+
+    durability = JournalDurability()
+    with pytest.raises(ValueError) as durable:
+        await Agent(
+            TestModel(), name='compat', toolsets=[FunctionToolset([tool], id='functions')], capabilities=[durability]
+        ).run('go')
+
+    assert type(durable.value) is type(plain.value) is ValueError
+    assert str(durable.value) == str(plain.value)
+    assert str(plain.value).startswith('`UserPromptPart.content[0]` must be a `UserContent` item, got `dict`.')
+    assert durability.recorded_names[-1] == 'compat__function_toolset__functions.call_tool:tool'
+
+
+async def test_valid_tool_return_content_payload_is_unchanged() -> None:
+    """A `ToolReturn` whose `content` is all `UserContent` records the payload it did before raw items were kept.
+
+    Not a VCR test: the recorded `CallToolResult` is internal to the durable journal and never reaches a
+    provider request, so no cassette could catch a change to it.
+    """
+
+    async def tool() -> ToolReturn:
+        return ToolReturn(
+            'ok',
+            content=[
+                'text',
+                ImageUrl('https://example.com/a.png', force_download=True),
+                DocumentUrl('https://example.com/a.pdf'),
+                UploadedFile(file_id='file-abc', provider_name='openai'),
+            ],
+        )
+
+    payload = JSON_CODEC.dump(CallToolResult, await wrap_tool_call_result(tool()))
+
+    assert payload == {
+        'result': {
+            'return_value': 'ok',
+            'content': [
+                'text',
+                {
+                    'url': 'https://example.com/a.png',
+                    'force_download': True,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': 'b86daf',
+                },
+                {
+                    'url': 'https://example.com/a.pdf',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'document-url',
+                    'media_type': 'application/pdf',
+                    'identifier': '390e3c',
+                },
+                {
+                    'file_id': 'file-abc',
+                    'provider_name': 'openai',
+                    'vendor_metadata': None,
+                    'kind': 'uploaded-file',
+                    'media_type': 'application/octet-stream',
+                    'identifier': 'a40aeb',
+                },
+            ],
+            'metadata': None,
+            'tools': None,
+            'kind': 'tool-return',
+        },
+        'kind': 'tool_return',
+        'content_file_digests': [
+            '2291a684072cc7df0374fd268a33c1bbd709bb1baa9dfcc7c2ed0549ef081190',
+            'cf02548c20cb09be0ba635500d901345ee3216a54282a4a945acd7d625272639',
+            'd3de7927d7c91630bdc6c64d48402fe9425e5286a16af0c6af005984b50759ad',
+        ],
+    }
+    assert unwrap_tool_call_result(JSON_CODEC.load(CallToolResult, payload)) == await tool()
+
+
+def test_recorded_tool_return_content_loads_unchanged() -> None:
+    """A `tool_return` result recorded before raw content items were kept still loads as it did.
+
+    Not a VCR test: it loads a recorded journal payload, which no provider request carries.
+    """
+    recorded = {
+        'result': {
+            'return_value': 'ok',
+            'content': [{'kind': 'image-url', 'url': 'https://example.com/a.png', 'force_download': True}],
+            'metadata': None,
+            'tools': None,
+            'kind': 'tool-return',
+        },
+        'kind': 'tool_return',
+        'content_file_digests': [],
+    }
+
+    loaded = JSON_CODEC.load(CallToolResult, recorded)
+
+    expected = ToolReturn('ok', content=[ImageUrl('https://example.com/a.png', force_download=True)])
+    assert unwrap_tool_call_result(loaded) == expected
+    assert unwrap_recorded_tool_call_result(loaded) == expected
+
+
+class _RepairToolReturnContent(AbstractCapability[Any]):
+    """Replaces each dict in a `ToolReturn`'s `content` with the `ImageUrl` it names."""
+
+    def __init__(self) -> None:
+        self.seen: list[str] = []
+
+    async def after_tool_execute(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, result: Any
+    ) -> Any:
+        assert isinstance(result, ToolReturn)
+        content = cast(list[Any], result.content)
+        self.seen.extend(type(item).__name__ for item in content)
+        return replace(result, content=[ImageUrl(item['url']) if isinstance(item, dict) else item for item in content])
+
+
+class _RecoverFromToolError(AbstractCapability[Any]):
+    def __init__(self) -> None:
+        self.errors: list[str] = []
+
+    async def on_tool_execute_error(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Exception
+    ) -> Any:
+        self.errors.append(type(error).__name__)
+        return 'recovered'
+
+
+def _mixed_content_tool() -> ToolReturn:
+    return ToolReturn(
+        'ok',
+        content=[
+            ImageUrl('https://example.com/kept.png'),
+            cast(Any, {'kind': 'image-url', 'url': 'https://example.com/a.png'}),
+        ],
+    )
+
+
+async def test_after_tool_execute_sees_tool_return_content_as_returned_in_durable_run() -> None:
+    """A durable run hands the tool-execution hooks the `ToolReturn.content` the tool returned, as a plain run does."""
+
+    async def run(*capabilities: AbstractCapability[Any]) -> tuple[list[str], list[ModelMessage]]:
+        repair = _RepairToolReturnContent()
+        agent = Agent(
+            TestModel(),
+            name='compat',
+            toolsets=[FunctionToolset([_mixed_content_tool], id='functions')],
+            capabilities=[repair, *capabilities],
+        )
+        result = await agent.run('go')
+        return repair.seen, result.all_messages()
+
+    plain_seen, plain_messages = await run()
+    durable_seen, durable_messages = await run(JournalDurability())
+
+    assert plain_seen == durable_seen == ['ImageUrl', 'dict']
+    user_parts = [
+        [part.content for part in message.parts if isinstance(part, UserPromptPart)]
+        for messages in (plain_messages, durable_messages)
+        for message in messages
+        if isinstance(message, ModelRequest) and any(isinstance(part, ToolReturnPart) for part in message.parts)
+    ]
+    expected = [[ImageUrl('https://example.com/kept.png'), ImageUrl('https://example.com/a.png')]]
+    assert user_parts == [expected, expected]
+
+
+async def test_on_tool_execute_error_is_not_called_for_tool_return_content_in_durable_run() -> None:
+    """`content` that isn't `UserContent` is rejected after the tool-execution hooks in both runs, so none sees it."""
+
+    async def run(*capabilities: AbstractCapability[Any]) -> tuple[list[str], str]:
+        recover = _RecoverFromToolError()
+        agent = Agent(
+            TestModel(),
+            name='compat',
+            toolsets=[FunctionToolset([_mixed_content_tool], id='functions')],
+            capabilities=[recover, *capabilities],
+        )
+        with pytest.raises(ValueError) as exc_info:
+            await agent.run('go')
+        return recover.errors, str(exc_info.value)
+
+    plain_errors, plain_message = await run()
+    durable_errors, durable_message = await run(JournalDurability())
+
+    assert plain_errors == durable_errors == []
+    assert durable_message == plain_message
+    assert plain_message.startswith('`UserPromptPart.content[1]` must be a `UserContent` item, got `dict`.')
+
+
+async def test_tool_return_with_non_user_content_payload_golden() -> None:
+    """A `ToolReturn` whose `content` holds an item that isn't `UserContent` records it as returned.
+
+    Not a VCR test: the recorded `CallToolResult` is internal to the durable journal and never reaches a
+    provider request, so no cassette could catch a change to it.
+    """
+    payload = JSON_CODEC.dump(CallToolResult, await wrap_tool_call_result(_async_value(_mixed_content_tool())))
+
+    assert payload == {
+        'result': {
+            'return_value': 'ok',
+            'content': [
+                {
+                    'url': 'https://example.com/kept.png',
+                    'force_download': False,
+                    'vendor_metadata': None,
+                    'kind': 'image-url',
+                    'media_type': 'image/png',
+                    'identifier': '4845bf',
+                },
+                {'value': {'kind': 'image-url', 'url': 'https://example.com/a.png'}, 'kind': 'raw_content_item'},
+            ],
+            'metadata': None,
+            'tools': None,
+        },
+        'kind': 'tool_return_with_raw_content',
+        'content_file_digests': ['121350cdb00ce0673d307818fd6600c69b6a889c5329d44defba578cd3e6a849'],
+    }
+    for codec in (JSON_CODEC, IDENTITY_CODEC):
+        recorded = codec.load(
+            CallToolResult, codec.dump(CallToolResult, await wrap_tool_call_result(_async_value(_mixed_content_tool())))
+        )
+        assert unwrap_tool_call_result(recorded) == _mixed_content_tool()
+        assert unwrap_recorded_tool_call_result(recorded) == _mixed_content_tool()
+
+    # A worker predating this variant fails to decode it rather than reading it as something else.
+    earlier_call_tool_result = Annotated[
+        _ApprovalRequired
+        | _CallDeferred
+        | _ModelRetry
+        | _ValidationError
+        | _ToolReturn
+        | _ToolContentResult
+        | _ToolFailed
+        | _RunCancelled,
+        Discriminator('kind'),
+    ]
+    with pytest.raises(ValidationError):
+        JSON_CODEC.load(earlier_call_tool_result, payload)
+
+
+async def _async_value(value: Any) -> Any:
+    return value

@@ -39,7 +39,14 @@ from pydantic_ai.exceptions import (
     ToolFailed,
     UserError,
 )
-from pydantic_ai.messages import InstructionPart, ToolReturn, ToolReturnContent, _RecordsContentFiles  # pyright: ignore[reportPrivateUsage]
+from pydantic_ai.messages import (
+    _USER_CONTENT_TYPES,  # pyright: ignore[reportPrivateUsage]
+    InstructionPart,
+    ToolReturn,
+    ToolReturnContent,
+    UserContent,
+    _RecordsContentFiles,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.tools import (
     AgentDepsT,
     RunContext,
@@ -467,6 +474,79 @@ class _ToolContentResult(_RecordsContentFiles):
     kind: Literal['tool_content_result'] = 'tool_content_result'
 
 
+@dataclass
+class _RawContentItem:
+    """A `ToolReturn.content` item that isn't `UserContent`, kept as the tool returned it."""
+
+    value: Any
+    _: KW_ONLY
+    kind: Literal['raw_content_item'] = 'raw_content_item'
+
+
+def _content_item_discriminator(value: Any) -> str:
+    if isinstance(value, _RawContentItem) or (is_str_dict(value) and value.get('kind') == 'raw_content_item'):
+        return 'raw'
+    return 'content'
+
+
+_ContentItem = Annotated[
+    Annotated[UserContent, Tag('content')] | Annotated[_RawContentItem, Tag('raw')],
+    Discriminator(_content_item_discriminator),
+]
+
+
+@dataclass
+class _ToolReturnWithRawContentResult:
+    """The fields of a `ToolReturn` whose `content` holds items that aren't `UserContent`."""
+
+    return_value: ToolReturnContent
+    _: KW_ONLY
+    content: list[_ContentItem]
+    metadata: Any = None
+    tools: list[str] | None = None
+
+
+@dataclass
+class _ToolReturnWithRawContent(_RecordsContentFiles):
+    # Emitted only for a `ToolReturn` whose `content` holds an item that isn't `UserContent`. Loading
+    # `ToolReturn.content` validates each item as `UserContent`, which would turn a dict shaped like a file
+    # part into that part; this keeps such items as the tool returned them, so the run sees the same
+    # `content` as a plain run and rejects it the same way. Workers predating this variant cannot decode
+    # it, but the run fails on such content either way; every other result keeps its existing shape.
+    _content_field: ClassVar[str] = 'result'
+
+    result: _ToolReturnWithRawContentResult
+    _: KW_ONLY
+    kind: Literal['tool_return_with_raw_content'] = 'tool_return_with_raw_content'
+
+
+def _record_tool_return(result: ToolReturn[Any]) -> _ToolReturn | _ToolReturnWithRawContent:
+    content = result.content
+    if (
+        isinstance(content, str)
+        or not isinstance(content, Sequence)
+        or all(isinstance(item, _USER_CONTENT_TYPES) for item in content)
+    ):
+        return _ToolReturn(result=result)
+    return _ToolReturnWithRawContent(
+        result=_ToolReturnWithRawContentResult(
+            return_value=result.return_value,
+            content=[item if isinstance(item, _USER_CONTENT_TYPES) else _RawContentItem(item) for item in content],
+            metadata=result.metadata,
+            tools=result.tools,
+        )
+    )
+
+
+def _tool_return_with_raw_content(result: _ToolReturnWithRawContentResult) -> ToolReturn[Any]:
+    return ToolReturn(
+        result.return_value,
+        content=[item.value if isinstance(item, _RawContentItem) else item for item in result.content],
+        metadata=result.metadata,
+        tools=result.tools,
+    )
+
+
 CallToolResult = Annotated[
     _ApprovalRequired
     | _CallDeferred
@@ -474,6 +554,7 @@ CallToolResult = Annotated[
     | _ValidationError
     | _ToolReturn
     | _ToolContentResult
+    | _ToolReturnWithRawContent
     | _ToolFailed
     | _RunCancelled,
     Discriminator('kind'),
@@ -489,6 +570,8 @@ private. Payloads journaled by earlier versions stay loadable.
 async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
     try:
         result = await coro
+        if isinstance(result, ToolReturn):
+            return _record_tool_return(cast(ToolReturn[Any], result))
         if is_str_dict(result) and result.get('kind') == 'tool-return':
             return _ToolContentResult(result=result)
         return _ToolReturn(result=result)
@@ -520,6 +603,8 @@ async def wrap_tool_call_result(coro: Awaitable[Any]) -> CallToolResult:
 def unwrap_tool_call_result(result: CallToolResult) -> Any:
     if isinstance(result, _ToolReturn | _ToolContentResult):
         return result.result
+    if isinstance(result, _ToolReturnWithRawContent):
+        return _tool_return_with_raw_content(result.result)
     if isinstance(result, _ApprovalRequired):
         raise ApprovalRequired(metadata=result.metadata)
     if isinstance(result, _CallDeferred):
@@ -661,6 +746,7 @@ def unwrap_recorded_tool_call_result(result: Any) -> Any:
         result,
         _ToolReturn
         | _ToolContentResult
+        | _ToolReturnWithRawContent
         | _ApprovalRequired
         | _CallDeferred
         | _ModelRetry

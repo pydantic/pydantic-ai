@@ -46,12 +46,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.tools import RunContext
+from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ExternalToolset, FunctionToolset
 from pydantic_ai_harness.absurd import AbsurdDurability
 from pydantic_ai_harness.absurd._operation_backend import (
-    _CONTROL_FLOW_KINDS,  # pyright: ignore[reportPrivateUsage]
     _RAW_RESULT_KINDS,  # pyright: ignore[reportPrivateUsage]
+    _UNCHECKPOINTED_KINDS,  # pyright: ignore[reportPrivateUsage]
 )
 from tests.harness._rate_limited_model import rate_limited_once
 
@@ -490,7 +490,7 @@ class TestToolResults:
     def test_every_core_result_kind_is_classified(self) -> None:
         # A result kind core adds must be sorted into checkpointed or not before it can reach a task.
         kinds = set(TypeAdapter(CallToolResult).json_schema()['discriminator']['mapping'])
-        assert kinds == _RAW_RESULT_KINDS | _CONTROL_FLOW_KINDS
+        assert kinds == _RAW_RESULT_KINDS | _UNCHECKPOINTED_KINDS
 
     async def test_model_retry_is_not_checkpointed_and_the_tool_reruns_on_replay(self, absurd: AsyncAbsurd) -> None:
         model_calls = {'calls': 0}
@@ -509,6 +509,49 @@ class TestToolResults:
             first = await agent.run('go')
         # The `ModelRetry` propagates out of the step, so nothing is stored.
         assert list(await checkpoints(absurd, ctx.task_id)) == ['retry__model.request', 'retry__model.request#2']
+        async with reenter_running_task(absurd, ctx.task_id):
+            second = await agent.run('go')
+
+        # Both model responses come from their checkpoints; only the tool runs again.
+        assert first.output == second.output == 'done'
+        assert model_calls['calls'] == tool_calls['calls'] == 2
+
+    async def test_tool_return_with_non_user_content_is_not_checkpointed_and_the_tool_reruns_on_replay(
+        self, absurd: AsyncAbsurd
+    ) -> None:
+        model_calls = {'calls': 0}
+        tool_calls = {'calls': 0}
+        toolset = FunctionToolset(id='tools')
+
+        @toolset.tool_plain
+        def lookup() -> ToolReturn:
+            tool_calls['calls'] += 1
+            return ToolReturn(
+                return_value='value',
+                # Deliberately not `UserContent`: this is the content whose call isn't checkpointed.
+                content=[{'kind': 'image-url', 'url': 'https://example.com/a.png'}],  # pyright: ignore[reportArgumentType]
+            )
+
+        class RepairContent(AbstractCapability[object]):
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[object],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: object,
+                result: object,
+            ) -> object:
+                assert isinstance(result, ToolReturn)
+                return ToolReturn(return_value='value', content=['repaired'])
+
+        model = _tool_calling_model(ToolCallPart('lookup'), counter=model_calls)
+        agent = Agent(model, name='raw', toolsets=[toolset], capabilities=[RepairContent(), AbsurdDurability()])
+
+        async with running_task_context(absurd) as ctx:
+            first = await agent.run('go')
+        # Its `ToolReturn.content` holds an item that isn't `UserContent`, so the call's result is not stored.
+        assert list(await checkpoints(absurd, ctx.task_id)) == ['raw__model.request', 'raw__model.request#2']
         async with reenter_running_task(absurd, ctx.task_id):
             second = await agent.run('go')
 

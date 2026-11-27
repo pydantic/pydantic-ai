@@ -117,6 +117,7 @@ it runs in the task handler on every attempt, so keep it deterministic and free 
 These are not checkpointed and run again on replay:
 
 - a tool call that raises `ModelRetry`, `ToolFailed`, `CallDeferred`, or `ApprovalRequired`;
+- a tool call whose `ToolReturn.content` holds items that aren't `UserContent`;
 - tools from a `DynamicToolset`.
 
 ## Constraints

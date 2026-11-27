@@ -88,7 +88,11 @@ def _completed_tool_result(operation_id: object, payload: object) -> bool:
     """Whether a wrapped tool result represents a completed call rather than control flow."""
     if not isinstance(operation_id, ToolsetCallToolId | ToolsetValidateToolArgumentsId):
         return True
-    return is_object_dict(payload) and payload.get('kind') in {'tool_return', 'tool_content_result'}
+    return is_object_dict(payload) and payload.get('kind') in {
+        'tool_return',
+        'tool_content_result',
+        'tool_return_with_raw_content',
+    }
 
 
 class RenderBoundOperation(
