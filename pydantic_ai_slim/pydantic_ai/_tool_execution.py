@@ -1245,6 +1245,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 tool_name=call.tool_name,
                 content=DEFERRED_CALL_FINAL_ALREADY_PROCESSED,
                 tool_call_id=call.tool_call_id,
+                ui_visibility=call.ui_visibility,
             )
             self.output_parts.append(part)
             yield _messages.FunctionToolResultEvent(part)

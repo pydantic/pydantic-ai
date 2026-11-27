@@ -152,7 +152,7 @@ async def test_calls_deferred_while_running_get_results_in_the_response_order():
     def start_export() -> str:
         raise CallDeferred
 
-    @agent.tool_plain
+    @agent.tool_plain(ui_visibility='private')
     def delete_file(path: str) -> str:
         raise ApprovalRequired
 
@@ -161,11 +161,12 @@ async def test_calls_deferred_while_running_get_results_in_the_response_order():
     last_request = result.all_messages()[-1]
     assert isinstance(last_request, ModelRequest)
     assert [
-        (part.tool_call_id, part.content, part.outcome)
+        (part.tool_call_id, part.content, part.outcome, part.ui_visibility)
         for part in last_request.parts
         if isinstance(part, ToolReturnPart)
     ] == [
-        ('call_output', 'Final result processed.', 'success'),
-        ('call_export', DEFERRED_RESULT, 'success'),
-        ('call_delete', DEFERRED_RESULT, 'success'),
+        ('call_output', 'Final result processed.', 'success', None),
+        ('call_export', DEFERRED_RESULT, 'success', None),
+        # The result keeps its call's `ui_visibility`, as every return built from a call does.
+        ('call_delete', DEFERRED_RESULT, 'success', 'private'),
     ]
