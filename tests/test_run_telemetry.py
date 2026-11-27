@@ -7,13 +7,16 @@ These are unit tests, not VCR tests: what they check is span attributes and the 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
-from opentelemetry.trace import INVALID_SPAN, Tracer
-from opentelemetry.util.types import AttributeValue
+from opentelemetry.context import Context
+from opentelemetry.trace import INVALID_SPAN, Link, Span, SpanKind, Tracer, TracerProvider as ApiTracerProvider
+from opentelemetry.util._decorator import _agnosticcontextmanager  # pyright: ignore[reportPrivateUsage]
+from opentelemetry.util.types import Attributes, AttributeValue
 
 from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai.capabilities import (
@@ -386,6 +389,52 @@ async def test_tool_call_span_is_invalid_in_a_sub_agent_run_inside_a_parent_tool
     await parent.run('go')
 
     assert seen == {'for_run': INVALID_SPAN, 'before_run': INVALID_SPAN, 'wrap_run': INVALID_SPAN}
+
+
+class LeavesTheCurrentSpanTracer(Tracer):
+    """Yields `INVALID_SPAN` without making it current, as no-op tracers on older `opentelemetry-api` versions do."""
+
+    def start_span(self, *args: Any, **kwargs: Any) -> Span:
+        return INVALID_SPAN
+
+    @_agnosticcontextmanager
+    def start_as_current_span(
+        self,
+        name: str,
+        context: Context | None = None,
+        kind: SpanKind = SpanKind.INTERNAL,
+        attributes: Attributes = None,
+        links: Sequence[Link] | None = None,
+        start_time: int | None = None,
+        record_exception: bool = True,
+        set_status_on_exception: bool = True,
+        end_on_exit: bool = True,
+    ) -> Iterator[Span]:
+        yield INVALID_SPAN
+
+
+class LeavesTheCurrentSpanTracerProvider(ApiTracerProvider):
+    def get_tracer(self, *args: Any, **kwargs: Any) -> Tracer:
+        return LeavesTheCurrentSpanTracer()
+
+
+async def test_a_sub_agent_whose_tracer_opens_no_span_does_not_write_to_its_parents_tool_span(
+    instrumented: Instrumented,
+):
+    """The child binds the span its own tool call opened, not whichever span is current, here the parent's."""
+    parent_instrumentation, exporter = instrumented(False)
+    child_settings = InstrumentationSettings(tracer_provider=LeavesTheCurrentSpanTracerProvider(), include_content=True)
+    child = agent_with_tool(Instrumentation(settings=child_settings))
+    parent = Agent(TestModel(call_tools=['delegate']), capabilities=[parent_instrumentation])
+
+    @parent.tool_plain
+    async def delegate() -> str:
+        return (await child.run('go')).output
+
+    await parent.run('go')
+
+    assert spans_with(exporter, 'example.marked') == []
+    assert spans_with(exporter, 'example.marked_in_body') == []
 
 
 async def test_tool_call_span_is_invalid_in_a_realtime_sessions_before_run(instrumented: Instrumented):
