@@ -4,6 +4,8 @@ import os
 import sys
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from functools import partial
+from typing import TypeVar
 
 from anyio import CancelScope
 from rich.console import Console
@@ -21,6 +23,8 @@ from pydantic_ai_pax.runtime.imported_sessions import ImportSource
 from pydantic_ai_pax.runtime.launch import launch_session_id
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from pydantic_ai_pax.runtime.workspace_trust import undecided_notice
+
+DepsT = TypeVar('DepsT')
 
 
 @asynccontextmanager
@@ -44,7 +48,8 @@ async def run_headless(
     project: ProjectSettings,
     resume: str | None = None,
     resume_from: ImportSource | None = None,
-    agent: AbstractAgent[None, object] | None = None,
+    agent: AbstractAgent[DepsT, object] | None = None,
+    deps: DepsT = None,
     session_id: str | None = None,
     fork_session: bool = False,
 ) -> int:
@@ -52,7 +57,7 @@ async def run_headless(
 
     `resume_from` imports the `resume` session from Claude Code or Codex first.
 
-    A supplied `agent` runs without any plugins, like `chat(..., load_plugins=False)`.
+    A supplied `agent` runs with `deps` and without any plugins, like `chat(..., load_plugins=False)`.
     `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
     """
     if resume == '':
@@ -61,15 +66,13 @@ async def run_headless(
     session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork_session)
     _report_pending(project)
     load_plugins = agent is None
-    agent = create_agent() if agent is None else agent
-    if settings.model is None and agent.model is None:
+    stock = create_agent() if agent is None else None
+    if settings.model is None and (stock.model if stock is not None else agent and agent.model) is None:
         raise ValueError('Choose a model with -m PROVIDER:NAME')
     reason: SessionEndReason = 'error'
     with open(os.devnull, 'w', encoding='utf-8') as sink:
-        shell = create_shell(
-            agent,
-            deps=None,
-            plugins=(),
+        create = partial(
+            create_shell,
             usage_limits=UsageLimits(request_limit=settings.request_limit),
             console=Console(file=sink, force_terminal=False),
             settings=settings,
@@ -79,10 +82,16 @@ async def run_headless(
             headless=True,
             load_plugins=load_plugins,
         )
+        # Two calls, so each agent is typed with the deps it gets: the stock agent takes none.
+        if agent is not None:
+            shell = create(agent, deps=deps, plugins=())
+        else:
+            assert stock is not None
+            shell = create(stock, deps=None, plugins=())
         # Nobody is asked in a headless run, so a folder you never decided about stays untrusted.
         if (notice := undecided_notice(shell.session.trust)) is not None:
             print(notice, file=sys.stderr)
-        async with agent:
+        async with shell.agent:
             with shell.screen.bound(no_screen):  # pragma: no branch -- bound never suppresses exceptions.
                 try:
                     # Restore first, so plugins start with the conversation the user asked for.
@@ -118,7 +127,7 @@ async def run_headless(
     return 0
 
 
-async def _load_plugins(loader: SessionPlugins[None]) -> None:
+async def _load_plugins(loader: SessionPlugins[None] | SessionPlugins[DepsT]) -> None:
     """Load every enabled plugin but `ask_user`, skipping one that a plugin loaded before it includes."""
     # Skip before activation, even when a saved declaration overrides the built-in.
     for entry in loader.entries():

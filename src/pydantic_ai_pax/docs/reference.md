@@ -70,7 +70,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 |---|---|
 | `-m`, `--model MODEL` | Use this model for this run, without saving it |
 | `-p`, `--prompt TEXT` | Run one prompt without interaction and print only the answer; see [Headless mode](#headless-mode) |
-| `-a`, `--agent MODULE:ATTR` | Chat with your own Pydantic AI agent; see [Your own agent](#your-own-agent) |
+| `-a`, `--agent MODULE:ATTR` | Chat with your own Pydantic AI agent, or the agent and deps a factory returns; see [Your own agent](#your-own-agent) |
 | `--resume [SESSION-ID]` | Restore a saved session; no ID opens the browser |
 | `-c`, `--continue` | Restore the most recent saved session in this directory; see [Saved sessions](#saved-sessions-and-resume) |
 | `--resume-claude [SESSION-ID]`, `--resume-codex [SESSION-ID]` | Import and restore a Claude Code or Codex session |
@@ -3813,15 +3813,43 @@ instance instead of Pax's default agent. Pax appends the launch directory to
 resolves without installing it. It does so only when nothing installed has the
 module's top-level name. A module there whose top-level name is also installed
 resolves against the installed package instead, so it usually fails with "module
-not found". `ATTR` must
-name an instance, not a class; the agent runs with `deps=None`. For that session
+not found". `ATTR` names an
+agent instance, or a function that takes no arguments and returns an agent or an
+`(agent, deps)` tuple, for an agent with a `deps_type`:
+
+```python
+from dataclasses import dataclass
+
+from pydantic_ai import Agent, RunContext
+
+
+@dataclass
+class Deps:
+    api_key: str
+
+
+reviewer = Agent('anthropic:claude-sonnet-4-6', deps_type=Deps)
+
+
+@reviewer.tool
+def api_key_suffix(ctx: RunContext[Deps]) -> str:
+    return ctx.deps.api_key[-4:]
+
+
+def make_reviewer() -> tuple[Agent[Deps], Deps]:
+    return reviewer, Deps(api_key='...')
+```
+
+With that in `my_agents.py`, `pax --agent my_agents:make_reviewer` runs the agent with
+those deps. An agent named on its own runs with `deps=None`, so if its `deps_type` needs deps,
+Pax refuses it at launch, before any model request, and names the type. For that session
 only, no plugins load: no built-ins (including the stock coder tools), no saved or
 drop-in user plugins, and no project plugins, and `/plugins` reports that they are
 off. Nothing saved changes, so plain `pax` loads plugins as before. The agent
 keeps its own model unless `-m` or `CLAI_MODEL` selects another, and code mode
 starts off, whatever is saved; `/set run.code_mode true` turns it on. `-p`, `--resume`,
 and `--worktree` still apply; `config` and `plugins` subcommands reject `--agent`.
-To pass deps or plugins, write a launcher that calls `chat` (see
+To pass plugins, write a launcher that calls `chat` (see
 `customization.md`).
 
 ### Headless mode
