@@ -10,6 +10,7 @@ import re
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Literal
 
 import anyio
 from pydantic import JsonValue
@@ -1281,6 +1282,48 @@ class TestPausedSandboxCalls:
         # Each claimed call's reports follow straight after its start.
         assert sandbox_reports(events) == [('started', 'read_file'), ('finished', 'read_file')] * 3
 
+    async def test_denied_launch_is_reported_before_a_later_cold_call(self, tmp_path: Path) -> None:
+        """The stream can reach a denied launch's claim after the snippet has moved on, and before `run_code` settles."""
+        cold_started = anyio.Event()
+        lag = Hooks[object]()
+
+        @lag.on.event(SpeculativeCallClaimedEvent)
+        async def reach_claim_late(ctx: RunContext[object], event: SpeculativeCallClaimedEvent) -> None:
+            # A consumer still busy with an earlier event holds the stream back like this.
+            await cold_started.wait()
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                return ModelResponse(parts=[TextPart('done')])
+            # One compound statement, so eager execution starts it only once the tool call does.
+            code = 'if True:\n    try:\n        await read_file(path="b.py")\n    except Exception:\n        pass\n    await cold()\n'
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+        counters = SpeculationCounters()
+        (tmp_path / 'b.py').write_text('contents of b.py\n')
+        file_system = FileSystem()
+        sandbox = speculative_capabilities(counters, (file_system,))
+        agent: Agent[None, str] = Agent(
+            streamed(respond), capabilities=[file_system, lag, *sandbox, LocalWorkspace(tmp_path)]
+        )
+
+        @agent.tool_plain
+        async def cold() -> str:
+            """Run without speculating."""
+            cold_started.set()
+            return 'ran'
+
+        started, finished, _ = await run_shown(
+            agent, capabilities=[Hooks[None](before_tool_execute=pause_reads), HandleDeferredToolCalls(answer_inline)]
+        )
+
+        assert counters.hits == 1
+        assert [event.call.tool_name for event in started] == ['read_file', 'cold']
+        assert [(event.result.tool_name, event.result.outcome) for event in finished] == [
+            ('cold', 'success'),
+            ('read_file', 'denied'),
+        ]
+
     async def test_paused_launch_waits_for_its_claim(self) -> None:
         show = ShowSandboxCalls[None]()
         launch = ToolCallPart(tool_name='read_file', args={'path': 'a.py'}, tool_call_id='parent__spec_1')
@@ -1305,6 +1348,26 @@ class TestPausedSandboxCalls:
             )
             == 'settled'
         )
+
+    @pytest.mark.parametrize('state', ['pending', 'ready'])
+    async def test_paused_launch_evicted_before_its_claim_is_never_shown(
+        self, state: Literal['pending', 'ready']
+    ) -> None:
+        show = ShowSandboxCalls[None]()
+        launch = ToolCallPart(tool_name='read_file', args={'path': 'a.py'}, tool_call_id='parent__spec_1')
+
+        async def pause(args: dict[str, object]) -> str:
+            raise ApprovalRequired()
+
+        with pytest.raises(ApprovalRequired):
+            await show.wrap_tool_execute(
+                context(), call=launch, tool_def=ToolDefinition(name='read_file'), args={}, handler=pause
+            )
+        evicted = SpeculativeCallEvictedEvent(launch_id=launch.tool_call_id, wrapped_tool_name='read_file', state=state)
+        await show.on_event(context(), event=evicted)
+        # The evicted launch is forgotten, so a claim with its id reports nothing; emitting would
+        # fail, as this context has no stream.
+        await show.on_event(context(), event=claimed(ready=True, elapsed_ms=1, launch_id=launch.tool_call_id))
 
 
 async def test_guidance_mentions_raw_triple_quoted_multiline_shell_commands(tmp_path: Path) -> None:

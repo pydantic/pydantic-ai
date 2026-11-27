@@ -473,6 +473,29 @@ class SpeculativeExecution(AbstractCapability[AgentDepsT]):
 
 
 @dataclass
+class _Slot:
+    """The place in the stream a reported claim's reports move up to."""
+
+    call_id: str
+    expected: int
+    """How many reports `on_event` emitted for the claim."""
+    reports: list[AgentStreamEvent] = field(default_factory=list[AgentStreamEvent])
+
+
+def _releasable(item: AgentStreamEvent | _Slot) -> bool:
+    """An event, or a claim's slot once all of its reports are in."""
+    return not isinstance(item, _Slot) or len(item.reports) == item.expected
+
+
+def _released(item: AgentStreamEvent | _Slot, slots: dict[str, _Slot]) -> list[AgentStreamEvent]:
+    """What `item` holds; a released slot closes, so a later report with its id, such as the result, passes through."""
+    if not isinstance(item, _Slot):
+        return [item]
+    slots.pop(item.call_id, None)
+    return item.reports
+
+
+@dataclass
 class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
     """Report tools called from inside `run_code` so they render like direct calls.
 
@@ -505,8 +528,8 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
         default_factory=dict[str, tuple[object, str]], init=False, repr=False
     )
     """Each settled `run_code`'s value and fallback error, for paused launches claimed after it settled."""
-    _reported: set[str] = field(default_factory=set[str], init=False, repr=False)
-    """Claiming call ids `on_event` reported, whose reports the stream moves up to their claim."""
+    _reported: dict[str, int] = field(default_factory=dict[str, int], init=False, repr=False)
+    """Claiming call ids `on_event` reported, with how many reports the stream moves up to their claim."""
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> 'ShowSandboxCalls[AgentDepsT]':
         """Keep held launches per run."""
@@ -625,7 +648,7 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
             call_id = event.nested_tool_call_id
             if event.launch_id in self._launched:
                 call, result = self._launched.pop(event.launch_id)
-                self._reported.add(call_id)
+                self._reported[call_id] = 2
                 await ctx.emit(SandboxCallStartedEvent(tool_call_id=call_id, call=replace(call, tool_call_id=call_id)))
                 await ctx.emit(
                     SandboxCallFinishedEvent(tool_call_id=call_id, result=replace(result, tool_call_id=call_id))
@@ -637,59 +660,52 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
                 nested = NESTED_CALL.fullmatch(call_id)
                 settled = self._settled.get(nested['parent']) if nested is not None else None
                 if settled is None:
+                    # Its result comes when `run_code` settles, so only the start moves up to the claim.
+                    self._reported[call_id] = 1
                     await ctx.emit(SandboxCallStartedEvent(tool_call_id=call_id, call=claimed))
                     self._deferred[call_id] = claimed
                 else:
-                    self._reported.add(call_id)
+                    self._reported[call_id] = 2
                     await ctx.emit(SandboxCallStartedEvent(tool_call_id=call_id, call=claimed))
                     await self._close(ctx, claimed, *settled)
 
     async def wrap_run_event_stream(
         self, ctx: RunContext[AgentDepsT], *, stream: AsyncIterable[AgentStreamEvent]
     ) -> AsyncIterable[AgentStreamEvent]:
-        """Hold the sandbox call reports after a reported claim until its two reports arrive, then yield those first.
+        """Hold the sandbox call reports after a reported claim until its reports arrive, then yield those first.
 
         Listeners run before this wrapper sees an event, so a reported claim's reports are already
         queued behind it. Other events pass straight through.
         """
-        held: deque[AgentStreamEvent | list[AgentStreamEvent]] = deque()
-        slots: dict[str, list[AgentStreamEvent]] = {}
+        held: deque[AgentStreamEvent | _Slot] = deque()
+        slots: dict[str, _Slot] = {}
         async for event in stream:
             if not isinstance(event, SandboxCallStartedEvent | SandboxCallFinishedEvent):
                 yield event
                 self._open_slot(event, held, slots)
                 continue
             if event.tool_call_id in slots:
-                slots[event.tool_call_id].append(event)
+                slots[event.tool_call_id].reports.append(event)
             else:
                 held.append(event)
-            while held and self._releasable(held[0]):
-                for released in self._released(held.popleft()):
+            while held and _releasable(held[0]):
+                for released in _released(held.popleft(), slots):
                     yield released
         # A stream that ends before a claim's reports arrive still delivers what it held.
         while held:
-            for released in self._released(held.popleft()):
+            for released in _released(held.popleft(), slots):
                 yield released
 
     def _open_slot(
         self,
         event: AgentStreamEvent,
-        held: deque[AgentStreamEvent | list[AgentStreamEvent]],
-        slots: dict[str, list[AgentStreamEvent]],
+        held: deque[AgentStreamEvent | _Slot],
+        slots: dict[str, _Slot],
     ) -> None:
-        """Queue a slot for a reported claim's two reports, ahead of the reports that follow it."""
+        """Queue a slot for a reported claim's reports, ahead of the reports that follow it."""
         if isinstance(event, SpeculativeCallClaimedEvent) and event.nested_tool_call_id in self._reported:
-            self._reported.discard(event.nested_tool_call_id)
-            held.append(slots.setdefault(event.nested_tool_call_id, []))
-
-    @staticmethod
-    def _releasable(item: AgentStreamEvent | list[AgentStreamEvent]) -> bool:
-        """An event, or a claim's slot once both of its reports are in."""
-        return not isinstance(item, list) or len(item) == 2
-
-    @staticmethod
-    def _released(item: AgentStreamEvent | list[AgentStreamEvent]) -> list[AgentStreamEvent]:
-        return item if isinstance(item, list) else [item]
+            call_id = event.nested_tool_call_id
+            held.append(slots.setdefault(call_id, _Slot(call_id, self._reported.pop(call_id))))
 
 
 def speculative_capabilities(
