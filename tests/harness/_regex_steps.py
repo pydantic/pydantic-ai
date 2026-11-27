@@ -366,7 +366,7 @@ class StepCounter:
 
 _SAMPLE = 'aA0 _-./:=@"\'<>\\\n\t!#\x1b\x00\u200b'
 """Characters to try in a set or wildcard, besides the ones a pattern names."""
-_GROWTH_LIMIT = 3
+GROWTH_LIMIT = 3
 """Doubling the input doubles a linear scan's added steps and quadruples a quadratic one's; this sits between."""
 
 
@@ -386,6 +386,8 @@ class Shape:
 class _Walk:
     units: set[str] = field(default_factory=set[str])
     nodes: int = 0
+    admitting: bool = False
+    """Whether each one-character lookbehind carries a character it admits into the units after it."""
 
 
 def _representatives(node: Node, test: Callable[[str], bool]) -> list[str]:
@@ -406,7 +408,7 @@ def _representatives(node: Node, test: Callable[[str], bool]) -> list[str]:
 def _walk(nodes: list[Node], flags: int, prefix: str, walk: _Walk) -> tuple[int, bool]:
     """Add the pump units of `nodes` to `walk`, carrying in the literal text before them; return reach and unboundedness."""
     reach, unbounded = 0, False
-    for node in nodes:
+    for index, node in enumerate(nodes):
         walk.nodes += 1
         test = character_test(node, flags)
         if node.name in _REPEATS:
@@ -441,9 +443,23 @@ def _walk(nodes: list[Node], flags: int, prefix: str, walk: _Walk) -> tuple[int,
             reach, unbounded, prefix = reach + body_reach, unbounded or body_unbounded, ''
         elif node.name in ('ASSERT', 'ASSERT_NOT'):
             direction, body = _pair(node.argument)
-            body_reach, body_unbounded = _walk(_nodes(body), flags, '', walk)
+            body_nodes = _nodes(body)
+            body_reach, body_unbounded = _walk(body_nodes, flags, '', walk)
             reach += body_reach if _int(direction) == 1 else 0
             unbounded |= body_unbounded
+            # A one-character lookbehind lets an attempt start only after a character it admits, or at the start of
+            # the text. `(?<!\S)#` restarts at each `#` of ` # # #`, not of `###`, while `(?<!\S)(?:ab)*(?:ab)*c`
+            # backtracks through `abab` from the start. So the rest of the sequence is walked as is, and once more
+            # admitting at this lookbehind and every later one. That covers none of them admitting and all of them
+            # admitting with one extra walk per lookbehind; walking each mix of k lookbehinds would take 2^k walks.
+            behind = character_test(body_nodes[0], flags) if _int(direction) == -1 and len(body_nodes) == 1 else None
+            admits = [c for c in _SAMPLE if behind(c) == (node.name == 'ASSERT')] if behind is not None else []
+            if admits and walk.admitting:
+                prefix += admits[0]
+            elif admits:
+                rest = _Walk(admitting=True)
+                _walk(nodes[index + 1 :], flags, prefix + admits[0], rest)
+                walk.units |= rest.units
     walk.units.add(prefix)
     walk.units.discard('')
     return reach, unbounded
@@ -464,7 +480,7 @@ def linearity_failure(pattern: str, flags: int) -> str | None:
     finds, and stay within `4 * nodes * (reach + 1)` steps per character: a linear scan tries each node about once
     per character an attempt reads. A pattern without an unbounded repeat reads at most `reach` characters per
     attempt, so that one scan is enough. One with an unbounded repeat is also scanned at twice and four times that
-    length, and must add no more than `_GROWTH_LIMIT` times as many steps for the second doubling as for the first.
+    length, and must add no more than `GROWTH_LIMIT` times as many steps for the second doubling as for the first.
     """
     counter = StepCounter(pattern, flags)
     compiled = re.compile(pattern, flags)
@@ -484,6 +500,6 @@ def linearity_failure(pattern: str, flags: int) -> str | None:
                 f'`StepCounter` disagrees with `re` on {text!r}'
             )
             steps.append(scan.steps)
-        if pattern_shape.unbounded and steps[2] - steps[1] > _GROWTH_LIMIT * (steps[1] - steps[0]):
+        if pattern_shape.unbounded and steps[2] - steps[1] > GROWTH_LIMIT * (steps[1] - steps[0]):
             return f'{unit!r} * {repeats}, {2 * repeats}, {4 * repeats}: {steps} steps'
     return None
