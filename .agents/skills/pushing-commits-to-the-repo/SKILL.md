@@ -98,6 +98,7 @@ For a removed PR, comment that it is ready to re-enqueue once its current head m
 
 A merge-queue removal posts no comment and leaves the PR open. Detect it as a new `removed_from_merge_queue` event in `gh api --paginate repos/pydantic/pydantic-ai/issues/<number>/timeline` while the PR is still open; a merge logs the same event.
 Diagnose the failed jobs of the PR's newest `merge_group` run (`head_branch` `gh-readonly-queue/main/pr-<number>-<sha>`) as step 2 of "After you push — the loop" requires.
+A merge group cancels its run at the first failed job, so a cancelled job there neither passed nor failed: the job that failed first is the cause.
 After diagnosing, post a PR comment that names each failed job and its cause, with evidence: your fix commit, a known flake, or a failure already on `main`.
 [Who merges](#who-merges) says whether you re-enqueue it.
 
