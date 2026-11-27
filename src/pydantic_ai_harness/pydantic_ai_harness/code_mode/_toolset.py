@@ -6,8 +6,8 @@ import inspect
 import keyword
 import re
 import warnings
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Mapping, Sequence
+from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
@@ -609,6 +609,16 @@ def _module_stubs(modules: Mapping[str, ExternalModule]) -> dict[str, str | None
     return stubs
 
 
+# Modules Monty bundles: `import math` reaches Monty's own module, never an external one of that name. Monty
+# 1.7's `sys.builtin_module_names`, plus `time`, which it bundles but leaves out of that list.
+_MONTY_MODULES = frozenset(
+    {
+        'asyncio', 'base64', 'binascii', 'bisect', 'collections', 'dataclasses', 'datetime', 'functools',
+        'itertools', 'json', 'math', 'os', 'pathlib', 'random', 're', 'sys', 'time', 'typing', 'unicodedata',
+    }
+)  # fmt: skip
+
+
 def check_external_modules(modules: Mapping[str, ExternalModule]) -> None:
     """Reject module names the sandbox can't import, and modules without the stubs the model and type checker read."""
     for name in modules:
@@ -616,6 +626,11 @@ def check_external_modules(modules: Mapping[str, ExternalModule]) -> None:
             raise UserError(
                 f'`external_modules` key {name!r} is not a module name. '
                 'Use a top-level name and nest submodules as `ExternalModule` attributes.'
+            )
+        if name in _MONTY_MODULES:
+            raise UserError(
+                f'`external_modules` key {name!r} names a module Monty already provides, '
+                'so the sandbox would import that one. Pick another name.'
             )
     if missing := [name for name, stubs in _module_stubs(modules).items() if not stubs]:
         raise UserError(
@@ -867,6 +882,19 @@ def _started_calls_note(execution: RunCodeExecution) -> str:
     if not execution.nested_calls:
         return ''
     return f'\n\n{_describe_started_calls(execution.nested_calls, execution.nested_returns)}'
+
+
+def _refuse_after_output(execution: RunCodeExecution) -> None:
+    """Refuse a sandbox call once the code submitted the final output, or had a submission blocked.
+
+    Code that caught the stop doesn't get to run more functions, including after a submission an output
+    guardrail blocked, which only `_submit_output` records.
+    """
+    if execution.output_submission is not None or isinstance(execution.run_ending_error, OutputBlocked):
+        raise RuntimeError(
+            'This code already submitted the final output, or had a submission blocked, so it cannot call more '
+            'functions.'
+        )
 
 
 def _raise_run_ending_error(execution: RunCodeExecution) -> None:
@@ -1617,8 +1645,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             # Already converted in `__post_init__`; this narrows the field's type.
             os_handler=as_os_handler(self.os_access),
             module_functions=self._module_functions,
-            # Eager statements run while the model streams; a host function waits for a parallel input guard too.
-            module_calls_allowed=partial(input_guardrails_allow, ctx),
+            module_call_guard=partial(self._module_call_guard, ctx, execution),
         )
 
         async def run_feed() -> MontyComplete | TurnComplete:
@@ -1777,13 +1804,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         Refusing here means no task is created; the executor hands the error to the sandbox at
         the call site, so calls that already completed keep their recorded results.
         """
-        if execution.output_submission is not None or isinstance(execution.run_ending_error, OutputBlocked):
-            # Code that caught the stop doesn't get to run more tools after submitting, including a submission an
-            # output guardrail blocked, which only `_submit_output` records.
-            raise RuntimeError(
-                'This code already submitted the final output, or had a submission blocked, so it cannot call more '
-                'functions.'
-            )
+        _refuse_after_output(execution)
         original_name = tool.sanitized_to_original.get(sandbox_name, sandbox_name)
         tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
         args = schema_arg_names(tool.callable_defs[sandbox_name], kwargs)
@@ -1798,6 +1819,22 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             if claimed is not None:
                 return speculation.adopt(ctx, execution, claimed, call_part)
         return self._run_tool_call(ctx, execution, tool_manager, sandbox_name, call_part)
+
+    @asynccontextmanager
+    async def _module_call_guard(
+        self, ctx: RunContext[AgentDepsT], execution: RunCodeExecution, name: str
+    ) -> AsyncGenerator[None]:
+        """Refuse a host module call a tool call would be refused for, and bracket it for speculation.
+
+        Eager statements run while the model streams, so a module function waits for a parallel input
+        guard's verdict as a tool call does. It may write state a speculative read already saw, so it is
+        an unsafe call.
+        """
+        _refuse_after_output(execution)
+        if not await input_guardrails_allow(ctx):
+            raise RuntimeError(f'{name!r} did not run: an input guardrail did not allow the prompt.')
+        with self.speculation.unsafe_call() if self.speculation is not None else nullcontext():
+            yield
 
     async def _run_tool_call(
         self,

@@ -6,9 +6,9 @@ import asyncio
 import re
 
 import pytest
-from pydantic_monty import ExternalModule
+from pydantic_monty import AsyncMonty, ExternalModule, MontyComplete
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ToolOutput
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -127,10 +127,27 @@ async def test_wrong_arguments_to_an_async_function_are_raised_at_the_call_site(
     Only the first snippet is type-checked, so the second reaches the function with the wrong arguments.
     """
     code = (
-        'kwargs = {"unknown": 1}\ntry:\n    await warehouse.fx_rate(**kwargs)\n'
+        'kwargs = {"unknown": 1}\ntry:\n    call = warehouse.fx_rate(**kwargs)\n'
         '    r = "called"\nexcept TypeError:\n    r = "caught"\nr'
     )
     assert (await _agent('import warehouse', code).run('go')).output == "'caught'"
+
+
+async def test_code_that_catches_the_output_stop_calls_no_module_function() -> None:
+    """After submitting the final output, a module call is refused as a tool call is."""
+    code = (
+        'import warehouse\ntry:\n    submit_total(response=1)\nexcept RuntimeError:\n    pass\n'
+        'try:\n    warehouse.total(region="us")\nexcept RuntimeError as e:\n    print(e)'
+    )
+    agent = Agent(
+        _code_model(code),
+        output_type=ToolOutput(int, name='submit_total'),
+        capabilities=[CodeMode(allow_final_output=True, external_modules={'warehouse': WAREHOUSE})],
+    )
+    result = await agent.run('go')
+    assert result.output == 1
+    [returned] = [p.content for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    assert 'so it cannot call more functions.' in str(returned)
 
 
 async def test_stubs_type_check_the_snippet_and_describe_the_module() -> None:
@@ -179,3 +196,13 @@ async def test_stubs_type_check_the_snippet_and_describe_the_module() -> None:
 def test_modules_are_checked_when_the_agent_is_built(modules: dict[str, ExternalModule], message: str) -> None:
     with pytest.raises(UserError, match=re.escape(message)):
         CodeMode(external_modules=modules)
+
+
+async def test_names_monty_bundles_are_rejected() -> None:
+    """A module Monty bundles shadows an external one of the same name, so each name Monty reports is refused."""
+    async with AsyncMonty() as pool, pool.checkout() as session:
+        complete = await session.feed_start('import sys\nsys.builtin_module_names')
+    assert isinstance(complete, MontyComplete)
+    for name in [*complete.output, 'time']:
+        with pytest.raises(UserError, match=re.escape(f'key {name!r} names a module Monty already provides')):
+            CodeMode(external_modules={name: WAREHOUSE})

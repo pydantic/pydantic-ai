@@ -203,7 +203,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     and each call to one of its functions pauses the sandbox and runs that function on the host.
 
     Every module and submodule needs `stubs`: the `run_code` description shows them to the model,
-    and Monty's type checker reads them. A sync function runs in a worker thread and an async one
+    and Monty's type checker reads them. A name Monty bundles, such as `math`, is rejected. A sync
+    function runs in a worker thread (inline inside a Temporal workflow) and an async one
     on the event loop, concurrently with other async calls, like tools. An exception a function
     raises is raised at its call site in the sandbox. Calls into modules are not tool calls: they
     don't count toward `max_tool_calls` and don't appear in the message history.

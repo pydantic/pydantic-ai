@@ -20,7 +20,7 @@ import asyncio
 import inspect
 import sys
 from collections.abc import Awaitable, Callable, Container, Coroutine, Mapping
-from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, TypeVar, assert_never
@@ -533,8 +533,9 @@ class MontyExecutor:
     # Functions of the session's `external_modules`, by dotted name (see `module_functions`). Called
     # here rather than by Monty, so their async calls are deferred and settled like parallel tool calls.
     module_functions: Mapping[str, Callable[..., object]] = field(default_factory=dict[str, Callable[..., object]])
-    # Awaited before each module function runs; `False` raises at the call site instead, as a blocked tool call does.
-    module_calls_allowed: Callable[[], Awaitable[bool]] | None = None
+    # Entered around each module function call, by dotted name. Raising on entry refuses the call: the error is
+    # raised at the sandbox call site, as a refused tool call's is.
+    module_call_guard: Callable[[str], AbstractAsyncContextManager[None]] = lambda _name: nullcontext()
     # Awaited before deferred calls are resolved. Every call dispatched so far has started by then, so
     # a host can run the calls it collected from them as one batch, in dispatch order. That holds for
     # parallel dispatch only: under `global_sequential`, calls start after this.
@@ -651,29 +652,35 @@ class MontyExecutor:
 
         An exception it raises is raised at the sandbox call site, where the code can catch it.
         """
-        if self.module_calls_allowed is not None and not await self.module_calls_allowed():
-            return await self._raise_in_sandbox(
-                snapshot,
-                RuntimeError(f'{snapshot.function_name!r} did not run: an input guardrail did not allow the prompt.'),
-            )
+        name = snapshot.function_name
         context = snapshot.trace_context()
         if not is_async_callable(function):
             # Bound first, so a host keyword such as `func` can't collide with `run_in_executor`'s own.
-            call = run_in_executor(partial(function, *snapshot.args, **snapshot.kwargs))
+            call = self._guarded(name, run_in_executor(partial(function, *snapshot.args, **snapshot.kwargs)))
             return await call_monty(self.portal, snapshot.resume, await _await_external(PendingCall(call, context)))
+        # The task is created under the call's trace context, so spans the function opens nest under it.
         token = otel_context.attach(context)
         try:
             # Arguments the function can't take raise here, before there is a coroutine to defer.
-            call = function(*snapshot.args, **snapshot.kwargs)
+            coroutine = function(*snapshot.args, **snapshot.kwargs)
+            assert inspect.iscoroutine(coroutine), 'an async callable returns a coroutine'
+            call = self._guarded(name, coroutine)
+            self._pending[snapshot.call_id] = PendingCall(
+                call if self.global_sequential else asyncio.ensure_future(call), context
+            )
         except Exception as exc:
             return await self._raise_in_sandbox(snapshot, exc)
         finally:
             otel_context.detach(token)
-        assert inspect.iscoroutine(call), 'an async callable returns a coroutine'
-        self._pending[snapshot.call_id] = PendingCall(
-            call if self.global_sequential else asyncio.ensure_future(call), context
-        )
         return await call_monty(self.portal, snapshot.resume, ExternalFuture(future=...))
+
+    async def _guarded(self, name: str, call: Coroutine[Any, Any, object]) -> object:
+        """Run a module function's call inside `module_call_guard`."""
+        try:
+            async with self.module_call_guard(name):
+                return await call
+        finally:
+            call.close()  # a no-op once it has run; closes it unawaited when the guard refuses
 
     async def _sleep(self, snapshot: FunctionSnapshot) -> Snapshot:
         """Wait for a sandbox sleep here rather than in Monty, charging it to `max_sleep_seconds`.
