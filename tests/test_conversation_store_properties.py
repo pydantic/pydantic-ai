@@ -669,22 +669,20 @@ KNOWN_FINDINGS = [
         'summary-after-appended-messages',
         frozenset({'S6'}),
         lambda turn, earlier: (
-            dataclasses.replace(turn, appended=(), prompt=True) if turn.capability == 'summarize' else turn
+            dataclasses.replace(
+                turn, appended=(), prompt=True, hook=None if turn.hook == 'append_before_run' else turn.hook
+            )
+            if turn.capability == 'summarize'
+            else turn
         ),
         (
             (Turn(), Turn(appended=('prompt',), prompt=False, capability='summarize')),
             (Turn(appended=('exchange',), capability='summarize'),),
+            (Turn(), Turn(capability='summarize', keep=3, hook='append_before_run')),
         ),
-        'A summary of stored messages is stored after the messages appended before the run, like a prompt the run '
-        'goes on from or an exchange a UI sent, though the model was sent it before them.',
-    ),
-    KnownFinding(
-        'message-appended-before-run-is-lost',
-        frozenset({'S1', 'S2', 'S3', 'S4', 'S5', 'S6'}),
-        lambda turn, earlier: dataclasses.replace(turn, hook=None) if turn.hook == 'append_before_run' else turn,
-        ((Turn(), Turn(hook='append_before_run')),),
-        'A message a `before_run` hook adds with `ctx.messages.append(...)` to a continued conversation is in '
-        '`result.conversation` but not saved: the save starts after it.',
+        'A summary of stored messages is stored after the messages added before the run, like a prompt the run '
+        'goes on from, an exchange a UI sent or a message a `before_run` hook added, though the model was sent it '
+        'before them. The persistence docs describe this placement: after the messages the run was given.',
     ),
     KnownFinding(
         'message-appended-in-a-trimmed-run-is-lost',
@@ -727,6 +725,9 @@ def test_known_finding_is_still_present(finding: KnownFinding, reproducer: tuple
 
 
 FIXED_FINDINGS: dict[str, tuple[tuple[Turn, ...], ...]] = {
+    # A message a `before_run` hook added with `ctx.messages.append(...)` to a continued conversation was in
+    # `result.conversation` but not saved: the save started after it.
+    'message-appended-before-run-is-lost': ((Turn(), Turn(hook='append_before_run')),),
     # Two requests in a row, like an appended prompt and the new one, a prompt and an enqueued message, came back
     # merged, and a window that starts with a tool result came back without it, so `load()` didn't equal the
     # conversation that was saved.

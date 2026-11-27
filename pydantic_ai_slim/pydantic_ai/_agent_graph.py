@@ -973,6 +973,8 @@ class GraphAgentState:
     [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index]. The result's
     `conversation` finds them in the history to tell its store where the unsaved messages start.
     """
+    conversation_loaded: int | None = None
+    """Internal: how many messages the conversation this run was given held, before a `before_run` hook added any."""
     conversation_deferred_tool_requests: DeferredToolRequests | None = None
     """The [`deferred_tool_requests`][pydantic_ai.conversation.Conversation.deferred_tool_requests] of the conversation this run was given, if any.
 
@@ -1334,6 +1336,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx_messages.used = True
 
         given = ctx.state.message_history
+        unsaved, loaded = ctx.state.conversation_unsaved, ctx.state.conversation_loaded
+        if unsaved is not None and loaded is not None and len(given) > loaded:
+            # The store doesn't have the messages a `before_run` hook added either.
+            ctx.state.conversation_unsaved = [*unsaved, *given[loaded:]]
         cleaned, answered_at_pause = self._history_to_run(given)
         # The run's conversation keeps the history as it was given, not as it's cleaned to send.
         ctx.state.appended_messages.record_given(given, cleaned)
