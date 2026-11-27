@@ -275,7 +275,10 @@ class BatchingJournalDurability(JournalDurability):
 
 
 async def test_event_stream_dispatch_defaults_to_one_unit_per_event() -> None:
-    """Without the opt-in, an engine dispatches each event in its own unit, in stream order, as before batching."""
+    """Without the opt-in, an engine dispatches each event in its own unit, in stream order, as before batching.
+
+    Cassettes record model requests, not how workflow-side events group into durable units, so a journal checks it.
+    """
     handled: list[AgentStreamEvent] = []
 
     async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
@@ -300,12 +303,18 @@ async def test_event_stream_dispatch_defaults_to_one_unit_per_event() -> None:
 
 
 def test_event_stream_handler_params_keeps_its_single_event_field() -> None:
-    """Custom backends read `params.event`, as before batching: the public params carry one event."""
+    """Custom backends read `params.event`, as before batching: the public params carry one event.
+
+    This is the shape of a public type, which no recorded request exercises.
+    """
     assert [field.name for field in fields(EventStreamHandlerParams)] == ['event', 'run_context']
 
 
 async def test_a_backend_that_dispatches_per_event_receives_the_public_single_event_params() -> None:
-    """Batching is Temporal's alone, so another engine's event-handler operation gets one public params per event."""
+    """Batching is Temporal's alone, so another engine's event-handler operation gets one public params per event.
+
+    What a backend receives per durable unit is internal, so a journal backend checks it; no cassette records it.
+    """
     received: list[EventStreamHandlerParams] = []
 
     class RecordingBackend(_JournalBackend):
@@ -434,7 +443,10 @@ async def test_event_stream_dispatch_ignores_spurious_wake(monkeypatch: pytest.M
 
 
 async def test_event_stream_dispatch_propagates_handler_failure_and_closes_stream() -> None:
-    """A handler failure reaches the caller and closes the node stream without leaking the dispatcher task."""
+    """A handler failure reaches the caller and closes the node stream without leaking the dispatcher task.
+
+    A failing handler and the dispatcher task it runs in are local, so no cassette can produce or observe them.
+    """
     stream_closed = False
     handler_error = RuntimeError('handler failed')
 
@@ -465,7 +477,10 @@ async def test_event_stream_dispatch_propagates_handler_failure_and_closes_strea
 
 
 async def test_event_stream_dispatch_propagates_producer_failure_and_closes_stream() -> None:
-    """A node stream failure reaches the caller after the events before it, with the stream closed."""
+    """A node stream failure reaches the caller after the events before it, with the stream closed.
+
+    A node stream that raises mid-way is constructed here, since no recorded model response fails that way.
+    """
     stream_closed = False
     producer_error = RuntimeError('producer failed')
 
@@ -578,7 +593,10 @@ async def test_event_stream_dispatch_does_not_block_embedded_tool_execution() ->
 
 
 async def test_model_request_waits_for_events_pulled_before_it() -> None:
-    """A model request in the batched stream starts only once the events pulled before it reached the handler."""
+    """A model request in the batched stream starts only once the events pulled before it reached the handler.
+
+    The ordering is between local tasks, which no cassette records, so the test drives it directly.
+    """
     finish_dispatch = asyncio.Event()
     ordering: list[str] = []
 
@@ -612,7 +630,10 @@ async def test_model_request_waits_for_events_pulled_before_it() -> None:
 
 
 async def test_a_delegated_run_does_not_wait_for_the_delegating_run_s_dispatch() -> None:
-    """A tool the stream starts inherits the dispatch, but a model request of the agent it delegates to starts at once."""
+    """A tool the stream starts inherits the dispatch, but a model request of the agent it delegates to starts at once.
+
+    The wait is a local task dependency between runs, which no cassette records, so the test drives it directly.
+    """
     dispatch_started = asyncio.Event()
     finish_dispatch = asyncio.Event()
     ordering: list[str] = []
@@ -647,7 +668,10 @@ async def test_a_delegated_run_does_not_wait_for_the_delegating_run_s_dispatch()
 
 @pytest.mark.parametrize('payload_size', [10, 1_000_000], ids=['small', 'large'])
 async def test_how_events_split_into_units_does_not_depend_on_their_size(payload_size: int) -> None:
-    """Units split by event type only, so a change in how events serialize can't change an in-flight run's units."""
+    """Units split by event type only, so a change in how events serialize can't change an in-flight run's units.
+
+    Unit boundaries are internal and need payloads of chosen sizes, which a recording can't vary.
+    """
     batches: list[list[AgentStreamEvent]] = []
 
     class RecordingJournalDurability(BatchingJournalDurability):
@@ -673,7 +697,10 @@ async def test_how_events_split_into_units_does_not_depend_on_their_size(payload
 
 @pytest.mark.parametrize('count', [1, 2], ids=['failed-event', 'event-after-the-failed-one'])
 async def test_model_request_after_a_failed_dispatch_does_not_start(count: int) -> None:
-    """A model request waiting on a failed burst raises a plain error chained from the handler's, and doesn't start."""
+    """A model request waiting on a failed burst raises a plain error chained from the handler's, and doesn't start.
+
+    A failed dispatch is a local handler failure, which no cassette can produce, so the test raises it directly.
+    """
     handler_error = RuntimeError('handler failed')
     waiting = asyncio.Event()
     waiters: list[asyncio.Task[None]] = []
@@ -713,7 +740,10 @@ async def test_model_request_after_a_failed_dispatch_does_not_start(count: int) 
 
 
 async def test_model_request_wait_propagates_its_own_cancellation() -> None:
-    """Cancelling a model request that waits on a stuck dispatch cancels it rather than letting it resume."""
+    """Cancelling a model request that waits on a stuck dispatch cancels it rather than letting it resume.
+
+    Cancellation of a local wait is task scheduling, which no cassette records, so the test drives it directly.
+    """
     dispatch_started = asyncio.Event()
     waiting = asyncio.Event()
     resumed = False
