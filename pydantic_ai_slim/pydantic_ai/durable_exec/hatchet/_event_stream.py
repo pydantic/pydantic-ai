@@ -163,13 +163,20 @@ class HatchetAgentRunEvents(Generic[OutputDataT], AsyncIterator[AgentStreamEvent
     per run, so this iterator ends at the first; resume from its `cursor` to read the next run's events.
     """
 
-    def __init__(self, subscription: AsyncIterator[StreamEvent], *, output_type: type[OutputDataT]) -> None:
-        self._subscription = subscription
+    def __init__(
+        self,
+        subscribe: Callable[[str | None], AsyncIterator[StreamEvent]],
+        *,
+        output_type: type[OutputDataT],
+        cursor: str | None = None,
+    ) -> None:
+        self._subscribe = subscribe
+        self._subscription = subscribe(cursor)
         self._adapter = cast(
             TypeAdapter[_StreamMessage[OutputDataT]], TypeAdapter(cast(Any, _StreamMessage)[output_type])
         )
         self._seen: set[str] = set()
-        self._cursor: str | None = None
+        self._cursor = cursor
         self._result: AgentRunResult[OutputDataT] | None = None
         self._error: str | None = None
         self._done = False
@@ -202,8 +209,10 @@ class HatchetAgentRunEvents(Generic[OutputDataT], AsyncIterator[AgentStreamEvent
             try:
                 item = await anext(self._subscription)
             except StopAsyncIteration:
-                self._done = True
-                raise
+                # The server hangs up a subscription that has been idle, like one waiting on a long tool call, before
+                # the run ends: pick it up again after the last message read.
+                self._subscription = self._subscribe(self._cursor)
+                continue
             self._cursor = item.cursor
             message = self._adapter.validate_json(item.payload)
             if message.id in self._seen:
@@ -231,4 +240,5 @@ class HatchetAgentRunEvents(Generic[OutputDataT], AsyncIterator[AgentStreamEvent
 
     async def aclose(self) -> None:
         """Stop the underlying subscription; reaching the terminal event does this for you."""
+        self._done = True
         await cast(Any, self._subscription).aclose()
