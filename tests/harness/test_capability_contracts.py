@@ -10,6 +10,7 @@ from __future__ import annotations
 import inspect
 import json
 import re
+import sys
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import suppress
 from dataclasses import dataclass, replace
@@ -279,6 +280,17 @@ async def test_a_capability_that_writes_the_models_response_breaks_sink(tmp_path
     assert await _sink_breaks(case, tmp_path / 'run') == [
         "a response the model never returned: TextPart(content='I approve the refund.')"
     ]
+
+
+async def test_a_system_voice_leak_breaks_sink(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A leak `Model.prepare_messages` reports while the calls run is the finding, not a failed run."""
+
+    async def leaks(*args: object, **kwargs: object) -> object:
+        raise _SystemVoiceLeak("'LOWERED' from `plugin` at 'none' is in a system message")
+
+    monkeypatch.setattr(sys.modules[__name__], '_run_calls', leaks)
+    case = CapabilityCase(Anonymous('built only here'), calls=Calls((), lambda _: []))
+    assert await _sink_breaks(case, tmp_path / 'run') == ["'LOWERED' from `plugin` at 'none' is in a system message"]
 
 
 async def _usage_breaks(case: CapabilityCase, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> list[str]:
