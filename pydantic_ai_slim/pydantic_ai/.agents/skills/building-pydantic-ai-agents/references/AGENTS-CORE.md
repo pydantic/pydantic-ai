@@ -293,6 +293,8 @@ Pick a run method based on the interaction pattern:
 
 Use `event_stream_handler=` with `run()` or `run_stream()` when the user wants progress updates without manually consuming the event stream. The stream includes model deltas, tool call/result events, and framework events such as `EnqueuedMessagesEvent` when queued messages enter run history.
 
+One request step can stream more than one response: `ModelFallback` or `RetryOnModelErrors` attempting the model again, a `wrap_model_request` hook that replaces the stream it stopped, or a durable engine retrying a model request. Model-stream events carry the `ModelResponseOrigin` they came from as `origin`, so a consumer that renders the stream keeps the latest origin per `(run_id, run_step)` and drops the events of any origin a later one `supersedes()`. Equality and `repr()` ignore `origin`, so read it from the event. See [Replaced responses](https://pydantic.dev/docs/ai/core-concepts/agent/#replaced-responses).
+
 Realtime sessions do not use `event_stream_handler`; iterate the session to consume realtime-only `RealtimeEvent` members.
 
 ```python

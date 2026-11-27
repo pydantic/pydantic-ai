@@ -76,6 +76,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] = field(default=list, repr=False)
     _max_tokens_getter: Callable[[], int | None] = field(default=lambda: None, repr=False)
     """The `max_tokens` the request was made with, for the error raised when the token limit cut off the output."""
+    _attempt: int = field(default=1, repr=False)
+    """The attempt at the request step that the stream came from, which its events' `origin` records."""
+    _origin: _messages.ModelResponseOrigin | None = field(default=None, init=False, repr=False)
+    """The origin the events of the current attempt are stamped with, built on its first event."""
 
     _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
@@ -548,8 +552,18 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 pass
         return True
 
+    def _with_origin(self, event: ModelResponseStreamEvent) -> ModelResponseStreamEvent:
+        """The event, stamped with the origin of the response it came from."""
+        if (origin := self._origin) is None:
+            run_id = self._run_ctx.run_id
+            assert run_id is not None, 'An agent run always has a `run_id`.'
+            origin = self._origin = _messages.ModelResponseOrigin(
+                run_id=run_id, run_step=self._run_ctx.run_step, attempt=self._attempt
+            )
+        return replace(event, origin=origin)
+
     async def _model_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        """The model stream's events, followed by its replacement's if the stream was abandoned."""
+        """The model stream's events, followed by its replacement's if the stream was abandoned, stamped with their origin."""
         events = aiter(self._raw_stream_response)
         while self._replacement_response is None:
             event: ModelResponseStreamEvent | None = None
@@ -564,15 +578,18 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             if event is None:
                 self._model_stream_finished = True
                 return
-            yield event
+            yield self._with_origin(event)
 
         response = await self._replacement_response()
         if response is not None:
+            # The replacement is another response at the request step, streamed as its next attempt.
+            self._attempt += 1
+            self._origin = None
             self._raw_stream_response = models.CompletedStreamedResponse(
                 response, model_request_parameters=self._model_request_parameters, replay_events=True
             )
             async for event in self._raw_stream_response:
-                yield event
+                yield self._with_origin(event)
 
     async def _pull_shared(self, events_iterator: AsyncIterator[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
         # Serialize access to the shared iterator. An early break from stream_text() can leave a
@@ -665,6 +682,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         new_message_index: int,
         stream_response: AgentStream[AgentDepsT, OutputDataT] | None,
         on_complete: Callable[[], Awaitable[None]] | None,
+        *,
+        compactions: list[_messages.CompactionRecord] | None = None,
     ) -> None: ...
 
     @overload
@@ -683,9 +702,12 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         stream_response: AgentStream[AgentDepsT, OutputDataT] | None = None,
         on_complete: Callable[[], Awaitable[None]] | None = None,
         run_result: AgentRunResult[OutputDataT] | None = None,
+        *,
+        compactions: list[_messages.CompactionRecord] | None = None,
     ) -> None:
         self._all_messages = all_messages
         self._new_message_index = new_message_index
+        self._compactions = compactions if compactions is not None else []
 
         self._stream_response = stream_response
         self._on_complete = on_complete
@@ -745,6 +767,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     run_id=self.run_id,
                     conversation_id=self.conversation_id,
                     metadata=self.metadata,
+                    compactions=self._compactions,
                     appended_messages=self._settled_full_history(state.appended_messages, start),
                 ),
                 _new_message_index=self._new_message_index,
@@ -946,6 +969,20 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return self._stream_response.response
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
+
+    @property
+    def compactions(self) -> list[_messages.CompactionRecord]:
+        """The compactions this run kept so far, in the order it kept them.
+
+        The message history only shows the compacted history:
+        [`new_messages()`][pydantic_ai.result.StreamedRunResult.new_messages] are this run's messages still in it. Each
+        [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] says what it replaced, so you can tell which
+        messages were summarized, for example to store the conversation's full log. A compaction made for an attempt
+        that then failed isn't included.
+        """
+        if self._run_result is not None:
+            return self._run_result.compactions
+        return self._compactions
 
     @property
     def metadata(self) -> dict[str, Any] | None:
@@ -1277,6 +1314,14 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
     def metadata(self) -> dict[str, Any] | None:
         """Metadata associated with this agent run, if configured."""
         return self._streamed_run_result.metadata
+
+    @property
+    def compactions(self) -> list[_messages.CompactionRecord]:
+        """The compactions this run kept so far.
+
+        See [`StreamedRunResult.compactions`][pydantic_ai.result.StreamedRunResult.compactions].
+        """
+        return self._streamed_run_result.compactions
 
     @property
     def workspace(self) -> Workspace:
