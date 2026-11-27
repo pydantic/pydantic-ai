@@ -77,7 +77,7 @@ async def research(question: str) -> str:
 - `conversation=` carries the failed run's usage forward, so the limits count it: raise them to give the resumed run room. To store the failed turn instead, `await store.save(error.conversation)` with a `ConversationStore`.
 - `capture_run_messages()` records just the messages; resuming with `message_history=messages` starts usage and limits from zero.
 - When a token or cost limit is crossed, the billed response that crossed it is kept in the conversation with `state='interrupted'`, so the resumed run doesn't send that request again, unless a hook rejected that response with `ModelRetry` ([#11425](https://github.com/pydantic/pydantic-ai/issues/11425)). See [Usage limits](https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits).
-- To keep a run from hitting `request_limit` at all, a capability can read `ctx.usage.requests` and `ctx.usage_limits.request_limit` in `before_model_request`, tell the model how many requests are left, and drop function tools in `prepare_tools` on the last one. See [Wrapping up before the request limit](https://pydantic.dev/docs/ai/core-concepts/agent/#wrapping-up-before-the-request-limit).
+- To keep a run from hitting `request_limit` at all, a capability can read `ctx.usage.requests` and `ctx.usage_limits.request_limit` in `before_model_request`, tell the model how many requests are left, and drop function tools in `prepare_tools` on the last one. See [Wrapping up before the request limit](https://pydantic.dev/docs/ai/core-concepts/agent/#wrapping-up-before-the-request-limit). Pydantic AI Harness ships this as `WrapUpAtLimits`, which also wraps up at the tool-call and token limits.
 
 ## Debug and Validate Agent Behavior
 

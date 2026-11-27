@@ -446,6 +446,8 @@ Agent.instrument_all(instrumentation_settings)
 
 When `include_binary_content=False`, Pydantic AI excludes binary file data, including images, audio, and documents, from telemetry for user prompts, model responses, tool returns, the agent's output, output-function arguments, and run and tool deferral metadata. The media type remains recorded everywhere. When a value is recorded as a file rather than a message part, its vendor metadata and identifier are recorded too; Pydantic AI derives the identifier from the content when you do not set one.
 
+Media in what a tool or output function returns ([`BinaryContent`][pydantic_ai.messages.BinaryContent], media URLs and [`UploadedFile`][pydantic_ai.messages.UploadedFile]s) is recorded as the same `blob`, `uri` or `file` message part as in a user prompt, so a backend that renders media in messages renders it in tool results too. Like a prompt's, such a part keeps only its media type and modality when binary content is excluded.
+
 Binary content is found inside dictionaries, lists and [`ToolReturn`][pydantic_ai.messages.ToolReturn]s, but not inside your own types: a [`BinaryContent`][pydantic_ai.messages.BinaryContent] held as a field of a model or dataclass you define is still recorded in full.
 
 ```python {title="excluding_binary_content.py"}

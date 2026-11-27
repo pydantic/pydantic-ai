@@ -188,6 +188,8 @@ dbos = ["dbos>=3.4.0"]
 prefect = ["prefect>=3.9.0"]
 # Spec (YAML agent specs)
 spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
+# JSON Schema validation for `StructuredDict(validate=True)`
+jsonschema = ["jsonschema>=4.18"]
 
 [tool.hatch.metadata]
 allow-direct-references = true

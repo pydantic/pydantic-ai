@@ -996,6 +996,16 @@ SlidingWindowCompaction(max_messages=80, keep_messages=40, receipts=True)
   `SlidingWindowCompaction`'s says the dropped context is gone. `ClearToolResults`,
   `DeduplicateFileReads`, and `ClampOversizedMessages` blank in place, keep every message, and cross
   no boundary, so they emit none.
+- **Voice.** Each receipt is a `CompactionReceiptPart`, a capability part in the application's voice
+  that stays with the compacted history: the model sees it where the compaction cut, as a
+  mid-conversation system message, or as a `<system>` block on a model without one, never as the
+  user's words, so it doesn't start a user turn. Its text is only the strategy's own wording with
+  counts, the `by` attribution and the handle filled in. Find receipts in history by this type.
+  Earlier versions wrote receipts as user prompts; one in a saved history is still recognized, by
+  its metadata, never its text, and replaced at the next compaction, which already moves the cached
+  prefix.
+- **Client-held history.** A UI adapter in its default `manage_system_prompt='server'` mode leaves
+  capability parts out of the dump, so history the client sends back has no receipts.
 - **Receipt slot.** `SlidingWindowCompaction` counts its receipt toward `keep_messages`
   (`keep_messages=40` keeps the receipt and 39 messages), but the receipt never takes the last slot:
   `keep_messages=1` keeps the receipt and the newest message.

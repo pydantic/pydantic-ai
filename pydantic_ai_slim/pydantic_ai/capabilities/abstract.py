@@ -1089,6 +1089,9 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
         For a realtime session, the result is produced when the session closes; a transformed result
         becomes `session.result` before the caller leaves the `async with` boundary.
+
+        A [`compact_history()`][pydantic_ai.agent.AbstractAgent.compact_history] run ends after its compaction
+        step without a model response, so its result's `output` is `None`, whatever the agent's `output_type`.
         """
         return result
 
@@ -1102,6 +1105,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
         `handler()` runs `before_run`, the run body with `on_run_error` recovery, and
         `after_run`. Returning without calling `handler()` skips that lifecycle.
+
+        The result `handler()` returns for a
+        [`compact_history()`][pydantic_ai.agent.AbstractAgent.compact_history] run has an `output` of `None`,
+        whatever the agent's `output_type`: that run ends after its compaction step without a model response.
 
         If `handler()` raises and this method catches the exception and returns a result instead,
         the error is suppressed and the recovery result is used directly without `after_run`.
@@ -1392,6 +1399,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip `on_model_request_error`
         and directly retry the model request with a retry prompt. If the handler was called,
         the model response is preserved in history for context (same as `after_model_request`).
+
+        In a [`compact_history()`][pydantic_ai.agent.AbstractAgent.compact_history] run, the handler compacts the
+        history and then ends the run without sending the request, by raising a `BaseException` that isn't an
+        `Exception`. Let it propagate: `except Exception` doesn't catch it, and a `try`/`finally` sees it.
         """
         return await handler(request_context)
 
