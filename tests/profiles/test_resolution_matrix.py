@@ -749,27 +749,24 @@ def test_openrouter_gpt_6_2(model_name: str):
 
 @pytest.mark.skipif(not openai_imports() or not bedrock_imports(), reason='openai or bedrock not installed')
 @pytest.mark.parametrize(
-    ('provider', 'model_name', 'expected'),
+    ('provider', 'model_name'),
     [
-        ('openai', 'gpt-6.2-sol', True),
-        ('openai', 'gpt-6.2-astra', True),
-        ('openai', 'gpt-6.1-sol', False),
-        ('azure', 'gpt-6.2-sol', False),
-        ('azure', 'gpt-6.2-astra', False),
-        ('bedrock-mantle', 'openai.gpt-6.2-sol', False),
-        ('openrouter', 'openai/gpt-6.2-sol', False),
-        ('vercel', 'openai/gpt-6.2-sol', False),
+        ('azure', 'gpt-6.2-sol'),
+        ('azure', 'gpt-6.2-astra'),
+        ('bedrock-mantle', 'openai.gpt-6.2-sol'),
+        ('openrouter', 'openai/gpt-6.2-sol'),
+        ('vercel', 'openai/gpt-6.2-sol'),
     ],
 )
-def test_gpt_6_2_stable_instructions_as_input_only_on_openai(provider: str, model_name: str, expected: bool):
-    """GPT-6.2's leading-input instructions are set on OpenAI's own API only, where the uncached top-level field was measured.
+def test_gpt_6_2_stable_instructions_as_input_off_beyond_openai(provider: str, model_name: str):
+    """Providers other than OpenAI's own API don't set GPT-6.2's leading-input instructions flag.
 
+    `test_openai_gpt_6_2` pins the flag on `OpenAIProvider`, where the uncached top-level field was measured.
     Other providers serving the same model keep the instructions in the top-level field until measured there.
 
     Not a VCR test: this validates local provider-profile capability resolution.
     """
     provider_class = {
-        'openai': OpenAIProvider,
         'azure': AzureProvider,
         'bedrock-mantle': BedrockMantleProvider,
         'openrouter': OpenRouterProvider,
@@ -777,7 +774,7 @@ def test_gpt_6_2_stable_instructions_as_input_only_on_openai(provider: str, mode
     }[provider]
     profile = provider_class.model_profile(model_name)
     assert profile is not None
-    assert profile.get('openai_responses_stable_instructions_as_input', False) is expected
+    assert profile.get('openai_responses_stable_instructions_as_input', False) is False
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
