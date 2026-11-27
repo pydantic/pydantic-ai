@@ -2,6 +2,7 @@
 
 from rich.console import Console
 
+from pydantic_ai import _version_check
 from pydantic_ai_pax.cli.self_update import installed
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.runtime.worktrees import Worktree
@@ -15,6 +16,9 @@ def print_welcome(project: ProjectSettings, console: Console, *, worktree: Workt
     console.print()
     print_banner(console)
     console.print(f'pydantic-ai-pax {installed().label}', style=theme.color(theme.MUTED))
+    if _version_check.announce():
+        # Pax hides Pydantic AI's own banner, so its first launch announces the shared version check instead.
+        console.print(_version_check.ANNOUNCEMENT, style=theme.color(theme.MUTED), markup=False, highlight=False)
     if worktree is not None:
         # Soft wrap keeps the path copyable: hard wrapping would break it with newlines.
         console.print(worktree.notice, style=theme.color(theme.MUTED), markup=False, highlight=False, soft_wrap=True)
