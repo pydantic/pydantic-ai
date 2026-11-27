@@ -1267,7 +1267,8 @@ def test_gpt_oss_inline_defs_without_openai_rewrite():
     """Bedrock Converse and Hugging Face only inline gpt-oss `$defs`, and keep a schema whose `$ref` they can't reach.
 
     The inliner doesn't walk under a `type` list, so inlining such a schema would leave its `$ref` pointing at a
-    dropped definition.
+    dropped definition. A recursive schema's root goes under `$defs` by its `title`, and the root `$ref` escapes a `%`
+    in it, so the schema stays reachable and is inlined.
     """
     nested: dict[str, Any] = {
         'type': 'object',
@@ -1278,6 +1279,18 @@ def test_gpt_oss_inline_defs_without_openai_rewrite():
         'type': 'object',
         'properties': {'x': {'type': ['object', 'null'], 'properties': {'v': {'$ref': '#/$defs/Value'}}}},
         '$defs': {'Value': {'type': 'object', 'properties': {'a': {'type': 'string'}}}},
+    }
+    percent_title: dict[str, Any] = {
+        'title': '10%Cash',
+        'type': 'object',
+        'properties': {'home': {'$ref': '#/$defs/Address'}, 'node': {'$ref': '#/$defs/Node'}},
+        '$defs': {
+            'Address': {'type': 'object', 'properties': {'city': {'type': 'string'}}},
+            'Node': {
+                'type': 'object',
+                'properties': {'children': {'type': 'array', 'items': {'$ref': '#/$defs/Node'}}},
+            },
+        },
     }
     for profile in (
         BedrockProvider.model_profile('openai.gpt-oss-120b-1:0'),
@@ -1290,6 +1303,28 @@ def test_gpt_oss_inline_defs_without_openai_rewrite():
             {'type': 'object', 'properties': {'home': {'type': 'object', 'properties': {'city': {'type': 'string'}}}}}
         )
         assert transformer(unreachable).walk() == unreachable
+        assert transformer(percent_title).walk() == snapshot(
+            {
+                '$defs': {
+                    'Node': {
+                        'type': 'object',
+                        'properties': {'children': {'type': 'array', 'items': {'$ref': '#/$defs/Node'}}},
+                    },
+                    '10%Cash': {
+                        'title': '10%Cash',
+                        'type': 'object',
+                        'properties': {
+                            'home': {'type': 'object', 'properties': {'city': {'type': 'string'}}},
+                            'node': {
+                                'type': 'object',
+                                'properties': {'children': {'type': 'array', 'items': {'$ref': '#/$defs/Node'}}},
+                            },
+                        },
+                    },
+                },
+                '$ref': '#/$defs/10%25Cash',
+            }
+        )
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')

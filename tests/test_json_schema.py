@@ -967,6 +967,26 @@ def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
     assert result['$defs']['Node']['properties']['child'] == {'$ref': '#/$defs/Node'}
 
 
+@pytest.mark.parametrize('title,ref', [('10%Cash', '#/$defs/10%25Cash'), (5, '#/$defs/5')])
+def test_inline_defs_recursive_root_ref_from_title(title: object, ref: str):
+    """A recursive root with no `$ref` of its own goes under `$defs` by its `title`, which the root `$ref` escapes.
+
+    Resolving the `$ref` percent-decodes it, so a `%` in the title is written as `%25`. Nothing validates `title`,
+    so a value that isn't a string is written as its `str()`, as before.
+    Unit test: the walker writes the `$ref` before any request is built.
+    """
+    schema = {
+        'type': 'object',
+        'title': title,
+        'properties': {'child': {'$ref': '#/$defs/Node'}},
+        '$defs': {'Node': {'type': 'object', 'properties': {'child': {'$ref': '#/$defs/Node'}}}},
+    }
+
+    result = InlineDefsJsonSchemaTransformer(deepcopy(schema)).walk()
+
+    assert (result['$ref'], set(result['$defs'])) == (ref, {'Node', title})
+
+
 @pytest.mark.parametrize(
     'json_schema, location',
     [
@@ -979,6 +999,15 @@ def test_inline_defs_recursive_ref_root_key_collides_with_a_def():
             },
             'definitions.A.properties.x',
             id='through-ref',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {'a': {'$ref': '#/definitions/A%20B~1C'}},
+                'definitions': {'A B/C': {'type': 'object', 'properties': {'x': 'string'}}},
+            },
+            'definitions.A B/C.properties.x',
+            id='through-escaped-ref',
         ),
     ],
 )
@@ -1090,6 +1119,65 @@ MCP_POINTER_REF_SCHEMA: dict[str, Any] = {
             },
             id='escaped-tokens-and-list-index',
         ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {
+                    'from address': ADDRESS_SCHEMA,
+                    'from%20address': {'type': 'integer'},
+                    'to': {'$ref': '#/properties/from%20address'},
+                },
+            },
+            {
+                'type': 'object',
+                'properties': {
+                    'from address': ADDRESS_SCHEMA,
+                    'from%20address': {'type': 'integer'},
+                    'to': ADDRESS_SCHEMA,
+                },
+            },
+            id='percent-encoded-token',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {
+                    '%20/': ADDRESS_SCHEMA,
+                    ' /': {'type': 'integer'},
+                    '%20~1': {'type': 'boolean'},
+                    'to': {'$ref': '#/properties/%2520%7E1'},
+                },
+            },
+            {
+                'type': 'object',
+                'properties': {
+                    '%20/': ADDRESS_SCHEMA,
+                    ' /': {'type': 'integer'},
+                    '%20~1': {'type': 'boolean'},
+                    'to': ADDRESS_SCHEMA,
+                },
+            },
+            id='percent-decoded-once-before-tilde',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {
+                    'a/b': ADDRESS_SCHEMA,
+                    'a': {'b': {'type': 'integer'}},
+                    'to': {'$ref': '#/properties/a%2Fb'},
+                },
+            },
+            {
+                'type': 'object',
+                'properties': {
+                    'a/b': ADDRESS_SCHEMA,
+                    'a': {'b': {'type': 'integer'}},
+                    'to': ADDRESS_SCHEMA,
+                },
+            },
+            id='percent-encoded-slash-in-token',
+        ),
     ],
 )
 def test_inline_defs_resolves_json_pointer_refs(schema: dict[str, Any], expected: dict[str, Any]):
@@ -1183,6 +1271,30 @@ def test_inline_defs_dangling_ref_raises(ref: str):
 
     with pytest.raises(
         UserError, match=f'^Could not find \\$ref definition for {re.escape(ref.removeprefix("#/$defs/"))}$'
+    ):
+        InlineDefsJsonSchemaTransformer(schema).walk()
+
+
+@pytest.mark.parametrize(
+    'ref,name',
+    [
+        ('#/$defs/Display%20Name', 'Display Name'),
+        ('#/$defs/a~1b', 'a/b'),
+        pytest.param('#/$defs/%23/properties/a', '#/properties/a', id='decoded-name-reads-as-a-pointer'),
+    ],
+)
+def test_inline_defs_dangling_escaped_definition_name_raises(ref: str, name: str):
+    """A dangling `$defs` `$ref` with escapes in its name names the `$ref` as written, besides the decoded name.
+
+    The decoded name can appear nowhere in the schema the user wrote. A decoded name that reads as a JSON pointer is
+    still only a definition name, so it doesn't reach `properties.a`.
+    Unit test: the walker raises before any request is built.
+    """
+    schema = {'type': 'object', 'properties': {'a': {'type': 'string'}, 'b': {'$ref': ref}}}
+
+    with pytest.raises(
+        UserError,
+        match=f'^Could not find \\$ref definition for {re.escape(ref)} \\(definition name {re.escape(repr(name))}\\)$',
     ):
         InlineDefsJsonSchemaTransformer(schema).walk()
 

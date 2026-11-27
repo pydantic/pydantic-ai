@@ -293,7 +293,6 @@ _UNRESOLVED_POINTERS = {
     'pointer_ref-to-boolean': 'https://github.com/pydantic/pydantic-ai/pull/12924',
     'definitions-true': 'https://github.com/pydantic/pydantic-ai/pull/12924',
     'definitions-false': 'https://github.com/pydantic/pydantic-ai/pull/12924',
-    'pointer_ref-percent-encoded': 'https://github.com/pydantic/pydantic-ai/pull/13009',
 }
 """Corpus cases whose JSON pointer `$ref` inlining can't resolve yet, by the open PR that resolves it."""
 

@@ -5,6 +5,7 @@ from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from copy import deepcopy
 from dataclasses import dataclass, field
 from typing import Any, ClassVar, Literal, NoReturn, TypeAlias, assert_never, cast
+from urllib.parse import unquote
 
 from pydantic import JsonValue
 
@@ -177,9 +178,19 @@ def _check_schema_container(key: str, container: type[dict[str, Any]] | type[lis
         _check_schema_shape(member, f'{path}.{name}')
 
 
+def decode_json_pointer_token(token: str) -> str:
+    """A reference token of a local JSON-pointer `$ref` (RFC 6901), with its escapes decoded.
+
+    A `$ref` is a URI, so the token is percent-decoded once (section 6), and only then are `~1` and `~0` unescaped
+    (section 4), in that order: `%7E1` decodes to `/`. Split the pointer on `/` before decoding its tokens, so that
+    `%2F` stays part of a member name, as it does in a `$defs` name `definition_name()` decodes whole.
+    """
+    return unquote(token).replace('~1', '/').replace('~0', '~')
+
+
 def _json_pointer_path(ref: str) -> str:
-    """The dotted path an error names for a local JSON pointer, with its `~1` and `~0` escapes decoded."""
-    return '.'.join(token.replace('~1', '/').replace('~0', '~') for token in ref.split('/')[1:])
+    """The dotted path an error names for a local JSON pointer, with its escapes decoded."""
+    return '.'.join(decode_json_pointer_token(token) for token in ref.split('/')[1:])
 
 
 def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
@@ -191,8 +202,7 @@ def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
     if ref != '#' and not ref.startswith('#/'):
         return None
     node: JsonValue = schema
-    for token in ref.split('/')[1:]:
-        token = token.replace('~1', '/').replace('~0', '~')
+    for token in map(decode_json_pointer_token, ref.split('/')[1:]):
         if isinstance(node, dict):
             node = node.get(token)
         elif isinstance(node, list) and token in map(str, range(len(node))):
@@ -204,8 +214,8 @@ def resolve_json_pointer(schema: JsonSchema, ref: str) -> JsonSchema | None:
 
 
 def definition_name(ref: str) -> str:
-    """The `$defs` name a `$ref` like `#/$defs/Model` points at, with its `~1` and `~0` escapes decoded."""
-    return ref.removeprefix('#/$defs/').replace('~1', '/').replace('~0', '~')
+    """The `$defs` name a `$ref` like `#/$defs/Model` points at, with its escapes decoded."""
+    return decode_json_pointer_token(ref.removeprefix('#/$defs/'))
 
 
 def definition_refs(schema: Subschema) -> Iterator[str]:
@@ -413,7 +423,9 @@ class JsonSchemaTransformer(ABC):
         # If we are preferring inlined defs and there are recursive refs, we _have_ to use a $defs+$ref structure
         root_ref, root_key = self._root_ref_and_key(defs)
         defs[root_key] = handled
-        return {'$defs': defs, '$ref': root_ref or f'#/$defs/{root_key}'}
+        # Resolving the `$ref` percent-decodes it, and a `title` can hold a `%`. Nothing validates `title`, so it may
+        # not be a string.
+        return {'$defs': defs, '$ref': root_ref or '#/$defs/' + str(root_key).replace('%', '%25')}
 
     def _root_ref_and_key(self, defs: Mapping[str, JsonSchema]) -> tuple[str | None, str]:
         """The root `$ref` the output keeps, if any, and the `$defs` key the walked root goes under.
@@ -514,6 +526,9 @@ class JsonSchemaTransformer(ABC):
         """
         # Decode only a definition name; other pointers are decoded by `resolve_json_pointer()`.
         key = definition_name(ref) if ref.startswith('#/$defs/') else ref
+        if key not in self.defs and key != ref.removeprefix('#/$defs/'):
+            # A decoded name can appear nowhere in the schema as written, so the `$ref` is named too.
+            raise UserError(f'Could not find $ref definition for {ref} (definition name {key!r})')
         if key in self.refs_stack:
             if key not in self.defs:
                 # Only a `$defs` name can stay a `$ref` once the schema around it is inlined.
