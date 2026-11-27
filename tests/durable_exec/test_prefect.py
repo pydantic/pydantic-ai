@@ -52,6 +52,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseRejectedEvent,
     ModelSettings,
     PartDeltaEvent,
     PartEndEvent,
@@ -135,7 +136,7 @@ from pydantic_ai.models import (
     ModelSelectionContext,
 )
 from pydantic_ai.models._batch_model import BatchPool
-from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel, StreamFunctionDef
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel, StreamFunctionDef
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -224,6 +225,13 @@ from ..conftest import IsDatetime, IsSameStr, IsStr, legacy_retry_prompt_part
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
 from ..realtime_connections import InferredConnection
+from ..rejected_response_utils import (
+    ANNOUNCEMENT,
+    ANSWER,
+    RejectAnnouncements,
+    announce_then_answer,
+    reject_announcements,
+)
 from ..workspace_fakes import ref_workspace
 from ..wrapped_retry_toolsets import failing_toolset
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
@@ -1180,6 +1188,107 @@ async def test_prefect_agent_iter_in_flow_fires_event_stream_handler(
         if (attributes := span.get('attributes')) and attributes.get('logfire.msg') == 'runtime_event'
     ]
     assert exported_messages != []
+
+
+_rejection_events: list[AgentStreamEvent] = []
+
+
+async def _collect_rejection_events(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _rejection_events.append(event)
+
+
+@pytest.mark.parametrize('source', ['output validator', 'after_model_request'])
+async def test_prefect_reports_a_rejected_streamed_response_between_the_attempts(
+    allow_model_requests: None, source: str
+) -> None:
+    """In a Prefect flow, the rejected response's events, then `ModelResponseRejectedEvent`, then the retry's events.
+
+    Each event reaches the handler in a task of its own, so the order is the order the flow dispatches them in. An
+    `after_model_request` verdict is waited for in the step's stream, so it holds the same order.
+    """
+    _rejection_events.clear()
+    durability = PrefectDurability(event_stream_handler=_collect_rejection_events)
+    agent = Agent(
+        FunctionModel(stream_function=announce_then_answer),
+        name='rejection_stream_agent',
+        capabilities=[durability, RejectAnnouncements()] if source == 'after_model_request' else [durability],
+    )
+    if source == 'output validator':
+        agent.output_validator(reject_announcements)
+
+    @flow(name='test_prefect_reports_a_rejected_streamed_response_between_the_attempts')
+    async def run_flow() -> str:
+        return (await agent.run('When does the store open?')).output
+
+    assert await run_flow() == ANSWER
+    assert [event.event_kind for event in _rejection_events] == snapshot(
+        ['part_start', 'final_result', 'part_end', 'model_response_rejected', 'part_start', 'final_result', 'part_end']
+    )
+
+
+async def _announce_then_look_up(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    """Announce a lookup, look it up once asked again, then answer."""
+    if len(messages) == 1:
+        yield ANNOUNCEMENT
+    elif any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+        yield ANSWER
+    else:
+        yield {0: DeltaToolCall(name='look_up_opening_hours', json_args='{}', tool_call_id='look_up')}
+
+
+async def test_prefect_flow_retry_after_the_rejection_dispatch_appears_replays_the_later_event_handlers(
+    allow_model_requests: None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A flow first run by a release that didn't dispatch `ModelResponseRejectedEvent` replays its later events.
+
+    The rejection's dispatch counts on its own sequence key, so it doesn't shift the shared event counter that the
+    later events' task keys carry. On the retry the rejection reaches the handler for the first time, and the tool
+    events after it replay their recorded handler runs instead of running the handler again.
+    """
+    handled: list[str] = []
+
+    async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in stream:
+            handled.append(event.event_kind)
+
+    agent = Agent(
+        FunctionModel(stream_function=_announce_then_look_up),
+        name='rejection_upgrade_replay_agent',
+        capabilities=[PrefectDurability[object](event_stream_handler=handler)],
+    )
+    agent.output_validator(reject_announcements)
+
+    @agent.tool_plain
+    def look_up_opening_hours() -> str:
+        return '9 am'
+
+    dispatch = PrefectDurability._dispatch_event_stream_event  # pyright: ignore[reportPrivateUsage]
+    attempts = 0
+
+    async def dispatch_as_released_before_the_event(
+        self: PrefectDurability[object], ctx: RunContext[object], event: AgentStreamEvent
+    ) -> None:
+        if attempts == 1 and isinstance(event, ModelResponseRejectedEvent):
+            return
+        await dispatch(self, ctx, event)
+
+    monkeypatch.setattr(PrefectDurability, '_dispatch_event_stream_event', dispatch_as_released_before_the_event)
+
+    @flow(retries=1, name='test_prefect_flow_retry_after_the_rejection_dispatch_appears')
+    async def upgraded_between_attempts() -> str:
+        nonlocal attempts
+        attempts += 1
+        result = await agent.run('When does the store open?')
+        if attempts == 1:
+            raise RuntimeError('retried by the upgraded release')
+        return result.output
+
+    assert await upgraded_between_attempts() == ANSWER
+    assert attempts == 2
+    assert [kind for kind in handled if not kind.startswith('part_') and kind != 'final_result'] == snapshot(
+        ['function_tool_call', 'function_tool_result', 'model_response_rejected']
+    )
 
 
 async def test_event_stream_handler_property_outside_flow() -> None:

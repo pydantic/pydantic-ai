@@ -28,6 +28,7 @@ from ..messages import (
     FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
+    ModelResponseRejectedEvent,
     ModelSettingsDeltaEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -364,8 +365,21 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             if isinstance(event, PartDeltaEvent) and not delta_recorded:
                 self._record_part_delta(event)
 
-            if isinstance(event, PartStartEvent):
+            async with aclosing(self._after_handle_event(event)) as after_events:
+                async for e in after_events:
+                    yield e
+
+    async def _after_handle_event(self, event: NativeEvent) -> AsyncGenerator[EventT, None]:
+        """Fire the turn hooks `event` implies, and record what the error path needs, after `handle_event` saw it."""
+        match event:
+            case ModelResponseRejectedEvent():
+                # The response that takes the rejected one's place starts a turn of its own.
+                async for e in self._turn_to(None):
+                    yield e
+            case PartStartEvent():
                 self._record_part_start(event)
+            case _:
+                pass
 
     async def _before_handle_event(
         self, event: NativeEvent, on_complete: OnCompleteFunc[EventT] | None
@@ -401,6 +415,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             case ToolResultEvent():
                 tool_call_id = event.part.tool_call_id
                 self._pending_tool_calls.pop(tool_call_id, None)
+            case ModelResponseRejectedEvent():
+                async for e in self._end_rejected_response():
+                    yield e
             case _:
                 pass
 
@@ -433,11 +450,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
         # first: it's a response-side event, whereas the tool-call cleanup below turns to the
         # request side, and everything after the error chunk is dropped.
-        if (part := self._open_part) is not None:
-            part = self._apply_open_part_deltas(part)
-            self._open_part = None
-            self._open_part_deltas.clear()
-            async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
+        if (end := self._end_open_part()) is not None:
+            async for e in self.handle_part_end(end):
                 yield e
 
         # Close any pending tool calls before emitting the error,
@@ -541,6 +555,25 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             record_exception(get_current_span(), complete_error, include_content=False, escaped=False)
             raise
 
+    async def _end_rejected_response(self) -> AsyncIterator[EventT]:
+        """End the part a rejected response left open, as one cut short mid-part does, and forget its final result.
+
+        The end goes through `handle_event`, as the ends the model streams do, so what a protocol adds to those applies.
+        """
+        if (end := self._end_open_part()) is not None:
+            async for e in self.handle_event(end):
+                yield e
+        self._final_result_event = None
+
+    def _end_open_part(self) -> PartEndEvent | None:
+        """The end of the part the stream left open, if any, with the deltas it received so far; it's no longer open."""
+        if (part := self._open_part) is None:
+            return None
+        part = self._apply_open_part_deltas(part)
+        self._open_part = None
+        self._open_part_deltas.clear()
+        return PartEndEvent(index=self._open_part_index, part=part)
+
     async def _turn_to(self, to_turn: Literal['request', 'response'] | None) -> AsyncIterator[EventT]:
         """Fire hooks when turning from request to response or vice versa."""
         if to_turn == self._turn:
@@ -581,6 +614,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         - [`OutputToolResultEvent`][pydantic_ai.messages.OutputToolResultEvent] -> `handle_output_tool_result`
         - [`DeferredToolRequestsEvent`][pydantic_ai.messages.DeferredToolRequestsEvent] -> `handle_deferred_tool_requests`
         - [`DeferredToolResultsEvent`][pydantic_ai.messages.DeferredToolResultsEvent] -> `handle_deferred_tool_results`
+        - [`ModelResponseRejectedEvent`][pydantic_ai.messages.ModelResponseRejectedEvent] -> `handle_model_response_rejected`
         - [`CustomEvent`][pydantic_ai.messages.CustomEvent] -> `handle_custom_event`
         - [`CapabilityEvent`][pydantic_ai.messages.CapabilityEvent] -> `handle_capability_event`
         - [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] -> `handle_run_result`
@@ -696,6 +730,8 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
                 return self.handle_deferred_tool_requests(event)
             case DeferredToolResultsEvent():
                 return self.handle_deferred_tool_results(event)
+            case ModelResponseRejectedEvent():
+                return self.handle_model_response_rejected(event)
             case CustomEvent():
                 # Checked here rather than in each protocol's handler so that `ui=False` holds for
                 # third-party adapters too, and so an adapter overriding `handle_custom_event` can't
@@ -1185,6 +1221,19 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             event: The deferred tool results event.
         """
         return
+        yield  # Make this an async generator
+
+    async def handle_model_response_rejected(self, event: ModelResponseRejectedEvent) -> AsyncIterator[EventT]:
+        """Handle a `ModelResponseRejectedEvent`, sent when a streamed response was rejected and another takes its place.
+
+        It comes after the rejected response's events, while that response's turn is still open; the turn ends
+        right after, so the next response starts one of its own. By default no protocol events are emitted.
+        Override this to tell the frontend the output it just showed isn't the answer.
+
+        Args:
+            event: The model response rejected event.
+        """
+        return  # pragma: no cover
         yield  # Make this an async generator
 
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[EventT]:

@@ -205,6 +205,13 @@ class _RestrictedRunContext(Protocol):
 
 MODEL_RESPONSE_STREAM_EVENT_TYPES = get_union_args(ModelResponseStreamEvent)
 
+REJECTED_EVENT_DISPATCH_PATCH = 'pydantic_ai:rejected_event_dispatch'
+"""Patch ID marking durable histories in which a `ModelResponseRejectedEvent` is handed to the `event_stream_handler`.
+
+The handler runs in a durable unit that a history recorded before the event existed doesn't have, so engines
+with a patch primitive (Temporal, DBOS) dispatch the event only where it is set. The event is yielded either way.
+"""
+
 _CONVERSATION_ID_NAMESPACE = uuid.UUID('b4a5470b-7dc5-4744-b6d4-27f7c81a3775')
 """Namespace for the UUID5 a durable run derives its default `conversation_id` from."""
 

@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import asyncio
 import dataclasses
+import functools
 import inspect
 import time
 import weakref
@@ -53,7 +54,7 @@ from pydantic_ai._instrumentation import (
     mcp_telemetry_url_toolset_ids,
     open_request_policy,
 )
-from pydantic_ai._model_request_attempts import AttemptStart, carried_attempts
+from pydantic_ai._model_request_attempts import AttemptStart, carried_attempts, failed_attempt
 from pydantic_ai._parts_manager import stamp_and_type_call_part, ui_visibility_stamps
 from pydantic_ai._tool_execution import last_response_index, process_tool_calls
 from pydantic_ai._utils import (
@@ -1069,9 +1070,18 @@ class GraphAgentState:
             message = f'Exceeded maximum output retries ({max_output_retries})'
             raise exceptions.UnexpectedModelBehavior(message) from error
         if isinstance(feedback, _messages.RetryFeedbackPart):  # pragma: no branch
-            feedback.retry = dataclasses.replace(
-                feedback.retry, attempt=self.output_retries_used, max_retries=max_output_retries
-            )
+            self.stamp_output_retry(max_output_retries, feedback, attempt=self.output_retries_used)
+
+    def stamp_output_retry(
+        self, max_output_retries: int, feedback: _messages.RetryFeedbackPart, *, attempt: int | None = None
+    ) -> None:
+        """Stamp `feedback` with the output retry `attempt` it is, by default the one the next retry would consume.
+
+        A retry that would exceed the budget isn't stamped, as `consume_output_retry` doesn't stamp it.
+        """
+        attempt = self.output_retries_used + 1 if attempt is None else attempt
+        if attempt <= max_output_retries:
+            feedback.retry = dataclasses.replace(feedback.retry, attempt=attempt, max_retries=max_output_retries)
 
 
 @dataclasses.dataclass(kw_only=True)
@@ -2716,6 +2726,50 @@ async def _outside_attempts(awaitable: Awaitable[T]) -> T:
         ) from retry
 
 
+ResponseRejection: TypeAlias = Callable[
+    [_messages.ModelResponse, bool], Awaitable[_messages.ModelResponseRejectedEvent | None]
+]
+"""Awaited by a request step's `AgentStream` once its model stream has finished or been cut short, with what it
+streamed and whether it was cut short, for the event reporting that its response was rejected, if it was."""
+
+
+@dataclasses.dataclass
+class _HandlerVerdict:
+    """Whether the streaming handler has finished, and whether it asked the model again.
+
+    It asks again when `after_model_request`, or a failure the handler converted, raises `ModelRetry`. The stream
+    reads this to report a rejection without waiting on the rest of `wrap_model_request`.
+    """
+
+    finished: anyio.Event = field(default_factory=anyio.Event)
+    retried: bool = False
+
+    async def track(self, handler: Awaitable[_messages.ModelResponse]) -> _messages.ModelResponse:
+        """Await `handler`, recording how it finished."""
+        try:
+            return await handler
+        except exceptions.ModelRetry:
+            self.retried = True
+            raise
+        finally:
+            self.finished.set()
+
+
+def _rejected_response_event(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]],
+    response: _messages.ModelResponse,
+    reason: _messages.RetryFeedbackPart | _messages.ModelRequestAttempt,
+) -> _messages.ModelResponseRejectedEvent:
+    """Report that `response`, produced by the current run step, was rejected for `reason`."""
+    return _messages.ModelResponseRejectedEvent(
+        response=response,
+        reason=reason,
+        run_step=ctx.state.run_step,
+        # Every attempt the step moved on from before this one is listed on the response.
+        attempt=len(response.failed_attempts or ()) + 1,
+    )
+
+
 def _display_first_run_banner(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> None:
     """Show the first-run banner, from whichever path prepared the run's first request.
 
@@ -2805,6 +2859,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         repr=False, init=False, default_factory=dict[str, _messages.Authority]
     )
     """The capabilities below operator authority whose instructions this request resolved, by their block's id."""
+    _attempt_start: AttemptStart | None = field(default=None, init=False, repr=False)
+    """When the attempt whose stream was handed to the consumer started."""
+    _rejection_feedback: tuple[exceptions.ModelRetry, _messages.RetryFeedbackPart] | None = field(
+        default=None, init=False, repr=False
+    )
+    """The feedback a `ModelRetry` that rejected the streamed response was reported with, which the retry then sends."""
     _step_instruction_parts: list[_messages.InstructionPart] | None = field(repr=False, init=False, default=None)
     """The instruction parts this request step resolved for its model, before the hooks ran, without the loaded ones."""
     _step_toolset_instruction_parts: list[_messages.InstructionPart] = field(
@@ -2902,6 +2962,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         time_to_first_chunk: float | None = None
         accounted_responses: list[_messages.ModelResponse] = []
         before_model_request_context: list[tuple[ContextVar[Any], Any]] = []
+        handler_verdict = _HandlerVerdict()
 
         async def _streaming_handler(
             req_ctx: ModelRequestContext,
@@ -2936,7 +2997,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                     self._did_stream = True
                     agent_stream = self._build_agent_stream(
-                        ctx, sr, req_ctx.model_request_parameters, model_id=self._serving_model_id
+                        ctx, sr, req_ctx.model_request_parameters, model_id=self._serving_model_id, rejection=rejection
                     )
                     agent_stream_holder.append(agent_stream)
                     stream_ready.set()
@@ -2975,9 +3036,13 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             _handler_usage_recorded = True
             # The attempts the stream was handed over with are described, not billed again.
             self._record_response_usage(ctx, response, request_context=req_ctx, described=described_attempts)
+            agent_stream._response_usage_recorded = True  # pyright: ignore[reportPrivateUsage]
             accounted_responses.append(response)
             capture_model_response_span_context(req_ctx, response, time_to_first_chunk)
             return await _after_streamed_model_request(ctx.deps.root_capability, run_context, req_ctx, response)
+
+        def _tracked_handler(req_ctx: ModelRequestContext) -> Awaitable[_messages.ModelResponse]:
+            return handler_verdict.track(_streaming_handler(req_ctx))
 
         wrap_request_context = request_context
         root_capability = ctx.deps.root_capability
@@ -2985,10 +3050,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             wrap_awaitable = root_capability.wrap_model_request(
                 run_context,
                 request_context=wrap_request_context,
-                handler=_streaming_handler,
+                handler=_tracked_handler,
             )
         else:
-            wrap_awaitable = _streaming_handler(wrap_request_context)
+            wrap_awaitable = _tracked_handler(wrap_request_context)
         # The stream teardown waits for the request through `ScopedTask`, so a cancelled `anyio` scope around the
         # consumer can't cut the model stream's shielded close short.
         wrap = ScopedTask(_outside_attempts(wrap_awaitable))
@@ -3006,6 +3071,10 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 return e.response
             except exceptions.ModelRetry:
                 return None
+
+        rejection = functools.partial(
+            self._stream_rejection, ctx, stream_done=stream_done, handler=handler_verdict, wrap=wrap
+        )
 
         # Wait for handler to start or wrap to complete (short-circuit).
         # If outer cancellation arrives during this wait, drain both tasks before re-raising
@@ -3123,7 +3192,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                             # A genuine failure rather than a walk-away: cancel the still-live job so it doesn't leak.
                             await _cancel_interrupted_job(wrap_request_context, partial)
                         self._commit_interrupted_response(
-                            ctx, partial, recorded, (_handler_request_context or wrap_request_context).messages
+                            ctx,
+                            partial,
+                            recorded,
+                            (_handler_request_context or wrap_request_context).messages,
+                            # An `after_model_request` verdict at the end of the model stream recorded it already.
+                            record_billed_usage=not _handler_usage_recorded,
                         )
                 else:
                     try:
@@ -3157,6 +3231,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                         # `ModelRetry` — then there's no response to preserve in history.
                         if _handler_response is not None:  # pragma: no branch
                             self._append_response(ctx, _handler_response, record_usage=not _handler_usage_recorded)
+                            self._report_late_rejection(ctx, agent_stream_holder[0].response, e)
                         await self._build_retry_node(ctx, e)
                     except BaseException:
                         await _settle_pending(_pending, None)
@@ -3182,18 +3257,22 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         streamed: _messages.ModelResponse,
         recorded: _messages.ModelResponse,
         request_messages: Sequence[_messages.ModelMessage],
+        *,
+        record_billed_usage: bool = True,
     ) -> None:
         """Commit the response an interrupted stream produced so far, without checking usage limits.
 
         `streamed` is the stream's response so far, and `recorded` is it as `_interrupted_stream_response` recorded it.
         `request_messages` are the messages the stream was requested with, which end in the suspended response it
-        resumed, if any.
+        resumed, if any. `record_billed_usage` is `False` when the handler already added the response's usage to the
+        run's.
         """
         recorded.run_id = ctx.state.run_id
         recorded.conversation_id = ctx.state.conversation_id
         recorded.model_id = recorded.model_id or self._serving_model_id
         recorded.workspace_ref = ctx.deps.workspace_ref
-        _record_billed_usage(ctx.state.usage, _billed_by_request(recorded, request_messages))
+        if record_billed_usage:
+            _record_billed_usage(ctx.state.usage, _billed_by_request(recorded, request_messages))
         if recorded.parts:
             # The agent acted on what was streamed before the interruption, so the step counts;
             # a stream that failed before producing anything doesn't.
@@ -3238,10 +3317,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model_request_parameters: models.ModelRequestParameters,
         *,
         model_id: str | None = None,
+        rejection: ResponseRejection | None = None,
     ) -> result.AgentStream[DepsT, T]:
         """Build an AgentStream from the given stream response and context, which came from the model `model_id` identifies."""
         return result.AgentStream[DepsT, T](
             _raw_stream_response=stream_response,
+            _rejection=rejection,
             _output_schema=ctx.deps.output_schema,
             _model_request_parameters=model_request_parameters,
             _output_validators=ctx.deps.output_validators,
@@ -4238,9 +4319,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     replay_events=True,
                 )
                 failed.log.attach_to_stream(replay)
+                self._attempt_start = start
                 return replay, request_context, request_start, failed.log.attempts
             stream_stack.push_async_exit(attempt_stack)
             failed.log.attach_to_stream(sr)
+            self._attempt_start = start
             return sr, request_context, request_start, failed.log.attempts
 
     def _recovers_failure_to_open(
@@ -4499,6 +4582,94 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             for response in responses:
                 ctx.deps.usage_limits.check_per_request_input_tokens(context_input_tokens(response))
 
+    async def _stream_rejection(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        streamed: _messages.ModelResponse,
+        cut_short: bool,
+        *,
+        stream_done: anyio.Event,
+        handler: _HandlerVerdict,
+        wrap: ScopedTask[_messages.ModelResponse],
+    ) -> _messages.ModelResponseRejectedEvent | None:
+        """The hooks' verdict on the streamed response, once the model stream has finished or been abandoned.
+
+        Reported as a rejection when they ask the model again with `ModelRetry`, or when `wrap_model_request`
+        cut the stream short to answer with a response of its own. Only reports the verdict: the stream's
+        teardown acts on it, raising any other error, once the consumer is done with the stream.
+        """
+        if not cut_short:
+            if not ctx.deps.root_capability._has_after_model_request:  # pyright: ignore[reportPrivateUsage]
+                # Nothing can reject the response inside the handler, so it finishes once the consumer leaves the
+                # stream, as it always has. A retry `wrap_model_request` decides on is reported from there.
+                return None
+            # The consumer has seen the whole response, so let the handler finish as it would once the consumer
+            # leaves the stream, and `after_model_request` pass its verdict before the stream ends. The rest of
+            # `wrap_model_request` is only waited for when the handler asked the model again: a wrapper can still
+            # be busy otherwise, like a parallel input guardrail, and its verdict is acted on once the consumer
+            # is done with the stream.
+            stream_done.set()
+            await handler.finished.wait()
+            if not handler.retried:
+                return None
+        elif not streamed.parts:
+            # Cut short before the model produced anything, so the consumer has nothing to set apart.
+            return None
+        try:
+            # Shielded so a cancelled consumer leaves `wrap.task` to the stream teardown.
+            await asyncio.shield(wrap.task)
+        except exceptions.ModelRetry as e:
+            return self._reject_with_retry(ctx, streamed, e)
+        except Exception:
+            # On a cut-short stream, only a skip gets here, which replaces the response as a returned response
+            # does: any other error was already raised to the consumer by the replacement. On a finished stream,
+            # it's an error `wrap_model_request` raised instead of the handler's retry, which the teardown raises.
+            pass
+        if not cut_short:
+            # `wrap_model_request` recovered from the handler's retry.
+            return None
+        assert self._serving_model is not None and self._attempt_start is not None
+        # `kind` keeps its default, `'fallback'`: a replacement is not another attempt at the same model.
+        reason = failed_attempt(
+            self._serving_model, streamed, start=self._attempt_start, duration=self._attempt_start.elapsed()
+        )
+        return _rejected_response_event(ctx, streamed, reason)
+
+    def _reject_with_retry(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        response: _messages.ModelResponse,
+        error: exceptions.ModelRetry,
+    ) -> _messages.ModelResponseRejectedEvent:
+        """Reject `response` for `error`, returning the event that reports it.
+
+        Stamps the feedback the retry will send, and remembers it so `_build_retry_node` sends that same part.
+        """
+        feedback = _messages.RetryFeedbackPart(content=error.message, retry=_messages.RetryInfo(cause='model_retry'))
+        ctx.state.stamp_output_retry(ctx.deps.max_output_retries, feedback)
+        self._rejection_feedback = (error, feedback)
+        return _rejected_response_event(ctx, response, feedback)
+
+    def _report_late_rejection(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        response: _messages.ModelResponse,
+        error: exceptions.ModelRetry,
+    ) -> None:
+        """Report that `response` was rejected for `error`, unless the stream reported it already.
+
+        That's a rejection decided after the stream ended, by `wrap_model_request` or after the consumer left
+        the stream early. It's buffered so it reaches the consumer ahead of the retry's events.
+        """
+        if self._reported_feedback(error) is None:
+            ctx.state.event_stream_buffer.append(self._reject_with_retry(ctx, response, error))
+
+    def _reported_feedback(self, error: exceptions.ModelRetry) -> _messages.RetryFeedbackPart | None:
+        """The feedback the stream reported the response's rejection for `error` with, which the retry then sends."""
+        if self._rejection_feedback is not None and self._rejection_feedback[0] is error:
+            return self._rejection_feedback[1]
+        return None
+
     def _end_with_submitted_output(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> SetFinalResult[DepsT, NodeRunEndT]:
@@ -4524,7 +4695,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """
         self._emit_capability_load_records(ctx)
         _discard_output_submitted_during_step(ctx)
-        m = _messages.RetryFeedbackPart(content=error.message, retry=_messages.RetryInfo(cause='model_retry'))
+        m = self._reported_feedback(error) or _messages.RetryFeedbackPart(
+            content=error.message, retry=_messages.RetryInfo(cause='model_retry')
+        )
         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=error, feedback=m)
         # A retry without a response gives up on this step, so its request-scoped parts go with it. When the
         # response was kept in history it answers them, and this is a no-op.
@@ -4698,6 +4871,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                             ctx, result.FinalResult(cast(NodeRunEndT, result_data)), []
                         )
                     except ToolRetryError as e:
+                        yield self._reject_response(ctx, e)
                         ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
                         self._next_node = ModelRequestNode[DepsT, NodeRunEndT](
                             _messages.ModelRequest(parts=[e.tool_retry])
@@ -4807,6 +4981,7 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
                 _raise_if_cut_off_output(
                     self.model_response, e, output_schema=output_schema, max_tokens=ctx.state.last_max_tokens
                 )
+                yield self._reject_response(ctx, e)
                 ctx.state.consume_output_retry(ctx.deps.max_output_retries, error=e, feedback=e.tool_retry)
                 self._next_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[e.tool_retry]))
 
@@ -4824,6 +4999,22 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
             self._stream_error = e
             ctx.deps.failed_tool_nodes[id(self)] = self
             raise
+
+    def _reject_response(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        error: ToolRetryError,
+    ) -> _messages.ModelResponseRejectedEvent:
+        """Reject a response with no usable output for `error`, returning the event that reports it.
+
+        Stamps the feedback the retry will send. The rejection is reported ahead of the retry, so also when the
+        retry budget is used up, before the run fails with that error.
+        """
+        feedback = error.tool_retry
+        # A retry that answers no tool call always travels as feedback.
+        assert isinstance(feedback, _messages.RetryFeedbackPart)
+        ctx.state.stamp_output_retry(ctx.deps.max_output_retries, feedback)
+        return _rejected_response_event(ctx, self.model_response, feedback)
 
     def _events_for_response(
         self,

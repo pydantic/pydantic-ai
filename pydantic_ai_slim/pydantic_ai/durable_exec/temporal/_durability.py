@@ -23,6 +23,7 @@ from pydantic_ai.capabilities.retry_on_model_errors import RetryOnModelErrors
 from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.durable_exec._base import (
     MODEL_RESPONSE_STREAM_EVENT_TYPES,
+    REJECTED_EVENT_DISPATCH_PATCH,
     BaseDurabilityCapability,
     capability_selects_child_workflow,
     conversation_id_from_run_id,
@@ -44,7 +45,7 @@ from pydantic_ai.exceptions import (
     UserError,
 )
 from pydantic_ai.external_events import external_event_scope
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse
+from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ModelResponseRejectedEvent
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters, infer_model
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult
@@ -685,6 +686,11 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         # A topic on its own is a reason to stream, even without an `event_stream_handler`. Outside a
         # workflow there is nothing to publish to, so it isn't a reason to stream there.
         return super().has_wrap_run_event_stream or (self._event_stream_topic is not None and self.in_durable_context)
+
+    async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
+        if isinstance(event, ModelResponseRejectedEvent) and not workflow.patched(REJECTED_EVENT_DISPATCH_PATCH):
+            return
+        await super()._dispatch_event_stream_event(ctx, event)
 
     def _model_stream_event_handler(self) -> EventStreamHandler[AgentDepsT] | None:
         """Publish the live model stream to the topic from inside the model-request activity.

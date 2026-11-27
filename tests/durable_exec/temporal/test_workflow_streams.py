@@ -65,6 +65,7 @@ if sys.version_info >= (3, 14):  # pragma: lax no cover
     )
 
 with workflow.unsafe.imports_passed_through():
+    from ...rejected_response_utils import ANSWER, announce_then_answer, reject_announcements
     from ._shared import BASE_ACTIVITY_CONFIG, TASK_QUEUE
 
 pytestmark = [pytest.mark.xdist_group(name='temporal-workflow-streams')]
@@ -472,6 +473,90 @@ async def test_workflow_side_events_cost_no_activity(client: Client) -> None:
         'agent__topic_only_stream_agent__model_request_stream',
         'agent__topic_only_stream_agent__toolset__<agent>__call_tool',
     ]
+
+
+# --- A rejected response --------------------------------------------------------------------------
+
+_rejection_handler_events: list[AgentStreamEvent] = []
+
+
+async def _rejection_handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _rejection_handler_events.append(event)
+
+
+_rejection_durability = TemporalDurability(
+    activity_config=BASE_ACTIVITY_CONFIG, event_stream_topic=TOPIC, event_stream_handler=_rejection_handler
+)
+_rejection_agent = Agent(
+    FunctionModel(stream_function=announce_then_answer),
+    name='rejection_stream_agent',
+    capabilities=[_rejection_durability],
+)
+_rejection_agent.output_validator(reject_announcements)
+
+
+@workflow.defn
+class RejectionStreamingWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.events = AgentEventStream()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with self.events:
+            result = await _rejection_agent.run(prompt)
+        return result.output
+
+
+@pytest.mark.parametrize('patched', [True, False], ids=['patched', 'recorded before the patch'])
+async def test_rejection_is_published_with_or_without_the_dispatch_patch(
+    client: Client, monkeypatch: pytest.MonkeyPatch, patched: bool
+) -> None:
+    """The rejected-event dispatch patch gates only the `event_stream_handler`: the topic gets the rejection either way.
+
+    Publishing appends to the workflow's own log and schedules no activity, so a history recorded before the patch
+    replays it unchanged. Faking `workflow.patched` off for this patch stands in for the code before the upgrade.
+    """
+    _rejection_handler_events.clear()
+    if not patched:
+        real_patched = workflow.patched
+
+        def before_the_patch(patch_id: str) -> bool:
+            return patch_id != 'pydantic_ai:rejected_event_dispatch' and real_patched(patch_id)
+
+        monkeypatch.setattr(workflow, 'patched', before_the_patch)
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RejectionStreamingWorkflow],
+        plugins=[AgentPlugin(_rejection_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            RejectionStreamingWorkflow.run,
+            args=['When does the store open?'],
+            id=f'{RejectionStreamingWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        received = await _collect(
+            _rejection_durability.stream_agent_events(
+                client, handle, output_type=str, poll_cooldown=timedelta(milliseconds=50)
+            )
+        )
+        assert await handle.result() == ANSWER
+
+    assert _kinds(received) == [
+        'PartStartEvent',
+        'FinalResultEvent',
+        'PartEndEvent',
+        'ModelResponseRejectedEvent',
+        'PartStartEvent',
+        'FinalResultEvent',
+        'PartEndEvent',
+        'AgentRunResultEvent',
+    ]
+    assert ('ModelResponseRejectedEvent' in _kinds(_rejection_handler_events)) is patched
 
 
 # --- Filtering ------------------------------------------------------------------------------------

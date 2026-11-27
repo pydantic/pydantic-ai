@@ -185,7 +185,8 @@ Key parameters:
 - `StreamGuardrail(guard)`: holds each streamed `TextPart`, `ThinkingPart` or `ToolCallPart` until it
   is complete and passes the whole part to the guard before its events reach `run_stream_events()`,
   a run's `event_stream_handler` argument or a UI adapter; `ProcessEventStream` and `on_event`
-  see raw events. Adds the part's generation time to its first chunk; a tool call is held until
+  see raw events. A `ModelResponseRejectedEvent` passes with its response's text, thinking and
+  tool-call parts left out. Adds the part's generation time to its first chunk; a tool call is held until
   the model response ends.
   `run_stream()`'s `stream_text()`/`stream_output()` are not screened (a `block` still raises), and
   the run's history and output are not changed; pair with `OutputGuardrail`/`ToolGuardrail` for

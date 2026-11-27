@@ -34,6 +34,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseRejectedEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     OutputToolCallEvent,
@@ -72,6 +73,7 @@ from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, conversation_view, message, message_part, try_import
+from .rejected_response_utils import ANNOUNCEMENT, ANSWER, announce_then_answer, reject_announcements
 from .workspace_fakes import ConnectOnlyWorkspaceCapability
 
 with try_import() as otel_sdk_imports_successful:
@@ -234,6 +236,9 @@ class DummyUIEventStream(UIEventStream[DummyUIRunInput, str, AgentDepsT, OutputD
     async def handle_run_result(self, event: AgentRunResultEvent) -> AsyncIterator[str]:
         yield f'<run-result>{event.result.output}</run-result>'
 
+    async def handle_model_response_rejected(self, event: ModelResponseRejectedEvent) -> AsyncIterator[str]:
+        yield f'<rejected run_step={event.run_step} attempt={event.attempt} />'
+
     async def before_stream(self) -> AsyncIterator[str]:
         yield '<stream>'
 
@@ -293,6 +298,36 @@ async def test_run_stream_text_and_thinking():
             '</thinking followed_by_thinking=False>',
             '</response>',
             '<run-result>Half of some text</run-result>',
+            '</stream>',
+        ]
+    )
+
+
+async def test_run_stream_rejected_response_ends_its_turn():
+    """A rejected response's turn ends after the rejection, so the response replacing it starts a turn of its own."""
+
+    agent = Agent(model=FunctionModel(stream_function=announce_then_answer))
+    agent.output_validator(reject_announcements)
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('When?')])
+    adapter = DummyUIAdapter(agent, request)
+    events = [event async for event in adapter.run_stream()]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            f'<text follows_text=False>{ANNOUNCEMENT}',
+            '<final-result tool_name=None />',
+            '</text followed_by_text=False>',
+            '<rejected run_step=1 attempt=1 />',
+            '</response>',
+            '<response>',
+            f'<text follows_text=False>{ANSWER}',
+            '<final-result tool_name=None />',
+            '</text followed_by_text=False>',
+            '</response>',
+            f'<run-result>{ANSWER}</run-result>',
             '</stream>',
         ]
     )

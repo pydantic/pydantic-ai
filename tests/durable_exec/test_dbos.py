@@ -42,6 +42,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseRejectedEvent,
     ModelSettings,
     PartDeltaEvent,
     PartStartEvent,
@@ -189,6 +190,15 @@ from ..batch_utils import FAST_BATCH_SETTINGS, SlowBatchTestModel
 from ..clock_utils import LONG_TIMEOUT, Clock
 from ..continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from ..rejected_response_utils import (
+    ANNOUNCEMENT,
+    ANSWER,
+    RejectAnnouncements,
+    RetryAnnouncements,
+    always_announce,
+    announce_then_answer,
+    reject_announcements,
+)
 from .decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
 from .preamble_text import (
     RunAndStreamResult,
@@ -499,6 +509,42 @@ iter_handler_stream_agent = Agent(
     FunctionModel(stream_function=runtime_handler_stream_function),
     name='iter_handler_stream_agent',
     capabilities=[DBOSDurability(event_stream_handler=runtime_event_stream_handler)],
+)
+
+_rejection_events: list[AgentStreamEvent] = []
+
+
+async def _collect_rejection_events(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _rejection_events.append(event)
+
+
+rejection_stream_agent = Agent(
+    FunctionModel(stream_function=announce_then_answer),
+    name='rejection_stream_agent',
+    capabilities=[DBOSDurability(event_stream_handler=_collect_rejection_events)],
+)
+rejection_stream_agent.output_validator(reject_announcements)
+
+_yielded_rejections: list[ModelResponseRejectedEvent] = []
+
+
+@rejection_stream_agent.on_event(ModelResponseRejectedEvent)
+async def _record_yielded_rejection(ctx: RunContext[None], event: ModelResponseRejectedEvent) -> None:
+    _yielded_rejections.append(event)
+
+
+hooked_rejection_stream_agent = Agent(
+    FunctionModel(stream_function=announce_then_answer),
+    name='hooked_rejection_stream_agent',
+    capabilities=[DBOSDurability(event_stream_handler=_collect_rejection_events), RejectAnnouncements()],
+)
+
+wrapper_rejection_stream_agent = Agent(
+    FunctionModel(stream_function=always_announce),
+    name='wrapper_rejection_stream_agent',
+    capabilities=[DBOSDurability(event_stream_handler=_collect_rejection_events), RetryAnnouncements()],
+    retries={'output': 0},
 )
 
 
@@ -922,6 +968,172 @@ async def test_dbos_agent_run_in_workflow_with_runtime_event_stream_handler(
         and isinstance((event := attributes.get('event')), str)
     ]
     assert exported_event_messages != []
+
+
+@pytest.mark.parametrize(
+    'agent',
+    [rejection_stream_agent, hooked_rejection_stream_agent],
+    ids=['output validator', 'after_model_request'],
+)
+async def test_dbos_reports_a_rejected_streamed_response_between_the_attempts(
+    allow_model_requests: None, dbos: DBOS, agent: Agent[None, str]
+) -> None:
+    """In a DBOS workflow, the rejected response's events, then `ModelResponseRejectedEvent`, then the retry's events.
+
+    An `after_model_request` verdict is waited for in the step's stream, so it holds the same order.
+    """
+    _rejection_events.clear()
+
+    @DBOS.workflow()
+    async def run_rejection_workflow() -> str:
+        return (await agent.run('When does the store open?')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        output = await run_rejection_workflow()
+
+    assert output == ANSWER
+    assert [event.event_kind for event in _rejection_events] == snapshot(
+        ['part_start', 'final_result', 'part_end', 'model_response_rejected', 'part_start', 'final_result', 'part_end']
+    )
+
+
+@pytest.mark.parametrize('patch', ['patched', 'recorded before the patch', 'probe interrupted'])
+async def test_dbos_rejected_event_dispatch_is_gated_by_a_patch(
+    allow_model_requests: None, dbos: DBOS, monkeypatch: pytest.MonkeyPatch, patch: str
+) -> None:
+    """Only a workflow with the patch marker hands `ModelResponseRejectedEvent` to the `event_stream_handler`.
+
+    A workflow recorded before the patch has no step for the rejection, so recovering it under this code must not
+    start one. Faking `DBOS.patch_async` stands in for the code before the upgrade, which never called it, and for
+    a probe another step interrupted, which records nothing. The rejection is yielded either way.
+
+    Not a VCR test: it pins the steps DBOS records; the model is a `FunctionModel`.
+    """
+    _rejection_events.clear()
+    _yielded_rejections.clear()
+    workflow_id = str(uuid.uuid4())
+
+    async def before_the_patch(patch_name: str) -> bool:
+        return False
+
+    async def interrupted(patch_name: str) -> bool:
+        raise DBOSPatchNondeterminismError(workflow_id, patch_name, 'another step started during the probe')
+
+    if patch == 'recorded before the patch':
+        monkeypatch.setattr(DBOS, 'patch_async', before_the_patch)
+    elif patch == 'probe interrupted':
+        monkeypatch.setattr(DBOS, 'patch_async', interrupted)
+
+    @DBOS.workflow()
+    async def run_rejection_workflow() -> str:
+        return (await rejection_stream_agent.run('When does the store open?')).output
+
+    with SetWorkflowID(workflow_id):
+        assert await run_rejection_workflow() == ANSWER
+
+    assert [event.response.text for event in _yielded_rejections] == [ANNOUNCEMENT]
+    handled = [event.event_kind for event in _rejection_events]
+    steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(workflow_id)]
+    if patch == 'patched':
+        assert 'model_response_rejected' in handled
+        assert steps == snapshot(
+            [
+                'rejection_stream_agent__model.request_stream',
+                'DBOS.patch-pydantic_ai:rejected_event_dispatch',
+                'rejection_stream_agent__event_stream_handler',
+                'rejection_stream_agent__model.request_stream',
+            ]
+        )
+    else:
+        assert 'model_response_rejected' not in handled
+        assert steps == snapshot(
+            ['rejection_stream_agent__model.request_stream', 'rejection_stream_agent__model.request_stream']
+        )
+
+
+_rejection_crash_armed = threading.Event()
+
+
+@DBOS.workflow()
+async def _reject_then_crash_workflow() -> str:
+    output = (await rejection_stream_agent.run('When does the store open?')).output
+    if _rejection_crash_armed.is_set():
+        _rejection_crash_armed.clear()
+        raise _ProcessCrash
+    return output
+
+
+async def test_dbos_workflow_that_recorded_a_rejection_before_the_patch_recovers(
+    allow_model_requests: None, dbos: DBOS, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A workflow that rejected a response before the patch recovers without a handler step for the rejection.
+
+    Its next model request is recorded where the patched code hands the rejection to the handler, so recovery's
+    `DBOS.patch_async` finds that step there and takes the unpatched branch instead of failing on an unexpected
+    step. A workflow started with the patch recovers through its marker, replaying the handler step. Faking
+    `DBOS.patch_async` stands in for the code before the upgrade, which never called it.
+
+    Not a VCR test: it pins the steps DBOS records and replays; the model is a `FunctionModel`.
+    """
+    _rejection_events.clear()
+
+    async def before_the_patch(patch_name: str) -> bool:
+        return False
+
+    async def start_and_crash() -> str:
+        workflow_id = f'rejection-recovery-{uuid.uuid4()}'
+        _rejection_crash_armed.set()
+        with SetWorkflowID(workflow_id), pytest.raises(_ProcessCrash):
+            await _reject_then_crash_workflow()
+        return workflow_id
+
+    async def recorded_steps(workflow_id: str) -> list[str]:
+        return [step['function_name'] for step in await dbos.list_workflow_steps_async(workflow_id)]
+
+    monkeypatch.setattr(DBOS, 'patch_async', before_the_patch)
+    unpatched_id = await start_and_crash()
+    monkeypatch.undo()
+    patched_id = await start_and_crash()
+    handled = [event.event_kind for event in _rejection_events]
+
+    for workflow_id in (unpatched_id, patched_id):
+        handle = await DBOS.resume_workflow_async(workflow_id)
+        assert await handle.get_result() == ANSWER
+
+    assert await recorded_steps(unpatched_id) == snapshot(
+        ['rejection_stream_agent__model.request_stream', 'rejection_stream_agent__model.request_stream']
+    )
+    assert await recorded_steps(patched_id) == snapshot(
+        [
+            'rejection_stream_agent__model.request_stream',
+            'DBOS.patch-pydantic_ai:rejected_event_dispatch',
+            'rejection_stream_agent__event_stream_handler',
+            'rejection_stream_agent__model.request_stream',
+        ]
+    )
+    assert handled.count('model_response_rejected') == 1
+    # Recovery replays the recorded steps, so neither workflow hands the handler anything again.
+    assert [event.event_kind for event in _rejection_events] == handled
+
+
+async def test_dbos_reports_a_rejection_that_ends_the_run_before_the_error(
+    allow_model_requests: None, dbos: DBOS
+) -> None:
+    """In a DBOS workflow, a `wrap_model_request` retry that uses up the output retry budget reaches the durable
+    `event_stream_handler` before `UnexpectedModelBehavior` fails the workflow."""
+    _rejection_events.clear()
+
+    @DBOS.workflow()
+    async def run_exhausting_workflow() -> str:
+        return (await wrapper_rejection_stream_agent.run('When does the store open?')).output
+
+    with SetWorkflowID(str(uuid.uuid4())):
+        with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(0\)'):
+            await run_exhausting_workflow()
+
+    assert [event.event_kind for event in _rejection_events] == snapshot(
+        ['part_start', 'final_result', 'part_end', 'model_response_rejected']
+    )
 
 
 async def test_dbos_agent_iter_in_workflow_fires_event_stream_handler(

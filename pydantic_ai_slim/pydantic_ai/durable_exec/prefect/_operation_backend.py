@@ -8,6 +8,7 @@ from prefect.context import FlowRunContext
 from pydantic_ai.durable_exec._operation import CapabilityOperationId, DurableOperationId, EventStreamHandlerId
 from pydantic_ai.durable_exec._operation_backend import CallableOperationBackend, RoleBasedOperationConfig
 from pydantic_ai.durable_exec._workspace import WORKSPACE_OPERATION_ID
+from pydantic_ai.messages import ModelResponseRejectedEvent
 from pydantic_ai.tools import RunContext
 
 from ._operation_names import PrefectOperationNamer
@@ -33,6 +34,10 @@ class PrefectOperationBackend(CallableOperationBackend[TaskConfig]):
         sequence_key: str | None = None
         if isinstance(operation_id, EventStreamHandlerId):
             sequence_key = self._event_sequence_key
+            if isinstance(cache_key[0], ModelResponseRejectedEvent):
+                # Counted apart, so a flow first run by a release that didn't dispatch this event keeps the later
+                # events' task keys on retry, and replays their recorded handler runs instead of running them again.
+                sequence_key = f'pydantic_ai_rejected_event_sequence:{self._event_sequence_key}'
         elif isinstance(operation_id, CapabilityOperationId):
             # Match the singleton bound by _bind_workspace_operation: equal custom capability IDs
             # still use the custom operation's projection and counter namespace.

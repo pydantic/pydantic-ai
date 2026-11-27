@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from weakref import WeakKeyDictionary
 
 from dbos import DBOS, SetWorkflowTimeout
-from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
+from dbos._error import DBOSPatchNondeterminismError, DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai._cancel import provide_run_deadline
@@ -20,6 +20,7 @@ from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.capabilities.abstract import AbstractCapability, WrapRunHandler
 from pydantic_ai.durable_exec._base import (
+    REJECTED_EVENT_DISPATCH_PATCH,
     BaseDurabilityCapability,
     capability_selects_child_workflow,
     conversation_id_from_run_id,
@@ -38,7 +39,7 @@ from pydantic_ai.durable_exec._toolset import (
 )
 from pydantic_ai.durable_exec._workspace import DurableWorkspace
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import AgentStreamEvent
+from pydantic_ai.messages import AgentStreamEvent, ModelResponseRejectedEvent
 from pydantic_ai.models import Model
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, matches_tool_selector
@@ -438,6 +439,15 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             assert handler is not None
             await handler(ctx, self._single_event_stream(event))
             return
+        if isinstance(event, ModelResponseRejectedEvent):
+            try:
+                patched = await DBOS.patch_async(REJECTED_EVENT_DISPATCH_PATCH)
+            except DBOSPatchNondeterminismError:
+                # Another step in the workflow started during the probe, which recorded nothing. Recovery's probe
+                # finds that step at this position, so it takes the same branch.
+                patched = False
+            if not patched:
+                return
         reservations = self._event_step_reservations.get((DBOS.workflow_id, ctx.run_id))
         if reservations is not None and (pending := reservations.get(id(event))):
             reservation = pending.popleft()

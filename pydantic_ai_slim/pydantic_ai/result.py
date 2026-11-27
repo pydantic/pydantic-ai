@@ -7,7 +7,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime
 from decimal import Decimal
 from types import TracebackType
-from typing import TYPE_CHECKING, Any, Generic, Self, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Self, TypeAlias, cast, overload
 
 import anyio
 from pydantic import ValidationError
@@ -45,6 +45,7 @@ from .usage import RunUsage, UsageLimits
 from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
+    from ._agent_graph import ResponseRejection
     from ._appended_messages import AppendedMessages
     from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
@@ -56,6 +57,9 @@ __all__ = (
     'OutputValidatorFunc',
     'StreamedRunResultSync',
 )
+
+_ModelOrRejectionEvent: TypeAlias = ModelResponseStreamEvent | _messages.ModelResponseRejectedEvent
+"""An event of a request step's model stream, or the one reporting that its response was rejected."""
 
 
 @dataclass(kw_only=True)
@@ -85,6 +89,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
     _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
 
+    _rejection: ResponseRejection | None = field(default=None, repr=False)
+    """Awaited once the model stream has finished or been abandoned, with what it streamed and whether it was cut
+    short, for the event reporting that its response was rejected, if it was."""
+
     # Set by `_abandon_model_stream()`: awaited for the response that replaces the abandoned model stream.
     _replacement_response: Callable[[], Awaitable[_messages.ModelResponse | None]] | None = field(
         default=None, init=False, repr=False
@@ -92,13 +100,19 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _model_pull_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
     _model_pull_scope: anyio.CancelScope | None = field(default=None, init=False)
     _model_stream_finished: bool = field(default=False, init=False)
+    _response_usage_recorded: bool = field(default=False, init=False)
+    """Set once the request step has added this response's usage to the run's, as it does when the hooks have
+    passed their verdict on the finished stream."""
+    _initial_includes_response: bool = field(default=False, init=False)
+    """Whether `_initial_run_ctx_usage` was snapshotted after this response's usage was added to the run's."""
 
     def __post_init__(self):
         self._refresh_initial_run_ctx_usage()
 
     def _refresh_initial_run_ctx_usage(self) -> None:
-        """Snapshot the run's usage so far, which `usage` adds this response's usage on top of."""
+        """Snapshot the run's usage so far, which `usage` adds this response's usage on top of, unless it has it."""
         self._initial_run_ctx_usage = deepcopy(self._run_ctx.usage)
+        self._initial_includes_response = self._response_usage_recorded
         # The step being streamed is counted in the run's usage once its response is committed, after
         # the stream; count it here already so the stream's usage includes it.
         self._initial_run_ctx_usage.requests += 1  # usage-attribution: a deepcopy, for the live usage view
@@ -247,6 +261,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         # Mid-stream, `_raw_stream_response.usage` carries no cost yet (it's filled in when the response is
         # appended to history), so add a live best-effort estimate of this request's cost on top of the
         # earlier requests' cost. Once the cost has been filled in, `+` already accounts for it.
+        if self._initial_includes_response:
+            return deepcopy(self._initial_run_ctx_usage)
         usage = self._initial_run_ctx_usage + self._raw_stream_response.usage
         if self._raw_stream_response.usage.cost is None:
             price = best_effort_price(
@@ -552,8 +568,20 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 pass
         return True
 
-    async def _model_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        """The model stream's events, followed by its replacement's if the stream was abandoned."""
+    async def _rejected(
+        self, streamed: _messages.ModelResponse, *, cut_short: bool
+    ) -> _messages.ModelResponseRejectedEvent | None:
+        """The event reporting that `streamed` was rejected, if it was."""
+        if self._rejection is None:
+            return None
+        return await self._rejection(streamed, cut_short)
+
+    async def _model_events(self) -> AsyncIterator[_ModelOrRejectionEvent]:
+        """The model stream's events, followed by its replacement's if the stream was abandoned.
+
+        A rejection of the streamed response is reported between the two, or after the model stream's events
+        when nothing replaces them.
+        """
         events = aiter(self._raw_stream_response)
         while self._replacement_response is None:
             event: ModelResponseStreamEvent | None = None
@@ -567,10 +595,15 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 break
             if event is None:
                 self._model_stream_finished = True
+                if rejected := await self._rejected(self.response, cut_short=False):
+                    yield rejected
                 return
             yield event
 
+        streamed = self.response
         response = await self._replacement_response()
+        if rejected := await self._rejected(streamed, cut_short=True):
+            yield rejected
         if response is not None:
             self._raw_stream_response = models.CompletedStreamedResponse(
                 response, model_request_parameters=self._model_request_parameters, replay_events=True
@@ -611,7 +644,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             ):
                 yield event
 
-    async def _events_iter(self, base_iter: AsyncIterator[ModelResponseStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
+    async def _events_iter(self, base_iter: AsyncIterator[_ModelOrRejectionEvent]) -> AsyncIterator[AgentStreamEvent]:
         try:
             while True:
                 # Drain events emitted into the run's event buffer before each pull, so they interleave with the
@@ -1314,11 +1347,11 @@ class FinalResult(Generic[OutputDataT]):
 
 
 def _get_usage_checking_stream_response(
-    events: AsyncIterator[ModelResponseStreamEvent],
+    events: AsyncIterator[_ModelOrRejectionEvent],
     limits: UsageLimits | None,
     get_usage: Callable[[], RunUsage],
     get_request_input_tokens: Callable[[], int],
-) -> AsyncIterator[ModelResponseStreamEvent]:
+) -> AsyncIterator[_ModelOrRejectionEvent]:
     if limits is not None and limits.has_token_limits():
 
         async def _usage_checking_iterator():

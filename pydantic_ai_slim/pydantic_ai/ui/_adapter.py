@@ -16,6 +16,7 @@ from typing import (
     Literal,
     Protocol,
     Self,
+    TypeAlias,
     cast,
     runtime_checkable,
 )
@@ -47,6 +48,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelResponseRejectedEvent,
     ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -411,6 +413,30 @@ def tool_availability_delta_from_payload(payload: Mapping[str, Any]) -> ToolAvai
     if part.tool_call_id is not None and not part.tool_call_id.strip():
         part.tool_call_id = None
     return part
+
+
+RejectedResponseOutcome: TypeAlias = Literal['retried', 'replaced']
+"""What followed a rejected response, as a UI rejection payload's `outcome` reports it: `'retried'` when the model was
+asked again, or `'replaced'` when a capability answered instead."""
+
+
+def model_response_rejected_payload(event: ModelResponseRejectedEvent) -> dict[str, Any]:
+    """Serialize a [`ModelResponseRejectedEvent`][pydantic_ai.messages.ModelResponseRejectedEvent] for a UI data channel.
+
+    The payload says which response was rejected and how, so a frontend can set its output apart from what follows:
+    its `outcome`, with the retry's `cause` when the model was asked again. The feedback the model is asked again
+    with is left out: it's addressed to the model, and can say what an output validator checks for.
+    """
+    reason = event.reason
+    payload: dict[str, Any] = {'run_step': event.run_step, 'attempt': event.attempt}
+    outcome: RejectedResponseOutcome
+    if isinstance(reason, RetryFeedbackPart):
+        outcome = 'retried'
+        payload.update(outcome=outcome, cause=reason.retry.cause)
+    else:
+        outcome = 'replaced'
+        payload.update(outcome=outcome)
+    return payload
 
 
 def capability_load_delta_payload(part: CapabilityLoadDeltaPart) -> dict[str, Any]:
