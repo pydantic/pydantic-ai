@@ -357,8 +357,6 @@ With the default format (`version=5`), Pydantic AI emits these spans, all under 
 | `embeddings {model}` | Each embeddings request | `gen_ai.request.model`, `gen_ai.usage.*`, `operation.cost` (when a price is known) |
 | `image_generation {model}` | Each image generation request | `gen_ai.request.model`, `gen_ai.usage.*`, `operation.cost` (when a price is known) |
 
-With [Pydantic AI Gateway](gateway.md#observability), each model request shows a second `chat` span emitted by the Gateway.
-
 `pydantic_ai.all_messages`, `gen_ai.input.messages` and `gen_ai.output.messages` hold a JSON array of OpenTelemetry GenAI messages (`{"role": ..., "parts": [...]}`), not the format of [`all_messages_json()`][pydantic_ai.agent.AgentRunResult.all_messages_json]. In a `tool_call` part, `arguments` keeps [`ToolCallPart.args`][pydantic_ai.messages.ToolCallPart.args] as the provider returned it: a JSON object from some providers, such as Google, and a JSON string from others, such as OpenAI. Code that reads these attributes should handle both. `gen_ai.tool.call.arguments` on `execute_tool` spans is always a JSON string.
 
 ### Configuring data format
