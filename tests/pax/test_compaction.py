@@ -595,6 +595,8 @@ def test_compact_at_row_steps_through_shares_or_takes_a_token_count() -> None:
     assert row().display('75%') == '75% - about 150k tokens'
     assert source.apply(row(), '85%') == 'Saved Compact at.'
     assert saved[-1] == {}, 'the default share is saved as no choice, so a later default still applies'
+    source.apply(row(), '150k')
+    assert saved[-1] == {'threshold_tokens': 150_000}
     assert source.reset(row()) == 'Reset Compact at.'
     assert saved[-1] == {} and source.current(row()) == '85%'
     assert source.apply(row(), '100%') == 'Saved Compact at.'
