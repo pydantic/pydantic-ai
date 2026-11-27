@@ -148,15 +148,16 @@ the order the calls started, so one a call makes, like `get_output`'s on `valida
 what a test that leaves it set records depends on how fast the stream arrives.
 
 Each span the OpenTelemetry SDK ends is one line of kind `span`, with its name, number, parent, kind, the name of its
-instrumentation scope, its attributes, its status, and its events, each with its name and attributes. An exception
-event's stack trace is left out, since a refactor moves the lines it names, and so is the exception fingerprint Logfire
-sets on a span, which hashes the function and source line of each frame in it. A test's spans are numbered in the order
-they started, and a parent is named by its number; a parent that didn't start in the test the span ends in, like a
-remote one, is `external`. Concurrent tool calls end their spans in any order, so a test's span lines come after its
-others, ahead of the durable execution ones below, in the order the spans started. A span ended again is recorded once.
-Span IDs, timestamps and durations aren't recorded; the ones its attributes hold are normalized, below. The capture wraps
-`start` and `end` on the SDK's `Span`, so a span that isn't recording, like one a sampler drops or a tracer other than
-the SDK's starts, records nothing, and only its absence shows.
+instrumentation scope, its attributes, its status, and its events, each with its name and attributes. The stack trace an
+exception event holds is left out, since a refactor moves the lines it names, and so is the exception fingerprint
+Logfire sets on a span, which hashes the function and source line of each frame in it: neither is recorded from a span
+or an event. A test's spans are numbered in the order they started, and a parent is named by its number; a parent that
+didn't start in the test the span ends in, like a remote one, is `external`. Concurrent tool calls end their spans in
+any order, so a test's span lines come after its others, ahead of the durable execution ones below, in the order the
+spans started. A span ended again is recorded once. Span IDs, timestamps and durations aren't recorded; the ones its
+attributes hold are normalized, below. The capture wraps `start` and `end` on the SDK's `Span`, so a span that isn't
+recording, like one a sampler drops or a tracer other than the SDK's starts, records nothing, and only its absence
+shows.
 
 Each exception a `pytest.raises` or `pytest.RaisesGroup` block catches is one line of kind `exception`, with its class,
 message and notes, whether it suppresses its context, and, described alike, the exceptions it groups, its `__cause__`
@@ -230,7 +231,7 @@ references, durations a clock measured, like the evaluated call's in that dispat
 `DelegationFinishedEvent` reports, the time a streamed request's chat span records its first chunk took, the id a
 sub-agent's question to its parent gets, Temporal timers computed from a clock reading, and the `custom_id` of each batch
 request `InMemoryBatchModel` encodes, which hashes a random token, are normalized, so two runs of the same code compare
-equal. A
+equal. A version 5 UUID is normalized even where it hashes a fixed name, so a change to what it hashes doesn't show. A
 step id a model echoes back isn't, in a tool call's arguments or where `Planning` renders it from them, as a subtask's
 parent or a dependency. Cassette playback hands a response's headers back in a different order each run, so the
 `HTTPHeaders` botocore copies into an error response's `ResponseMetadata` are sorted where an error message renders
@@ -396,7 +397,9 @@ GENERATED_VALUES = [
     # The `uuid4().hex[:12]` id a sub-agent's question to its parent gets, which its task question and answer carry.
     (re.compile(r'("question_id":")[0-9a-f]{12}"'), r'\1QUESTION_ID"'),
     # `uuid4().hex` ids, like `AskUserQuestion.id`, and `uuid5().hex` ones, like a sub-agent task's ID, which is also its
-    # conversation's and hashes the run's ID; the version and variant digits spare most other hex digests.
+    # conversation's and hashes the run's ID. A task's ID is rendered in many forms, so it's matched by its shape. The
+    # version and variant digits spare all but one in 32 other hex digests, and a `uuid5()` of a fixed name is
+    # normalized too, so a change to what it hashes doesn't show.
     (re.compile(r'(?<![0-9a-f])[0-9a-f]{12}[45][0-9a-f]{3}[89ab][0-9a-f]{15}(?![0-9a-f])'), 'UUID'),
     # asyncio numbers the tasks it names by default in the order the process created them, like the cancelling task
     # anyio's cancellation message renders.
