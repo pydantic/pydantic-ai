@@ -51,7 +51,7 @@ from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import AgentRunResult
 from pydantic_ai.capabilities import Capability, NativeTool
 from pydantic_ai.direct import model_request
-from pydantic_ai.exceptions import ModelRetry, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ModelAPIError, ModelRetry, UnexpectedModelBehavior, UserError
 from pydantic_ai.models import ModelRequestParameters, decision
 from pydantic_ai.models.decision import DecisionRequest, NoulQuestion
 from pydantic_ai.models.fallback import FallbackModel
@@ -952,9 +952,12 @@ async def test_a_selected_tool_fill_failure_does_not_fall_back_to_another_route(
         """
 
     agent = Agent(FallbackModel(mock_model(record), TestModel()), output_type=Ticket, tools=[set_direction])
-    with pytest.raises(UnexpectedModelBehavior, match=r"selected 'set_direction'.*failed while filling"):
+    with pytest.raises(UnexpectedModelBehavior, match=r"selected 'set_direction'.*failed while filling") as exc_info:
         await agent.run('Go left.')
     assert seen == 2
+    # Not a model error, which `FallbackModel` and `ModelFallback` would fall back on, though its cause is one.
+    assert not isinstance(exc_info.value, ModelAPIError)
+    assert isinstance(exc_info.value.__cause__, ModelAPIError)
 
 
 class Resolution(BaseModel):
@@ -2551,7 +2554,7 @@ async def test_history_from_another_model(allow_model_requests: None):
     seen: list[dict[str, Any]] = []
 
     def record(request: httpx2.Request) -> httpx2.Response:
-        seen.append(json.loads(request.content))
+        seen.append(json.loads(decode_request_body(request.content, request.headers)))
         return answers(response={'type': 'noul', 'noul': 0.9})
 
     history: list[ModelMessage] = [

@@ -57,8 +57,10 @@ Each entry is one tool call, one model reply, or one piece of model thinking:
   no JSON form, such as a type, is stored as compact JSON with that part as its `repr`. Files are not
   logged: each becomes a `[<media type> content not logged]` line.
 - **Failures.** A `ModelRetry` is logged with the outcome `retried` and the retry message. Any
-  other exception is logged as `failed`, with its type and message, and is still raised. A failure
-  that an outer capability recovers from is logged once, as `success`, with the recovered result.
+  other exception is logged as `failed`, with its type and message, and is still raised; a tool
+  wrapped by [`ReportToolErrors`](../report_tool_errors/) is logged as `failed` with the message it
+  reports. A failure that an outer capability recovers from is logged once, as `success`, with the
+  recovered result.
 - **Model replies.** Each text part of a response, with `record_text=True` (the default). Thinking
   is logged only with `record_thinking=True`.
 
@@ -81,6 +83,11 @@ Every entry carries `seq` (its 1-based position in the log), `kind` (`tool`, `te
 cleared the conversation when it was recorded, `0` before the first. Each entry also has an
 idempotency `key`, so a hook that runs again, or a retried durable operation, writes it once.
 
+A tool that dispatches others records them under its own call: a Code Mode script's calls have
+`run_code`'s id as their `parent_tool_call_id`. [`ToolBridge`](../tool_bridge/)'s `tool_call` runs
+the tool it names under its own id, so the two entries share a `tool_call_id`, and the named tool's
+`parent_tool_call_id` is that same id.
+
 `WorkLog` adds no instructions. The tool descriptions say what the log holds, and
 `ResetCompaction`'s notice points the model at it when the history was cleared.
 
@@ -100,25 +107,33 @@ contains, and `chars`, so the model can tell whether reading the entry takes mor
 The result also has `total_entries`, the size of the whole log, and `capped`, set when matches were
 left out to keep the result under 50,000 characters.
 
-`read_work_log(seq, offset=0, limit=200, from_end=False, pattern=None)` reads one entry: the call
-with its arguments in full and its outcome, plus a window of the content's lines. It follows
+`read_work_log(seq, offset=0, limit=200, from_end=False, pattern=None, unit='lines')` reads one
+entry: the call with its arguments in full and its outcome, plus a window of the content. It follows
 `ToolOutputLimits`' `read_tool_result`:
 
-- `pattern` is a literal substring, not a regex, and keeps only the lines that contain it;
-  `total_lines` counts those lines, or all lines without a `pattern`.
+- `pattern` is a literal substring, not a regex, and keeps only the lines that contain it; `total`
+  counts those lines, or all lines without a `pattern`.
 - `limit` is clamped to 1,000 lines, and the returned text to 50,000 characters. `capped` says the
   character cap cut the text, keeping its start, or its end with `from_end=True`; `next_offset` then
-  points at the first line not returned in full. For a single line longer than the cap,
-  `next_offset` moves past it, since no read can return more of it.
+  points at the first line not returned in full, passing over a line the cap cut. `cut_at` is the
+  byte offset where the cut line's missing part starts.
+- `unit='bytes'` reads the content's UTF-8 bytes instead, for output without useful line breaks
+  such as minified JSON: `offset`, `limit`, `next_offset` and `total` then count bytes, `limit` is
+  clamped to 50,000, and `pattern` can't be used. `read_work_log(seq, unit='bytes', offset=cut_at,
+  limit=50_000)` returns the rest of a cut line.
 - `next_offset` is the `offset` that reads on, or `None` when the window reached the end (the
   start, with `from_end=True`).
 - An unknown `seq`, a negative `offset` or a `limit` below 1 asks the model to retry, with the
   valid range of `seq` in the message.
 
 Both tools return `TypedDict`s, so [Code Mode](../code_mode/) shows their return types to the
-model, and a script can search and read the log in one `run_code` call. `read_work_log` returns are
-exempt from `ToolOutputLimits`, as `read_tool_result` returns are, so a page of the log is not
-spilled again. `search_work_log` returns are reduced like any other tool's.
+model, and a script can search and read the log in one `run_code` call. Both are exempt from
+`ToolOutputLimits`, as its own `read_tool_result` and `grep_tool_result` are: each result is already
+bounded, and a spilled one would need a second tool to read.
+
+The tools return other tools' results, by their own [UI visibility](https://pydantic.dev/docs/ai/integrations/ui/overview/#tool-visibility),
+not by that of the tools they recorded. Under a `'public'` default, a `'private'` tool's result
+reaches a UI client through `read_work_log`, as it does through `ToolBridge` or Code Mode.
 
 ## One log per conversation
 
@@ -190,9 +205,8 @@ reduces it: the conversation can hold a spill marker while the log keeps the who
 The log's writes and both tools run as durable operations of the capability's `id`,
 `'work_log'`: `append` for each recorded entry, and `search` and `read` for the tools. A replay
 reuses what was recorded. That records one operation per entry, so under Temporal each recorded
-tool call, reply or thought adds one event to the workflow history. Inside a durable unit such as
-`run_code`'s tool activity, where the nested calls run, the appends run inline, and the entry's key
-keeps a retried unit from writing twice.
+tool call, reply or thought adds one event to the workflow history. An append made inside another
+durable unit runs inline in it, and the entry's key keeps a retried unit from writing twice.
 
 Keep the `id` fixed once a workflow is live. Under a durable engine a store operation can run in
 another process, so use `FileWorkLogStore` or `WorkspaceWorkLogStore` there rather than the

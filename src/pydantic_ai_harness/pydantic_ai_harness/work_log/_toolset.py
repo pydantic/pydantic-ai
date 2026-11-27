@@ -13,7 +13,7 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
-from pydantic_ai_harness._line_slice import check_window
+from pydantic_ai_harness._line_slice import ReadUnit, check_window
 from pydantic_ai_harness._work_log_kinds import WORK_LOG_READ_KIND, WORK_LOG_SEARCH_KIND
 from pydantic_ai_harness.work_log._store import WorkLogEntryKind, WorkLogOutcome
 
@@ -55,14 +55,18 @@ class WorkLogRead(TypedDict):
     args: str | None
     outcome: WorkLogOutcome | None
     text: str
-    """The selected lines of the content."""
+    """The selected lines of the content, or its selected bytes with `unit='bytes'`."""
+    unit: ReadUnit
+    """What `offset`, `next_offset` and `total` count."""
     offset: int
     next_offset: int | None
     """The `offset` that reads on, or `None` when this window reached the end (the start, with `from_end`)."""
-    total_lines: int
-    """Lines matching `pattern`, or all lines without one."""
+    total: int
+    """Lines matching `pattern`, or all lines without one; bytes with `unit='bytes'`."""
     capped: bool
     """Whether the size cap cut `text`. `next_offset` then points at the first line not returned whole."""
+    cut_at: int | None
+    """Where the line the size cap cut continues, as a byte `offset` for a `unit='bytes'` read; else `None`."""
 
 
 class WorkLogToolset(FunctionToolset[AgentDepsT]):
@@ -75,11 +79,11 @@ class WorkLogToolset(FunctionToolset[AgentDepsT]):
             [RunContext[AgentDepsT], str | None, str | None, str | None, int], Awaitable[WorkLogSearchResult]
         ],
         read: Callable[
-            [RunContext[AgentDepsT], int, int, int, bool, str | None], Awaitable[WorkLogRead | RetryRequest]
+            [RunContext[AgentDepsT], int, int, int, bool, str | None, ReadUnit], Awaitable[WorkLogRead | RetryRequest]
         ],
-        tool_id: str,
+        toolset_id: str | None,
     ) -> None:
-        super().__init__(id=tool_id)
+        super().__init__(id=toolset_id)
         self._search = search
         self._read = read
         self.add_function(self.search_work_log, tool_kind=WORK_LOG_SEARCH_KIND)
@@ -120,16 +124,19 @@ class WorkLogToolset(FunctionToolset[AgentDepsT]):
         limit: int = 200,
         from_end: bool = False,
         pattern: str | None = None,
+        unit: ReadUnit = 'lines',
     ) -> WorkLogRead:
         """Read one work log entry in full: the call, its arguments and outcome, and its result by lines.
 
         Args:
             ctx: The run context (supplied by the agent).
             seq: The entry's `seq`, from a search match.
-            offset: Number of matching lines to skip from the start (or end). Must be >= 0.
-            limit: Maximum number of lines to return (>= 1; clamped to a built-in cap).
+            offset: Number of matching lines (or bytes) to skip from the start (or end). Must be >= 0.
+            limit: Maximum number of lines (or bytes) to return (>= 1; clamped to a built-in cap).
             from_end: Count `offset`/`limit` from the end of the result.
             pattern: Optional literal substring; only lines containing it are returned.
+            unit: `'bytes'` slices raw bytes, for output without useful line breaks such as minified JSON;
+                `offset` and `limit` then count bytes, so pass a larger `limit` (up to 50,000).
         """
-        limit = check_window(offset, limit)
-        return raise_retry(await self._read(ctx, seq, offset, limit, from_end, pattern))
+        limit = check_window(offset, limit, unit, pattern)
+        return raise_retry(await self._read(ctx, seq, offset, limit, from_end, pattern, unit))

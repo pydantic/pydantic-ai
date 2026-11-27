@@ -23,7 +23,10 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    are_tool_call_args_cut_off,
+    incomplete_tool_call_message,
     is_incomplete_json,
+    output_pipeline_scope,
     run_image_process_hooks,
     run_output_with_hooks,
     truncated_output_message,
@@ -42,6 +45,7 @@ from .usage import RunUsage, UsageLimits
 from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
+    from ._appended_messages import AppendedMessages
     from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
 
@@ -75,6 +79,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
     _cached_output: OutputDataT | None = field(default=None, init=False)
+    _output_validated: bool = field(default=False, init=False)
+    """Whether `_cached_output` holds the validated final output, which can itself be `None`."""
 
     _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
     _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
@@ -99,8 +105,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def stream_output(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[OutputDataT]:
         """Asynchronously stream the (validated) agent outputs."""
-        if self._cached_output is not None:
-            yield deepcopy(self._cached_output)
+        if self._output_validated:
+            yield deepcopy(cast(OutputDataT, self._cached_output))
             return
 
         last_response: _messages.ModelResponse | None = None
@@ -124,6 +130,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             #    and may behave differently based on that flag
             # 2. Users can rely on the last yielded item being the fully validated output
             self._cached_output = await self.validate_response_output(response)
+            self._output_validated = True
             yield deepcopy(self._cached_output)
 
     async def stream_response(self, *, debounce_by: float | None = 0.1) -> AsyncIterator[_messages.ModelResponse]:
@@ -177,8 +184,9 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 yield text
         else:
             async for text in self._stream_response_text(delta=False, debounce_by=debounce_by):
-                for validator in self._output_validators:
-                    text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
+                with output_pipeline_scope():
+                    for validator in self._output_validators:
+                        text = await validator.validate(text, replace(self._run_ctx, partial_output=True))
                 yield text
 
     async def cancel(self) -> None:
@@ -260,8 +268,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
     async def get_output(self) -> OutputDataT:
         """Stream the whole response, validate the output and return it."""
-        if self._cached_output is not None:
-            return deepcopy(self._cached_output)
+        if self._output_validated:
+            return deepcopy(cast(OutputDataT, self._cached_output))
 
         # Iterate through any stream events
         async for _ in self:
@@ -269,6 +277,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         # Final validation with `allow_partial=False` (default)
         self._cached_output = await self.validate_response_output(self.response)
+        self._output_validated = True
         return deepcopy(self._cached_output)
 
     def _settled_output(self) -> tuple[OutputDataT, str | None]:
@@ -313,11 +322,11 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
                         f'Invalid response, unable to find tool call for {output_tool_name!r}'
                     )
-                return await self._tool_manager.handle_output_tool_call(
+                return await self._validate_tool_output(
                     tool_call,
-                    schema=self._output_schema,
+                    # As in `CallToolsNode`, only the tool call the response ended on can have been cut off.
+                    cut_off=message.finish_reason == 'length' and message.parts[-1] is tool_call,
                     allow_partial=allow_partial,
-                    wrap_validation_errors=False,
                 )
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
@@ -358,6 +367,23 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 raise exceptions.UnexpectedModelBehavior(
                     'Output validation failed during streaming, and retries are not supported in `run_stream()`'
                 ) from e
+            raise
+
+    async def _validate_tool_output(
+        self, tool_call: _messages.ToolCallPart, *, cut_off: bool, allow_partial: bool
+    ) -> OutputDataT:
+        """Validate an output tool call, whose arguments the token limit may have `cut_off`."""
+        try:
+            return await self._tool_manager.handle_output_tool_call(
+                tool_call,
+                schema=self._output_schema,
+                allow_partial=allow_partial,
+                wrap_validation_errors=False,
+            )
+        except ValidationError as e:
+            # Say that the token limit cut the arguments off, as `CallToolsNode` does, rather than only that they're invalid.
+            if cut_off and not allow_partial and are_tool_call_args_cut_off(tool_call):
+                raise exceptions.IncompleteToolCall(incomplete_tool_call_message(self._max_tokens_getter())) from e
             raise
 
     async def _validate_text_output(
@@ -616,6 +642,13 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     _run_result: AgentRunResult[OutputDataT] | None = None
 
+    _full_history_from: tuple[AppendedMessages, int] | None = None
+    """The run's record of its messages, and where the messages this result adds to its copy of the history start.
+
+    Set when the stream's own response ends the run, so the settled result's conversation can keep the full history
+    when a capability dropped or rewrote messages, as the run's would.
+    """
+
     is_complete: bool = field(default=False, init=False)
     """Whether the stream has all been received.
 
@@ -711,6 +744,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     run_id=self.run_id,
                     conversation_id=self.conversation_id,
                     metadata=self.metadata,
+                    appended_messages=self._settled_full_history(),
                 ),
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,
@@ -720,6 +754,21 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return result
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
+
+    def _settled_full_history(self) -> AppendedMessages:
+        """The full history for the settled result of a run whose history a capability rewrote, or an empty record."""
+        from ._appended_messages import AppendedMessages
+
+        record, start = self._full_history_from or (AppendedMessages(), 0)
+        if not record.full or record.messages is None:
+            return AppendedMessages()
+        # The run kept its full history when it ended, with the streamed response, which the run commits itself, but
+        # not the request with the tool returns the stream added to its copy after it. Content queued at a deferred
+        # pause is in both, recorded before the run committed the response, so the copy's order is kept for it.
+        added = [message for message in self._all_messages[start:] if isinstance(message, _messages.ModelRequest)]
+        in_copy = {id(message) for message in added}
+        kept = [message for message in record.messages if id(message) not in in_copy]
+        return AppendedMessages([*kept, *added], record.new_message_index, full=True)
 
     def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of _messages.

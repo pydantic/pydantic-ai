@@ -22,7 +22,7 @@ This file covers exactly those. It is not a second copy of the unit suite --
 API-shape coverage belongs there, where it runs on every matrix leg.
 
 Run against a local server with `make integration-redis` after starting one, e.g.
-`docker run -d -p 6379:6379 redis:8`. Without a reachable server the tests skip,
+`docker run -d -p 6379:6379 redis:8.10.3`. Without a reachable server the tests skip,
 unless `REDIS_REQUIRE_LIVE` is set (CI does), where an unreachable server fails
 instead -- a service container that never came up must not pass as a silent skip.
 
@@ -30,7 +30,7 @@ The cluster tests want a second server, at `REDIS_CLUSTER_TEST_URL`: one node in
 cluster mode that owns every slot, which is all `CROSSSLOT` needs.
 
 ```bash
-docker run -d --name redis-cluster -p 6380:6380 redis:8 \
+docker run -d --name redis-cluster -p 6380:6380 redis:8.10.3 \
   redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1
 docker exec redis-cluster redis-cli -p 6380 cluster addslotsrange 0 16383
 ```
@@ -73,7 +73,7 @@ from redis.asyncio import Redis
 from redis.asyncio.cluster import RedisCluster
 from redis.exceptions import RedisClusterException, RedisError, ResponseError
 
-from pydantic_ai_harness.spend import RedisSpendStore, SpendEntry, Spent
+from pydantic_ai_harness.spend_limits import RedisSpendStore, SpendEntry, Spent
 
 _NANOS = Decimal(10) ** 9
 """Billionths of a dollar to the dollar, which is how the store keeps money."""

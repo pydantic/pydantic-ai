@@ -15,8 +15,8 @@ from typing import TYPE_CHECKING, Any
 import pytest
 from pydantic import BaseModel, create_model
 
-from pydantic_ai import Agent, Tool
-from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError
+from pydantic_ai import Agent, DeprecatedModelWarning, Tool
+from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError, ModelSchemaTooComplexError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models._anthropic_schema_limits import exceeded_limit, is_schema_too_complex_error
@@ -29,6 +29,7 @@ from pydantic_ai.settings import ModelSettings, ToolOrOutput
 
 from ..._inline_snapshot import snapshot
 from ...conftest import RequestCapture, try_import
+from ..conftest import message_shape
 from ..test_anthropic import MockAnthropic, completion_message
 
 with try_import() as imports_successful:
@@ -263,6 +264,8 @@ async def test_default_output_over_limits_doesnt_warn_about_strict_mode(allow_mo
 
     with warnings.catch_warnings():
         warnings.simplefilter('error')
+        # `claude-sonnet-4-5` is deprecated, which `replay_deprecated_models` ignores until `simplefilter` overrides it.
+        warnings.filterwarnings('ignore', category=DeprecatedModelWarning)
         result = await Agent(model, output_type=inventory).run('Count.', model_settings={'thinking': True})
 
     assert result.output.model_dump(exclude_none=True) == {'counts': {'a': 1}}
@@ -323,7 +326,8 @@ async def test_schema_too_complex_error_has_hint(allow_model_requests: None, ant
     """A schema within the explicit limits can still be too complex for Anthropic to compile.
 
     Anthropic answers 13 optional parameters in one output object this way, although its explicit limit is 24.
-    The 400 stays a `ModelHTTPError` and gains a hint pointing at the docs.
+    The 400 is a `ModelSchemaTooComplexError` and still a `ModelHTTPError`, with a hint pointing at the docs. An
+    explicit `NativeOutput` isn't attempted again in Tool Output.
     """
     form = _model('Form', {f'field_{i}': (str, '') for i in range(13)})
     agent = Agent(anthropic_model('claude-haiku-4-5'), output_type=NativeOutput(form))
@@ -332,13 +336,45 @@ async def test_schema_too_complex_error_has_hint(allow_model_requests: None, ant
         await agent.run('Fill in the form.')
 
     error = exc_info.value
-    assert isinstance(error, ModelRequestRejectedError)
+    assert isinstance(error, ModelSchemaTooComplexError)
     assert error.status_code == 400
     assert error.hint == snapshot(
         "Anthropic couldn't compile the request's strict schemas into a grammar. Simplify them, set `strict=True` "
         'only on the tools that need it, or use `ToolOutput` without `strict=True` or `PromptedOutput` for a large '
         'output type. See https://pydantic.dev/docs/ai/models/anthropic/#schema-complexity-limits'
     )
+
+
+@pytest.mark.moves_cache_prefix(
+    reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
+)
+async def test_too_complex_inferred_native_output_is_attempted_in_tool_output(
+    allow_model_requests: None, anthropic_model: ANTHROPIC_MODEL_FIXTURE, request_capture: RequestCapture
+):
+    """On a request that thinks, a bare `output_type` infers Native Output, which Anthropic can reject as too complex.
+
+    The run then attempts the request again in Tool Output, which Anthropic doesn't compile.
+    """
+    form = _model('Form', {f'field_{i}': (str, '') for i in range(13)})
+    # Thinks by default, adaptively.
+    agent = Agent(anthropic_model('claude-sonnet-5', capture=True), output_type=form)
+
+    result = await agent.run('Fill in the form with `field_0` set to "a" and every other field left empty.')
+
+    assert result.output.model_dump(exclude_defaults=True) == {'field_0': 'a'}
+    assert [_request_shape(body) for body in request_capture.bodies()] == snapshot(
+        [
+            {'tool_choice': None, 'output_format': True, 'tools': []},
+            {'tool_choice': {'type': 'auto'}, 'output_format': False, 'tools': [('final_result', None)]},
+        ]
+    )
+    # The model never sees the rejected attempt: the Tool Output attempt sends the same single user message.
+    assert [message_shape(body) for body in request_capture.bodies()] == snapshot(
+        [[('user', ['text'])], [('user', ['text'])]]
+    )
+    assert result.usage.requests == 1
+    [failed] = result.response.failed_attempts or []
+    assert failed.error is not None and failed.error.startswith('ModelSchemaTooComplexError: ')
 
 
 def _object(properties: dict[str, Any], required: list[str]) -> dict[str, Any]:

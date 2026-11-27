@@ -109,6 +109,15 @@ class RealtimeModelProfile(TypedDict, total=False):
     """Whether prior images can be included when seeding a session with `message_history`."""
     supports_seeding_audio: bool
     """Whether retained user audio can be included when seeding a session with `message_history`."""
+    supports_appending_voice_instructions: bool
+    """Whether the voice model the caller hears takes instructions of its own, apart from the agent's, that
+    [`append_voice_instructions`][pydantic_ai.realtime.RealtimeSession.append_voice_instructions] can add to
+    mid-session.
+
+    OpenAI GPT-Live sets it: the agent's instructions go to its delegated backend, and the voice model's own prompt,
+    `openai_live_instructions`, can only be added to once the session has started. When `False` (the default), the
+    agent's instructions are the voice model's, and a [changed instruction](../realtime/capabilities.md#instructions-that-change)
+    already reaches it."""
     supports_thinking: bool
     """Whether the model supports reasoning/thinking configuration via the
     [`thinking`][pydantic_ai.realtime.RealtimeModelSettings.thinking] setting — OpenAI's `gpt-realtime-2*`
@@ -143,6 +152,18 @@ class RealtimeModelProfile(TypedDict, total=False):
     (Gemini Live's function-declaration `response` schema). Where it can't, a tool that opted in via
     `include_return_schema` gets the schema injected into its description instead, exactly as on a
     standard [`Model`][pydantic_ai.models.Model]."""
+    supports_tool_updates: bool
+    """Whether the model accepts a new list of tools mid-session, so a tool can be revealed after the session opens.
+
+    With it, loading an [on-demand capability](../capabilities/on-demand.md) that contributes tools, a
+    [tool search](../tools-advanced.md#tool-search) that finds a `defer_loading=True` tool, and a tool returning
+    [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn.tools] each send the model the tools they reveal, ahead of
+    the result that reveals them. OpenAI `gpt-realtime` and GPT-Live, Azure OpenAI and xAI Grok Voice support it.
+
+    When `False` (the default), a session keeps the tools it opened with, so
+    [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] refuses to open one whose agent has tools only a
+    reveal would show. Tools that `message_history` already revealed are sent when the session opens, on every
+    model."""
     supported_native_tools: frozenset[type[AbstractNativeTool]]
     """The [native tools][pydantic_ai.native_tools.AbstractNativeTool] the model runs server-side, e.g.
     [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool].
@@ -234,8 +255,10 @@ DEFAULT_REALTIME_PROFILE: RealtimeModelProfile = {
     'supports_webrtc': False,
     'supports_seeding_images': False,
     'supports_seeding_audio': False,
+    'supports_appending_voice_instructions': False,
     'async_tool_call_mode': 'never',
     'supports_tool_return_schema': False,
+    'supports_tool_updates': False,
     'supported_native_tools': frozenset(),
     'emits_input_speech_events': False,
     'output_speech_timestamp_granularity': None,

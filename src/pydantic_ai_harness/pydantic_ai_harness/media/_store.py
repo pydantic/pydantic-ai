@@ -1,4 +1,4 @@
-"""Local `MediaStore` protocol + `DiskMediaStore` / `SqliteMediaStore`.
+"""Local `MediaStore` protocol + `FileMediaStore` / `SqliteMediaStore`.
 
 The shared URI scheme is `media+sha256://<lowercase-hex>` -- content-addressed,
 so the same blob written through any store resolves the same way and dedup
@@ -52,7 +52,7 @@ class MediaContext:
     - `metadata` -- free-form `dict[str, str]` of user-supplied tags.
       Persisted by every concrete store (`SqliteMediaStore` and
       `PostgresMediaStore` as a JSON column, `S3MediaStore` as signed
-      `x-amz-meta-*` headers, `DiskMediaStore` as a sidecar JSON file,
+      `x-amz-meta-*` headers, `FileMediaStore` as a sidecar JSON file,
       `MongoMediaStore` as a JSON string on the manifest document). Read back
       via `MediaStore.get_metadata(uri)`.
     """
@@ -78,7 +78,7 @@ type, response headers, TTL, etc. without breaking the signature later.
 KeyStrategy = Callable[[str, MediaContext], str]
 """User-supplied callable that turns a URI + context into a backend storage key.
 
-Used by `DiskMediaStore` and `S3MediaStore` to derive the on-disk path / S3
+Used by `FileMediaStore` and `S3MediaStore` to derive the on-disk path / S3
 object key from the canonical URI. `SqliteMediaStore` does not take one: its
 primary key is the content digest, so a user-chosen key would break dedup.
 Default strategy is `<sha256>.bin` (see `default_key_strategy`); override when
@@ -173,7 +173,7 @@ class MediaStore(Protocol):
     `get` and `get_metadata` raise `FileNotFoundError` for a URI that was
     never stored. `get_metadata` returns the metadata of the first `put` on
     `SqliteMediaStore`, `PostgresMediaStore`, and `MongoMediaStore`. On
-    `DiskMediaStore` a later `put` that passes metadata replaces it; on
+    `FileMediaStore` a later `put` that passes metadata replaces it; on
     `S3MediaStore` every `put` replaces it, and one without metadata clears it.
     On those two, that holds for puts that resolve to the same key, which a
     custom `key_strategy` may not.
@@ -197,7 +197,7 @@ class MediaStore(Protocol):
     ) -> Mapping[str, str]: ...  # pragma: no cover
 
 
-class DiskMediaStore:
+class FileMediaStore:
     """Filesystem store. One file per blob; default layout is `<directory>/<sha256>.bin`.
 
     Directory is created on first write. Dedup is automatic via the

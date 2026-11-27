@@ -6,37 +6,36 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from typing import TYPE_CHECKING
 
-from pydantic_ai._framework_frame import framework_frame_text
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.framing import register_tag, wrap
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, ModelResponse, UserPromptPart
+from pydantic_ai.messages import (
+    DataCapabilityPart,
+    ModelMessage,
+    ModelRequest,
+    ModelRequestPart,
+    ModelResponse,
+    OperatorSource,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._provenance import tagged_text
 from pydantic_ai_harness._work_log_kinds import WORK_LOG_READ_KIND, WORK_LOG_SEARCH_KIND
 from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
-from pydantic_ai_harness.compaction._receipts import (
-    is_reset_notice_part,
-    last_reset_notice,
-    make_reset_notice_part,
-    reset_notice_count,
-)
 from pydantic_ai_harness.compaction._shared import (
     compact_with_span,
     context_for_request,
     estimate_token_count,
     exceeds,
     find_first_user_message,
-    find_latest_user_message,
     find_safe_cutoff,
-    is_user_turn_part,
+    is_user_part,
     iter_tool_pairs,
     prepend_first_user_message,
     record_compaction_reclaim,
     record_span_attributes,
+    require_trigger,
     resolve_token_trigger,
+    user_turn_starts,
     validate_token_trigger,
 )
 from pydantic_ai_harness.planning import Planning
@@ -47,11 +46,35 @@ if TYPE_CHECKING:
     # Not imported at runtime: importing `work_log` imports this package, so a runtime import would cycle.
     from pydantic_ai_harness.work_log import WorkLog
 
-_RESTATE_TAG = register_tag('current_state')
-"""Frames the text `ResetCompaction.restate` returns."""
 
-RESET_RESTATE_ORIGIN = 'pydantic-ai-harness.compaction.reset_restate.v1'
-"""The `origin` metadata of the part holding `restate`'s text, so the next reset replaces it rather than keeping it."""
+@dataclass(kw_only=True)
+class ResetNoticePart(DataCapabilityPart[str], namespace='reset_compaction', name='notice', tag='context_cleared'):
+    """The notice `ResetCompaction` leaves where it cleared the conversation, on the user channel.
+
+    Its text is the capability's own, from `ResetCompaction.notice`. Find notices in history by this type: a
+    later reset reads its typed fields, which are never sent to the model.
+    """
+
+    number: int
+    """How many times the conversation has been cleared, this time included."""
+
+    work_log: str | None
+    """The work log's handle the text names, or `None` when the conversation is not known."""
+
+    kept_responses: int
+    """Model responses the reset kept after the notice, so a later reset can tell whether anything is new."""
+
+
+@dataclass(kw_only=True)
+class CurrentStatePart(
+    DataCapabilityPart[str], namespace='reset_compaction', name='current_state', tag='current_state'
+):
+    """The task's current state, as `ResetCompaction.restate` returns it, right after the notice.
+
+    Return one from `restate` to give the text its real source, such as `ToolResultSource` for a command's
+    output; a plain string from `restate` is recorded as the application's own words, with `OperatorSource`.
+    A later reset replaces it.
+    """
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -163,11 +186,12 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
     notice: Callable[[ResetNotice], str] = default_reset_notice
     """Write the notice's text from what the reset did. Defaults to `default_reset_notice`."""
 
-    restate: Callable[[RunContext[AgentDepsT]], Awaitable[str | None]] | None = None
-    """Return the task's current state to put after the notice, framed in a `<current_state>` tag.
+    restate: Callable[[RunContext[AgentDepsT]], Awaitable[str | CurrentStatePart | None]] | None = None
+    """Return the task's current state to put after the notice, in a `<current_state>` frame.
 
-    `None` or an empty string adds nothing. Runs as a durable operation, and an error it raises fails the
-    request."""
+    A string is recorded as the application's own words. Return a `CurrentStatePart` instead to give text the
+    code didn't write, such as `git status` output, its real source. `None` or an empty string adds nothing.
+    Runs as a durable operation, and an error it raises fails the request."""
 
     preserve_loaded_capabilities: bool = True
     """When `True`, a deferred capability loaded in the cleared messages stays loaded.
@@ -199,10 +223,11 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
         return CapabilityOrdering(wraps=[Planning], requires=[type(self.work_log)])
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
-        """Fail the run at its start unless `work_log` is the `WorkLog` the agent registers under its id.
+        """Reject a registration without a trigger, or with a `work_log` the agent doesn't register under its id.
 
-        Otherwise the notice would name a log that nothing writes to.
+        With another `WorkLog`, the notice would name a log that nothing writes to.
         """
+        require_trigger('ResetCompaction', self.max_messages, self.max_tokens, self.max_fraction)
         work_log = self.work_log
         registered = ctx.capabilities.get(work_log.id) if work_log.id is not None else None
         if registered != work_log:
@@ -219,16 +244,17 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
         first = find_first_user_message(messages)
         head = prepend_first_user_message(messages, cutoff, [])
         latest: list[ModelMessage] = []
-        prompt = find_latest_user_message(messages) if self.keep_latest_user_prompt else None
-        if prompt is not None and prompt is not first and not any(prompt is message for message in messages[cutoff:]):
+        starts = user_turn_starts(messages) if self.keep_latest_user_prompt else []
+        prompt = messages[starts[-1]] if starts and starts[-1] < cutoff else None
+        if isinstance(prompt, ModelRequest) and prompt is not first:
             # Its user turns only: tool results merged into it would have lost their calls.
-            latest.append(replace(prompt, parts=[part for part in prompt.parts if is_user_turn_part(part)]))
+            latest.append(replace(prompt, parts=[part for part in prompt.parts if is_user_part(part)]))
         tail = without_reset_parts(messages[cutoff:])
         log_id = ctx.conversation_id or next(
             (message.conversation_id for message in reversed(messages) if message.conversation_id), None
         )
         facts = ResetNotice(
-            number=reset_notice_count(last_reset_notice(messages), 'number') + 1,
+            number=reset_count(messages) + 1,
             work_log=None if log_id is None else self.work_log.store.locate(log_id),
             search_tool=ctx.tool_name_for_kind(WORK_LOG_SEARCH_KIND) or 'search_work_log',
             read_tool=ctx.tool_name_for_kind(WORK_LOG_READ_KIND) or 'read_work_log',
@@ -240,15 +266,20 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
         record_span_attributes({'compaction.reset.number': facts.number})
         kept_responses = sum(isinstance(message, ModelResponse) for message in tail)
         parts: list[ModelRequestPart] = [
-            make_reset_notice_part(
-                self.notice(facts), number=facts.number, work_log=facts.work_log, kept_responses=kept_responses
+            ResetNoticePart(
+                content=self.notice(facts),
+                source=OperatorSource(),
+                capability_id=self.id,
+                number=facts.number,
+                work_log=facts.work_log,
+                kept_responses=kept_responses,
             )
         ]
         if self.restate is not None and (state := await self._restate(ctx)):
             parts.append(
-                UserPromptPart(
-                    [framework_frame_text(wrap(_RESTATE_TAG, state), metadata={'origin': RESET_RESTATE_ORIGIN})]
-                )
+                state
+                if isinstance(state, CurrentStatePart)
+                else CurrentStatePart(content=state, source=OperatorSource())
             )
         compacted = reinject_pinned(
             messages, [*head, ModelRequest(parts=parts), *latest, *tail], insert_at=len(head) + 1
@@ -262,7 +293,7 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
         )
 
     @durable_operation('restate')
-    async def _restate(self, ctx: RunContext[AgentDepsT]) -> str | None:
+    async def _restate(self, ctx: RunContext[AgentDepsT]) -> str | CurrentStatePart | None:
         """The caller's `restate`, as a durable operation, so a replay reuses its recorded result."""
         assert self.restate is not None
         return await self.restate(ctx)
@@ -307,10 +338,24 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
 
 
 def is_reset_part(part: ModelRequestPart) -> bool:
-    """Whether *part* is a reset notice or the state `restate` added with it, found by its metadata."""
-    return is_reset_notice_part(part) or (
-        isinstance(part, UserPromptPart) and tagged_text(part.content, RESET_RESTATE_ORIGIN) is not None
-    )
+    """Whether *part* is a reset notice or the state `restate` added with it."""
+    return isinstance(part, ResetNoticePart | CurrentStatePart)
+
+
+def last_reset_notice(messages: Sequence[ModelMessage]) -> ResetNoticePart | None:
+    """The newest reset notice in *messages*, including one merged into another request, or `None`."""
+    for message in reversed(messages):
+        if isinstance(message, ModelRequest):
+            for part in reversed(message.parts):
+                if isinstance(part, ResetNoticePart):
+                    return part
+    return None
+
+
+def reset_count(messages: Sequence[ModelMessage]) -> int:
+    """How many times the conversation in *messages* has been cleared: the newest notice's number, or 0."""
+    notice = last_reset_notice(messages)
+    return 0 if notice is None else notice.number
 
 
 def without_reset_parts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
@@ -334,5 +379,5 @@ def responses_past_kept(messages: Sequence[ModelMessage]) -> int | None:
         if isinstance(message, ModelResponse):
             responses += 1
         elif (notice := last_reset_notice([message])) is not None:
-            return responses - reset_notice_count(notice, 'kept_responses')
+            return responses - notice.kept_responses
     return None

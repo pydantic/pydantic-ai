@@ -4,8 +4,9 @@ Capabilities that give an agent knowledge beyond its prompt: `Memory` (a persist
 notebook the model writes and searches across runs), `ConversationSearch` (BM25 recall over
 history `StepPersistence` already stored, including turns compaction dropped), `WorkLog` (a log
 of every tool call with its full result, and the model's replies, that the model searches and reads
-back), `Skills` (Agent Skills `SKILL.md` files loaded on demand), and `PydanticAIDocs` (fetch
-Pydantic AI docs pages on demand). `Skills` and the optional Pixeltable integration require extras.
+back), `Skills` (Agent Skills `SKILL.md` files loaded on demand), and `PydanticAIDocs` (fetch Pydantic AI docs pages on
+demand), and `CurrentTime` (today's date or hour in the instructions). `Skills` and the optional Pixeltable
+integration require extras.
 
 | Need | Use |
 |---|---|
@@ -14,12 +15,13 @@ Pydantic AI docs pages on demand). `Skills` and the optional Pixeltable integrat
 | Full tool results compaction cleared or `ToolOutputLimits` reduced, including calls inside Code Mode | `WorkLog` (with `ResetCompaction`, see CONTEXT-MANAGEMENT.md) |
 | Specialized instructions the model pulls in only when relevant | `Skills` |
 | Agent that writes Pydantic AI code and needs current docs | `PydanticAIDocs` |
+| Answers that depend on today's date | `CurrentTime` |
 
 ## Memory
 
 Gives the model four tools: `write_memory(content, file='MEMORY.md', old_text=None)` (append, or
 replace one unique fragment), `read_memory(file)`, `delete_memory(file)` (`MEMORY.md` is
-protected), and `search_memory(query)`. With a `FileStore` in the run's workspace (no `workspace=`,
+protected), and `search_memory(query)`. With a `FileMemoryStore` in the run's workspace (no `workspace=`,
 relative `directory`), `FileSystem` on the agent and `inject_memory=True` (the default), `read_memory` is left out
 (`unless_tool_kind=READ_FILE_KIND`, fixed for the run) and an instruction block named `directory`
 (`on_change='append'`, present and empty from the first request until a file reader is on the run; its text
@@ -31,27 +33,28 @@ a later one for the same memory supersedes them, and a
 change made during a run (including `write_memory`) reaches the model with the next user prompt,
 not after tool results (the exception: re-enqueuing the run's own snapshot when compaction drops
 it mid tool loop). It is only added before the model's first response in a run, so a deferred `Memory`
-loaded mid-run waits for the next prompt. Snapshots carry `TextContent.metadata`
-`{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ..., 'id': ...}`; list compaction before `Memory`.
+loaded mid-run waits for the next prompt. Snapshots are `MemorySnapshotPart`s (a `DataCapabilityPart` from
+`pydantic_ai_harness.memory`, `<memory>` frame, `scope_hash` and `memory_id` fields); find them by type. List
+compaction before `Memory`.
 
 ```python
 from pydantic_ai import Agent
 
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import InMemoryStore
+from pydantic_ai_harness.memory import InMemoryMemoryStore
 
-agent = Agent('test', capabilities=[Memory(InMemoryStore())])
+agent = Agent('test', capabilities=[Memory(InMemoryMemoryStore())])
 ```
 
-The first positional argument is the store; it defaults to `InMemoryStore()` (process lifetime
+The first positional argument is the store; it defaults to `InMemoryMemoryStore()` (process lifetime
 only).
 
 ### Stores
 
 | Store | Persistence | Notes |
 |---|---|---|
-| `InMemoryStore()` | Process lifetime | Tests, ephemeral agents |
-| `FileStore(directory, *, workspace=None)` | Markdown files in the run's workspace | Needs a workspace or `workspace=` backend; one writer per directory |
+| `InMemoryMemoryStore()` | Process lifetime | Tests, ephemeral agents |
+| `FileMemoryStore(directory, *, workspace=None)` | Markdown files in the run's workspace | Needs a workspace or `workspace=` backend; one writer per directory |
 | `SqliteMemoryStore(database=... or connection=...)` | Durable, single host | A shared `connection` needs `check_same_thread=False` and must be dedicated to the store |
 | `PostgresMemoryStore(pool, *, table='agent_memory')` | Durable, shared | Driver-neutral `PostgresPool` protocol (for example an `asyncpg` pool); you own the pool lifecycle; no harness extra |
 | `PixeltableMemoryStore(table_name='harness.memory')` | Durable, shared (Pixeltable catalog) | Install `[pixeltable]` on Python 3.11 to 3.14; creates the table on first use |
@@ -61,11 +64,11 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
 
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import FileStore
+from pydantic_ai_harness.memory import FileMemoryStore
 
 agent = Agent(
     'test',
-    capabilities=[LocalWorkspace('.'), Memory(FileStore('.agent-memory'))],
+    capabilities=[LocalWorkspace('.'), Memory(FileMemoryStore('.agent-memory'))],
 )
 ```
 
@@ -82,14 +85,14 @@ async def build_memory() -> tuple[Memory[None], asyncpg.Pool]:
 ```
 
 Gotchas:
-- `FileStore` without an attached workspace fails the run at start (`UserError`). To keep memory
+- `FileMemoryStore` without an attached workspace fails the run at start (`UserError`). To keep memory
   on the host while the agent works in a sandbox, pass
-  `FileStore('.', workspace=LocalWorkspaceBackend('/var/lib/app/memory'))` (a backend, not the
+  `FileMemoryStore('.', workspace=LocalWorkspaceBackend('/var/lib/app/memory'))` (a backend, not the
   `LocalWorkspace` capability). With a read-only run workspace, write/delete tools are hidden.
 - Writes use optimistic compare-and-swap plus an idempotency id derived from run and tool call;
   a stale write returns a conflict to the model instead of overwriting. Custom stores must
   implement `MemoryStore` mutations atomically.
-- `FileStore` keeps replay receipts in `.memory-operations.json`; for concurrent writers across
+- `FileMemoryStore` keeps replay receipts in `.memory-operations.json`; for concurrent writers across
   processes use `SqliteMemoryStore` or `PostgresMemoryStore`.
 
 ### Pixeltable catalog
@@ -114,7 +117,7 @@ from dataclasses import dataclass
 from pydantic_ai import Agent
 
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import InMemoryStore
+from pydantic_ai_harness.memory import InMemoryMemoryStore
 
 
 @dataclass
@@ -125,7 +128,7 @@ class AppDeps:
 agent = Agent(
     'test',
     deps_type=AppDeps,
-    capabilities=[Memory(InMemoryStore(), namespace=lambda ctx: ctx.deps.user_id)],
+    capabilities=[Memory(InMemoryMemoryStore(), namespace=lambda ctx: ctx.deps.user_id)],
 )
 ```
 
@@ -136,7 +139,7 @@ I/O.
 ### Write metadata (who wrote a file)
 
 When the app's UI also edits memory, record provenance with the write instead of in the note.
-`InMemoryStore`, `SqliteMemoryStore` and `PostgresMemoryStore` implement `MetadataMemoryStore`:
+`InMemoryMemoryStore`, `SqliteMemoryStore` and `PostgresMemoryStore` implement `MetadataMemoryStore`:
 `store.write_with_metadata(path, content, expected_version=..., metadata={'updated_by': 'ui'})`
 stores a `Mapping[str, str]` (at most 4,096 characters as JSON) in the content's transaction
 (Postgres: a queryable `write_metadata JSONB` column), and
@@ -148,7 +151,7 @@ with the model's writes.
   `write_metadata` is unset, leaves none, so `updated_by='ui'` cannot outlive an agent edit.
   Deletes remove it; a replayed tool call returns its receipt and leaves the stored metadata as is.
 - Files live at `{namespace}/{agent_name}/{file}`, so a UI edits `{user_id}/main/MEMORY.md`.
-- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileStore`,
+- `write_metadata` with a store that is not a `MetadataMemoryStore` (`FileMemoryStore`,
   `PixeltableMemoryStore`, or a custom store implementing only `MemoryStore`) raises `UserError` at construction or run start.
 - A custom store opts in by implementing `write_with_metadata` (checked structurally, like
   `search`), writing metadata atomically with the content; its `write` must record none.
@@ -159,12 +162,18 @@ with the model's writes.
   `max_lines=200` additionally limits `MEMORY.md`; `max_memory_size=65_536` bounds per-file read,
   search, and write. Overflow is omitted with a pointer to `read_memory` (or `read_file` when it replaces it) / `search_memory`.
 - `inject_memory=False` keeps memory out of the conversation; the tools remain. Also use it when
-  less-trusted actors can write to the store (memory is untrusted, model-written content).
+  less-trusted actors can write to the store (memory is untrusted, model-written content). A `FileMemoryStore`
+  whose `MEMORY.md` is below `'operator'` authority (an untrusted repo) has its snapshot attributed to the
+  file's author, not the agent; keep reliable memory in an operator workspace via
+  `FileMemoryStore(..., workspace=...)`.
 - `injection_errors='ignore'` (default) skips injection on a store failure; `'raise'` fails the run.
 - `search_memory` is literal, bounded text search: `max_search_results=10`,
   `max_search_result_chars=4_000`, `max_search_files=1_000`. Queries are capped at 1,000 characters
   and 32 unique terms. No semantic ranking is built in; implement `SearchableMemoryStore.search`
   for an indexed backend.
+- A nested scope (namespace `acme/main` under `acme`) is skipped by search and the injected file
+  list. A custom store implements `ChildListingMemoryStore.list_child_paths` so its files do not
+  use up those listing limits.
 - Other options: `agent_name='main'` (storage segment, never shown to the model), `heading=''`
   (labels the guidance and injected block), `guidance=None` (replace the default usage text).
 
@@ -179,9 +188,9 @@ names do not collide:
 from pydantic_ai import Agent
 
 from pydantic_ai_harness import Memory
-from pydantic_ai_harness.memory import InMemoryStore
+from pydantic_ai_harness.memory import InMemoryMemoryStore
 
-store = InMemoryStore()
+store = InMemoryMemoryStore()
 agent = Agent(
     'test',
     capabilities=[
@@ -259,8 +268,9 @@ the model's text replies, in one log per `conversation_id`. Calls a Code Mode sc
 `run_code` get their own entries, with `run_code`'s call id as `parent_tool_call_id`. Adds two
 tools, usable from Code Mode code too: `search_work_log(query=None, tool_name=None, run_id=None,
 limit=10)` (BM25 over tool name, arguments and result; newest first without a query) and
-`read_work_log(seq, offset=0, limit=200, from_end=False, pattern=None)` (one entry in full, paged
-by line with `read_tool_result`'s caps: 1,000 lines, 50,000 characters, literal `pattern`).
+`read_work_log(seq, offset=0, limit=200, from_end=False, pattern=None, unit='lines')` (one entry in
+full, paged by line with `read_tool_result`'s caps: 1,000 lines, 50,000 characters, literal
+`pattern`; `unit='bytes'` pages raw bytes, and `cut_at` says where a line the cap cut continues).
 
 ```python
 from pydantic_ai import Agent
@@ -272,7 +282,7 @@ agent = Agent('test', capabilities=[WorkLog(FileWorkLogStore('work-logs'))])
 ```
 
 Key parameters: `store=InMemoryWorkLogStore()`, `record_text=True`, `record_thinking=False`,
-`tool_id='work-log'`, `id='work_log'`. Stores: `InMemoryWorkLogStore` (call `discard(log_id)` when a
+`id='work_log'` (also the toolset's id). Stores: `InMemoryWorkLogStore` (call `discard(log_id)` when a
 conversation ends), `FileWorkLogStore(directory)` (one JSONL file per conversation),
 `WorkspaceWorkLogStore(workspace=None)` (one file per entry under
 `.pydantic-ai-harness/work-log/<log>/` in the run's workspace), or your own `WorkLogStore`
@@ -282,7 +292,10 @@ Gotchas:
 - Not logged: deferred or approval-gated calls until they run, argument-validation failures, the
   work log's own tool calls, user prompts, and files (a placeholder names the media type).
 - `ModelRetry` is logged as `retried`; other exceptions as `failed` and still raised.
-- `read_work_log` returns are exempt from `ToolOutputLimits`; `search_work_log` returns are not.
+- Both tools' returns are exempt from `ToolOutputLimits`, and both return other tools' results by
+  their own UI visibility, so a `'private'` tool's result reaches a UI client through them under a
+  `'public'` default.
+- `ToolBridge`'s `tool_call` and the tool it runs share one `tool_call_id`.
 - `seq` follows the order calls finished, so a nested Code Mode call comes before its `run_code`.
 - It adds no instructions; `ResetCompaction`'s notice points the model at the log.
 - Under durable execution each recorded entry is one `append` operation; use the file or workspace
@@ -294,8 +307,9 @@ Gotchas:
 ## Skills
 
 Loads Agent Skills (`<library>/<skill>/SKILL.md`) as deferred capabilities: the model sees each
-skill's name and description and loads the body by calling core's `load_capability` tool with
-`{'id': '<skill name>'}`.
+skill's name and description, followed by its `when_to_use` if set, and loads the body by
+calling core's `load_capability` tool with `{'id': '<skill name>'}`. Put when to load a skill in
+`when_to_use` (a whole clause such as "Use when ..."), not in the description.
 
 ```bash
 uv add "pydantic-ai-harness[skills]"
@@ -340,11 +354,10 @@ Gotchas:
 - Skills shipped with the app: keep `Skills` and pass
   `workspace=LocalWorkspaceBackend(Path(__file__).parent)` (a path on disk, not an
   `importlib.resources` `Traversable`); relative library paths resolve against it, and the run needs
-  no workspace of its own (or its workspace can be a sandbox). Only `SKILL.md` bodies load: the
-  loaded instructions leave out the skill directory and `Skills` adds no file tools, so bundled
-  `references/` or `scripts/` are usable only from a library in the run's workspace with
-  `FileSystem`/`Shell` there. Otherwise `Skills` reads from the run's workspace, and a run without
-  one fails at start.
+  no workspace of its own (or its workspace can be a sandbox). The loaded instructions leave out
+  the skill directory; pass `read_files=True` for the model to read `references/` from there, and
+  put the library in the run's workspace with `Shell` there to run `scripts/`. Otherwise `Skills`
+  reads from the run's workspace, and a run without one fails at start.
 - No auto-discovery of `.agents`, `.claude`, or `~`: pass every library explicitly, and spell out
   a home path (workspace paths never expand `~`). Only immediate child directories with a
   `SKILL.md` count. A skill found twice (symlink or byte-identical `SKILL.md`; bundled files are
@@ -356,11 +369,20 @@ Gotchas:
 - With no skills found, `Skills` adds no instructions and no `load_capability` tool.
 - `description` is required. The loaded instructions name the skill's directory in the run's
   workspace (not for a `workspace=` library), so a model with file or shell tools can follow
-  `references/` or run `scripts/`; `Skills` itself never reads or
-  runs them, and `${CLAUDE_SKILL_DIR}` is not substituted. Fields like `allowed-tools`, `model`,
-  `hooks` are accepted but not implemented (one aggregated `UserWarning`).
+  `references/` or run `scripts/`, and `${CLAUDE_SKILL_DIR}`/`${SKILL_DIR}` become that directory.
+  `Skills` never runs bundled files. `Skills(..., read_files=True)` adds a `read_skill_file(skill,
+  path)` tool for a loaded skill's text files, confined to its directory and working for a
+  `workspace=` library too, so no `FileSystem` is needed. Fields like `allowed-tools`, `model`,
+  `hooks` are accepted but not implemented (one aggregated `UserWarning`); `when_to_use` is
+  honored.
 - Skill bodies become model instructions: load only trusted libraries. `include`/`exclude` are
-  catalog selection, not access control.
+  catalog selection, not access control. A skill whose `SKILL.md` is below `'operator'`
+  workspace authority (`authority_of(path)`, e.g. an untrusted repo) stays out of the catalog and
+  `load_capability`: the model gets `list_skills` (`{'skills': {name: description + when_to_use}}`, plus `'skipped'`
+  messages when a re-read skips one) and `load_skill(name)`, both returning tool output, with a fixed note
+  telling it to check `list_skills` at the start of a task. The tools re-read only the skills the run started
+  with; skips warn once, at run start. With `read_files=True`, `read_skill_file` reads a listed skill's files
+  without a `load_capability` first, also as tool output; an `'operator'` skill must still be loaded.
 - Instructions that are not `SKILL.md` packages in a directory go in a core deferred
   `Capability(id=..., description=..., instructions=..., defer_loading=True)` instead: ones defined
   in Python, files in a custom format
@@ -386,16 +408,35 @@ from pydantic_ai_harness import PydanticAIDocs
 agent = Agent('test', capabilities=[PydanticAIDocs()])
 ```
 
-Parameters: `local_docs_path: Path | None = None`, `cache: bool = True` (memoize per run).
+Parameters: `local_docs_path: Path | None = None`, `cache: bool = True` (memoize per run),
+keyword-only `remote_ref: str | None = None` (git ref to fetch from; `None` is the installed
+`pydantic_ai` release's tag, `main` for a dev build).
 Resolution per call: `{local_docs_path}/{topic}.md` in the run workspace (falling back to the
 `PYDANTIC_AI_HARNESS_DOCS_PATH` env var), then
-`https://raw.githubusercontent.com/pydantic/pydantic-ai/main/docs/{topic}.md`, else an error.
+`https://raw.githubusercontent.com/pydantic/pydantic-ai/{remote_ref}/docs/{topic}.md`, else an error.
 
 Gotchas: the local path is read through the run workspace only, with no `workspace=` override (in
 a sandbox the checkout must be in the sandbox); with a local path set and no workspace, the run fails at start. With no
 local path, the first read of each topic in a run fetches it from GitHub (every read with
 `cache=False`). `~` is not expanded. It never runs git, so keep a local checkout current yourself. Use `pydantic_ai_harness.pydantic_ai_docs`; the old `docs`
 module and `PyaiDocs` names are deprecated (keep `PyaiDocs` only to load old specs).
+
+## CurrentTime
+
+Adds one instruction stating the weekday and date (`precision='date'`, the default) or the hour
+(`precision='hour'`) in `timezone` (an IANA name or a `tzinfo`, default UTC; a name needs the system
+time zone database or the `tzdata` package, which Windows lacks by default). The time comes from the
+timestamp of the request being sent, so it reads no clock and is safe in durable workflow code. A new
+value is appended to the history (`on_change='append'`, keyed by `id='current_time'`), so the prompt
+cache holds; there is no finer precision than the hour.
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import CurrentTime
+
+agent = Agent('test', capabilities=[CurrentTime(timezone='Europe/Amsterdam')])
+```
 
 ## See also
 
@@ -404,5 +445,6 @@ module and `PyaiDocs` names are deprecated (keep `PyaiDocs` only to load old spe
 - https://pydantic.dev/docs/ai/harness/work-log/
 - https://pydantic.dev/docs/ai/harness/skills/
 - https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/
+- https://pydantic.dev/docs/ai/harness/current-time/
 - https://pydantic.dev/docs/ai/harness/step-persistence/
 - https://pydantic.dev/docs/ai/capabilities/on-demand/

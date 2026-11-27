@@ -621,6 +621,7 @@ def test_model_profile_fable_5_1():
     profile = anthropic_model_profile('claude-fable-5-1')
     assert profile == snapshot(
         {
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
@@ -636,6 +637,8 @@ def test_model_profile_fable_5_1():
             'anthropic_supports_max_effort': True,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disallows_sampling_settings': True,
+            'anthropic_disallows_temperature_with_top_p': False,
+            'anthropic_restricts_sampling_with_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': False,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,
@@ -726,6 +729,7 @@ def test_model_profile_opus_5():
     profile = anthropic_model_profile('claude-opus-5')
     assert profile == snapshot(
         {
+            'supported_image_media_types': frozenset({'image/gif', 'image/jpeg', 'image/png', 'image/webp'}),
             'thinking_tags': ('<thinking>', '</thinking>'),
             'mimics_assistant_message_formatting': True,
             'supports_json_schema_output': True,
@@ -741,6 +745,8 @@ def test_model_profile_opus_5():
             'anthropic_supports_max_effort': True,
             'anthropic_disallows_budget_thinking': True,
             'anthropic_disallows_sampling_settings': True,
+            'anthropic_disallows_temperature_with_top_p': False,
+            'anthropic_restricts_sampling_with_thinking': True,
             'anthropic_disallows_top_effort_when_thinking_disabled': True,
             'anthropic_disables_thinking_with_between_tools': False,
             'anthropic_distrusts_system_after_tool_result': False,

@@ -41,11 +41,11 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._durable import RetryRequest
 from pydantic_ai_harness._history_bm25 import Bm25Params, bm25_rank, clip, tokenize
-from pydantic_ai_harness._line_slice import MAX_READ_CHARS, slice_lines
+from pydantic_ai_harness._line_slice import MAX_READ_CHARS, ReadUnit, slice_bytes, slice_lines
 from pydantic_ai_harness._typeguards import is_object_list
 from pydantic_ai_harness._work_log_kinds import WORK_LOG_READ_KIND, WORK_LOG_SEARCH_KIND
 from pydantic_ai_harness._workspace import require_workspace
-from pydantic_ai_harness.compaction._receipts import last_reset_notice, reset_notice_count
+from pydantic_ai_harness.compaction._reset_compaction import reset_count
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits, indented_json
 from pydantic_ai_harness.tool_output_limits._payload import to_text
 from pydantic_ai_harness.work_log._store import (
@@ -98,12 +98,10 @@ class WorkLog(AbstractCapability[AgentDepsT]):
     record_thinking: bool = False
     """Record the model's thinking."""
 
-    tool_id: str = 'work-log'
-    """Toolset id for the `search_work_log` and `read_work_log` tools."""
-
     _: KW_ONLY
     id: str | None = 'work_log'
-    """Stable capability ID: durable execution names the log's operations by it.
+    """Stable capability ID: durable execution names the log's operations by it, and it is the id of the toolset
+    holding `search_work_log` and `read_work_log`.
 
     Two `WorkLog`s sharing this `id` are one log stated twice when they agree, and an error when
     they differ.
@@ -127,7 +125,7 @@ class WorkLog(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Provide `search_work_log` and `read_work_log`, each running through a durable operation."""
-        return WorkLogToolset[AgentDepsT](search=self._search, read=self._read, tool_id=self.tool_id)
+        return WorkLogToolset[AgentDepsT](search=self._search, read=self._read, toolset_id=self.id)
 
     # --- recording ---
 
@@ -225,7 +223,14 @@ class WorkLog(AbstractCapability[AgentDepsT]):
 
     @durable_operation('read')
     async def _read(
-        self, ctx: RunContext[AgentDepsT], seq: int, offset: int, limit: int, from_end: bool, pattern: str | None
+        self,
+        ctx: RunContext[AgentDepsT],
+        seq: int,
+        offset: int,
+        limit: int,
+        from_end: bool,
+        pattern: str | None,
+        unit: ReadUnit,
     ) -> WorkLogRead | RetryRequest:
         store, log_id = self._target(ctx)
         found = await store.read(log_id, seq, seq + 1)
@@ -234,12 +239,20 @@ class WorkLog(AbstractCapability[AgentDepsT]):
             valid = f'entries run from 1 to {count}' if count else 'the work log is empty'
             return RetryRequest(f'No work log entry has `seq` {seq}: {valid}.')
         entry = found[0]
-        window = slice_lines(
-            entry['content'], offset=offset, limit=limit, from_end=from_end, pattern=pattern, cap_keeps_end=from_end
-        )
-        # A capped window reads on from its first line not returned whole. A line longer than the cap on its
-        # own is skipped instead: no read can return more of it.
-        end = offset + (max(window.whole, 1) if window.capped else window.shown)
+        if unit == 'bytes':
+            chunk = slice_bytes(entry['content'], offset=offset, limit=limit, from_end=from_end)
+            reached = chunk.start == 0 if from_end else chunk.end >= chunk.total
+            text, total, capped, cut_at = chunk.text, chunk.total, False, None
+            next_offset = None if reached else offset + chunk.end - chunk.start
+        else:
+            window = slice_lines(
+                entry['content'], offset=offset, limit=limit, from_end=from_end, pattern=pattern, cap_keeps_end=from_end
+            )
+            # A capped window reads on from its first line not returned whole. A line the cap cut is passed over:
+            # `cut_at` says where a `unit='bytes'` read returns the rest of it.
+            end = offset + (max(window.whole, 1) if window.capped else window.shown)
+            text, total, capped, cut_at = window.text, window.total, window.capped, window.cut_at
+            next_offset = end if end < window.total else None
         return WorkLogRead(
             seq=entry['seq'],
             context=entry['context'],
@@ -249,11 +262,13 @@ class WorkLog(AbstractCapability[AgentDepsT]):
             parent_tool_call_id=entry['parent_tool_call_id'],
             args=entry['args'],
             outcome=entry['outcome'],
-            text=window.text,
+            text=text,
+            unit=unit,
             offset=offset,
-            next_offset=end if end < window.total else None,
-            total_lines=window.total,
-            capped=window.capped,
+            next_offset=next_offset,
+            total=total,
+            capped=capped,
+            cut_at=cut_at,
         )
 
 
@@ -274,7 +289,7 @@ def _record(
         key=key,
         run_id=ctx.run_id,
         step=ctx.run_step,
-        context=reset_notice_count(last_reset_notice(ctx.messages), 'number'),
+        context=reset_count(ctx.messages),
         kind=kind,
         tool_name=tool_name,
         tool_call_id=tool_call_id,
@@ -288,13 +303,14 @@ def _record(
 
 
 def _tool_record(ctx: RunContext[Any], call: ToolCallPart, outcome: WorkLogOutcome, content: str) -> WorkLogRecord:
-    # The step is in the key because models reuse tool call ids across turns.
+    # The step is in the key because models reuse tool call ids across turns, and the tool name because
+    # `ToolBridge` runs a bridged tool under its `tool_call`'s id.
     # A nested `ToolManager`, such as `run_code`'s, carries the context of the call that dispatched it;
     # a top-level call's manager carries the step's, which has no tool call id.
     dispatcher = ctx.tool_manager.ctx if ctx.tool_manager is not None else None
     return _record(
         ctx,
-        key=f'{ctx.run_id}:{ctx.run_step}:{call.tool_call_id}:{ctx.retry}',
+        key=f'{ctx.run_id}:{ctx.run_step}:{call.tool_call_id}:{call.tool_name}:{ctx.retry}',
         kind='tool',
         content=content,
         tool_name=call.tool_name,

@@ -134,11 +134,11 @@ Questions = Annotated[
 """The `questions` argument of `ask_user_question`."""
 
 
-class _ToolArguments(TypedDict):
+class _ToolArgs(TypedDict):
     questions: Questions
 
 
-_TOOL_ARGUMENTS = TypeAdapter(_ToolArguments)
+_TOOL_ARGUMENTS = TypeAdapter(_ToolArgs)
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -3,6 +3,7 @@ from __future__ import annotations as _annotations
 from contextvars import ContextVar
 from typing import Literal, TypeAlias
 
+from .._file_input import KNOWN_IMAGE_MEDIA_TYPES
 from ..native_tools import (
     AdvisorTool,
     CodeExecutionTool,
@@ -17,8 +18,8 @@ from . import ModelProfile
 
 _ANTHROPIC_BASE_BUILTINS = frozenset({WebSearchTool, CodeExecutionTool, WebFetchTool, MemoryTool, MCPServerTool})
 """Native tool types Anthropic generally supports across the model line. Mirrors
-`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated
-per-model in the profile below."""
+`AnthropicModel.supported_native_tools()` minus `ToolSearchTool`, which is gated per model in the profile below,
+and `ComputerTool`, which `AnthropicProvider` adds per model."""
 
 _INLINE_SYSTEM_PROMPT_MODEL_PREFIXES = (
     'claude-fable-5',
@@ -72,6 +73,9 @@ model, because `models/bedrock.py` cannot import from `models/anthropic/` withou
 
 AnthropicCodeExecutionToolVersion: TypeAlias = Literal['20250825', '20260120']
 """Concrete Anthropic code execution tool version to send for `CodeExecutionTool`."""
+
+AnthropicComputerToolVersion: TypeAlias = Literal['computer_toolset_20260801', 'computer_20251124', 'computer_20250124']
+"""Anthropic computer use tool version to send for `ComputerTool`."""
 
 _ANTHROPIC_CODE_EXECUTION_20260120_MODEL_PREFIXES = (
     'claude-fable-5',
@@ -156,6 +160,21 @@ class AnthropicModelProfile(ModelProfile, total=False):
     request payloads.
     """
 
+    anthropic_restricts_sampling_with_thinking: bool
+    """Whether the model takes `temperature` only at `1`, `top_p` only from `0.95`, and no `top_k` while it thinks.
+    Default: `False`.
+
+    Set for every Claude model, which rejects any other `temperature`, a lower `top_p`, or a `top_k` with a 400
+    while thinking. See
+    [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#feature-compatibility).
+    """
+
+    anthropic_disallows_temperature_with_top_p: bool
+    """Whether the model rejects `temperature` and `top_p` set together. Default: `False`.
+
+    Claude Haiku 4.5, Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6 accept one or the other, and return a 400 for both.
+    """
+
     anthropic_disallows_top_effort_when_thinking_disabled: bool
     """Whether the model rejects `xhigh`/`max` effort while thinking is explicitly disabled. Default: `False`.
 
@@ -182,6 +201,12 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """Whether the model supports `output_config.task_budget`. Default: `False`.
 
     Anthropic currently documents task budgets as a Claude Opus 4.7 / 4.8 / 5 / 5.5 and Haiku 5.5 beta feature.
+    """
+
+    anthropic_computer_tool_version: AnthropicComputerToolVersion
+    """Which Anthropic computer use tool or toolset is sent for a [`ComputerTool`][pydantic_ai.native_tools.ComputerTool]. Default: `'computer_20250124'`.
+
+    Whether `ComputerTool` is sent at all depends on `supported_native_tools`.
     """
 
     anthropic_supports_on_demand_compaction: bool
@@ -298,6 +323,31 @@ class AnthropicModelProfile(ModelProfile, total=False):
     When the provider's profile doesn't set it, `AnthropicModel` turns it on for the `AsyncAnthropic` client and leaves
     it off for every other client. Of those, Claude Platform on AWS (`AsyncAnthropicAWS`) and Microsoft Foundry also
     send those versions, but haven't been verified to accept `allowed_callers` with citations.
+    """
+
+    anthropic_supports_inference_geo: bool
+    """Whether the endpoint takes the `inference_geo` request parameter for
+    [data residency](https://platform.claude.com/docs/en/manage-claude/data-residency). Default: `False`.
+
+    When False, [`anthropic_inference_geo`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_inference_geo]
+    is ignored with a `UserWarning`. When the provider's profile doesn't set it, `AnthropicModel` turns it on for the
+    `AsyncAnthropic` client, which also serves Claude Platform on AWS and Claude on Google Cloud (Anthropic managed),
+    and leaves it off for the Bedrock, Vertex AI and Foundry clients, where the endpoint or deployment decides the
+    inference region. Set it in the provider's profile or with `profile=` for a client that forwards the parameter to
+    the Claude API. It doesn't depend on the model: models that don't support data residency reject the parameter
+    with a 400.
+    """
+
+    anthropic_supports_message_threads: bool
+    """Whether the endpoint serves Anthropic
+    [message threads](https://platform.claude.com/docs/en/build-with-claude/message-threads). Default: `False`.
+
+    When False,
+    [`anthropic_previous_message_id`][pydantic_ai.models.anthropic.AnthropicModelSettings.anthropic_previous_message_id]
+    is ignored with a `UserWarning`. When the provider's profile doesn't set it, `AnthropicModel` turns it on for the
+    `AsyncAnthropic` client, which also serves Claude Platform on AWS and Claude on Google Cloud (Anthropic managed),
+    and for the Foundry client, and leaves it off for the Bedrock and Vertex AI clients, where Anthropic doesn't offer
+    threads. Set it in the provider's profile or with `profile=` for a client that forwards threads to the Claude API.
     """
 
 
@@ -448,6 +498,10 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
             'claude-sonnet-5',
             'claude-haiku-5-5',
         )
+    )
+    # Verified live 2026-11-04. The models that set `disallows_sampling_settings` take neither.
+    disallows_temperature_with_top_p = model_name.startswith(
+        ('claude-haiku-4-5', 'claude-sonnet-4-5', 'claude-sonnet-4-6', 'claude-opus-4-5', 'claude-opus-4-6')
     )
     # Opus 5, Sonnet 5.5, and Haiku 5.5 cap effort at `high` while thinking is disabled; Opus 4.8 and earlier accept
     # every level. Opus 5.5 rejects disabled thinking outright, so the effort-specific error would mislead.
@@ -631,6 +685,9 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         supported_native_tools = supported_native_tools | {AdvisorTool}
 
     profile = AnthropicModelProfile(
+        # The Anthropic API answers HEIC, AVIF, BMP and TIFF images with a 400, and so does Claude through
+        # OpenRouter (checked live with `claude-haiku-5-5` and `anthropic/claude-haiku-4.5`, 2026-11-04).
+        supported_image_media_types=KNOWN_IMAGE_MEDIA_TYPES,
         # Read by `OpenAIChatModel`, not by `AnthropicModel`: litellm, vercel, heroku, snowflake and
         # openrouter serve Claude through that adapter and map it onto this profile, so these tags are
         # how it splits thinking out of a Claude response. Both adapters only render them for the
@@ -659,6 +716,8 @@ def anthropic_model_profile(model_name: str) -> ModelProfile | None:
         anthropic_supports_max_effort=not model_name.startswith('claude-opus-4-5'),
         anthropic_disallows_budget_thinking=disallows_budget_thinking,
         anthropic_disallows_sampling_settings=disallows_sampling_settings,
+        anthropic_disallows_temperature_with_top_p=disallows_temperature_with_top_p,
+        anthropic_restricts_sampling_with_thinking=model_name.startswith('claude-'),
         anthropic_disallows_top_effort_when_thinking_disabled=disallows_top_effort_when_thinking_disabled,
         anthropic_disables_thinking_with_between_tools=disables_thinking_with_between_tools,
         anthropic_distrusts_system_after_tool_result=distrusts_system_after_tool_result,

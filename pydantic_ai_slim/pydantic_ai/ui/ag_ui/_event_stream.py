@@ -10,6 +10,7 @@ import re
 import warnings
 from collections.abc import AsyncIterator, Iterable
 from dataclasses import KW_ONLY, dataclass, field
+from decimal import Decimal
 from typing import Literal
 from uuid import uuid4
 
@@ -228,7 +229,8 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
             return False
         # The spec's grammar is `MAJOR.MINOR`; `parse_ag_ui_version` is too lenient, as it tolerates suffixes.
         match = re.fullmatch(r'(\d+)\.(\d+)', declared)
-        return match is None or (int(match[1]), int(match[2])) >= LIFECYCLE_1_0_VERSION
+        # `Decimal`, not `int`: `int` refuses a string of more than 4,300 digits.
+        return match is None or tuple(map(Decimal, match.groups())) >= tuple(map(Decimal, LIFECYCLE_1_0_VERSION))
 
     @property
     def _event_encoder(self) -> EventEncoder:
@@ -313,7 +315,7 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if isinstance(output, DeferredToolRequests):
             if output.approvals:
                 return RunFinishedInterruptOutcome(
-                    interrupts=[approval_to_interrupt(call, output.metadata) for call in output.approvals],
+                    interrupts=[approval_to_interrupt(call, output) for call in output.approvals],
                 )
             if output.calls and self._emit_1_0_outcomes:
                 # Every call the run left for the client to execute has no `TOOL_CALL_RESULT` yet.
@@ -562,7 +564,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if not enqueued:
             return
         messages = AGUIAdapter.dump_messages(
-            enqueued, ag_ui_version=self.ag_ui_version, preserve_file_data=self.preserve_file_data
+            enqueued,
+            ag_ui_version=self.ag_ui_version,
+            preserve_file_data=self.preserve_file_data,
+            default_ui_visibility=self.default_ui_visibility,
         )
         yield ActivitySnapshotEvent(
             message_id=event.enqueue_id,

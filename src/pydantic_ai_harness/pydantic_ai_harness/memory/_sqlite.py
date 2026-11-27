@@ -21,6 +21,7 @@ from pydantic_ai_harness.memory._store import (
     decode_metadata,
     encode_metadata,
     lexical_search,
+    prefix_end,
     validate_store_path,
     validate_store_prefix,
 )
@@ -84,13 +85,14 @@ def _create_schema(connection: sqlite3.Connection) -> _Decoder:
     return _DECODERS[str(encoding)]
 
 
-def _prefix_end(prefix: str) -> str:
-    """An upper bound for the paths starting with `prefix`, so SQLite can seek the path index for the range.
+# A range on `path`, rather than `LIKE` or `substr`, lets SQLite seek the path index.
+_PREFIX_SQL = 'path >= ? AND path < ?'
+# Paths in a deeper scope nested under the prefix belong to another namespace or agent.
+_CHILD_SQL = f'{_PREFIX_SQL} AND instr(substr(path, length(?) + 1), ?) = 0'
 
-    Paths are ASCII (`validate_store_path`), so every one starting with `prefix` sorts below `prefix` plus
-    the highest code point under SQLite's default binary collation.
-    """
-    return f'{prefix}\U0010ffff'
+
+def _child_args(prefix: str) -> tuple[str, str, str, str]:
+    return prefix, prefix_end(prefix), prefix, '/'
 
 
 class SqliteMemoryStore:
@@ -107,7 +109,7 @@ class SqliteMemoryStore:
         if database is not None and str(database) in ('', ':memory:'):
             raise ValueError(
                 'an in-memory SQLite database does not work with per-call connections -- '
-                'use `InMemoryStore`, or pass a caller-owned `connection=`'
+                'use `InMemoryMemoryStore`, or pass a caller-owned `connection=`'
             )
         self._database = database
         self._connection = connection
@@ -332,8 +334,22 @@ class SqliteMemoryStore:
 
         def op(connection: sqlite3.Connection) -> list[str]:
             rows = connection.execute(
-                'SELECT path FROM memory_files WHERE path >= ? AND path < ? ORDER BY path LIMIT ?',
-                (prefix, _prefix_end(prefix), limit),
+                f'SELECT path FROM memory_files WHERE {_PREFIX_SQL} ORDER BY path LIMIT ?',
+                (prefix, prefix_end(prefix), limit),
+            ).fetchall()
+            return [str(row[0]) for row in rows]
+
+        return await anyio.to_thread.run_sync(self._run, op)
+
+    async def list_child_paths(self, prefix: str, *, limit: int) -> list[str]:
+        validate_store_prefix(prefix)
+        if limit <= 0:
+            raise ValueError('limit must be positive')
+
+        def op(connection: sqlite3.Connection) -> list[str]:
+            rows = connection.execute(
+                f'SELECT path FROM memory_files WHERE {_CHILD_SQL} ORDER BY path LIMIT ?',
+                (*_child_args(prefix), limit),
             ).fetchall()
             return [str(row[0]) for row in rows]
 
@@ -354,12 +370,9 @@ class SqliteMemoryStore:
             return MemorySearchResult(matches=[], scanned=0, truncated=False)
 
         def op(connection: sqlite3.Connection) -> list[tuple[str, str, bool]]:
-            # Paths in a deeper scope nested under `prefix` belong to another namespace or agent.
             rows = connection.execute(
-                f'SELECT path, {_BOUNDED_CONTENT_BLOB_SQL} FROM memory_files '
-                'WHERE path >= ? AND path < ? AND instr(substr(path, length(?) + 1), ?) = 0 '
-                'ORDER BY path LIMIT ?',
-                (max_file_chars, prefix, _prefix_end(prefix), prefix, '/', max_files + 1),
+                f'SELECT path, {_BOUNDED_CONTENT_BLOB_SQL} FROM memory_files WHERE {_CHILD_SQL} ORDER BY path LIMIT ?',
+                (max_file_chars, *_child_args(prefix), max_files + 1),
             ).fetchall()
             return [(str(row[0]), *self._decode_prefix(row[1], max_file_chars)) for row in rows]
 

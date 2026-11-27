@@ -10,14 +10,12 @@ identifier for persisted run history. Each strategy gates it behind its `receipt
 
 from __future__ import annotations
 
-from collections.abc import Sequence
 from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelRequestPart, TextContent, UserPromptPart
+from pydantic_ai.messages import ModelMessage, ModelRequest, TextContent, UserPromptPart
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness._provenance import tagged_text
 
 _RECEIPT_MARKER = '[History before this point'
 """Prefix identifying a receipt part, for detection and de-accumulation across compactions."""
@@ -113,66 +111,6 @@ def is_receipt_part(part: object) -> bool:
 def is_receipt_message(message: ModelMessage) -> bool:
     """Return True if *message* is a request made up entirely of receipt parts."""
     return isinstance(message, ModelRequest) and bool(message.parts) and all(is_receipt_part(p) for p in message.parts)
-
-
-# ---------------------------------------------------------------------------
-# Reset notices
-# ---------------------------------------------------------------------------
-
-
-RESET_NOTICE_ORIGIN = 'pydantic-ai-harness.compaction.reset_notice.v1'
-"""The `origin` metadata of `ResetCompaction`'s notice.
-
-An `origin` rather than the receipt marker: receipt de-duplication in the other compactions would
-delete a receipt-marked notice, while an `origin` makes it harness data that they keep and that
-`find_first_user_message` does not mistake for a user turn.
-"""
-
-
-def make_reset_notice_part(text: str, *, number: int, work_log: str | None, kept_responses: int) -> UserPromptPart:
-    """Wrap reset notice *text* in a `UserPromptPart`, with the facts later resets read back as metadata.
-
-    *number* counts the resets in the conversation, this one included. *work_log* is the handle the
-    text names, if any. *kept_responses* is how many model responses the reset kept after the notice.
-    """
-    return UserPromptPart(
-        [
-            TextContent(
-                text,
-                metadata={
-                    'origin': RESET_NOTICE_ORIGIN,
-                    'number': number,
-                    'work_log': work_log,
-                    'kept_responses': kept_responses,
-                },
-            )
-        ]
-    )
-
-
-def is_reset_notice_part(part: ModelRequestPart) -> bool:
-    """Return True if *part* is a reset notice, found by its metadata."""
-    return isinstance(part, UserPromptPart) and tagged_text(part.content, RESET_NOTICE_ORIGIN) is not None
-
-
-def last_reset_notice(messages: Sequence[ModelMessage]) -> TextContent | None:
-    """The newest reset notice in *messages*, including one merged into another request, or `None`."""
-    for message in reversed(messages):
-        if not isinstance(message, ModelRequest):
-            continue
-        for part in reversed(message.parts):
-            if (
-                isinstance(part, UserPromptPart)
-                and (notice := tagged_text(part.content, RESET_NOTICE_ORIGIN)) is not None
-            ):
-                return notice
-    return None
-
-
-def reset_notice_count(notice: TextContent | None, key: str) -> int:
-    """The count a reset notice records under *key* in its metadata, such as its `number`; 0 without one."""
-    value: object = notice.metadata.get(key) if notice is not None else 0
-    return value if isinstance(value, int) else 0
 
 
 # ---------------------------------------------------------------------------

@@ -24,6 +24,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     ModelResponsePart,
+    OperatorSource,
     TextContent,
     TextPart,
     ThinkingPart,
@@ -34,8 +35,9 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, ToolDefinition
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, WorkspaceError
-from pydantic_ai_harness import CodeMode, ToolOutputLimits, WorkLog
-from pydantic_ai_harness.tool_output_limits import Band, LocalFileStore, Truncate
+from pydantic_ai_harness import CodeMode, ToolBridge, ToolOutputLimits, WorkLog
+from pydantic_ai_harness.compaction import ResetNoticePart
+from pydantic_ai_harness.tool_output_limits import Band, LocalFileOverflowStore, Truncate
 from pydantic_ai_harness.work_log import (
     WORK_LOG_READ_KIND,
     WORK_LOG_SEARCH_KIND,
@@ -135,7 +137,7 @@ class TestWorkLog:
         run_id = result.run_id
         assert await store.read(_CONVERSATION) == [
             {
-                'key': f'{run_id}:1:c1:0',
+                'key': f'{run_id}:1:c1:lookup:0',
                 'run_id': run_id,
                 'step': 1,
                 'context': 0,
@@ -180,7 +182,7 @@ class TestWorkLog:
         store = InMemoryWorkLogStore()
         capabilities: list[AbstractCapability[None]] = [
             WorkLog(store),
-            ToolOutputLimits(store=LocalFileStore(tmp_path)),
+            ToolOutputLimits(store=LocalFileOverflowStore(tmp_path)),
         ]
         agent = Agent(
             _scripted([ToolCallPart('dump', {}, tool_call_id='c1')]),
@@ -421,18 +423,12 @@ class TestWorkLog:
         assert await store.read('another conversation') == []
 
     async def test_context_counts_the_latest_reset_notice(self) -> None:
-        notice = UserPromptPart(
-            [
-                TextContent(
-                    'The conversation before this point was cleared.',
-                    metadata={
-                        'origin': 'pydantic-ai-harness.compaction.reset_notice.v1',
-                        'number': 2,
-                        'work_log': None,
-                        'kept_responses': 0,
-                    },
-                )
-            ]
+        notice = ResetNoticePart(
+            content='The conversation before this point was cleared.',
+            source=OperatorSource(),
+            number=2,
+            work_log=None,
+            kept_responses=0,
         )
         history: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart('Start')]),
@@ -519,6 +515,25 @@ class TestWorkLogCodeMode:
             (4, None, None, None),
         ]
         assert entries[2]['args'] == json.dumps({'code': code}, separators=(',', ':'))
+
+    async def test_a_tool_bridge_call_and_the_tool_it_runs_are_both_logged(self) -> None:
+        """`ToolBridge` runs the bridged tool under its `tool_call`'s id, so both entries share it."""
+        store = InMemoryWorkLogStore()
+        args = {'name': 'lookup', 'args_json': json.dumps({'city': 'Paris'})}
+        agent = Agent(
+            _scripted([ToolCallPart('tool_call', args, tool_call_id='tc')]),
+            capabilities=[ToolBridge(), WorkLog(store)],
+            tools=[lookup],
+        )
+
+        await agent.run('Go', conversation_id=_CONVERSATION)
+
+        entries = await store.read(_CONVERSATION)
+        assert [(e['tool_name'], e['tool_call_id'], e['parent_tool_call_id'], e['content']) for e in entries] == [
+            ('lookup', 'tc', 'tc', 'sunny in Paris'),
+            ('tool_call', 'tc', None, 'sunny in Paris'),
+            (None, None, None, 'done'),
+        ]
 
     async def test_eager_nested_calls_are_logged_before_run_code(self) -> None:
         searched = asyncio.Event()
@@ -682,7 +697,7 @@ class TestWorkLogTools:
         )
 
         assert [
-            (read['text'], read['offset'], read['next_offset'], read['total_lines'])
+            (read['text'], read['offset'], read['next_offset'], read['total'])
             for read in (_READ.validate_python(result) for result in found)
         ] == [
             ('line 0\nline 1\nline 2', 0, 3, 10),
@@ -701,10 +716,12 @@ class TestWorkLogTools:
             'args': '{}',
             'outcome': 'success',
             'text': 'line 0\nline 1\nline 2',
+            'unit': 'lines',
             'offset': 0,
             'next_offset': 3,
-            'total_lines': 10,
+            'total': 10,
             'capped': False,
+            'cut_at': None,
         }
 
     async def test_read_is_capped_in_lines_and_characters(self) -> None:
@@ -758,6 +775,34 @@ class TestWorkLogTools:
         assert long == 'z' * 50_000
         assert long_from_end == f'{"z" * 49_994}\nshort'
 
+    async def test_a_cut_line_continues_in_a_bytes_read(self) -> None:
+        content = '\n'.join(letter * 20_000 for letter in 'abcd')
+        store = InMemoryWorkLogStore()
+        await store.append(_CONVERSATION, _record('k1', content))
+        await store.append(_CONVERSATION, _record('k2', 'z' * 60_000 + '\nshort'))
+
+        found = await _call_tools(
+            store,
+            ('read_work_log', {'seq': 1, 'limit': 4}),
+            ('read_work_log', {'seq': 1, 'limit': 4, 'from_end': True}),
+            ('read_work_log', {'seq': 2}),
+            ('read_work_log', {'seq': 2, 'from_end': True}),
+            ('read_work_log', {'seq': 2, 'unit': 'bytes', 'offset': 50_000, 'limit': 50_000}),
+            ('read_work_log', {'seq': 2, 'unit': 'bytes', 'limit': 3, 'from_end': True}),
+        )
+
+        reads = [_READ.validate_python(result) for result in found]
+        # Forward, the cut line goes on past what was shown; from the end, its start was left out.
+        assert [read['cut_at'] for read in reads[:4]] == [40_002 + 9_998, 20_001, 50_000, 0]
+        rest, tail = reads[4:]
+        assert (rest['text'], rest['unit'], rest['next_offset'], rest['total']) == (
+            'z' * 10_000 + '\nshort',
+            'bytes',
+            None,
+            60_006,
+        )
+        assert (tail['text'], tail['next_offset']) == ('ort', 3)
+
     async def test_bad_read_arguments_ask_for_a_retry(self) -> None:
         store = InMemoryWorkLogStore()
         await store.append(_CONVERSATION, _record('k1'))
@@ -766,6 +811,7 @@ class TestWorkLogTools:
             ('read_work_log', {'seq': 5}),
             ('read_work_log', {'seq': 1, 'offset': -1}),
             ('read_work_log', {'seq': 1, 'limit': 0}),
+            ('read_work_log', {'seq': 1, 'unit': 'bytes', 'pattern': 'x'}),
         ]
         # One run each: a tool's retry budget allows one retry per run.
         found = [await _call_tools(store, call) for call in calls]
@@ -775,10 +821,11 @@ class TestWorkLogTools:
             ['No work log entry has `seq` 5: entries run from 1 to 1.'],
             ['`offset` must be >= 0.'],
             ['`limit` must be >= 1.'],
+            ["`pattern` filters lines, so it cannot be combined with `unit='bytes'`."],
         ]
         assert empty == ['No work log entry has `seq` 1: the work log is empty.']
 
-    async def test_tool_output_limits_reduces_search_but_not_read(self, tmp_path: Path) -> None:
+    async def test_tool_output_limits_reduces_neither_search_nor_read(self, tmp_path: Path) -> None:
         store = InMemoryWorkLogStore()
         for index in range(120):
             await store.append(_CONVERSATION, _record(f'k{index}', 'needle ' * 100, args='a' * 300))
@@ -788,10 +835,10 @@ class TestWorkLogTools:
             store,
             ('search_work_log', {'query': 'needle', 'limit': 1_000}),
             ('read_work_log', {'seq': 121}),
-            capabilities=[ToolOutputLimits(store=LocalFileStore(tmp_path))],
+            capabilities=[ToolOutputLimits(store=LocalFileOverflowStore(tmp_path))],
         )
 
-        assert str(searched).startswith('[Tool output too large')
+        assert _SEARCH.validate_python(searched)['capped'] is True
         assert _READ.validate_python(read)['text'] == 'z' * 30_000
 
 

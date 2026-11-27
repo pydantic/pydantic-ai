@@ -11,8 +11,14 @@ from pydantic_ai.profiles._family import ModelProfileFunc, vendor_family_model_p
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
 from pydantic_ai.profiles.amazon import amazon_model_profile
 from pydantic_ai.profiles.groq import groq_model_profile
+from pydantic_ai.profiles.inclusionai import inclusionai_model_profile
 from pydantic_ai.profiles.mistral import mistral_model_profile
+from pydantic_ai.profiles.nvidia import nvidia_model_profile
 from pydantic_ai.profiles.openai import OpenAIJsonSchemaTransformer, OpenAIModelProfile, openai_model_profile
+from pydantic_ai.profiles.stepfun import stepfun_model_profile
+from pydantic_ai.profiles.tencent import tencent_model_profile
+from pydantic_ai.profiles.thinkingmachines import thinkingmachines_model_profile
+from pydantic_ai.profiles.xiaomi import xiaomi_model_profile
 
 try:
     from openai import AsyncOpenAI
@@ -42,11 +48,33 @@ def _mistral_model_profile(model_name: str) -> ModelProfile:
     return merge_profile(openai_model_profile(model_name), profile)
 
 
+def _on_openai_defaults(family_profile: ModelProfileFunc) -> ModelProfileFunc:
+    """`family_profile`, on the OpenAI defaults assumed for a model no family profile describes.
+
+    For families whose profile only says whether the model thinks, so the rest of the profile still comes from the
+    OpenAI fallback. A model the family doesn't describe gets `None`, and so the fallback alone.
+    """
+
+    def profile(model_name: str) -> ModelProfile | None:
+        family = family_profile(model_name)
+        return None if family is None else merge_profile(openai_model_profile(model_name), family)
+
+    return profile
+
+
 _OPENAI_COMPATIBLE_VENDOR_PROFILES: dict[str, ModelProfileFunc] = {
     'bedrock': amazon_model_profile,
     'groq': groq_model_profile,
+    'inclusionai': _on_openai_defaults(inclusionai_model_profile),
     'mistral': _mistral_model_profile,
     'mistralai': _mistral_model_profile,
+    'nvidia': _on_openai_defaults(nvidia_model_profile),
+    'stepfun': _on_openai_defaults(stepfun_model_profile),
+    'stepfun-ai': _on_openai_defaults(stepfun_model_profile),
+    'tencent': _on_openai_defaults(tencent_model_profile),
+    'thinkingmachines': _on_openai_defaults(thinkingmachines_model_profile),
+    'xiaomi': _on_openai_defaults(xiaomi_model_profile),
+    'xiaomimimo': _on_openai_defaults(xiaomi_model_profile),
 }
 """Vendors whose profile here differs from the shared family map, on top of it."""
 

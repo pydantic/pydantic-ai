@@ -19,11 +19,16 @@ from typing import Any
 from grpclib.const import Cardinality, Handler, Status
 from grpclib.encoding.base import CodecBase
 from grpclib.exceptions import GRPCError
+from grpclib.protocol import H2Protocol
 from grpclib.server import Server, Stream
 from pydantic_monty._binary import find_monty_binary  # the lookup `AsyncMonty()` uses for local workers
 
+from tests._timeouts import READINESS_WAIT_TIMEOUT
+
 SESSION_METHOD = '/monty.v1.MontySession/Session'
 _LENGTH_PREFIX = struct.Struct('<I')
+_OOM_EXIT_CODE = 65
+"""A worker's exit code after it exceeded its memory limit: Monty's `OOM_EXIT_CODE`, in `crates/monty-types/src/resource.rs`."""
 
 
 class _RawCodec(CodecBase):
@@ -33,10 +38,10 @@ class _RawCodec(CodecBase):
     def __content_subtype__(self) -> str:
         return 'proto'
 
-    def encode(self, message: Any, message_type: Any) -> bytes:  # pragma: no cover -- only bridged sessions (#8824)
+    def encode(self, message: Any, message_type: Any) -> bytes:
         return message
 
-    def decode(self, data: bytes, message_type: Any) -> Any:  # pragma: no cover -- only bridged sessions (#8824)
+    def decode(self, data: bytes, message_type: Any) -> Any:
         return data
 
 
@@ -55,7 +60,7 @@ class MontyRelay:
     def __mapping__(self) -> dict[str, Handler]:
         return {SESSION_METHOD: Handler(self._session, Cardinality.STREAM_STREAM, bytes, bytes)}
 
-    async def drop_streams(self) -> None:  # pragma: no cover -- only the skipped #8824 tests bridge a session
+    async def drop_streams(self) -> None:
         """Reset every open stream, as a lost worker connection does."""
         await asyncio.gather(*(stream.cancel() for stream in self._streams))
 
@@ -77,9 +82,9 @@ class MontyRelay:
             return
         if self.refuse:
             raise GRPCError(Status.UNAUTHENTICATED, 'unauthorized')
-        return await self._bridge(stream)  # pragma: no cover -- only the skipped #8824 tests bridge a session
+        return await self._bridge(stream)
 
-    async def _bridge(self, stream: Stream[bytes, bytes]) -> None:  # pragma: no cover -- only the skipped #8824 tests
+    async def _bridge(self, stream: Stream[bytes, bytes]) -> None:
         self._streams.append(stream)
         child = await asyncio.create_subprocess_exec(
             find_monty_binary(), 'subprocess', stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE
@@ -101,12 +106,61 @@ class MontyRelay:
                 while True:
                     (length,) = _LENGTH_PREFIX.unpack(await stdout.readexactly(_LENGTH_PREFIX.size))
                     await stream.send_message(await stdout.readexactly(length))
+            # The worker closed its stdout, so it exited or is exiting: reap it rather than kill it,
+            # since a kill that lands mid-exit replaces its exit code.
+            async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+                await child.wait()
         finally:
             to_child_task.cancel()
             await asyncio.gather(to_child_task, return_exceptions=True)
             with suppress(ProcessLookupError):
                 child.kill()
             await child.wait()
+        if child.returncode == _OOM_EXIT_CODE:
+            # Monty's server reports a worker out of memory this way, which the client raises as `MemoryError`.
+            await stream.send_trailing_metadata(
+                status=Status.RESOURCE_EXHAUSTED,
+                status_message='worker exceeded its memory limit',
+                metadata={'monty-cause': 'out_of_memory'},
+            )
+
+
+class _RelayServer(Server):
+    """A grpclib server that closes the connections it accepted when it stops.
+
+    grpclib's `close()` only cancels request handlers, and on Python 3.11 `wait_closed()` returns without waiting for
+    open connections. A connection the client closes after the test's last loop turn would otherwise outlive the loop,
+    and its transport warn as unclosed when it's collected.
+    """
+
+    def __init__(self, handlers: list[MontyRelay], *, codec: CodecBase) -> None:
+        super().__init__(handlers, codec=codec)
+        self.connections: list[tuple[asyncio.BaseTransport, asyncio.Event]] = []
+
+    def _protocol_factory(self) -> H2Protocol:
+        protocol = super()._protocol_factory()
+        connection_made, connection_lost = protocol.connection_made, protocol.connection_lost
+        lost = asyncio.Event()
+
+        def made(transport: asyncio.BaseTransport) -> None:
+            self.connections.append((transport, lost))
+            connection_made(transport)
+
+        def gone(exc: BaseException | None) -> None:
+            connection_lost(exc)
+            lost.set()
+
+        protocol.connection_made, protocol.connection_lost = made, gone
+        return protocol
+
+    async def stop(self) -> None:
+        self.close()
+        for transport, _ in self.connections:
+            transport.close()
+        async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+            for _, lost in self.connections:
+                await lost.wait()
+            await self.wait_closed()
 
 
 @asynccontextmanager
@@ -119,10 +173,9 @@ async def serve_monty_relay(
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
     sock.bind(('127.0.0.1', port))
     relay.url = f'http://127.0.0.1:{sock.getsockname()[1]}'
-    server = Server([relay], codec=_RawCodec())
+    server = _RelayServer([relay], codec=_RawCodec())
     await server.start(sock=sock)
     try:
         yield relay
     finally:
-        server.close()
-        await server.wait_closed()
+        await server.stop()
