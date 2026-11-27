@@ -3023,6 +3023,69 @@ class TestTieredCompaction:
         with pytest.raises(ValueError, match='skip_on must contain only Exception subclasses'):
             TieredCompaction(tiers=[ClearToolResults()], target_tokens=10, skip_on=(BaseException,))  # pyright: ignore[reportArgumentType]
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_two_summarizer_tiers_escalate_cheap_to_strong_on_an_agent(self):
+        """Two tiers sharing `SummarizingCompaction`'s default `id` stay two tiers, and the failing one is skipped."""
+        calls: list[str] = []
+
+        def cheap(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append('cheap')
+            raise ModelAPIError('cheap', 'unavailable')
+
+        def strong(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append('strong')
+            return ModelResponse(parts=[TextPart('strong summary')])
+
+        def main(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append('main')
+            return ModelResponse(parts=[TextPart('done')])
+
+        tiered = TieredCompaction(
+            tiers=[
+                SummarizingCompaction(model=FunctionModel(cheap), keep_messages=1),
+                SummarizingCompaction(model=FunctionModel(strong), keep_messages=1),
+            ],
+            target_tokens=1,
+        )
+        agent = Agent(FunctionModel(main), capabilities=[tiered])
+
+        result = await agent.run('next', message_history=[_user('first'), ModelResponse(parts=[TextPart('reply')])])
+
+        assert calls == ['cheap', 'strong', 'main']
+        assert result.output == 'done'
+
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_summarizer_tier_runs_beside_a_top_level_summarizer(self):
+        """A top-level `SummarizingCompaction` shares the tier's default `id`, and neither replaces the other."""
+        calls: list[str] = []
+
+        def summarizer(label: str) -> FunctionModel:
+            def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+                calls.append(label)
+                return ModelResponse(parts=[TextPart(f'{label} summary')])
+
+            return FunctionModel(summarize)
+
+        def main(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append('main')
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(main),
+            capabilities=[
+                TieredCompaction(
+                    tiers=[ClearToolResults(), SummarizingCompaction(model=summarizer('tier'), keep_messages=1)],
+                    target_tokens=1,
+                ),
+                SummarizingCompaction(model=summarizer('direct'), max_messages=1000),
+            ],
+        )
+
+        result = await agent.run('next', message_history=[_user('first'), ModelResponse(parts=[TextPart('reply')])])
+
+        assert calls == ['tier', 'main']
+        assert result.output == 'done'
+
     async def test_programming_error_in_a_tier_propagates(self):
         cap = TieredCompaction(tiers=[_FailingTier(RuntimeError('bug'))], target_tokens=1)
         messages: list[ModelMessage] = [_user('x' * 40)]

@@ -230,6 +230,14 @@ Each tier keeps some messages as they are: its `keep_tokens` or `keep_messages` 
 
 On its own trigger, `TieredCompaction` skips a tier that raises one of its `skip_on` exceptions and moves on to the next. By default these are `ModelAPIError`, `FallbackExceptionGroup` and `UnexpectedModelBehavior`, such as a summarizer whose provider is down or that exhausted its retries, the same selection as `FallbackCompaction`'s `fallback_on`. The skipped tier's receipts are discarded, a warning is logged, and a `compact_messages` span records the tier as `compaction.strategy`, with `compaction.skipped='tier_failed'` and `error.type`. Other exceptions, such as programming errors and `UsageLimitExceeded`, propagate, as does every exception on a direct `compact()` call, so a `FallbackCompaction` around it still falls back. Pass `skip_on=()` to propagate every tier failure.
 
+### Nested strategies under durable execution
+
+A tier is not registered on the agent, so a `SummarizingCompaction` or `RelevanceCompaction` tier can't bind its own durable operations. When a tier has durable operations, `TieredCompaction` runs its tiers as its own `compact` durable operation, under its stable default `id`, `tiered_compaction`, so a replay reuses the compacted history instead of calling the summarizer again. `FallbackCompaction` does the same for its chain, under `fallback_compaction`, and a composing strategy nested in either runs inside that operation. Tiers without durable operations, like `ClearToolResults` and `DeduplicateFileReads`, run in workflow code and add no durable unit. Under Temporal the operation is an activity whose run context omits `tracer` and `capabilities`, so `RelevanceCompaction` and `receipts=True` on a summarizing or sliding-window tier fail there, and receipts recorded inside the activity add no `compaction.receipt` span events.
+
+Like other capabilities with a default `id`, two `TieredCompaction`s (or two `FallbackCompaction`s) on one agent now merge into one, and one passed for a run replaces the agent's. Pass distinct `id=` values to keep both.
+
+Before this change, a nested summarizer's model call ran in workflow code: it failed in Temporal's workflow sandbox, and on DBOS, Prefect and the Harness engines it ran without being recorded. A workflow that compacted through a nested summarizer on an earlier version has no record of the new durable unit, so its recorded history no longer lines up with what the workflow now runs. Let workflows like that finish on the earlier version before upgrading their workers.
+
 ## `FallbackCompaction`: recover when a strategy fails
 
 !!! warning "Compatibility impact: `FallbackCompaction` falls back on `UnexpectedModelBehavior`"
@@ -252,7 +260,7 @@ fallback = FallbackCompaction(
 )
 ```
 
-Its optional `max_tokens` or `max_fraction` trigger runs the chain when estimated context tokens exceed it; with neither, its request hook does nothing. `context_window`, `fallback_context_window`, and `tokenizer` work as on the other strategies. The hook preserves pinned parts, persists the result, and emits a `compact_messages` span when history changes. Direct `compact()` and `compact_now()` calls ignore the threshold, so it also works inside other composing strategies and for manual compaction. The chain calls each child's `compact()` directly, bypassing the child's trigger, so a child needs none.
+Its optional `max_tokens` or `max_fraction` trigger runs the chain when estimated context tokens exceed it; with neither, its request hook does nothing. `context_window`, `fallback_context_window`, and `tokenizer` work as on the other strategies. The hook preserves pinned parts, persists the result, and emits a `compact_messages` span when history changes. Direct `compact()` and `compact_now()` calls ignore the threshold, so it also works inside other composing strategies and for manual compaction. The chain calls each child's `compact()` directly, bypassing the child's trigger, so a child needs none. Under durable execution, a chain with a summarizer runs as the `compact` durable operation of `FallbackCompaction`, as described in [nested strategies under durable execution](#nested-strategies-under-durable-execution).
 
 ### Background compaction (experimental)
 

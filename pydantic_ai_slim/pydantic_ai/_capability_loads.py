@@ -105,7 +105,13 @@ def deferred_capability_ids(ctx: RunContext[AgentDepsT]) -> set[str] | None:
 
     Outside a run, as with `compact_now`, there is no registry to ask; core ignores a load of a capability
     the next run doesn't register. A stand-in context without a registry at all counts as outside a run.
+    Inside a durable unit the registry doesn't cross the boundary, so the ids serialized with the context
+    at dispatch answer instead, as they do for `RunContext.is_tool_available`.
     """
+    from pydantic_ai.durable_exec import DurableRunContext  # noqa: PLC0415
+
+    if isinstance(ctx, DurableRunContext):
+        return ctx._deferred_capability_ids  # pyright: ignore[reportPrivateUsage]
     capabilities = getattr(ctx, 'capabilities', None)
     if not capabilities:
         return None
