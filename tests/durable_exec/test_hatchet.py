@@ -652,7 +652,7 @@ def _build_reroute(hatchet: Hatchet, name: str, target: str | Model) -> Scenario
         ) -> ModelRequestContext:
             if request_context.attempt == 1:
                 raise RetryModelRequest(target)
-            return request_context  # pragma: no cover
+            return request_context
 
     durability = HatchetDurability[Any](hatchet, models={'rerouted': FunctionModel(_rerouted, model_name='rerouted')})
     # The agent's own model is never called: the hook moves the first attempt before anything is sent.
