@@ -243,8 +243,8 @@ says so and reports the nested calls already made.
 
 Sleep isn't execution time and has its own per-snippet allowance of `max_duration_seconds`; a sleep
 past it raises `TimeoutError` without waiting and keeps the session. The allowance applies even in a
-Temporal workflow or an Azure Durable Task orchestration, where the execution-time limit is off;
-only `resource_limits='unlimited'` removes it.
+Temporal workflow, where the execution-time limit is off; only `resource_limits='unlimited'` removes
+it.
 
 Monty also caps cumulative suspensions with `max_suspensions` (default 1,000 per session, shared by
 consecutive snippets). External calls, OS callbacks, name lookups, and future resolutions each
@@ -284,12 +284,12 @@ Nested calls also count toward the run's
 would exceed the limit ends the run with `UsageLimitExceeded`, as a top-level call does, even if the
 snippet catches it.
 
-When snippets run in Temporal workflow code or Azure Durable Task orchestrator code, `CodeMode`
-disables `max_duration_seconds`, even an explicit override: `run_code` is replayed there, and
-measuring elapsed time could make replay diverge from the recorded history. Turns that run as
-Temporal activities keep it (see [Remote turns as activities](#remote-turns-as-activities)). The
-memory and suspension caps still apply. Put time-bounded work behind an activity: a tool the
-snippet calls (see [Azure Durable Task durability](#azure-durable-task-durability)).
+When snippets run in Temporal workflow code, `CodeMode` disables `max_duration_seconds`, even an
+explicit override: `run_code` is replayed there, and measuring elapsed time could make replay
+diverge from the recorded workflow. Turns that run as activities keep it (see [Remote turns as
+activities](#remote-turns-as-activities)), and under [Azure Durable
+Task](#azure-durable-task-durability) every turn does. The memory and suspension caps still apply.
+Put time-bounded work behind a Temporal activity.
 
 ## Submitting the final output
 
@@ -664,9 +664,9 @@ agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(monty_sandbo
 ```
 
 The pool's `request_timeout` (default 10 seconds) adds a per-turn transport deadline, on top of
-`max_duration_seconds` outside durable execution. In Temporal workflow code and Azure Durable Task
-orchestrator code, Code Mode disables the execution timer for deterministic replay, and the transport
-deadline still applies. When turns run as activities (see [Remote turns as activities](#remote-turns-as-activities)), the timer applies again
+`max_duration_seconds` outside Temporal. In Temporal workflow code, Code Mode disables the execution
+timer for deterministic replay, and the transport deadline still applies. When turns run as
+activities (see [Remote turns as activities](#remote-turns-as-activities)), the timer applies again
 and the factory is called once per turn, so return a new pool from each call.
 
 Use `https://` unless the network is trusted: the connection carries your agent's tool calls and
@@ -845,22 +845,30 @@ model the connection was lost, as for a dropped connection outside Temporal.
 guide](../azure_durable_task/README.md) to drive the agent with `run_durable` and register its
 activities.
 
-As under Temporal, `run_code` executes in orchestrator code and nested tool calls are activities, which
-`asyncio.gather` schedules concurrently. The SDK replays the orchestrator from the start each time an
-activity finishes, so every replay re-runs the run's snippets against the recorded results: a sandbox
-sleep is a durable timer, `max_duration_seconds` is off in orchestrator code, and `os_access`
-callbacks (called on the orchestrator thread), `mount` access and host-clock calls must be
-deterministic. A host answer that changes on replay, and with it the activities or timers a snippet
-schedules, fails the orchestration with the SDK's `NonDeterminismError`.
+Durable Task replays the orchestrator from the start each time an activity finishes, so a snippet
+that ran in orchestrator code couldn't have a time limit: measuring elapsed time could make replay
+diverge from the recorded history. Unlike Temporal, whose deadlock detector fails a workflow task
+that doesn't yield within 2 seconds, Durable Task also never stops orchestrator code that blocks, so
+nothing would stop a model-written `while True: pass`. Code Mode therefore never runs a snippet in
+orchestrator code. It runs each turn as an activity, as in [Remote turns as
+activities](#remote-turns-as-activities), where `max_duration_seconds` and `max_memory` apply, and
+that needs:
 
-Nothing bounds a snippet's computation in orchestrator code. The orchestrator thread waits while a
-snippet computes, and unlike Temporal, whose deadlock detector fails a workflow task that doesn't
-yield within 2 seconds, Durable Task has no such check, so a model-written `while True: pass` blocks
-the orchestrator thread indefinitely, and the run's timeout and cancellation wait with it. Keep
-snippets to orchestration, calling tools and combining their results, and put heavy or unbounded
-computation in a tool: tools run as activities, outside replay, where a tool can apply its own time
-limit. Turns don't run as activities on Azure Durable Task, so a remote `monty_sandbox` must
-be reachable whenever the orchestrator replays.
+- `monty_sandbox` set to a Monty server that stores sessions.
+- No `os_access`.
+- No `mount` in `'overlay'` mode, the default, or with `write_bytes_limit`. The activity worker reads
+  `'read-only'` and `'read-write'` mounts, so their directories must exist wherever turn activities
+  run.
+- A `CodeMode` with an `id`, `'code_mode'` by default, that's on the agent when it's built, not one a
+  `DynamicCapability` returns.
+
+Any other configuration fails the run with a `UserError` on its first `run_code` call, naming the
+changes it needs, and so does a server that stores no sessions. Nested tool calls are activities,
+which `asyncio.gather` schedules concurrently, a sandbox sleep is a durable timer, and replay reads
+each turn's result from history. Turns use the `capability_options` retry policy you pass to
+`AzureDurableTaskDurability`. Durable Task doesn't stop a running activity, so `max_duration_seconds`
+is what bounds a turn; with `resource_limits='unlimited'`, only a pool factory's own
+`request_timeout` does.
 
 ## Observability
 
@@ -1015,9 +1023,8 @@ CodeMode(os_policy={'datetime': 'system', 'timezone': 'Europe/Paris'})
 Sandboxed code then reads the worker's clock in that zone with no handler: `datetime.datetime.now()`,
 `astimezone()`, `%Z`, and `time.tzname` all agree. A `datetime` value in place of `'system'` freezes
 the clock; `{'timezone': 'Europe/Paris'}` alone keeps the clock on `os_access` but reads its naive
-local time in that zone rather than as UTC. In a Temporal workflow or an Azure Durable
-Task orchestration a `'system'` clock or `random_start` is read again on replay, so keep the
-defaults (or fixed values) there.
+local time in that zone rather than as UTC. In a Temporal workflow a `'system'` clock or
+`random_start` is read again on replay, so keep the defaults (or fixed values) there.
 
 ## Host modules
 

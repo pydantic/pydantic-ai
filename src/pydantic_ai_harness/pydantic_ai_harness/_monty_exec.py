@@ -30,7 +30,9 @@ from anyio.from_thread import BlockingPortal, start_blocking_portal
 from opentelemetry import context as otel_context
 from typing_extensions import TypeVarTuple, Unpack
 
+from pydantic_ai import RunContext
 from pydantic_ai._utils import is_async_callable, run_in_executor
+from pydantic_ai.durable_exec import BaseDurabilityCapability, DurabilityEngineSpec
 from pydantic_ai_harness._typeguards import is_object_tuple, is_str_keyed_dict
 
 try:
@@ -98,6 +100,30 @@ def in_durable_task_orchestration() -> bool:
     """
     bridge = sys.modules.get('pydantic_ai_harness.azure_durable_task._bridge')
     return bridge is not None and bridge.current_loop() is not None
+
+
+def unbounded_replay_engine(ctx: RunContext[object]) -> DurabilityEngineSpec | None:
+    """The engine running this code, when it replays the code but doesn't stop it when it blocks; else `None`.
+
+    Sandboxed code there can't have an elapsed-time limit, since every replay must take the recorded
+    path, and nothing else stops a snippet that computes forever, so it must not run there.
+    """
+    spec = next(
+        (
+            capability.engine_spec
+            for capability in ctx.capabilities.values()
+            if isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
+        ),
+        None,
+    )
+    if spec is None and in_durable_task_orchestration():
+        # An agent with no durability capability of its own, such as one an inline tool runs.
+        from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability
+
+        spec = AzureDurableTaskDurability.engine_spec
+    if spec is None or not spec.replays_orchestrator_code or spec.bounds_blocking_orchestrator_code:
+        return None
+    return spec
 
 
 # Running Monty inside a Temporal workflow or a Durable Task orchestration

@@ -174,9 +174,9 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     Pass an `AbstractOS` such as `OSAccess`, or a handler called with keyword arguments (see
     `pydantic_monty.OsHandler`). A plain function is called from a Monty thread, not the event
     loop's thread, with the run's contextvars set, so it must not touch asyncio objects; an `async`
-    handler is awaited on an event loop instead. Inside a Temporal workflow or an Azure Durable Task
-    orchestration, clock, environment, and randomness calls run on the orchestrator's own thread, so a
-    Temporal handler can use `workflow.now()`.
+    handler is awaited on an event loop instead. Inside a Temporal workflow, clock, environment, and
+    randomness calls run on the workflow's own thread, so the handler can use `workflow.now()`. Under
+    Azure Durable Task, `CodeMode` refuses to run with a handler; see the Code Mode guide.
     The positional `(name, args, kwargs)` form is deprecated.
     """
 
@@ -193,8 +193,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     `{'timezone': 'Europe/Paris'}` alone keeps the clock on `os_access` but makes `astimezone()`,
     `%Z`, and `time.tzname` report that zone. See `pydantic_monty.OSPolicy` for every key.
 
-    Inside a Temporal workflow or an Azure Durable Task orchestration, a `'system'` clock or
-    `random_start` is read again on replay; keep the defaults (or fixed values) there.
+    Inside a Temporal workflow, a `'system'` clock or `random_start` is read again on replay; keep
+    the defaults (or fixed values) there.
     """
 
     external_modules: Mapping[str, ExternalModule] | None = None
@@ -261,12 +261,12 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, repr=False
     )
-    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run, or for each turn when turns run as Temporal activities. Unset, code runs locally.
+    """Where sandboxed code runs: an `http://`, `https://`, `ws://`, or `wss://` URL of the server root, with no path, query, or fragment, which connects without a key, or a sync or async function that returns a `pydantic_monty.AsyncMontyRemote`, called for each run, or for each turn when turns run as activities. Unset, code runs locally.
 
     A remote pool's `request_timeout` adds a per-turn transport deadline to `max_duration_seconds`.
-    In Temporal workflow code and Azure Durable Task orchestrator code, only the transport deadline
-    applies. Tools, `os_access`, and print output stay in your process, and so do mounts unless
-    turns run as activities, where the activity worker reads them.
+    In Temporal workflow code, only the transport deadline applies. Tools, `os_access`, and print
+    output stay in your process, and so do mounts unless turns run as activities, where the activity
+    worker reads them. Under Azure Durable Task, every turn runs as an activity.
     """
 
     monty_sandbox_url: str | None = field(default=None, repr=False)
