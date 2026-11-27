@@ -462,7 +462,12 @@ class Permissions(AbstractCapability[AgentDepsT]):
         if action == 'write':
             locations = await write_locations(ctx.workspace, text)
         else:
-            locations = await command_locations(ctx.workspace, text, posix=posix)
+            # Inside a durable run, expanding `~` or a variable from this process's environment could decide
+            # differently on replay: such a command counts as protected.
+            found = await command_locations(ctx.workspace, text, posix=posix, expand=not in_durable_context(ctx))
+            if found is None:
+                return True
+            locations = found
         return any(matches(location, self.protected_paths, posix=posix) for location in locations)
 
     def _mode_asks(
