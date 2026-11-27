@@ -395,12 +395,17 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         instructions: list[SourcedInstruction[AgentDepsT]] = []
         lowered = {id(source.capability) for source in self._lowered_instruction_sources()}
         for capability in self._ordered_instruction_sources():
-            # A capability below operator authority states its instructions in history instead.
-            if capability.defer_loading is not True and id(capability) not in lowered:
+            # A deferred container states its instructions as one loaded block. Inside that block, collect children
+            # that would otherwise state themselves separately because they are below operator authority.
+            if capability.defer_loading is not True and (self.defer_loading is True or id(capability) not in lowered):
                 instructions.extend(capability._collect_instructions())
         return instructions
 
     def _lowered_instruction_sources(self) -> list[_LoweredInstructionSource[AgentDepsT]]:
+        # A deferred container's children stay hidden until the container is loaded. The loaded block then collects
+        # them above rather than stating each child's lowered block before it is available.
+        if self.defer_loading is True:
+            return super()._lowered_instruction_sources()
         # Each source is judged on its own: `with_authority` lowers a container's children too. A container whose
         # subclass took `get_instructions` over decides what it says instead of its lowered children, whose toolsets'
         # instructions are still stated; below operator authority, what it says is a block of its own.

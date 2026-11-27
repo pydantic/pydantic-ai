@@ -549,26 +549,38 @@ async def test_a_dynamic_capabilitys_ceiling_lowers_the_instructions_it_returns(
     ]
 
 
-async def test_a_deferred_dynamic_groups_instructions_are_not_stated_before_it_loads():
-    """A dynamic deferred group keeps its member instructions hidden until the group is loaded."""
+@pytest.mark.parametrize('dynamic', [False, True])
+async def test_a_deferred_groups_instructions_are_stated_only_after_it_loads(dynamic: bool):
+    """Static and dynamic deferred groups hide member instructions until loaded, then state them as one block."""
     received = Received()
+    responses = [ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'notes_group'}, tool_call_id='load')])]
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         received.messages.append(messages)
-        return ModelResponse(parts=[TextPart('Done.')])
+        return responses.pop(0) if responses else ModelResponse(parts=[TextPart('Done.')])
 
     group = CombinedCapability[Notes](
         [notes_capability()], id='notes_group', description='Notes tools.', defer_loading=True
-    )
+    ).with_authority('none')
+    capability = DynamicCapability(lambda ctx: group).with_authority('none') if dynamic else group
     agent = Agent(
         FunctionModel(model_fn, profile=INLINE),
         deps_type=Notes,
-        capabilities=[DynamicCapability(lambda ctx: group).with_authority('none')],
+        capabilities=[capability],
     )
     result = await agent.run('Hi', deps=Notes())
 
-    assert statements(result.all_messages()) == []
-    assert all('Static note.' not in str(message) for message in received.messages)
+    assert 'Static note.' not in str(received.messages[0])
+    assert statements(result.all_messages()) == [
+        InstructionDeltaPart(
+            id=InstructionId(CapabilityInstructionSource('notes_group')),
+            content='Static note.\n\nThe count is 1.',
+            authority='none',
+        )
+    ]
+    assert last_request_texts(received.messages[-1])[-1] == (
+        '<capability_instructions>\nStatic note.\n\nThe count is 1.\n</capability_instructions>'
+    )
 
 
 async def test_a_dynamic_wrapper_keeps_its_nested_toolsets_instructions():
