@@ -1336,6 +1336,16 @@ def test_unbound_capability_cannot_register() -> None:
         AzureDurableTaskDurability().get_durable_operation_backend()
 
 
+def test_engine_spec_declares_how_orchestrator_code_runs() -> None:
+    """Orchestrator code replays on a loop other threads can't wake, and nothing stops it when it blocks."""
+    spec = AzureDurableTaskDurability.engine_spec
+    assert (spec.replays_orchestrator_code, spec.thread_wakeable_loop, spec.bounds_blocking_orchestrator_code) == (
+        True,
+        False,
+        False,
+    )
+
+
 def test_activity_cannot_emit_live_events(durable_worker: InMemoryWorker) -> None:
     @dataclass
     class DurableTaskProgressEvent(CustomEvent):
