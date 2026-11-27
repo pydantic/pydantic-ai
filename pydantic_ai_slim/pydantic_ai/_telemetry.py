@@ -83,8 +83,8 @@ def open_span(
     `error.type` to the exception's type, and is recorded by its type only, unless the run captures
     content, as its message can quote content. A cancellation is not an error, as in OpenTelemetry's own
     spans, and neither is a deferral, an approval request or a skip (`CallDeferred`, `ApprovalRequired`,
-    `SkipToolExecution`, `SkipModelRequest`): they leave the status unset. In a Temporal workflow, from `wrap_run` on, a span that covered only
-    replayed work is not exported again.
+    `SkipToolExecution`, `SkipModelRequest`): they leave the status unset. In a Temporal workflow, from
+    `wrap_run` on, a span that covered only replayed work is not exported again.
     """
     with _open_span(_traced_run_of(ctx), name, attributes=attributes, content=content) as span:
         yield span
@@ -120,8 +120,7 @@ def _open_span(
             raise
 
 
-# Raised to defer, skip or replace a call, not because it failed. `Instrumentation` doesn't mark its own spans
-# ERROR for them either.
+# Raised to defer, skip or replace a call, not because it failed.
 _CONTROL_FLOW = (CallDeferred, ApprovalRequired, SkipToolExecution, SkipModelRequest)
 
 

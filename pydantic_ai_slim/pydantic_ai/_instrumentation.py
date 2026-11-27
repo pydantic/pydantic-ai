@@ -1024,7 +1024,10 @@ def record_exception(
 
 
 def exception_type_name(error: BaseException) -> str:
-    """`error`'s type as `module.QualName`, or just the name for a builtin, as OTel's `exception.type` and `error.type` use."""
+    """`error`'s type as `module.QualName`, or just the name for a builtin.
+
+    The form OTel's `exception.type` and `error.type` use.
+    """
     error_type = type(error)
     if error_type.__module__ == 'builtins':
         return error_type.__qualname__
