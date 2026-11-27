@@ -67,7 +67,7 @@ class Steered(list[str]):
 
 def test_defaults_aliases_and_collisions() -> None:
     settings = Settings()
-    assert (settings.keyboard_labels, settings.question_submit) == ('unset', 'ask')
+    assert (settings.keyboard_labels, settings.question_submit) == ('neutral', 'ask')
     assert [settings.input_bindings.action(key) for key in ('enter', 'alt-enter', 'shift-enter', 'ctrl-j')] == [
         'send',
         'steer',
@@ -222,7 +222,7 @@ async def test_input_command_resets_every_input_setting_and_hands_key_tests_to_t
         settings.question_submit,
         settings.question_placement,
         settings.busy_delivery,
-    ) == (InputBindings(), 'unset', 'ask', 'picker', 'after-turn')
+    ) == (InputBindings(), 'neutral', 'ask', 'picker', 'after-turn')
     with pytest.raises(ValueError, match=r'^Usage: /input \[test\|reset\]$'):
         await runtime.commands.execute_async('/input reset now')
     with pytest.raises(ValueError, match='Key testing needs the terminal composer'):
@@ -405,7 +405,10 @@ async def test_the_hint_row_shows_after_an_input_change_or_while_input_waits() -
             await anyio.lowlevel.checkpoint()
             live.feed('ctrl-c')
         assert responses[0].cancelled and live.queued_messages == ('next step',)
-        assert 'F4 Queue: Edit / Remove / Steer / Delivery' in shown()
+        assert 'Ctrl+J newline' not in shown(), 'queued entries keep main frame'
+        live.edit_queue_entry(live.queued_prompts()[0])
+        assert "Editing - won't send while you edit it" in shown()
+        assert 'Ctrl+J newline' not in shown(), 'a held edit keeps main frame and its own row'
 
 
 async def test_remembered_follow_up_queues_the_draft_without_routing() -> None:
@@ -702,18 +705,6 @@ async def test_physical_enter_labels_follow_effective_bindings(keyboard: Keyboar
             tasks.cancel_scope.cancel()
 
 
-async def test_first_run_hint_offers_keyboard_setup_until_labels_are_chosen() -> None:
-    async with editor() as (live, _, _):
-        live.keyboard_labels = lambda: 'unset'
-        newline = live.key_label('newline')
-        assert live.input_hint() == f'Keyboard setup: /input - {newline} newline'
-        assert live.input_hint() not in [Text.from_ansi(row).plain for row in live.frame()], 'the banner offers it'
-        live.input_changed = lambda: True
-        assert live.input_hint() in [Text.from_ansi(row).plain for row in live.frame()]
-        live.keyboard_labels = lambda: 'pc'
-        assert live.input_hint() == f'Enter: send - F4 Delivery - {newline} newline - /input'
-
-
 async def test_editing_is_not_pending_and_cancel_preserves_reserved_id_and_images() -> None:
     async with editor() as (live, _, _):
         image = BinaryContent(data=b'original image', media_type='image/png')
@@ -732,6 +723,9 @@ async def test_editing_is_not_pending_and_cancel_preserves_reserved_id_and_image
         frame = Text.from_ansi('\n'.join(live.frame())).plain
         assert "Editing - won't send while you edit it" in frame
         assert 'queued: 2' in frame and 'queued: 3' not in frame
+        assert 'Stop editing' not in frame, 'the held edit keeps its own row without the hint row'
+        live.input_changed = lambda: True
+        frame = Text.from_ansi('\n'.join(live.frame())).plain
         assert 'Save/requeue' in frame and 'Stop editing' in frame
         assert await live.read() == 'first'
         live.feed('escape')

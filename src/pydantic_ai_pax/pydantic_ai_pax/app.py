@@ -366,7 +366,7 @@ def _create_home_shell(
         transcript.capture(console),
     ):
         project = project or ProjectSettings()
-        print_welcome(project, console, worktree=worktree, settings=settings)
+        print_welcome(project, console, worktree=worktree)
         return create_shell(
             agent,
             deps=deps,

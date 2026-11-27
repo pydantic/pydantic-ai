@@ -96,7 +96,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `model` | `openai-codex:gpt-6-astra` | Provider-qualified model for every turn. Overrides the model baked into the agent. |
 | `run.request_limit` | `10000` | Most model requests one prompt may make before the turn stops. |
 | `input.bindings` | `{"send":"enter","steer":"alt-enter","newline":"shift-enter"}` | User-only decoded composer keys; `/input` edits each action. Ctrl+J inserts a newline, except on Windows, where it steers. |
-| `input.keyboard_labels` | `unset` | User-only keyboard labels: `neutral`, `mac`, or `pc`. Unset offers setup; labels do not detect terminal transport. |
+| `input.keyboard_labels` | `neutral` | User-only keyboard labels: `neutral`, `mac`, or `pc`. Labels do not detect terminal transport. |
 | `input.question_submit` | `ask` | User-only interaction preference: `ask`, `answer`, or `follow-up`. Never grants tool approval. |
 | `input.questions` | `picker` | User-only: where questions and tool approvals wait. `picker` takes the keys as each one arrives; opt-in `composer` keeps your draft and keys, and F2 reviews them. |
 | `input.busy_delivery` | `after-turn` | User-only busy composer delivery: `after-turn` or opt-in `next-checkpoint`. F4 inspects/changes it. |
@@ -1279,7 +1279,7 @@ response has omitted usage information.
 ### Keyboard setup
 
 Run `/input` to choose Mac, PC, or neutral key labels and configure **Send**,
-**Steer**, and **Newline**. Until you choose labels, the launch banner names `/input`.
+**Steer**, and **Newline**. The launch hints name `/input`.
 The defaults stay Enter to send or queue, Alt/Option+Enter to steer, and a
 distinctly reported Shift+Enter to insert a newline. Ctrl+J inserts a
 newline, including in custom question answers, except on
@@ -1301,8 +1301,7 @@ remapping. Ctrl+M, Ctrl+Enter and Ctrl+Shift+Enter act as Enter (Ctrl+Enter
 steers on Windows), so they cannot be bound separately; `/set` rejects bindings that collide. In `/input`, choosing a
 key another action holds swaps the two, so Enter can become the newline and Alt+Enter send. Unsupported shortcuts are refused
 rather than silently taking over editing keys. The hint row below the composer follows effective
-bindings. It appears once you change an `input.*` setting, and while a question waits in the composer or
-messages are queued or held for editing.
+bindings. It appears once you change an `input.*` setting, and while a question waits in the composer.
 
 `/input` and `/set` can edit or reset `input.keyboard_labels`, `input.bindings`,
 `input.question_submit`, `input.questions`, and `input.busy_delivery`. `/input reset` resets all five. These are user-only

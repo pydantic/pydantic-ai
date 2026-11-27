@@ -1169,13 +1169,8 @@ class LivePrompt:
             rows.append(truncate(pinned, width) + reset)
         rows.append(muted + truncate(self._footer(width, muted=muted), width) + reset)
         # Hints use spare space, without displacing the draft, pinned status, or pending work. Until an input
-        # setting changes, they show only while a question, queued entry or held edit needs their keys.
-        if len(rows) < height - 2 and (
-            self.input_changed()
-            or self.questions.menu is not None
-            or bool(self.queued_messages)
-            or self._editing is not None
-        ):
+        # setting changes, they show only while a question waits in the composer.
+        if len(rows) < height - 2 and (self.input_changed() or self.questions.menu is not None):
             rows.insert(-1 - bool(pinned), muted + truncate(self.input_hint(), width) + reset)
         return tuple(rows)
 
@@ -1238,8 +1233,6 @@ class LivePrompt:
             return self.questions.hint(send_label=send, newline_label=newline)
         if self.queued_messages:
             return f'F4 Queue: Edit / Remove / Steer / Delivery - {newline} newline - /input setup'
-        if self.keyboard_labels() == 'unset':
-            return f'Keyboard setup: /input - {newline} newline'
         action = self.binding_action('send')
         return f'{send}: {action} - F4 Delivery - {newline} newline - /input'
 

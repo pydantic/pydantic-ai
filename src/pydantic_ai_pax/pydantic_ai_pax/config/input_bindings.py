@@ -5,7 +5,7 @@ from typing import Literal, get_args
 from pydantic import BaseModel, ConfigDict, model_validator
 
 InputAction = Literal['send', 'steer', 'newline']
-KeyboardLabels = Literal['unset', 'neutral', 'mac', 'pc']
+KeyboardLabels = Literal['neutral', 'mac', 'pc']
 QuestionSubmit = Literal['ask', 'answer', 'follow-up']
 QuestionPlacement = Literal['picker', 'composer']
 BusyDelivery = Literal['after-turn', 'next-checkpoint']

@@ -38,7 +38,6 @@ from pydantic_ai_pax.config import (
     Settings,
     resolve_settings,
 )
-from pydantic_ai_pax.config.input_bindings import KeyboardLabels
 from pydantic_ai_pax.config.project_settings import (
     PROJECT_FILE,
     SAFE_PROJECT_KEYS,
@@ -1056,11 +1055,10 @@ def test_the_banner_prints_unknown_keys_as_written_and_inert(tmp_path: Path) -> 
     assert '\x1b' not in text
 
 
-@pytest.mark.parametrize('labels', ['unset', 'mac'])
-def test_the_launch_banner_offers_key_setup_until_keyboard_labels_are_chosen(labels: KeyboardLabels) -> None:
+def test_the_launch_banner_names_input_setup_in_its_static_hints() -> None:
     output = io.StringIO()
-    print_welcome(
-        ProjectSettings(), Console(file=output, width=300), settings=Settings(model=None, keyboard_labels=labels)
+    print_welcome(ProjectSettings(), Console(file=output, width=300))
+    assert (
+        '/new starts a session; /resume restores one; /input sets up keys; /exit quits. Esc or Ctrl+C interrupts a turn.\n'
+        in output.getvalue()
     )
-    # The newline key it names is Ctrl+J except where Ctrl+J steers, so only the setup offer is checked here.
-    assert ('/input sets up keys;' in output.getvalue()) == (labels == 'unset')

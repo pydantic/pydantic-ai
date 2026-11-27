@@ -93,8 +93,8 @@ class Settings(BaseModel):
         description='Decoded send, steer and newline keys. /input test checks your terminal.',
     )
     keyboard_labels: KeyboardLabels = Field(
-        default='unset',
-        description='Keyboard labels only: unset offers /input setup; neutral, mac or pc. Does not detect SSH keys.',
+        default='neutral',
+        description='Keyboard labels only: neutral, mac or pc. Does not detect SSH keys.',
     )
     busy_delivery: BusyDelivery = Field(
         default='after-turn',

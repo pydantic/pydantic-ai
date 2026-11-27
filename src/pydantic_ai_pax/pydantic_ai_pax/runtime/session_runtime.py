@@ -506,7 +506,7 @@ def create_shell(
         # Forget the old output too, or a resize or the exit printout would show it again.
         if shell.terminal is not None:
             shell.terminal.transcript.clear()
-        print_welcome(project, console, settings=context.settings)
+        print_welcome(project, console)
 
     async def clear(_: list[str]) -> str:
         await session.clear()

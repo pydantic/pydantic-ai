@@ -1867,6 +1867,7 @@ def test_input_preferences_roundtrip_and_unknown_settings_survive(
     assert store.load().input_bindings == InputBindings()
     assert store.load().busy_delivery == 'after-turn'
     assert store.load().question_placement == 'picker'
+    assert store.load().keyboard_labels == 'neutral', 'a store saved before input settings existed loads'
     store.set('input.busy_delivery', 'next-checkpoint')
     store.set('input.questions', 'composer')
     store.set('input.keyboard_labels', 'mac')

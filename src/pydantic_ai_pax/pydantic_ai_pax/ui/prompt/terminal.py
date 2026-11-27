@@ -28,9 +28,10 @@ if TYPE_CHECKING:
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
-_INPUT_FIELDS = {name for key, name in SETTING_FIELDS.items() if key.startswith('input.')}
-# Compared with the shown session's values, so the composer shows its hint row once any input setting changes.
-_DEFAULT_INPUT = Settings.model_construct().model_dump(include=_INPUT_FIELDS)
+_INPUT_FIELDS = tuple(name for key, name in SETTING_FIELDS.items() if key.startswith('input.'))
+# The composer shows its hint row once the shown session's input settings differ from these. It runs on every
+# paint, so it compares fields rather than serializing them.
+_DEFAULTS = Settings.model_construct()
 
 
 class _Nowhere(io.StringIO):
@@ -182,7 +183,9 @@ class Terminal(Generic[DepsT, OutputT]):
             keyboard_labels=lambda: self._shown().context.settings.keyboard_labels,
             busy_delivery=lambda: self._shown().context.settings.busy_delivery,
             remember_busy_delivery=lambda mode: self._shown().context.set_setting(['input.busy_delivery', mode]),
-            input_changed=lambda: self._shown().context.settings.model_dump(include=_INPUT_FIELDS) != _DEFAULT_INPUT,
+            input_changed=lambda: any(
+                getattr(self._shown().context.settings, name) != getattr(_DEFAULTS, name) for name in _INPUT_FIELDS
+            ),
             queue_in_toolbar=lambda: 'queued' in self._shown().context.settings.footer_fields,
             full_screen=self._shown().context.settings.full_screen,
         )
