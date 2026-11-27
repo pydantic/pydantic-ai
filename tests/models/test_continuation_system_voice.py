@@ -53,14 +53,14 @@ from pydantic_ai.settings import ModelSettings
 from ..conftest import RequestCapture, try_import
 
 with try_import() as openai_available:
-    from pydantic_ai.models.openai import OpenAIResponsesModel
+    from pydantic_ai.models.openai import OpenAIResponsesModel, OpenAIResponsesModelSettings
     from pydantic_ai.profiles.openai import OpenAIModelProfile
     from pydantic_ai.providers.openai import OpenAIProvider
 
 with try_import() as anthropic_available:
     from anthropic import AsyncAnthropic
 
-    from pydantic_ai.models.anthropic import AnthropicModel
+    from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
 
     from .conftest import AnthropicModelFactory
@@ -71,7 +71,7 @@ with try_import() as xai_available:
     from xai_sdk import AsyncClient as XaiAsyncClient
     from xai_sdk.proto import chat_pb2, sample_pb2
 
-    from pydantic_ai.models.xai import XaiModel
+    from pydantic_ai.models.xai import XaiModel, XaiModelSettings
     from pydantic_ai.providers.xai import XaiProvider
 
 pytestmark = pytest.mark.usefixtures('allow_model_requests')
@@ -314,18 +314,21 @@ def xai(model_name: str) -> Callable[[Server, httpx2.AsyncClient], Model]:
     return lambda server, _: XaiModel(model_name, provider=XaiProvider(xai_client=cast(XaiAsyncClient, server)))
 
 
-def seed_openai(response: ModelResponse) -> ModelSettings:
-    return cast(ModelSettings, {'openai_previous_response_id': response.provider_response_id})
+def seed_openai(response: ModelResponse) -> OpenAIResponsesModelSettings:
+    assert response.provider_response_id is not None
+    return OpenAIResponsesModelSettings(openai_previous_response_id=response.provider_response_id)
 
 
-def seed_xai(response: ModelResponse) -> ModelSettings:
-    return cast(ModelSettings, {'xai_previous_response_id': response.provider_response_id})
+def seed_xai(response: ModelResponse) -> XaiModelSettings:
+    assert response.provider_response_id is not None
+    return XaiModelSettings(xai_previous_response_id=response.provider_response_id)
 
 
-AUTO = cast(ModelSettings, {'openai_previous_response_id': 'auto'})
-CONVERSATION = cast(ModelSettings, {'openai_conversation_id': 'conv_1'})
-THREADS = cast(ModelSettings, {'max_tokens': 512, 'anthropic_previous_message_id': 'auto'})
-XAI_STORE = cast(ModelSettings, {'xai_store_messages': True})
+# Annotated literals rather than constructor calls, so the module imports without each provider's SDK.
+AUTO: OpenAIResponsesModelSettings = {'openai_previous_response_id': 'auto'}
+CONVERSATION: OpenAIResponsesModelSettings = {'openai_conversation_id': 'conv_1'}
+THREADS: AnthropicModelSettings = {'max_tokens': 512, 'anthropic_previous_message_id': 'auto'}
+XAI_STORE: XaiModelSettings = {'xai_store_messages': True}
 XAI_REPEATS_INSTRUCTIONS = (
     "Documented: without the stored response in `message_history`, `XaiModel` can't tell what the server holds, "
     'so it sends the instructions, which the stored response already holds'
@@ -396,7 +399,7 @@ CASES: list[tuple[Case, pytest.MarkDecorator]] = [
             OpenAIResponsesServer,
             openai('gpt-5.4-mini'),
             CONVERSATION,
-            lambda _: cast(ModelSettings, {'openai_conversation_id': 'auto'}),
+            lambda _: OpenAIResponsesModelSettings(openai_conversation_id='auto'),
         ),
         openai_case,
     ),
@@ -473,7 +476,7 @@ async def run_scenario(case: Case) -> Outcome:
     return Outcome(model, server.wire(server.bodies[-1]), server.seen[-1])
 
 
-def cases(claim: Callable[[Case], str | None]) -> list[Any]:
+def cases(claim: Callable[[Case], str | None]):
     return [
         pytest.param(
             case,
@@ -550,7 +553,7 @@ async def test_openai_previous_response_id_live(openai_api_key: str, request_cap
     server = OpenAIResponsesServer()
     for body, response in zip(request_capture.bodies('/responses'), responses, strict=True):
         assert response.provider_response_id is not None
-        server.record(cast(dict[str, Any], body), response.provider_response_id, reply(response))
+        server.record(body, response.provider_response_id, reply(response))
     assert server.bodies[-1]['previous_response_id'] == responses[-2].provider_response_id
     check_live(server, model)
 
@@ -570,7 +573,7 @@ async def test_anthropic_message_threads_live(anthropic_model: AnthropicModelFac
     server = AnthropicThreadsServer()
     for body, response in zip(request_capture.bodies('/messages'), responses, strict=True):
         assert response.provider_response_id is not None
-        server.record(cast(dict[str, Any], body), response.provider_response_id, reply(response))
+        server.record(body, response.provider_response_id, reply(response))
     assert server.bodies[-1]['thread'] == {
         'type': 'continue',
         'previous_message_id': responses[-2].provider_response_id,
