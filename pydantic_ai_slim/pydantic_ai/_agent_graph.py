@@ -1337,10 +1337,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx_messages.used = True
 
         given = ctx.state.message_history
-        unsaved, loaded = ctx.state.conversation_unsaved, ctx.state.conversation_loaded
-        if unsaved is not None and loaded is not None and len(given) > loaded:
-            # The store doesn't have the messages a `before_run` hook added either.
-            ctx.state.conversation_unsaved = [*unsaved, *given[loaded:]]
+        _mark_added_before_run_unsaved(ctx.state)
         cleaned, answered_at_pause = self._history_to_run(given)
         # The run's conversation keeps the history as it was given, not as it's cleaned to send.
         ctx.state.appended_messages.record_given(given, cleaned)
@@ -6218,6 +6215,13 @@ def _set_resumed_history(
         resumed_request=ctx.deps.resumed_request,
         resumed_request_index=ctx.deps.resumed_request_index,
     )
+
+
+def _mark_added_before_run_unsaved(state: GraphAgentState) -> None:
+    """Count the messages a `before_run` hook added to a loaded conversation as unsaved, since the store doesn't have them either."""
+    unsaved, loaded, given = state.conversation_unsaved, state.conversation_loaded, state.message_history
+    if unsaved is not None and loaded is not None and len(given) > loaded:
+        state.conversation_unsaved = [*unsaved, *given[loaded:]]
 
 
 def _record_appended_after(state: GraphAgentState, request: _messages.ModelRequest) -> None:
