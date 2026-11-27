@@ -1064,6 +1064,144 @@ class TestContentReduction:
 
 
 # ---------------------------------------------------------------------------
+# Attachments: nested-tool content (and any ToolReturn.attachments) is reduced per item
+# ---------------------------------------------------------------------------
+
+
+def _attachment(
+    content: str | BinaryContent | Any,
+    *,
+    tool_call_id: str = 'nested-1',
+    tool_name: str = 'inner',
+    capability_id: str | None = None,
+) -> ToolResultAttachment:
+    from pydantic_ai.messages import UserContent
+
+    item: UserContent = content
+    return ToolResultAttachment(
+        content=item,
+        tool_call_id=tool_call_id,
+        tool_name=tool_name,
+        capability_id=capability_id,
+    )
+
+
+class TestAttachmentReduction:
+    async def test_large_text_attachment_is_truncated(self):
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=150))])
+        out = await _run(
+            cap,
+            ToolReturn(return_value='small', attachments=[_attachment('A' * 400, capability_id='cap-1')]),
+        )
+        assert isinstance(out, ToolReturn)
+        assert out.return_value == 'small'
+        [attachment] = out.attachments
+        assert attachment.tool_call_id == 'nested-1'
+        assert attachment.tool_name == 'inner'
+        assert attachment.capability_id == 'cap-1'
+        assert isinstance(attachment.content, str) and 'truncated' in attachment.content
+        assert len(attachment.content) <= 150
+
+    async def test_large_text_attachment_is_spilled(self, tmp_path: Path):
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        cap: ToolOutputLimits[object] = ToolOutputLimits(
+            bands=[Band(over=100, action=Spill(preview_chars=20))], store=store
+        )
+        out = await _run(
+            cap,
+            ToolReturn(return_value='small', attachments=[_attachment('C' * 5000)]),
+        )
+        assert isinstance(out, ToolReturn)
+        assert out.return_value == 'small'
+        [attachment] = out.attachments
+        assert attachment.tool_call_id == 'nested-1' and attachment.tool_name == 'inner'
+        assert isinstance(attachment.content, str) and 'too large' in attachment.content
+        handle = out.metadata['overflow_attachment_handles'][0]['handle']
+        assert out.metadata['overflow_attachment_handles'][0]['tool_call_id'] == 'nested-1'
+        assert await store.read(handle) == ('C' * 5000).encode('utf-8')
+
+    async def test_only_attachments_reduced_when_value_is_small(self):
+        """A large attachment must be reduced even when return_value and content stay under every band."""
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=150))])
+        out = await _run(cap, ToolReturn(return_value='ok', attachments=[_attachment('X' * 500)]))
+        assert isinstance(out, ToolReturn)
+        assert out.return_value == 'ok'
+        [attachment] = out.attachments
+        assert isinstance(attachment.content, str) and 'truncated' in attachment.content
+
+    async def test_each_attachment_is_reduced_independently(self, tmp_path: Path):
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=50, action=Spill())], store=store)
+        out = await _run(
+            cap,
+            ToolReturn(
+                return_value='ok',
+                attachments=[
+                    _attachment('a' * 200, tool_call_id='n1', tool_name='t1'),
+                    _attachment('short', tool_call_id='n2', tool_name='t2'),
+                    _attachment('b' * 200, tool_call_id='n3', tool_name='t3'),
+                ],
+            ),
+        )
+        assert isinstance(out, ToolReturn)
+        assert [a.tool_call_id for a in out.attachments] == ['n1', 'n2', 'n3']
+        assert [a.tool_name for a in out.attachments] == ['t1', 't2', 't3']
+        assert isinstance(out.attachments[0].content, str) and 'too large' in out.attachments[0].content
+        assert out.attachments[1].content == 'short'
+        assert isinstance(out.attachments[2].content, str) and 'too large' in out.attachments[2].content
+        handles = out.metadata['overflow_attachment_handles']
+        assert [item['tool_call_id'] for item in handles] == ['n1', 'n3']
+        assert handles[0]['handle'] != handles[1]['handle']
+
+    async def test_text_content_attachment_is_reduced(self):
+        from pydantic_ai.messages import TextContent
+
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=150))])
+        out = await _run(
+            cap,
+            ToolReturn(
+                return_value='ok',
+                attachments=[_attachment(TextContent(content='T' * 400, metadata={'src': 1}))],
+            ),
+        )
+        assert isinstance(out, ToolReturn)
+        [attachment] = out.attachments
+        assert attachment.tool_call_id == 'nested-1'
+        assert isinstance(attachment.content, TextContent)
+        assert attachment.content.metadata == {'src': 1}
+        assert 'truncated' in attachment.content.content
+        assert len(attachment.content.content) <= 150
+
+    async def test_file_attachment_passes_through(self):
+        image = BinaryContent(data=b'\x89PNG\r\n\x1a\n' + b'x' * 100_000, media_type='image/png')
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=10, action=Truncate(max_chars=150))])
+        original = ToolReturn(return_value='ok', attachments=[_attachment(image)])
+        assert await _run(cap, original) is original
+
+    async def test_value_content_and_attachments_all_reduced(self, tmp_path: Path):
+        store = LocalFileOverflowStore(base_dir=tmp_path)
+        cap: ToolOutputLimits[object] = ToolOutputLimits(bands=[Band(over=50, action=Spill())], store=store)
+        out = await _run(
+            cap,
+            ToolReturn(
+                return_value='v' * 200,
+                content='c' * 200,
+                attachments=[_attachment('a' * 200)],
+                metadata={'k': 1},
+            ),
+        )
+        assert isinstance(out, ToolReturn)
+        assert out.metadata['overflow_handle'] != out.metadata['overflow_content_handle']
+        assert out.metadata['overflow_attachment_handles'][0]['handle'] not in {
+            out.metadata['overflow_handle'],
+            out.metadata['overflow_content_handle'],
+        }
+        [attachment] = out.attachments
+        assert attachment.tool_call_id == 'nested-1'
+        assert isinstance(attachment.content, str) and 'too large' in attachment.content
+
+
+# ---------------------------------------------------------------------------
 # Summarize (M1: assert model + usage, not just a wholesale mock)
 # ---------------------------------------------------------------------------
 

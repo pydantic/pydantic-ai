@@ -343,7 +343,10 @@ point onward.
 ## ToolOutputLimits
 
 Reduces an oversized tool return once, when produced, so it is not re-sent at full size on every
-later request. Actions: `Truncate` (zero-LLM, lossy), `Spill` (lossless: stores the payload and
+later request. It reduces `return_value`, textual `content`, and each text item in
+`ToolReturn.attachments` (nested-tool content such as Code Mode's) independently with the same
+bands; each attachment keeps its attribution, and a truncation or spill note lands on that
+attachment. Actions: `Truncate` (zero-LLM, lossy), `Spill` (lossless: stores the payload and
 returns a handle plus preview), `Summarize` (one LLM call), `Passthrough`. The lossy markers tell
 the model to rerun the tool: `[truncated: ...; rerun the original tool for the full output]`, and a
 summary opens with `[summary of N chars of output; rerun the original tool for the full output]`.

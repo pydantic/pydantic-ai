@@ -66,20 +66,26 @@ for an image or PDF, reaches the model with its files as they are. A lone data i
 measured as itself, and several as one JSON list. When a band
 applies, the reduced text replaces that data, ahead of the files. Text `content` is reduced the
 same way whatever the return value holds. Non-text `content` that overflows is left unreduced
-with a `warnings.warn`. `ToolReturn.attachments`, the content of the tools a tool called (such
-as Code Mode's nested calls), is kept as it is and not reduced: scope the capability to those
-tools to bound it.
+with a `warnings.warn`.
+
+`ToolReturn.attachments`, the content of the tools a tool called (such as Code Mode's nested
+calls), is reduced the same way: each text attachment is measured and reduced independently
+with the same bands, and a truncation or spill note lands on that attachment. Each attachment
+keeps its `tool_call_id`, `tool_name`, and `capability_id`, so the model still sees which call
+produced it. File attachments pass through unchanged, as files in a return value do.
 
 ### `ToolReturn.metadata` is preserved
 
-Spill keys (`overflow_handle`, `overflow_bytes`, `overflow_content_handle`) live in
-`ToolReturn.metadata` alongside whatever the tool put there. A pre-existing mapping is copied
-in with stringified keys; a pre-existing non-mapping value (a string, a dataclass, anything
-that is not a `Mapping`) is kept under `original_metadata` rather than dropped. A list or tuple,
-the shape the AG-UI and Vercel AI adapters read UI events and chunks from, stays a list with the
-spill keys appended as one dict item, and a single event or chunk becomes such a list, so those
-events still reach the UI. Either way the caller's own metadata survives a spill and is readable
-from `metadata` on the resulting `ToolReturnPart` after `Agent.run`.
+Spill keys (`overflow_handle`, `overflow_bytes`, `overflow_content_handle`, and
+`overflow_attachment_handles`) live in `ToolReturn.metadata` alongside whatever the tool put
+there. `overflow_attachment_handles` is a list of `{'tool_call_id', 'handle'}` for each spilled
+attachment. A pre-existing mapping is copied in with stringified keys; a pre-existing
+non-mapping value (a string, a dataclass, anything that is not a `Mapping`) is kept under
+`original_metadata` rather than dropped. A list or tuple, the shape the AG-UI and Vercel AI
+adapters read UI events and chunks from, stays a list with the spill keys appended as one dict
+item, and a single event or chunk becomes such a list, so those events still reach the UI.
+Either way the caller's own metadata survives a spill and is readable from `metadata` on the
+resulting `ToolReturnPart` after `Agent.run`.
 
 ## Bands: combine the modes
 
@@ -181,7 +187,8 @@ newline does not add a line, but a blank final line counts. Requesting more line
 selects the whole text, subject to the same cap. Negative `keep_tail_lines` values are rejected.
 
 This applies to the text after serialization and optional ANSI stripping, independently
-for `ToolReturn.return_value` and textual `content`. Binary fallbacks are unchanged.
+for `ToolReturn.return_value`, textual `content`, and each text attachment. Binary fallbacks are
+unchanged.
 Tail-line selection adds no telemetry spans: it is a slicing choice within the existing
 tool-result reduction, rather than a separate operation.
 
@@ -446,6 +453,9 @@ replay.
   model always gets the full error it needs to recover.
 - A large `ToolReturn.content` is reduced with the same bands as `return_value`; non-text
   content that overflows is left unreduced with a warning.
+- Each text item in `ToolReturn.attachments` is reduced with the same bands, independently,
+  with its truncation or spill note on that attachment and its attribution kept; file
+  attachments pass through.
 - Multiple oversized returns in one step get distinct handles (keyed per `tool_call_id`);
   retries get distinct handles too (keyed per `retry`), so a retried call never clobbers the
   earlier attempt's spill. A `tool_call_id` is only unique within one response, so a provider

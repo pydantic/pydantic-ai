@@ -22,6 +22,7 @@ from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
+    TextContent,
     ToolCallPart,
     ToolResultAttachment,
     ToolReturn,
@@ -123,9 +124,9 @@ def _default_bands() -> list[Band]:
 
 @dataclass
 class _Unit:
-    """One reducible piece of a tool return: its `return_value` or its `content`.
+    """One reducible piece of a tool return: its `return_value`, `content`, or an attachment.
 
-    `suffix` distinguishes the two so they spill to distinct handles for the same call.
+    `suffix` distinguishes the pieces so they spill to distinct handles for the same call.
     """
 
     binary: bool
@@ -392,7 +393,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         args: dict[str, Any],
         result: Any,
     ) -> Any:
-        """Reduce the tool result -- both `return_value` and model-visible `content`."""
+        """Reduce the tool result -- `return_value`, `content`, and each text attachment."""
         original: object = result
         if tool_def.tool_kind in _EXEMPT_KINDS or await _reads_a_spill(ctx, tool_def, args):
             return original
@@ -425,21 +426,23 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             new_value, value_handle = await self._reduce(ctx, call, bands, value_unit)
             value_bytes = len(value_unit.data)
         content_text, content_handle = await self._reduce_content(ctx, call, bands, content)
+        new_attachments, attachment_handles = await self._reduce_attachments(ctx, call, bands, attachments)
 
-        if new_value is None and content_text is None:
+        if new_value is None and content_text is None and new_attachments is None:
             return original
 
         return self._assemble(
             wrapped=wrapped,
             return_value=return_value,
             content=content,
-            attachments=attachments,
+            attachments=new_attachments if new_attachments is not None else attachments,
             metadata=metadata,
             new_value=new_value,
             value_handle=value_handle,
             value_bytes=value_bytes,
             content_text=content_text,
             content_handle=content_handle,
+            attachment_handles=attachment_handles,
         )
 
     async def _reduce_data_beside_files(
@@ -480,12 +483,15 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         value_bytes: int,
         content_text: str | None,
         content_handle: str | None,
+        attachment_handles: Sequence[Mapping[str, str]] = (),
     ) -> object:
         """Rebuild the tool result from the reduced parts, preserving the envelope."""
         if wrapped:
             new_metadata = metadata
-            if value_handle is not None or content_handle is not None:
-                new_metadata = _with_handles(metadata, value_handle, value_bytes, content_handle)
+            if value_handle is not None or content_handle is not None or attachment_handles:
+                new_metadata = _with_handles(
+                    metadata, value_handle, value_bytes, content_handle, attachment_handles=attachment_handles
+                )
             wrapped_out: ToolReturn[object] = ToolReturn(
                 return_value=new_value if new_value is not None else return_value,
                 content=content_text if content_text is not None else content,
@@ -572,6 +578,53 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             )
         return None, None
 
+    async def _reduce_attachments(
+        self,
+        ctx: RunContext[AgentDepsT],
+        call: ToolCallPart,
+        bands: Sequence[Band],
+        attachments: Sequence[ToolResultAttachment],
+    ) -> tuple[Sequence[ToolResultAttachment] | None, list[dict[str, str]]]:
+        """Reduce each text attachment independently, keeping its attribution to the call that produced it.
+
+        A truncation or spill note lands on the attachment itself, since each is framed to the model
+        on its own. Non-text attachments (files) pass through unchanged, as files in a return value do.
+        Returns `(new_attachments, spilled_handles)`: `new_attachments` is None when nothing changed;
+        each spilled handle is `{'tool_call_id', 'handle'}`.
+        """
+        if not attachments:
+            return None, []
+
+        changed = False
+        reduced: list[ToolResultAttachment] = []
+        spilled: list[dict[str, str]] = []
+        for index, attachment in enumerate(attachments):
+            text, original_text = _attachment_text(attachment.content)
+            if text is None:
+                reduced.append(attachment)
+                continue
+            replacement, handle = await self._reduce(
+                ctx,
+                call,
+                bands,
+                self._make_unit(text, tool_name=call.tool_name, suffix=f'.attachment.{index}'),
+            )
+            if replacement is None:
+                reduced.append(attachment)
+                continue
+            changed = True
+            reduced.append(
+                ToolResultAttachment(
+                    content=_with_attachment_text(original_text, replacement),
+                    tool_call_id=attachment.tool_call_id,
+                    tool_name=attachment.tool_name,
+                    capability_id=attachment.capability_id,
+                )
+            )
+            if handle is not None:
+                spilled.append({'tool_call_id': attachment.tool_call_id, 'handle': handle})
+        return (reduced if changed else None), spilled
+
     async def _apply(
         self,
         ctx: RunContext[AgentDepsT],
@@ -612,8 +665,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
     def _handle_key(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
         """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
 
-        `suffix` keeps a return's `return_value` and `content` spills on distinct handles. A later
-        step reusing a name already spilled this run (see `_spilled_calls`) gets
+        `suffix` keeps a return's `return_value`, `content`, and attachment spills on distinct handles.
+        A later step reusing a name already spilled this run (see `_spilled_calls`) gets
         `run_id/<step>/tool_call_id.retry` instead of the plain `run_id/tool_call_id.retry`.
         """
         run_id = ctx.run_id or 'run'
@@ -825,11 +878,33 @@ def _log_fallback(operation: str, tool_name: str, fallback: str, exc: Exception)
     )
 
 
+def _attachment_text(content: UserContent) -> tuple[str | None, str | TextContent | None]:
+    """The reducible text of an attachment, and the text-bearing item to rebuild when reduced.
+
+    Plain `str` and `TextContent` (not `StructuredContent`) are reduced. Files and other items
+    pass through: like files in a return value, they reach the model as themselves.
+    """
+    if isinstance(content, str):
+        return content, content
+    if type(content) is TextContent:
+        return content.content, content
+    return None, None
+
+
+def _with_attachment_text(original: str | TextContent | None, text: str) -> UserContent:
+    """Put reduced `text` back into the attachment's content shape."""
+    if isinstance(original, TextContent):
+        return TextContent(content=text, metadata=original.metadata)
+    return text
+
+
 def _with_handles(
     existing: object,
     value_handle: str | None,
     value_bytes: int,
     content_handle: str | None = None,
+    *,
+    attachment_handles: Sequence[Mapping[str, str]] = (),
 ) -> object:
     """Stash spill handle(s) in `ToolReturn.metadata` (app-only, costs no model tokens).
 
@@ -844,6 +919,10 @@ def _with_handles(
         handles['overflow_bytes'] = value_bytes
     if content_handle is not None:
         handles['overflow_content_handle'] = content_handle
+    if attachment_handles:
+        handles['overflow_attachment_handles'] = [
+            {'tool_call_id': item['tool_call_id'], 'handle': item['handle']} for item in attachment_handles
+        ]
 
     if is_mapping(existing):
         return {**{str(key): existing[key] for key in existing}, **handles}
