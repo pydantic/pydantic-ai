@@ -170,10 +170,13 @@ class WorkLog(AbstractCapability[AgentDepsT]):
             if tool_def.tool_kind not in _OWN_KINDS:
                 if isinstance(error, (ModelRetry, ToolRetryError)):
                     record = _tool_record(ctx, call, 'retried', str(error))
-                else:
+                elif isinstance(error, ToolFailedError):
                     # Core wraps a tool's `ToolFailed` before it reaches a wrap hook; name what the tool raised.
-                    name = 'ToolFailed' if isinstance(error, ToolFailedError) else type(error).__name__
-                    record = _tool_record(ctx, call, 'failed', f'{name}: {error}')
+                    record = _tool_record(ctx, call, 'failed', f'ToolFailed: {error}')
+                else:
+                    # The type only, as `ReportToolErrors` reports it: the model never saw this message, which can
+                    # carry file paths, hostnames or connection strings.
+                    record = _tool_record(ctx, call, 'failed', type(error).__name__)
                 await self._append(ctx, record)
             raise
 
@@ -363,16 +366,17 @@ def _matches(entries: list[WorkLogEntry], terms: frozenset[str]) -> tuple[list[W
 
 
 def _result_text(result: object) -> str:
-    """A tool result as the model sees it: a `ToolReturn`'s `content` when set, else the value as text.
+    """A tool result as the model sees it: the value as text, then a `ToolReturn`'s `content` when set.
 
     Files are named by media type rather than logged.
     """
-    if isinstance(result, ToolReturn) and result.content is not None:
-        content = result.content
-        items: Sequence[object] = [content] if isinstance(content, str) else content
-    else:
-        value: object = result.return_value if isinstance(result, ToolReturn) else result
-        items = value if is_object_list(value) and any(is_multi_modal_content(item) for item in value) else [value]
+    value: object = result.return_value if isinstance(result, ToolReturn) else result
+    items: list[object] = (
+        list(value) if is_object_list(value) and any(is_multi_modal_content(item) for item in value) else [value]
+    )
+    if isinstance(result, ToolReturn) and (content := result.content) is not None:
+        # The model gets `content` as a user message after the tool result, so it follows the value.
+        items.extend([content] if isinstance(content, str) else content)
     return '\n'.join(_item_text(item) for item in items if not isinstance(item, CachePoint))
 
 

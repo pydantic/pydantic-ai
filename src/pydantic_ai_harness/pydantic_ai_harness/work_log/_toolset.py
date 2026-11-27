@@ -83,7 +83,8 @@ class WorkLogToolset(FunctionToolset[AgentDepsT]):
         ],
         toolset_id: str | None,
     ) -> None:
-        super().__init__(id=toolset_id)
+        # The log holds results a UI adapter may have hidden from the client, such as a `'private'` tool's.
+        super().__init__(id=toolset_id, ui_visibility='redacted')
         self._search = search
         self._read = read
         self.add_function(self.search_work_log, tool_kind=WORK_LOG_SEARCH_KIND)

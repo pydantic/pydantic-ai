@@ -5,6 +5,7 @@ from __future__ import annotations
 import asyncio
 import hashlib
 import json
+import os
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
@@ -263,19 +264,19 @@ class TestWorkLog:
             ('lookup', 'success', 'ok'),
         ]
 
-    async def test_an_exception_is_logged_as_failed_and_still_raised(self) -> None:
+    async def test_an_exception_is_logged_as_failed_by_type_and_still_raised(self) -> None:
         def broken() -> str:
-            raise ValueError('boom')
+            raise ValueError('postgres://user:secret@db')
 
         store = InMemoryWorkLogStore()
         agent = Agent(
             _scripted([ToolCallPart('broken', {}, tool_call_id='c1')]), capabilities=[WorkLog(store)], tools=[broken]
         )
 
-        with pytest.raises(ValueError, match='boom'):
+        with pytest.raises(ValueError, match='secret'):
             await agent.run('Go', conversation_id=_CONVERSATION)
 
-        assert _tool_entries(await store.read(_CONVERSATION)) == [('broken', 'failed', 'ValueError: boom')]
+        assert _tool_entries(await store.read(_CONVERSATION)) == [('broken', 'failed', 'ValueError')]
 
     async def test_an_error_an_outer_capability_recovers_is_logged_once_as_success(self) -> None:
         class Recover(AbstractCapability[None]):
@@ -384,8 +385,8 @@ class TestWorkLog:
 
         assert _tool_entries(await store.read(_CONVERSATION)) == [
             ('captioned', 'success', 'a caption\n[image/png content not logged]'),
-            ('rich', 'success', 'first\nsecond\n[image/png content not logged]'),
-            ('visible', 'success', 'what the model sees'),
+            ('rich', 'success', 'value\nfirst\nsecond\n[image/png content not logged]'),
+            ('visible', 'success', 'value\nwhat the model sees'),
             ('structured', 'success', '{\n  "count": 1\n}'),
             ('linked', 'success', '[image-url content not logged]'),
         ]
@@ -691,6 +692,18 @@ class TestWorkLogCodeMode:
 
 
 class TestWorkLogTools:
+    async def test_tools_are_redacted_for_ui_clients(self) -> None:
+        """The log holds every tool's result, a `'private'` tool's included, so a UI client gets a placeholder."""
+        seen: dict[str, str | None] = {}
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.update((tool.name, tool.ui_visibility) for tool in info.function_tools)
+            return ModelResponse(parts=[TextPart('done')])
+
+        await Agent(FunctionModel(respond), capabilities=[WorkLog()]).run('Go', conversation_id=_CONVERSATION)
+
+        assert seen == {'search_work_log': 'redacted', 'read_work_log': 'redacted'}
+
     async def test_search_ranks_by_bm25(self) -> None:
         store = InMemoryWorkLogStore()
         await store.append(_CONVERSATION, _record('k1', 'the weather in paris is sunny'))
@@ -970,7 +983,8 @@ class TestWorkLogStores:
         store = FileWorkLogStore(tmp_path)
         await store.append('log', _record('k1'))
         path = tmp_path / 'log.jsonl'
-        path.write_text(path.read_text() + '{"seq": 2, "ke')
+        # Cut inside a UTF-8 sequence, as a crash can leave it.
+        path.write_bytes(path.read_bytes() + '{"seq": 2, "content": "\u00e9'.encode()[:-1])
 
         reopened = FileWorkLogStore(tmp_path)
 
@@ -978,15 +992,72 @@ class TestWorkLogStores:
         assert await reopened.append('log', _record('k2')) == 2
         assert [entry['key'] for entry in await FileWorkLogStore(tmp_path).read('log')] == ['k1', 'k2']
 
-    @pytest.mark.parametrize('log_id', ['.', '..', 'a/b', 'x' * 129])
+    @pytest.mark.parametrize('log_id', ['.', '..', 'a/b', 'x' * 129, 'sha256-abc'])
     async def test_file_store_hashes_an_unsafe_log_id(self, tmp_path: Path, log_id: str) -> None:
         store = FileWorkLogStore(tmp_path)
 
         await store.append(log_id, _record('k1'))
 
-        digest = hashlib.sha256(log_id.encode()).hexdigest()
-        assert store.locate(log_id) == str(tmp_path / f'{digest}.jsonl')
-        assert [path.name for path in tmp_path.iterdir()] == [f'{digest}.jsonl']
+        name = f'sha256-{hashlib.sha256(log_id.encode()).hexdigest()}.jsonl'
+        assert store.locate(log_id) == str(tmp_path / name)
+        assert [path.name for path in tmp_path.iterdir()] == [name]
+
+    async def test_file_store_keeps_an_id_apart_from_the_name_of_a_hashed_one(self, tmp_path: Path) -> None:
+        store = FileWorkLogStore(tmp_path)
+        hashed_name = f'sha256-{hashlib.sha256(b"tenant:alice").hexdigest()}'
+
+        await store.append('tenant:alice', _record('k1', 'alice'))
+        await store.append(hashed_name, _record('k1', 'mallory'))
+
+        assert [entry['content'] for entry in await FileWorkLogStore(tmp_path).read('tenant:alice')] == ['alice']
+        assert len(list(tmp_path.iterdir())) == 2
+
+    @pytest.mark.skipif(not hasattr(os, 'geteuid'), reason='POSIX ownership check')
+    async def test_file_store_keeps_its_directory_owner_only(self, tmp_path: Path) -> None:
+        old_umask = os.umask(0)
+        try:
+            await FileWorkLogStore(tmp_path / 'new').append('log', _record('k1'))
+        finally:
+            os.umask(old_umask)
+        assert oct((tmp_path / 'new').stat().st_mode & 0o777) == '0o700'
+        assert oct((tmp_path / 'new' / 'log.jsonl').stat().st_mode & 0o777) == '0o600'
+
+        existing = tmp_path / 'existing'
+        existing.mkdir()
+        existing.chmod(0o755)
+        await FileWorkLogStore(existing).append('log', _record('k1'))
+        assert oct(existing.stat().st_mode & 0o777) == '0o700'
+
+    @pytest.mark.skipif(not hasattr(os, 'geteuid'), reason='POSIX ownership check')
+    async def test_file_store_refuses_a_directory_another_user_owns(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        await FileWorkLogStore(tmp_path).append('log', _record('k1'))
+        other_uid = tmp_path.stat().st_uid + 1
+        monkeypatch.setattr(os, 'geteuid', lambda: other_uid)
+
+        with pytest.raises(PermissionError, match='not owned by the current user'):
+            await FileWorkLogStore(tmp_path).append('log', _record('k2'))
+        with pytest.raises(PermissionError, match='not owned by the current user'):
+            await FileWorkLogStore(tmp_path).read('log')
+
+    async def test_file_store_refuses_a_symlinked_directory(self, tmp_path: Path) -> None:
+        target = tmp_path / 'target'
+        target.mkdir()
+        (tmp_path / 'logs').symlink_to(target, target_is_directory=True)
+
+        with pytest.raises(PermissionError, match='is a symbolic link'):
+            await FileWorkLogStore(tmp_path / 'logs').append('log', _record('k1'))
+        assert list(target.iterdir()) == []
+
+    async def test_file_store_skips_ownership_without_posix_ids(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        monkeypatch.delattr(os, 'geteuid', raising=False)
+        store = FileWorkLogStore(tmp_path)
+
+        assert await store.append('log', _record('k1')) == 1
+        assert [entry['key'] for entry in await store.read('log')] == ['k1']
 
     async def test_file_store_appends_concurrently_without_gaps(self, tmp_path: Path) -> None:
         store = FileWorkLogStore(tmp_path)
@@ -1072,6 +1143,14 @@ class TestWorkLogStores:
         with pytest.raises(WorkspaceError, match='is a symlink'):
             await store.append(workspace, 'log', _record('k2'))
         assert not (elsewhere / 'target.json').exists()
+
+        (logs / 'log' / f'00000002-{hashlib.sha256(b"k2").hexdigest()[:16]}.json').unlink()
+        await store.append(workspace, 'other', _record('k1'))
+        (other_entry,) = (logs / 'other').glob('*.json')
+        (logs / 'log' / f'00000003-{"0" * 16}.json').symlink_to(other_entry)
+        with pytest.raises(WorkspaceError, match=r'00000003-0{16}\.json` in the workspace is a symlink'):
+            await store.read(workspace, 'log')
+        (logs / 'log' / f'00000003-{"0" * 16}.json').unlink()
 
         (logs / 'log').rename(tmp_path / 'moved')
         (logs / 'log').symlink_to(tmp_path / 'moved')

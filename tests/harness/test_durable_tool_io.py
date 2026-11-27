@@ -42,7 +42,7 @@ from pydantic_ai_harness.planning import (
     SqlitePlanStore,
 )
 from pydantic_ai_harness.shell import Shell
-from pydantic_ai_harness.work_log import InMemoryWorkLogStore
+from pydantic_ai_harness.work_log import InMemoryWorkLogStore, WorkLogEntry
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._counting_clients import AWS_CLI_COUNT_VARIABLE, REQUESTS
@@ -172,11 +172,13 @@ def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[
     # Each read is its own request: a read of an unknown entry reads the log again to name the valid range.
     log_reads = 0
 
-    async def counted_log_read(self: InMemoryWorkLogStore, *args: Any, **kwargs: Any) -> Any:
+    async def counted_log_read(
+        self: InMemoryWorkLogStore, log_id: str, start: int = 1, stop: int | None = None
+    ) -> list[WorkLogEntry]:
         nonlocal log_reads
         log_reads += 1
         REQUESTS[f'work_log.read.{log_reads}'] += 1
-        return await original_log_read(self, *args, **kwargs)
+        return await original_log_read(self, log_id, start, stop)
 
     monkeypatch.setattr(InMemoryWorkLogStore, 'read', counted_log_read)
 

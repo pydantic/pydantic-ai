@@ -55,13 +55,13 @@ tool calls a [Code Mode](../code_mode/) script made inside one `run_code` call.
 Each entry is one tool call, one model reply, or one piece of model thinking:
 
 - **Tool calls that ran.** The tool's name and arguments (as JSON), the outcome, and the result as
-  the model would see it: a `ToolReturn`'s `content` when it has one, else its return value. Text
-  is stored as it is. Structured results are stored as indented JSON, one field per line, so
+  the model would see it: the return value, followed by a `ToolReturn`'s `content` when it has one.
+  Text is stored as it is. Structured results are stored as indented JSON, one field per line, so
   `read_work_log` pages them by line and `pattern` matches a field; a value holding something with
   no JSON form, such as a type, is stored as compact JSON with that part as its `repr`. Files are not
   logged: each becomes a `[<media type> content not logged]` line.
 - **Failures.** A `ModelRetry` is logged with the outcome `retried` and the retry message. Any
-  other exception is logged as `failed`, with its type and message, and is still raised; a tool
+  other exception is logged as `failed`, with its type only, and is still raised; a tool
   wrapped by [`ReportToolErrors`](../report_tool_errors/) is logged as `failed` with the message it
   reports. A failure that an outer capability recovers from is logged once, as `success`, with the recovered result. A result that an outer capability's `after_tool_execute` rejects is logged twice: as `success`, then as `retried` or `failed` with the rejection.
 - **Model replies.** Each text part of a response, with `record_text=True` (the default). Thinking
@@ -134,11 +134,11 @@ model, and a script can search and read the log in one `run_code` call. Both are
 `ToolOutputLimits`, as its own `read_tool_result` and `grep_tool_result` are: each result is already
 bounded, and a spilled one would need a second tool to read.
 
-The tools return other tools' results, by their own [UI visibility](https://pydantic.dev/docs/ai/integrations/ui/overview/#tool-visibility),
-not by that of the tools they recorded. Under a `'public'` default, a `'private'` tool's result
-reaches a UI client through `read_work_log`, as it does through `ToolBridge` or Code Mode. To keep
-such results from the client, set a non-public `default_ui_visibility` on the adapter, which these
-tools take.
+Both tools are `'redacted'` for [UI adapters](https://pydantic.dev/docs/ai/integrations/ui/overview/#tool-visibility): a client sees each call with its arguments,
+and a placeholder instead of its result. The log holds every tool's result, including ones the
+adapter keeps from the client, such as a `'private'` tool's, and an entry does not carry the
+visibility of the tool it recorded. To show the results, set the tools' visibility with
+[`PrepareTools`](https://pydantic.dev/docs/ai/integrations/ui/overview/#setting-it-in-bulk).
 
 ## One log per conversation
 
@@ -161,14 +161,16 @@ application derive it on the server from the authenticated user, as for
 | `WorkspaceWorkLogStore(workspace=None)` | One file per entry under `.pydantic-ai-harness/work-log/<log>/` in the run's workspace | That directory, relative to the working directory; none with `workspace=` |
 
 `<log>` is the conversation ID when it is 1 to 128 letters, digits, `.`, `_` or `-` and not only
-dots; otherwise it is the ID's SHA-256 hex digest, so no ID can name a path outside the store's
-directory.
+dots and not starting with `sha256-`; otherwise it is `sha256-` and the ID's SHA-256 hex digest.
+No ID can name a path outside the store's directory, and no two IDs share a log.
 
 - **In memory.** The log grows for as long as the process runs, so a long-lived server should call
   `discard` when a conversation ends. Two `WorkLog()`s with default stores are one log stated twice
   (see [Two of them](#two-of-them)). A reset notice names no handle for it: the agent reaches the
   log only through the tools.
-- **File.** The directory is created on the first write. The process reads a log's file once, the
+- **File.** The directory is created on the first write, readable by its owner only (`0700`), and
+  each file `0600`; an existing directory is made owner-only, and one that is a symlink or that
+  another user owns is refused. The process reads a log's file once, the
   first time it touches that log, to learn which entries it already holds. A reset notice names the
   file's absolute path.
 - **Workspace.** The working directory's `.pydantic-ai-harness/` holds a `.gitignore`, so the

@@ -5,10 +5,10 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
-from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
+from typing_extensions import TypedDict
 
 import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext
@@ -185,6 +185,13 @@ def _agent(script: Script, *capabilities: AbstractCapability[None], work_log: Wo
     return Agent(script.model(), deps_type=type(None), tools=[lookup], capabilities=[work_log, *capabilities])
 
 
+class _Trigger(TypedDict, total=False):
+    max_tokens: int
+    max_fraction: float
+    context_window: int
+    fallback_context_window: int
+
+
 class TestResetCompaction:
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_a_reset_keeps_the_first_request_the_notice_pins_the_latest_prompt_and_the_tail(self) -> None:
@@ -288,7 +295,7 @@ class TestResetCompaction:
             pytest.param({'max_fraction': 0.5}, None, False, id='default-fallback'),
         ],
     )
-    async def test_token_triggers(self, kwargs: dict[str, Any], profile: ModelProfile | None, resets: bool) -> None:
+    async def test_token_triggers(self, kwargs: _Trigger, profile: ModelProfile | None, resets: bool) -> None:
         # About 1,000 tokens by the characters-per-token estimate.
         history: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart('Plan the trip.')]),
@@ -724,33 +731,33 @@ class TestResetCompaction:
         assert 'agent__capability__reset_compaction.restate' in [name for name, _ in durability.calls]
 
     def test_the_default_notice_states_only_what_was_kept(self) -> None:
-        def notice(**changes: Any) -> str:
-            facts: dict[str, Any] = {
-                'number': 1,
-                'work_log': 'logs/conv.jsonl',
-                'search_tool': 'search_work_log',
-                'read_tool': 'read_work_log',
-                'replies_logged': True,
-                'cleared_messages': 4,
-                'kept_first_request': True,
-                'kept_user_turns': 0,
-                'kept_messages': 2,
-                'kept_tool_calls': 1,
-            }
-            return default_reset_notice(ResetNotice(**(facts | changes)))
+        facts = ResetNotice(
+            number=1,
+            work_log='logs/conv.jsonl',
+            search_tool='search_work_log',
+            read_tool='read_work_log',
+            replies_logged=True,
+            cleared_messages=4,
+            kept_first_request=True,
+            kept_user_turns=0,
+            kept_messages=2,
+            kept_tool_calls=1,
+        )
 
-        assert notice() == snapshot(
+        assert default_reset_notice(facts) == snapshot(
             "The conversation before this point was cleared to free context; you are continuing the same task (cleared once in this conversation). Your earlier tool calls with full results, including calls made inside code, and your earlier replies are in the work log `logs/conv.jsonl`. To pick up where you left off, call `search_work_log` with no query to list your most recent entries, or with keywords to find one, then read only the entries you need in full with `read_work_log`; both work as tools and from code. The log shows files as they were when read: read a file again before you edit it. The user's original request and your latest tool call and its result are still in this conversation."
         )
-        assert notice(number=3, work_log=None, kept_tool_calls=0) == snapshot(
+        assert default_reset_notice(replace(facts, number=3, work_log=None, kept_tool_calls=0)) == snapshot(
             "The conversation before this point was cleared to free context; you are continuing the same task (cleared 3 times in this conversation). Your earlier tool calls with full results, including calls made inside code, and your earlier replies are in the work log. To pick up where you left off, call `search_work_log` with no query to list your most recent entries, or with keywords to find one, then read only the entries you need in full with `read_work_log`; both work as tools and from code. The log shows files as they were when read: read a file again before you edit it. The user's original request is still in this conversation."
         )
-        assert notice(kept_first_request=False) == snapshot(
+        assert default_reset_notice(replace(facts, kept_first_request=False)) == snapshot(
             'The conversation before this point was cleared to free context; you are continuing the same task (cleared once in this conversation). Your earlier tool calls with full results, including calls made inside code, and your earlier replies are in the work log `logs/conv.jsonl`. To pick up where you left off, call `search_work_log` with no query to list your most recent entries, or with keywords to find one, then read only the entries you need in full with `read_work_log`; both work as tools and from code. The log shows files as they were when read: read a file again before you edit it. Your latest tool call and its result are still in this conversation.'
         )
         # A work log that doesn't record the model's text has no replies to point at.
-        assert 'and your earlier replies' not in notice(replies_logged=False)
-        assert notice(kept_first_request=False, kept_tool_calls=0, search_tool='log_search') == snapshot(
+        assert 'and your earlier replies' not in default_reset_notice(replace(facts, replies_logged=False))
+        assert default_reset_notice(
+            replace(facts, kept_first_request=False, kept_tool_calls=0, search_tool='log_search')
+        ) == snapshot(
             'The conversation before this point was cleared to free context; you are continuing the same task (cleared once in this conversation). Your earlier tool calls with full results, including calls made inside code, and your earlier replies are in the work log `logs/conv.jsonl`. To pick up where you left off, call `log_search` with no query to list your most recent entries, or with keywords to find one, then read only the entries you need in full with `read_work_log`; both work as tools and from code. The log shows files as they were when read: read a file again before you edit it.'
         )
 

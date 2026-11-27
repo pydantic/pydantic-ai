@@ -14,6 +14,7 @@ import hashlib
 import os
 import posixpath
 import re
+import stat
 import weakref
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -99,17 +100,19 @@ class WorkLogStore(Protocol):
 
 
 _SAFE_LOG_ID = re.compile(r'[A-Za-z0-9._-]{1,128}')
+_HASHED_PREFIX = 'sha256-'
 
 
 def file_name(log_id: str) -> str:
     """The file or directory name a persistent store keeps `log_id`'s log under.
 
-    `log_id` itself when it is safe as one path segment and not made only of dots, else its SHA-256
-    hex digest, so no id can name a path outside the store directory.
+    `log_id` itself when it is safe as one path segment, not made only of dots and not starting with
+    `sha256-`, else `sha256-` and its SHA-256 hex digest. No id can name a path outside the store
+    directory, and no two ids share a name.
     """
-    if _SAFE_LOG_ID.fullmatch(log_id) and log_id.strip('.'):
+    if _SAFE_LOG_ID.fullmatch(log_id) and log_id.strip('.') and not log_id.startswith(_HASHED_PREFIX):
         return log_id
-    return hashlib.sha256(log_id.encode()).hexdigest()
+    return _HASHED_PREFIX + hashlib.sha256(log_id.encode()).hexdigest()
 
 
 @dataclass
@@ -160,7 +163,8 @@ class FileWorkLogStore:
     """One JSONL file per log on the machine running the agent, `<directory>/<log>.jsonl`.
 
     The handle a reset notice shows is the file's absolute path. The keys already written are read
-    from the file the first time this process touches a log, then kept in memory.
+    from the file the first time this process touches a log, then kept in memory. The directory is
+    kept owner-only (`0700`) and each file is created `0600`: a log holds full tool results.
     """
 
     directory: str | os.PathLike[str]
@@ -204,15 +208,34 @@ class FileWorkLogStore:
         path = self._path(log_id)
         if not path.exists():
             return []
-        # Split on newlines only: JSON leaves U+2028 and its kin unescaped, and `splitlines` would cut at them.
-        # Every entry ends with a newline, so a last segment without one is a write a crash cut short: skip it.
-        *lines, _ = path.read_text(encoding='utf-8').split('\n')
+        self._check_root()
+        # Split the bytes on newlines only: JSON leaves U+2028 and its kin unescaped, and `splitlines` would cut at
+        # them. Every entry ends with a newline, so a last segment without one is a write a crash cut short: skip
+        # it before decoding, since it can end inside a UTF-8 sequence.
+        *lines, _ = path.read_bytes().split(b'\n')
         return [_ENTRY.validate_json(line) for line in lines if line]
+
+    def _check_root(self) -> None:
+        """Refuse a symlinked or foreign store directory, and keep it owner-only: logs hold full tool results."""
+        st = self._root.lstat()
+        if stat.S_ISLNK(st.st_mode):
+            raise PermissionError(f'Work log directory {str(self._root)!r} is a symbolic link; refusing to use it.')
+        geteuid = getattr(os, 'geteuid', None)
+        if geteuid is None:
+            return
+        if st.st_uid != geteuid():
+            raise PermissionError(
+                f'Work log directory {str(self._root)!r} is not owned by the current user; refusing to use it.'
+            )
+        if stat.S_IMODE(st.st_mode) & 0o077:
+            self._root.chmod(0o700)
 
     def _write_line(self, log_id: str, line: str) -> None:
         path = self._path(log_id)
-        path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open('a+b') as file:
+        # Created `0700`, so no other user can reach the directory before `_check_root` runs.
+        self._root.mkdir(mode=0o700, parents=True, exist_ok=True)
+        self._check_root()
+        with os.fdopen(os.open(path, os.O_RDWR | os.O_CREAT | os.O_APPEND, 0o600), 'a+b') as file:
             size = file.seek(0, os.SEEK_END)
             if size:
                 file.seek(size - 1)
@@ -329,7 +352,14 @@ class WorkspaceWorkLogStore:
             if (match := _ENTRY_FILE.fullmatch(entry.name)) is not None
         ]
         paths = sorted((seq, path) for seq, path in listed if start <= seq and (stop is None or seq < stop))
-        return [_ENTRY.validate_json(await workspace.read_bytes(path)) for _, path in paths]
+        entries: list[WorkLogEntry] = []
+        for _, path in paths:
+            # `read_bytes` follows a symlink planted under an entry's name, which could carry another log's entry.
+            name = posixpath.basename(path)
+            if await workspace.realpath(path) != posixpath.join(directory.real_path, name):
+                raise WorkspaceError(f'`{self.locate(log_id)}{name}` in the workspace is a symlink, so it is not used.')
+            entries.append(_ENTRY.validate_json(await workspace.read_bytes(path)))
+        return entries
 
     async def _directory(self, workspace: Workspace, log_id: str) -> _LogDirectory:
         """The log's directory in `workspace`, created and checked on first use, then cached."""

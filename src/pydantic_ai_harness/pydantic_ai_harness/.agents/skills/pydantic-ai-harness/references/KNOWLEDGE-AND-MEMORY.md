@@ -292,10 +292,9 @@ Gotchas:
 - Not logged: deferred or approval-gated calls until they run, argument-validation failures, the
   work log's own tool calls, user prompts, and files (a placeholder names the media type).
 - It can't be loaded from an agent spec (`get_serialization_name()` returns `None`); build it in Python.
-- `ModelRetry` is logged as `retried`; other exceptions as `failed` and still raised. A result an outer hook rejects gets a `success` and a `retried` entry.
-- Both tools' returns are exempt from `ToolOutputLimits`, and both return other tools' results by
-  their own UI visibility, so a `'private'` tool's result reaches a UI client through them under a
-  `'public'` default.
+- `ModelRetry` is logged as `retried`; other exceptions as `failed`, by type only, and still raised. A result an outer hook rejects gets a `success` and a `retried` entry.
+- Both tools' returns are exempt from `ToolOutputLimits`. Both tools are `'redacted'` for UI
+  clients, since they return other tools' results, a `'private'` tool's included.
 - `ToolBridge`'s `tool_call` and the tool it runs share one `tool_call_id`.
 - `seq` follows the order calls finished, so a nested Code Mode call comes before its `run_code`.
 - It adds no instructions; `ResetCompaction`'s notice points the model at the log.
