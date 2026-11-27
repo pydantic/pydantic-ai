@@ -12,6 +12,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
+    PartPosition,
     ToolPair,
     compact_with_span,
     context_for_request,
@@ -187,8 +188,8 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
             older, kept = messages[:boundary], messages[boundary:]
             clearable = iter_tool_pairs(older)
 
-        clear_return_positions: set[tuple[int, int]] = set()
-        clear_input_positions: set[tuple[int, int]] = set()
+        clear_return_positions: set[PartPosition] = set()
+        clear_input_positions: set[PartPosition] = set()
         for pair in clearable:
             if pair.tool_name in self.exclude_tools or (self.tools is not None and pair.tool_name not in self.tools):
                 continue

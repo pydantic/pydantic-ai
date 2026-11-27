@@ -13,7 +13,17 @@ from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from json import dumps
-from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, TypeGuard, assert_never, runtime_checkable
+from typing import (
+    TYPE_CHECKING,
+    Literal,
+    NamedTuple,
+    Protocol,
+    Self,
+    TypeAlias,
+    TypeGuard,
+    assert_never,
+    runtime_checkable,
+)
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
@@ -1207,6 +1217,21 @@ non-JSON placeholder would reach the provider as malformed function arguments.
 """
 
 
+PartPosition: TypeAlias = tuple[int, int]
+"""A part's `(message index, part index)` in a message history."""
+
+
+class _OpenCall(NamedTuple):
+    """A tool call waiting for its return, and where it sits in the history."""
+
+    position: PartPosition
+    call: ToolCallPart
+
+
+_OpenCalls: TypeAlias = dict[str, deque[_OpenCall]]
+"""The calls waiting for a return, by tool call ID, oldest first."""
+
+
 @dataclass(frozen=True)
 class ToolPair:
     """A matched tool call and its return, with the order the return appeared.
@@ -1221,8 +1246,8 @@ class ToolPair:
     tool_name: str
     call_part: ToolCallPart
     order: int
-    call_position: tuple[int, int]
-    return_position: tuple[int, int]
+    call_position: PartPosition
+    return_position: PartPosition
 
 
 def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[ToolPair]:
@@ -1240,7 +1265,7 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[ToolPair]:
     queued instead would mis-pair a later turn's return -- one reusing the id -- with the stale call.
     A legacy `RetryPromptPart` that names a tool settles its call the same way, for the same reason.
     """
-    open_calls: dict[str, deque[tuple[tuple[int, int], ToolCallPart]]] = {}
+    open_calls: _OpenCalls = {}
     pairs: list[ToolPair] = []
     for message_index, message in enumerate(messages):
         if isinstance(message, ModelResponse):
@@ -1253,7 +1278,7 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[ToolPair]:
 def _queue_calls(
     response: ModelResponse,
     message_index: int,
-    open_calls: dict[str, deque[tuple[tuple[int, int], ToolCallPart]]],
+    open_calls: _OpenCalls,
 ) -> None:
     """Queue *response*'s calls by ID, oldest first, so a later return answers them in order.
 
@@ -1264,15 +1289,15 @@ def _queue_calls(
     for part_index, part in enumerate(response.parts):
         if isinstance(part, ToolCallPart) and part.tool_call_id:
             pending = open_calls.setdefault(part.tool_call_id, deque())
-            if pending and pending[0][0][0] != message_index:
+            if pending and pending[0].position[0] != message_index:
                 pending.clear()
-            pending.append(((message_index, part_index), part))
+            pending.append(_OpenCall((message_index, part_index), part))
 
 
 def _settle_returns(
     request: ModelRequest,
     message_index: int,
-    open_calls: dict[str, deque[tuple[tuple[int, int], ToolCallPart]]],
+    open_calls: _OpenCalls,
     pairs: list[ToolPair],
 ) -> None:
     """Answer the oldest open call of each reply in *request*, pairing it unless it was a retry."""
@@ -1389,8 +1414,8 @@ def _clear_once(part: ToolReturnPart, placeholder: str | Callable[[ToolReturnPar
 
 def rebuild_with_cleared(
     messages: Sequence[ModelMessage],
-    clear_return_positions: set[tuple[int, int]],
-    clear_input_positions: set[tuple[int, int]],
+    clear_return_positions: set[PartPosition],
+    clear_input_positions: set[PartPosition],
     placeholder: str | Callable[[ToolReturnPart], str],
 ) -> list[ModelMessage]:
     """Return *messages* with the selected tool results (and optionally inputs) blanked.
@@ -1452,7 +1477,7 @@ def replace_returns(messages: Sequence[ModelMessage], contents: Mapping[str, str
 def _clear_inputs(
     message: ModelResponse,
     message_index: int,
-    clear_positions: set[tuple[int, int]],
+    clear_positions: set[PartPosition],
 ) -> ModelResponse:
     """*message* with the call arguments at the selected positions blanked, or *message* itself when none changes."""
     response_parts: list[ModelResponsePart] = []
