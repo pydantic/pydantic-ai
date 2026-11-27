@@ -345,6 +345,7 @@ include = [
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
     ".github/scripts/test_check_api_compatibility.py",
+    ".github/scripts/compliance_lock.py",
     ".github/scripts/pr_gates.py",
     ".github/scripts/publish_douwebot_review.py",
     ".github/scripts/review_gates.py",

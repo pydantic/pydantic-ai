@@ -29,6 +29,11 @@ uv.lock                   @DouweM @adtyavrdhn @mpfaffenberger @dsfaccini
 /src/pydantic_ai_harness/pydantic_ai_harness/sub_agents/_capability.py  @DouweM @adtyavrdhn
 /src/pydantic_ai_harness/pydantic_ai_harness/sub_agents/_toolset.py     @DouweM @adtyavrdhn
 
+# Compliance-locked files: `.github/scripts/compliance_lock.py` lists them, and `.github/workflows/AGENTS.md` says why.
+/tests/models/test_claude_agent_compliance.py  @DouweM @adtyavrdhn @dsfaccini @mpfaffenberger
+/tests/models/claude_code_fake.py              @DouweM @adtyavrdhn @dsfaccini @mpfaffenberger
+/.github/scripts/compliance_lock.py            @DouweM @adtyavrdhn @dsfaccini @mpfaffenberger
+
 # This file, after `/.github/` because the last matching pattern wins.
 # The durable owners review it too, so no PR drops them from a path unseen.
 /.github/CODEOWNERS       @DouweM @adtyavrdhn @dsfaccini

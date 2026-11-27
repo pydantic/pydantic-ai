@@ -290,6 +290,15 @@ A clean OpenCode fallback approval satisfies the same gate as a Claude approval.
 An `engine=opencode-zai` review from before the Coding Plan moved to `glm-5.4` names `glm-5.3-flash` in its attribution.
 The gate and the `prior-findings` job read both attributions; `EARLIER_REVIEW_ATTRIBUTIONS` in `publish_douwebot_review.py` lists the earlier ones.
 
+`Gate: compliance lock` fails a PR that adds, changes, deletes or renames a file in `LOCKED_PATHS` of
+`.github/scripts/compliance_lock.py`, which lists the module itself, until it carries `compliance:approved`. The label counts only
+when its latest `labeled` event comes from a `User` with write access, after GitHub last received the current head:
+after the PR's newest `ci.yml` run on that head and after any force push. It's the newest run, since a branch can
+leave a commit and later return to it by a fast-forward, which records no force push. `ci.yml` doesn't run on label
+changes, so the approval doesn't move that time. Both are GitHub's own times; commit dates aren't read. A push after the approval needs the label removed and added again. A fork PR's runs aren't linked
+to it, so the gate fails closed there. The gate runs default-branch code like the others, so a PR can't loosen it
+for itself.
+
 `pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews
 and inline-comment changes with a read-only token, including on forks. GitHub Actions has no
 review-thread trigger, so resolving an optional finding's thread updates the status on the next wake-up. Its completion wakes
@@ -597,13 +606,15 @@ starts none of them.
 
 # Code owners review dependency, CI config and durable runtime changes
 
-`.github/CODEOWNERS` owns three scopes:
+`.github/CODEOWNERS` owns four scopes:
 
 - **Dependency and build config**, owned by `@DouweM`, `@adtyavrdhn`, `@mpfaffenberger` and
   `@dsfaccini`: every `pyproject.toml` and `uv.lock`, `.pre-commit-config.yaml` and `Makefile`.
 - **Everything under `.github/`**, owned by `@dsfaccini` only: workflows, actions, scripts and the
-  rest of the directory. `CODEOWNERS` itself is the exception: `@DouweM` and `@adtyavrdhn` own it
-  too, so the durable runtime owners see every ownership change.
+  rest of the directory. `CODEOWNERS` itself is an exception: `@DouweM` and `@adtyavrdhn` own it
+  too, so the durable runtime owners see every ownership change. `scripts/compliance_lock.py` is the other.
+- **The compliance-locked files** that `.github/scripts/compliance_lock.py` lists, owned by all four maintainers;
+  `Gate: compliance lock` gates them.
 - **The durable runtime and its deep harness integrations**, owned by `@DouweM` and `@adtyavrdhn`
   only: the runtime under `pydantic_ai_slim/pydantic_ai/durable_exec/`, every harness durable
   engine (a `BaseDurabilityCapability` subclass), the harness's shared durable helper, and the
