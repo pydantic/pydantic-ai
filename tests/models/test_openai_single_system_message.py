@@ -113,10 +113,10 @@ GPT_OSS_ROUTES: dict[str, Callable[[httpx2.AsyncClient], Model]] = {
 
 def flagged_compatible_responses(profile: OpenAIModelProfile) -> Callable[[httpx2.AsyncClient], Model]:
     """gpt-oss on a compatible Responses route with the flag set in `profile`, to combine it with other profile keys."""
+    flagged = OpenAIModelProfile(**profile)
+    flagged['honors_only_first_system_message'] = True
     return lambda client: OpenAIResponsesModel(
-        'openai/gpt-oss-120b',
-        provider=compatible_provider(client),
-        profile=OpenAIModelProfile(honors_only_first_system_message=True, **profile),
+        'openai/gpt-oss-120b', provider=compatible_provider(client), profile=flagged
     )
 
 
@@ -456,6 +456,29 @@ async def test_a_leading_cache_point_keeps_its_breakpoint_on_the_merged_message(
         }
     )
     assert [item.get('role') for item in body['input']].count('system') == 1
+
+
+async def test_the_flag_merges_on_chat_even_where_multiple_system_messages_are_supported():
+    """On Chat Completions the flag merges the leading system messages even where several are supported.
+
+    Not a VCR test: the claim is the request body, which cassette matching doesn't check.
+    """
+    body = await run_and_capture(
+        lambda client: OpenAIChatModel(
+            'openai/gpt-oss-120b',
+            provider=compatible_provider(client),
+            profile=OpenAIModelProfile(
+                honors_only_first_system_message=True, openai_chat_supports_multiple_system_messages=True
+            ),
+        ),
+        system_prompt=SYSTEM_PROMPT,
+        instructions=INSTRUCTIONS,
+    )
+
+    assert leading_items(body) == [
+        {'role': 'system', 'content': f'{ANNOUNCEMENT}\n\n{SYSTEM_PROMPT}\n\n{INSTRUCTIONS}'},
+        {'role': 'user', 'content': 'What color is the sky?'},
+    ]
 
 
 UNFLAGGED_ROUTES: dict[str, Callable[[httpx2.AsyncClient], Model]] = {
