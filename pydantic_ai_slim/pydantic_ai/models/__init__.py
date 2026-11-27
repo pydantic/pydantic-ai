@@ -64,6 +64,7 @@ from .._capability_parts import (
     LookalikeNaming,
     is_downgraded_request_scoped,
     lowered_instruction_statement,
+    lowered_text_in_system_voice,
     render_capability_part,
     render_capability_parts,
 )
@@ -900,6 +901,27 @@ class _SettingsLayer(NamedTuple):
     settings: ModelSettings | None
     settable: bool = True
     """Whether the user can set a provider-specific setting here, so the warning can suggest it."""
+
+
+_check_system_voice = False
+"""Whether `Model.prepare_messages` checks that no text below `'operator'` reaches the model as a system message.
+
+Off by default, since the check looks for each such text in every system message, on every request. The test suite
+turns it on (`tests/conftest.py`), so every request a test prepares is checked: see "Voice and authority" in
+`agent_docs/capability-conformance.md`.
+"""
+
+
+class _SystemVoiceLeak(AssertionError):
+    """Raised by `_check_lowered_text_out_of_system_voice`, so a test can tell it from any other failed assertion."""
+
+
+def _check_lowered_text_out_of_system_voice(authored: list[ModelMessage], rendered: list[ModelMessage]) -> None:
+    """Raise if text below `'operator'` in `authored` is in a system message in `rendered`, when the check is on."""
+    if not _check_system_voice:
+        return
+    if found := lowered_text_in_system_voice(authored, rendered):
+        raise _SystemVoiceLeak('\n'.join(found))
 
 
 def _warn_unified_setting_overridden(
@@ -2142,6 +2164,7 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 which differs only for a corpus mixing capability-gated and standalone deferred tools.
                 Framework callers pass it.
         """
+        authored_history = messages
         inline_system = self.profile.get('supports_inline_system_prompts', False)
         if _has_instruction_state(messages):
             # The same path choice as the prefix statement in `prepare_request`; on the fallback path
@@ -2280,6 +2303,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         )
 
         messages = _move_request_scoped_prompts_to_tail(messages, self._goes_in_request_scoped_tail)
+
+        # Every system message is still a `SystemPromptPart` here: the wrap below only moves them to `<system>` blocks,
+        # and what's added after is the framework's own announcement.
+        _check_lowered_text_out_of_system_voice(authored_history, messages)
 
         if not inline_system:
             unwrapped = messages

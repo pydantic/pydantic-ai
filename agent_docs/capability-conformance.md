@@ -8,7 +8,7 @@ A capability is conformant when its entry in `CASES` (`tests/capability_cases.py
 
 Each area says what it requires and how the suite checks it. Contracts are `Contract(applies, exempt)` entries in `CONTRACTS`, run by `tests/harness/test_capability_contracts.py`; an exempt case must still break its contract, so fixing the capability fails the suite until the exemption is removed. Link an exemption that records a bug to the issue that tracks it.
 
-The contracts are numbered C0, C1, … as this checklist assigns them, not in the order they land. C1–C5 are planned and work toward [#13118](https://github.com/pydantic/pydantic-ai/issues/13118): no capability content below `'operator'` reaches the model in system voice.
+The contracts are numbered C0, C1, … as this checklist assigns them, not in the order they land. C1–C5 work toward [#13118](https://github.com/pydantic/pydantic-ai/issues/13118): no capability content below `'operator'` reaches the model in system voice. Those marked "planned" have not landed yet.
 
 ## Coverage
 
@@ -51,7 +51,7 @@ The rules behind these are in [Message History & Prompt Caching](message-history
 
 - C0 (above) makes these contracts reach every capability that runs tools.
 - C1, route matrix (planned): each case's `calls` run at `with_authority('none')` through every route, and the typed history must match the native route's source, authority and frame.
-- C2, sink check (planned): `Model.prepare_messages` asserts no part below `'operator'` renders as system or developer, and no capability below `'operator'` authors a `ModelResponse`.
+- C2, sink check (`SINK`): `Model.prepare_messages` checks every request a test prepares (`tests/conftest.py` turns the check on; applications never run it): once the text the application wrote at `'operator'` is taken out of each system message, none may hold text of 20 or more characters from a part below `'operator'`. A part's authority is `effective_authority`'s. `SINK` runs each case's `calls` with the capability lowered to `with_authority('none')`, so there is lowered text to find, and checks that every `ModelResponse` in the history is one the model returned. `tests/test_system_voice_sink.py` runs a history with lowered text in every channel through each way of placing system messages.
 - C3, role-site guard (planned): every site that builds a system or developer part is in an allowlist with its reason.
 - C4, transformation registry (planned): every function that returns `list[ModelMessage]` is registered, and sources survive each one.
 - C5, attribution on spans (planned): OpenTelemetry message parts keep each capability part's source.

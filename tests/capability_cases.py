@@ -846,6 +846,14 @@ vacuously. An exemption says why the tools can't run offline; one whose reason s
 case still to be backfilled, which `test_pending_calls_backfill` counts.
 """
 
+SINK = Contract('sink', applies=lambda _, case: case.calls is not None)
+"""C2: lowered to `with_authority('none')`, a capability's calls send none of its text as a system message, and every
+`ModelResponse` in the history is one the model returned.
+
+The first half is the check `Model.prepare_messages` runs on every request, which `tests/conftest.py` turns on; this
+contract runs each case's calls below `'operator'`, where there is lowered text for it to find.
+"""
+
 CONTRACTS = (
     RENAMED,
     UNSET_ID,
@@ -854,5 +862,6 @@ CONTRACTS = (
     FORWARDS_USAGE,
     WORKSPACE_FROM_FUNCTION,
     DECLARES_CALLS,
+    SINK,
 )
 """Every contract, so a meta-test can check each one's exemptions."""
