@@ -1496,11 +1496,17 @@ class TestProtectedCommandWords:
             "eval 'echo x > .pax/settings.json'",
             "sh -c 'pax config set model x'",
             'eval eval eval eval echo hi',
+            "bash -c -- 'echo x > .pax/settings.json'",
+            "sh -e -c 'echo x > .pax/settings.json'",
+            "bash -o pipefail -c 'echo x > .pax/settings.json'",
+            "bash --norc -c 'echo x > .pax/settings.json'",
+            "bash -c -e 'echo x > .pax/settings.json'",
             "sh -c 'echo hi'",
+            "bash -c -- 'echo hi'",
             'eval eval eval echo hi',
             'sh notes.sh',
         ]
-        assert await _held(*map(_command, commands), commands=['pax config']) == commands[:7]
+        assert await _held(*map(_command, commands), commands=['pax config']) == commands[:12]
 
     async def test_a_quoted_path_is_one_word(self) -> None:
         commands = ['echo x > "my dir/.pax/x"', 'echo x > my dir/.pax/x', 'tool --out=my/a']

@@ -155,19 +155,20 @@ def _tokens(command: str, *, posix: bool) -> list[str]:
 
 
 def _scripts(words: list[str]) -> list[str]:
-    """The scripts `words` hand a shell's `-c`, such as `sh -c '...'` or `bash -lc '...'`, or `eval`.
+    """The scripts `words` may hand a shell's `-c`, such as `sh -c '...'` or `bash -lc -- '...'`, or `eval`.
 
-    A shell or `eval` counts wherever it is among the words, so behind a prefix such as `env` or `sudo` too.
+    A shell or `eval` counts wherever it is among the words, so behind a prefix such as `env` or `sudo` too. Rather
+    than parse a shell's options, every word after its `-c` counts as a script, which only checks more words. Only the
+    first shell or `eval` is looked at: the words after it hold any later one, whose script is checked inside them.
     """
-    scripts: list[str] = []
     for i, word in enumerate(words):
         program = word.replace('\\', '/').rsplit('/', 1)[-1]
         if program == 'eval':
-            scripts.append(' '.join(words[i + 1 :]))
-        elif program in _SHELLS:
+            return [' '.join(words[i + 1 :])]
+        if program in _SHELLS:
             flag = next((j for j in range(i + 1, len(words)) if _SCRIPT_FLAG.fullmatch(words[j])), len(words))
-            scripts += words[flag + 1 : flag + 2]
-    return scripts
+            return list(dict.fromkeys(words[flag + 1 :]))
+    return []
 
 
 def _only_reads(command: str) -> bool:
