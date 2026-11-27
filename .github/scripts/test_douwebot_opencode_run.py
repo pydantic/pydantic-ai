@@ -683,6 +683,14 @@ def test_last_coding_plan_account_rate_limit_after_a_step_fails_the_job(
             'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type provider.rate-limit, status 429.',
             id='rate-limit-after-a-step',
         ),
+        # Only `PR Review Checks` restarts a run on a Go transport failure.
+        pytest.param(
+            'zai-key',
+            [*FINISHED, {'type': 'error', 'error': {'type': 'provider.transport', 'status': 200}}],
+            subprocess.CalledProcessError(1, 'opencode'),
+            'OpenCode run on opencode-go/deepseek-v4.1-flash on OpenCode Go failed with error type provider.transport, status 200.',
+            id='transport-after-a-step',
+        ),
         pytest.param('zai-key', [], subprocess.CalledProcessError(1, 'opencode'), NO_TYPE_LOG, id='no-error-event'),
         pytest.param(
             'zai-key',
