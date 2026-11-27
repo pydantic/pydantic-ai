@@ -1979,6 +1979,13 @@ Instructions that Pydantic AI and [Pydantic AI Harness](harness/index.md) comput
 
     Append delivery does not make instruction callbacks durable. In [durable execution](durable_execution/overview.md), callbacks must be deterministic or obtain changing external values through a [durable capability operation](capabilities/custom.md#durable-capability-operations) or the engine's durable units. Registering a bound async capability method decorated with `@durable_operation` through `capability.instructions(name='state', on_change='append')(capability.read_state)` records its result before history changes are computed. Replay then uses recorded values rather than fresh external reads.
 
+#### Keeping a rule in force over a long conversation {#keeping-a-rule-in-force}
+
+Instructions are sent with every request, but in a long conversation a rule competes with everything the model reads after it: the user's later requests, tool output, and the model's own earlier turns. Smaller and faster models tend to lose track of it first; frontier models hold it longer. Two mechanisms put the rule back near the latest turn, in the application's voice, without moving the cached prefix:
+
+- **When the rule changes**, give the instruction a `name` and `on_change='append'`. The new text is sent after the latest message instead of rewriting the instructions at the front of the request, as described [above](#appending-instruction-changes).
+- **When the rule stays the same but has to keep holding**, restate it with the Harness's [`SystemReminders`](harness/system-reminders.md): a `Reminder` on a cadence (`interval=`), with `scope='conversation'` if it should stay in front of the model for the rest of the conversation, or a [dynamic reminder](harness/system-reminders.md#dynamic-reminders) that returns the rule only when the run calls for it, such as after compaction or once the conversation has grown past a length you choose. Each firing is a system prompt at the tail of that request: a native system message where the model supports one, and a `<system>` block otherwise.
+
 #### Instructions for specific models {#model-specific-instructions}
 
 Some instructions are only needed by some models, to counter something those models tend to do. An instruction function can read the model handling the request from `ctx.model`, and its [profile](models/overview.md#inspecting-a-models-profile) from `ctx.model.profile`. Instructions are resolved before every request, and again for each model the [`ModelFallback`](capabilities/model-fallback.md#instructions-for-each-model) capability moves a request on to, so the text always matches the model that receives it.
