@@ -1025,7 +1025,7 @@ warehouse = ExternalModule(
     ),
 )
 # Sandboxed code can now run `import warehouse` and `warehouse.query('select ...')`:
-agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(external_modules={'warehouse': warehouse})])
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(external_modules={'warehouse': warehouse})])
 ```
 
 The `stubs` are required. They are the module's `.pyi` text: the `run_code` description shows them

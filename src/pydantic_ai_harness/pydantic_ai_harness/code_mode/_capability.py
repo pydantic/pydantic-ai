@@ -7,6 +7,7 @@ from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from pydantic import TypeAdapter, ValidationError
+from pydantic_monty import ExternalModule
 from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset
@@ -54,7 +55,7 @@ from pydantic_ai_harness.code_mode._toolset import (
 from pydantic_ai_harness.tool_bridge import ToolBridge
 
 if TYPE_CHECKING:
-    from pydantic_monty import AsyncMontyRemote, ExternalModule
+    from pydantic_monty import AsyncMontyRemote
 
     from pydantic_ai.capabilities.abstract import ValidatedToolArgs
     from pydantic_ai.messages import ToolCallPart
