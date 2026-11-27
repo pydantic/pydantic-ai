@@ -53,6 +53,11 @@ from pydantic_ai_harness.cdp_browser import (
 from tests._ports import reserve_loopback_port
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import no_leaked_tasks
+from tests.harness._legacy_durable_wrappers import (
+    LEGACY_DURABLE_WRAPPERS,
+    LegacyDurableWrapper,
+    wrap_in_legacy_durable_agent,
+)
 
 from ._fake_chrome import PAGE_SESSION, FakeChrome, pause_expression
 
@@ -1059,3 +1064,15 @@ class TestDurabilityRejection:
 
         with pytest.raises(UserError, match='CDPBrowser does not support durable execution'):
             Agent(TestModel(), capabilities=[CDPBrowser(), TemporalDurability()])
+
+    @pytest.mark.parametrize('wrapper', LEGACY_DURABLE_WRAPPERS)
+    def test_rejects_legacy_durable_wrapper_at_construction(self, wrapper: LegacyDurableWrapper):
+        agent = Agent(TestModel(), name='cdp_legacy', capabilities=[CDPBrowser()])
+        with pytest.raises(
+            UserError,
+            match=(
+                f'`CDPBrowser` does not support durable execution, so the deprecated `{wrapper}` cannot wrap an agent '
+                'that uses it: a live Chrome cannot survive activity replay or worker restart'
+            ),
+        ):
+            wrap_in_legacy_durable_agent(wrapper, agent)

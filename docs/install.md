@@ -88,6 +88,7 @@ pip/uv-add "pydantic-ai-slim[openai]"
 * `dbos` - installs [DBOS Durable Execution](durable_execution/dbos.md) dependency `dbos` [PyPI ↗](https://pypi.org/project/dbos){:target="_blank"}
 * `prefect` - installs [Prefect Durable Execution](durable_execution/prefect.md) dependency `prefect` [PyPI ↗](https://pypi.org/project/prefect){:target="_blank"}
 * `spec` - installs [AgentSpec](agent-spec.md) dependencies `pyyaml` [PyPI ↗](https://pypi.org/project/PyYAML){:target="_blank"} and `pydantic-handlebars` [PyPI ↗](https://pypi.org/project/pydantic-handlebars){:target="_blank"}
+* `jsonschema` - installs the [`StructuredDict(validate=True)`](output.md#structured-dict) dependency `jsonschema` [PyPI ↗](https://pypi.org/project/jsonschema){:target="_blank"}
 
 You can also install dependencies for multiple models and use cases, for example:
 

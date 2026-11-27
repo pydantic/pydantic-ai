@@ -28,7 +28,7 @@ result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
 print(result.usage)
-#> RunUsage(cost=Decimal('0.00007275'), input_tokens=57, output_tokens=8, requests=1)
+#> RunUsage(cost=Decimal('0.0001455'), input_tokens=57, output_tokens=8, requests=1)
 ```
 
 _(This example is complete, it can be run "as is")_
@@ -374,7 +374,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Native Output
 
-Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools. [Groq](models/groq.md#structured-output) also cannot combine Native Output with function tools. On [Anthropic](models/anthropic.md#schema-complexity-limits), the schema is compiled into a grammar with complexity limits that a large schema can exceed, and on a request that thinks, a structured `output_type` uses Native Output even without the marker class, unless its schema is over those limits. On [OpenAI](models/openai.md#structured-output-schemas), a schema over the strict-mode size limits is sent without strict mode.
+Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools. [Groq](models/groq.md#structured-output) also cannot combine Native Output with function tools. On [Anthropic](models/anthropic.md#schema-complexity-limits), the schema is compiled into a grammar with complexity limits that a large schema can exceed, and on a request that thinks, a structured `output_type` uses Native Output even without the marker class, unless its schema is over those limits or Anthropic rejects it as too complex, in which case the run uses Tool Output instead, except inside a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] (see [Schema complexity limits](models/anthropic.md#schema-complexity-limits)). On [OpenAI](models/openai.md#structured-output-schemas), a schema over the strict-mode size limits is sent without strict mode.
 
 To use this mode, you can wrap the output type(s) in the [`NativeOutput`][pydantic_ai.output.NativeOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient.
 
@@ -553,9 +553,35 @@ There's no tool call to answer, so a rejected submission doesn't use up an outpu
 
 If it's not feasible to define your desired structured output object using a Pydantic `BaseModel`, dataclass, or `TypedDict`, for example when you get a JSON schema from an external source or generate it dynamically, you can use the [`StructuredDict()`][pydantic_ai.output.StructuredDict] helper function to generate a `dict[str, Any]` subclass with a JSON schema attached that Pydantic AI will pass to the model.
 
-Note that Pydantic AI will not perform any validation of the received JSON object and it's up to the model to correctly interpret the schema and any constraints expressed in it, like required fields or integer value ranges.
+By default, Pydantic AI doesn't validate the received JSON object, so it's up to the model to correctly interpret the schema and any constraints expressed in it, like required fields or integer value ranges, and the output type is a `dict[str, Any]` your code should read defensively.
 
-The output type will be a `dict[str, Any]` and it's up to your code to defensively read from it in case the model made a mistake. You can use an [output validator](#output-validator-functions) to reflect validation errors back to the model and get it to try again.
+Pass `validate=True` to validate the output against the schema and send any mismatch back to the model to fix, like other [output validation errors](#output-validator-functions). It needs the [`jsonschema`](https://python-jsonschema.readthedocs.io/) package, installed with the `jsonschema` extra (`pip install "pydantic-ai[jsonschema]"`, or `"pydantic-ai-slim[jsonschema]"`):
+
+```python
+from pydantic_ai import Agent, StructuredDict
+
+Verdict = StructuredDict(
+    {
+        'type': 'object',
+        'properties': {'verdict': {'enum': ['pass', 'fail']}},
+        'required': ['verdict'],
+        'additionalProperties': False,
+    },
+    validate=True,
+)
+agent = Agent('{{ openai:medium }}', output_type=Verdict)
+result = agent.run_sync('Did the build pass?')
+print(result.output)
+#> {'verdict': 'pass'}
+```
+
+Values aren't converted: the output holds exactly the JSON the model sent, so `"42"` where the schema asks for an integer is an error rather than `42`. A few things to know about how the schema is applied:
+
+- It follows the schema's `$schema` dialect (Draft 2020-12 when it doesn't declare one), and a schema that isn't valid for that dialect raises a `UserError` when the `StructuredDict` is created.
+- String `format`s aren't checked.
+- [Streamed](#streaming-structured-output) partial outputs aren't checked, since a partial object rarely meets the schema yet; the final output is.
+- References inside the schema are resolved, but a remote `$ref` is never fetched.
+- `pattern` and `patternProperties` are checked with a linear-time regex engine, so crafted output can't stall a run. A pattern that uses lookarounds or backreferences, which that engine doesn't support, raises a `UserError` when the `StructuredDict` is created, as do `unevaluatedProperties` combined with `patternProperties`, and a `$schema` in a subschema.
 
 Along with the JSON schema, you can optionally pass `name` and `description` arguments to provide additional context to the model:
 
@@ -1055,7 +1081,7 @@ if result.response.finish_reason == 'length':
 Structured output is validated, so output that was cut off is usually caught:
 
 - With [`NativeOutput`](#native-output) or [`PromptedOutput`](#prompted-output), text that was cut off into JSON that doesn't parse raises [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] with a message naming the token limit, in [`run()`][pydantic_ai.agent.AbstractAgent.run] and [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] alike. The model isn't asked to try again, as it would run into the same limit. Text that was cut off but still parses is validated as usual, so it's the output when it's valid, and is retried when the schema or an [output validator](#output-validator-functions) rejects it.
-- With [tool output](#tool-output), an output tool call whose arguments were cut off into JSON that doesn't parse raises [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] right away, in `run()` and `run_stream()` alike. Arguments that were cut off but still parse are validated as usual, and are retried when the schema or an output validator rejects them.
+- With [tool output](#tool-output), an output tool call whose arguments were cut off into JSON that doesn't parse, or that came back with no arguments at all (as Anthropic returns a cut-off tool call), raises [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] right away, in `run()` and `run_stream()` alike. Arguments that were cut off but still parse are validated as usual, and are retried when the schema or an output validator rejects them.
 - A response that was cut off before it produced any output, say while the model was [thinking](capabilities/thinking.md), raises `OutputTokenLimitExceeded`.
 
 To get the whole answer, raise `max_tokens`, ask for a shorter one, or have [another model take over](capabilities/model-fallback.md#token-limit).

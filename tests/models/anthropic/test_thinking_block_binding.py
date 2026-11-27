@@ -596,7 +596,13 @@ async def test_anthropic_count_recovery_marks_a_request_whose_settings_delta_the
     )
     assert len(count_requests) == 3
     assert count_requests[2]['extra_body'] == snapshot(
-        {'thinking': {'type': 'adaptive', 'block_binding': {'prefix_mismatch_behavior': 'drop_block'}}}
+        {
+            'thinking': {
+                'type': 'adaptive',
+                'display': 'summarized',
+                'block_binding': {'prefix_mismatch_behavior': 'drop_block'},
+            }
+        }
     )
 
 

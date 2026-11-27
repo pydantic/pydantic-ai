@@ -33,8 +33,8 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Memory | No | [Memory](https://pydantic.dev/docs/ai/harness/memory/) |
 | Compaction | Yes | [Compaction](../capabilities/compaction.md) |
 | Guardrails | Yes (`tool_call` hook) | [Guardrails](https://pydantic.dev/docs/ai/harness/guardrails/) |
-| Code sandboxes | No | [Workspaces](../workspace.md#supported-workspaces) |
-| Browser use | No | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research) |
+| Code sandboxes | No | [Your machine, SSH and 11 sandboxes](../workspace.md#supported-workspaces), with per-path [authority](../workspace-custom.md#path-authority) |
+| Browser use | No | [Web & research](https://pydantic.dev/docs/ai/harness/#web--research), and [computer use](../harness/computer-use.md) on a desktop in 11 sandboxes |
 
 ## FAQ
 
@@ -44,6 +44,8 @@ repository's [complete coding agent](https://github.com/pydantic/pydantic-ai/blo
 built from the pieces `Coder` puts together.
 
 **Is there a terminal coding agent like Pi in Python?** Yes: [Pax](../harness/pax.md). It runs `Coder` by default, `pax --agent` runs your own agent, and a Pax plugin can be any Pydantic AI capability, so the same class serves your terminal and your production agent.
+
+**Can I control which content my agent treats as instructions?** Yes. What a capability tells the model mid-conversation is a typed part that records who wrote it (you, your user, or nobody you trust), and Pydantic AI speaks it in the voice that authority allows; what a capability enqueues can be lowered, never raised, as it moves through a run. Tool results and fetched pages stay data on every provider, and text that imitates the framework's own frames is flagged to the model. A workspace's files carry your authority unless you mark them untrusted, path by path. See [Where the content came from](../capabilities/custom.md#where-the-content-came-from) for the source and authority table, [Capability parts](../message-history.md#capability-parts) for how they are stored, and [Marking who wrote the files](../workspace-custom.md#workspace-authority).
 
 *Last checked: 2026-09-26*
 

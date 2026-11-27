@@ -36,8 +36,8 @@ Set the light model's effort from the PR's complexity.
 
 | Size label | Needs |
 |---|---|
-| S | CI green, `PR Review Checks` passed, and a clean douwebot approval. An obviously trivial S PR needs CI green and `PR Review Checks` passed only. |
-| M, L, XL | CI green, `PR Review Checks` passed, and a clean douwebot approval. |
+| S | CI green, `PR Review Checks` passed, `Gate: review findings dispositioned` passed, and a clean douwebot approval. An obviously trivial S PR needs CI green, `PR Review Checks` passed and `Gate: review findings dispositioned` passed only. |
+| M, L, XL | CI green, `PR Review Checks` passed, `Gate: review findings dispositioned` passed, and a clean douwebot approval. |
 
 Judge an S PR trivial only for string fixes or a clearly positive one-file docs update.
 State that judgment in the PR body.
@@ -58,8 +58,9 @@ Associate inline comments with the `head=` in their parent review's receipt, or 
 A clean, maintainer-authorized `douwebot:review-agent-config` approval satisfies the same requirement for protected paths.
 A human approval does not substitute for douwebot.
 
-`PR Review Gates` enforces M/L/XL against the recomputed size and exactly one matching label.
-Size S remains a manual judgment; review enforcement skips merge groups after admission.
+`PR Review Gates` enforces the douwebot approval on M/L/XL against the recomputed size and exactly one matching label.
+On size S the douwebot approval remains a manual judgment. `Gate: review findings dispositioned` applies at every size.
+Review enforcement skips merge groups after admission.
 On M, L and XL, the `Gate: clean douwebot approval` status reads `failure` until the head has a clean douwebot approval.
 Its description `Requires a marked, successful douwebot approval on the current head.` means douwebot has not approved this head.
 If douwebot already reviewed the head, triage its findings in step 4; otherwise trigger douwebot as step 3 of the loop says. Do not debug that failure as a CI failure.
@@ -67,6 +68,7 @@ If douwebot already reviewed the head, triage its findings in step 4; otherwise 
 `PR Review Checks` passed means its commit status reads `success` on the current head.
 [`.github/workflows/AGENTS.md`](../../../.github/workflows/AGENTS.md#pr-review-checks-reviews-every-same-repository-pull-request-head) and [`publish_pr_review_checks.py`](../../../.github/scripts/publish_pr_review_checks.py) define the workflow and its verdict.
 A maintainer can pass a head despite its findings by applying `pr-review-checks:accepted`. That label covers only the current head; a push removes it.
+The label passes only the `PR Review Checks` status: each finding still needs its reply for `Gate: review findings dispositioned`.
 Never apply `pr-review-checks:accepted` yourself.
 `PR Review Checks` posts as `github-actions[bot]` with its own `<!-- pr-review-checks run=… head=… -->` receipt. Its comments are not douwebot comments.
 
@@ -534,6 +536,9 @@ if the head changes, capture the new SHA and restart the loop.
      A `failure` whose description names `Incomplete`, `No result` or a rerun, and not `Blocking findings`, has no finding to triage. Rerun that `PR Review Checks` run once, then escalate.
      A rerun keeps the original run's `pr-review-checks.yml`, including the secrets its steps receive, but checks out its scripts from current `main`. When a fix to that workflow file has merged since, push a new head instead.
      When the run posted findings, its `target_url` links that review. Triage the findings in step 4.
+   - **`Gate: review findings dispositioned`:** required for every PR. Read it like `PR Review Checks`: it is a commit status on the PR head.
+     It reads `failure` until every inline thread a review bot started has a reply that counts. Step 4 posts those replies.
+     Its `target_url` links the `PR Review Gates` run, whose summary lists each unanswered thread and why each reply does not count.
    - **`CI Review`:** do not wait for it unless explicitly requested. On same-repository PRs, it runs
      when a user with write access approves the current head, when someone adds the `final-review`
      label, or on dispatch
@@ -571,10 +576,20 @@ if the head changes, capture the new SHA and restart the loop.
    An inline finding that an earlier run posted is not posted again, but it still counts toward the status. Find it in the earlier `PR Review Checks` threads.
    After you refute a `critical` or `high` finding, the status still fails. Ask a maintainer to apply `pr-review-checks:accepted` to the current head.
    For each comment:
-   - **Valid** → fix it, run targeted verification, commit, apply the pre-push gate and its scope/exemptions, push, and
-     complete the current-HEAD gates in steps 2 and 3. Then reply with what changed, react 👍,
-     and resolve the thread.
-   - **Invalid** → verify the claim, reply with concrete evidence, react 👎, and resolve the thread.
+   - **Valid** → fix it, run targeted verification, commit, apply the pre-push gate and its scope/exemptions, and
+     push. Then reply with what changed. On an inline finding from a review bot, open the reply, after any required
+     attribution line, with `Fixed in <sha>`, naming the fixing commit.
+     Complete the current-HEAD gates in steps 2 and 3, then react 👍 and resolve the thread.
+   - **Valid but out of scope** → file the follow-up issue the root `AGENTS.md` scope rule calls for, or find an
+     existing one. Reply with its link, react 👍, and resolve the thread.
+     On an inline finding from a review bot, open the reply, after any required attribution line, with `Tracked in #<n>`.
+     Without write access, cite an issue opened at or after the finding.
+     When the only matching issue predates the finding and you lack write access, ask a maintainer to post the `Tracked in`, and leave the thread open until they do.
+   - **Invalid** → verify the claim, reply with concrete evidence, and react 👎.
+     On an inline finding from a review bot, open the reply, after any required attribution line, with `Declined: <reason>`.
+     `Declined:` counts only from a user with write access, or from the PR author on a douwebot `Optional:` finding.
+     When your `Declined:` cannot count, ask a maintainer to post one, and leave the thread open until they do.
+     Otherwise resolve the thread.
      A repro you could not run — no credentials, no worker, no cassette — is not a refutation. Say
      what you tried and ask the user driving you; do not react 👎 on an untested claim.
    - **Close the bot verdict after its findings.** Verify every blocking finding against the current head.

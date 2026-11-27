@@ -1,0 +1,97 @@
+# description: Comments once per window on each open P1 or P2 issue that sat past its window, mentioning its owner.
+name: Priority SLA comments
+
+# `issue_pr_attention_monitor.py priority-sla` decides which issues are due a comment, and its
+# docstrings hold the rules. A run posts only when the `PRIORITY_SLA_POST` repository variable is
+# `true`, or when a manual run turns `dry_run` off. Any other run lists the comments it would post
+# in its summary and posts nothing.
+
+on:
+  schedule:
+    - cron: '43 14 * * 1-5'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: List the comments without posting them
+        type: boolean
+        default: true
+
+permissions: {}
+
+concurrency:
+  group: priority-sla
+  cancel-in-progress: false
+
+jobs:
+  plan:
+    if: github.repository == 'pydantic/pydantic-ai'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: read
+      # The linked pull requests in an issue's timeline.
+      pull-requests: read
+    outputs:
+      items: ${{ steps.plan.outputs.items }}
+      post: ${{ steps.plan.outputs.post }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/issue_pr_attention_monitor.py
+            .github/scripts/triage_models.py
+            .github/scripts/triage_telemetry.py
+          sparse-checkout-cone-mode: false
+      - name: Install pinned script dependencies
+        # logfire resolves its own dependencies, so only this read-only job installs it. The job
+        # that posts installs the pinned closure alone.
+        run: |
+          python3 -m pip install --quiet 'pydantic==2.13.4' \
+            'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4' \
+            --no-deps
+          python3 -m pip install --quiet 'logfire==5.6.0' || echo "logfire unavailable; telemetry disabled"
+      - name: List the issues due a comment
+        id: plan
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PRIORITY_SLA_POST: ${{ (github.event_name == 'workflow_dispatch' && !inputs.dry_run) || (github.event_name == 'schedule' && vars.PRIORITY_SLA_POST == 'true') }}
+          LOGFIRE_TRIAGE_WRITE_TOKEN: ${{ secrets.LOGFIRE_TRIAGE_WRITE_TOKEN }} # zizmor: ignore[secrets-outside-env] -- telemetry write token, in a job that can only read issues.
+          LOGFIRE_URL: ${{ vars.LOGFIRE_URL }}
+        run: python3 .github/scripts/issue_pr_attention_monitor.py priority-sla
+
+  post:
+    needs: [plan]
+    # A plan that failed on one issue still lists the others. `post` is written with `items`, so a
+    # plan that wrote neither posts nothing.
+    if: ${{ !cancelled() && needs.plan.outputs.post == 'true' && needs.plan.outputs.items != '[]' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+      issues: write
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          ref: ${{ github.event.repository.default_branch }}
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts/issue_pr_attention_monitor.py
+            .github/scripts/triage_models.py
+          sparse-checkout-cone-mode: false
+      - name: Install the typed-boundary dependency
+        # The `pydantic` pin and dependency closure every triage-script job shares, with `--no-deps`
+        # so pip resolves nothing else: this job holds a write-scoped token, so no new release may
+        # reach it.
+        run: >-
+          python3 -m pip install --quiet 'pydantic==2.13.4'
+          'pydantic-core==2.46.4' 'typing-extensions==4.16.0' 'annotated-types==0.7.0' 'typing-inspection==0.4.4'
+          --no-deps
+      - name: Post the comments, deciding each issue again first
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
+          PRIORITY_SLA_ITEMS: ${{ needs.plan.outputs.items }}
+        run: python3 .github/scripts/issue_pr_attention_monitor.py priority-sla-post
