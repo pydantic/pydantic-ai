@@ -4716,8 +4716,8 @@ class CompletionOrderWorkflow:
 
 def _completion_order_event_key(data: bytes) -> tuple[tuple[str, str], ...]:
     """The events one event-handler activity carries: a single event, or a burst of them under batched dispatch."""
-    payload = json.loads(data)['event']
-    events = payload if isinstance(payload, list) else [payload]
+    payload: Any = json.loads(data)['event']
+    events = cast(list[dict[str, Any]], payload if isinstance(payload, list) else [payload])
     return tuple((event['event_kind'], event['part']['tool_call_id']) for event in events)
 
 
