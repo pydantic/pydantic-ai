@@ -216,6 +216,25 @@ questions somewhere other than the terminal, declare ask_user again with a
 module whose Plugin returns AskUser(answerer=...) from get_capabilities with your
 own async answerer; see PLUGINS.md.
 
+With input.questions set to composer, pending questions and approvals instead leave
+composer focus, cursor, undo history, draft and attachments intact. F2 explicitly focuses
+the question's choices; F2 returns to the composer. Sending a draft while a question waits
+then offers Answer this question or Queue follow-up. Remember my choice saves only input.question_submit; /input edits or
+resets it. Each later question in a batch requires review or an explicit routing
+choice. Generic send, steering, queued prompts, custom text and this preference
+never approve tools. Approvals require explicit F2 focus before choosing an
+approval option. The live composer uses one input reader for all these controls;
+standalone answerers keep their exclusive picker handoff.
+
+/input configures send, steer and newline bindings and Mac/PC/neutral labels.
+Labels do not detect key transport or recover modifiers lost over SSH. /input test
+explicitly shows decoded keys/actions without submitting, interrupting, or
+showing draft/paste contents. Ctrl+G closes testing. Ctrl+J is the newline
+fallback in the composer and custom answers, never question confirmation, except
+on Windows, where Ctrl+Enter and Ctrl+J steer.
+F4 shows the queue's Edit, Remove and Steer actions. See the reference's
+Keyboard setup and Prompt area sections for the complete controls.
+
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
 multi-select questions. Enter submits nonblank text. Esc returns to the choices

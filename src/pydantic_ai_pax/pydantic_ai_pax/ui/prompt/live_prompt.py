@@ -7,6 +7,7 @@ from collections import deque
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from itertools import islice
+from typing import Literal
 
 import anyio
 from PIL import Image
@@ -18,13 +19,22 @@ from termflow.tui.completion import CompleteEvent, Completion, Document
 from termflow.tui.layout import truncate
 
 from pydantic_ai_pax.commands import Commands, expand_bare_command, is_command_input
+from pydantic_ai_pax.config.input_bindings import (
+    BusyDelivery,
+    InputAction,
+    InputBindings,
+    KeyboardLabels,
+    canonical_key,
+)
 from pydantic_ai_pax.ui import telemetry
 from pydantic_ai_pax.ui.menus.menu_worker import holding_output
 from pydantic_ai_pax.ui.prompt.image_input import ATTACHED, ImageInput, clipboard_images, pasted_paths, read_images
+from pydantic_ai_pax.ui.prompt.input_setup import KeyTest
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
 from pydantic_ai_pax.ui.prompt.prompt_buffer import PromptBuffer
 from pydantic_ai_pax.ui.prompt.prompt_completion import CompletionWorker
 from pydantic_ai_pax.ui.prompt.prompt_keys import PromptKeys, ctrl_enter_steers
+from pydantic_ai_pax.ui.prompt.prompt_questions import PromptQuestions
 from pydantic_ai_pax.ui.prompt.prompt_queue import QueuedPrompt, can_steer, input_kind
 from pydantic_ai_pax.ui.prompt.prompt_resize import resize_notifications
 from pydantic_ai_pax.ui.prompt.prompt_selection import LINK_END, LINK_START, hyperlink
@@ -58,6 +68,9 @@ class PromptRewind(Exception):
 
 _Submission = QueuedPrompt | KeyboardInterrupt | EOFError | PromptRewind
 
+SendRoute = Literal['save', 'choose-save', 'question', 'choose', 'send', 'after-turn', 'next-checkpoint']
+"""What Send does with the draft now; each caller words it for its own surface."""
+
 
 class LivePrompt:
     """One terminal surface, one keyboard reader, sequential queued submissions."""
@@ -80,6 +93,11 @@ class LivePrompt:
         spinner: Callable[[], Spinner] = lambda: BUILTIN_SPINNERS[DEFAULT_SPINNER],
         panel: Callable[[str], Sequence[str]] = lambda _: (),
         queue_changed: Callable[[], None] = lambda: None,
+        bindings: Callable[[], InputBindings] = InputBindings,
+        keyboard_labels: Callable[[], KeyboardLabels] = lambda: 'neutral',
+        busy_delivery: Callable[[], BusyDelivery] = lambda: 'after-turn',
+        remember_busy_delivery: Callable[[BusyDelivery], object] = lambda _: None,
+        input_changed: Callable[[], bool] = lambda: False,
         queue_in_toolbar: Callable[[], bool] | None = None,
         full_screen: bool = False,
     ) -> None:
@@ -110,6 +128,16 @@ class LivePrompt:
         self.spinner = spinner
         self.panel = panel
         self.queue_changed = queue_changed
+        self.bindings = bindings
+        self.keyboard_labels = keyboard_labels
+        self.busy_delivery = busy_delivery
+        self.remember_busy_delivery = remember_busy_delivery
+        self.input_changed = input_changed
+        self.key_test: KeyTest | None = None
+        # A shell's `SessionRuntime.bind` replaces this with the shown session's questions and preference.
+        self.questions = PromptQuestions(
+            paint=self.paint, preference=lambda: 'ask', remember=lambda _: None, show=self.console.print
+        )
         self.queue_in_toolbar = queue_in_toolbar
         self.ctrl_enter_steers = ctrl_enter_steers()
         """Whether Ctrl+Enter (and Ctrl+J, which older terminals send for it) steers, as Alt+Enter does.
@@ -126,6 +154,7 @@ class LivePrompt:
             source=get_app_session().input,
             feed=self.feed,
             eof=lambda: self.submit(EOFError()),
+            unknown=self.unrecognized_key,
         )
         self._submissions: deque[_Submission] = deque()
         # The queued prompt taken out of the queue while the draft edits it, the submission it returns after
@@ -133,6 +162,11 @@ class LivePrompt:
         self._editing: QueuedPrompt | None = None
         self._editing_after: _Submission | None = None
         self._shelved_draft = ''
+        self._queue_open = False
+        self._delivery_choice = False
+        self._queue_armed = False
+        self._queue_selected: QueuedPrompt | None = None
+        self._action_draft: PromptBuffer | None = None
         self._recall_queue: list[QueuedPrompt] = []
         self._recall_target: QueuedPrompt | None = None
         self._search_target: QueuedPrompt | None = None
@@ -166,12 +200,15 @@ class LivePrompt:
         """Every text the editor may still send, whose image attachments must stay.
 
         That is the draft, the one Esc restores while a queued prompt is edited, the one Down restores during a
-        recall walk, the one a search hides, and the queued prompts.
+        recall walk of the draft or of the composer a queue edit set aside, the one a search hides, and the
+        queued prompts.
         """
         shelved = (self._shelved_draft,) if self._editing is not None else ()
-        walked = (self.buffer.saved_draft,) if self.buffer.history_index is not None else ()
+        composers = (self.buffer,) if self._action_draft is None else (self.buffer, self._action_draft)
+        walked = tuple(composer.saved_draft for composer in composers if composer.history_index is not None)
         searched = (self.buffer.search_original,) if self.buffer.search is not None else ()
-        return (self.buffer.text, *shelved, *walked, *searched, *self.queued_messages)
+        action_draft = (self._action_draft.text,) if self._action_draft is not None else ()
+        return (self.buffer.text, *shelved, *walked, *searched, *action_draft, *self.queued_messages)
 
     def queued_prompts(self) -> list[QueuedPrompt]:
         """The queued prompts, oldest first, without control signals.
@@ -182,6 +219,10 @@ class LivePrompt:
         if self._editing is not None:
             items.insert(self._return_index(), self._editing)
         return [item for item in items if isinstance(item, QueuedPrompt)]
+
+    def runnable_prompts(self) -> list[QueuedPrompt]:
+        """The queued prompts that can run, without the one being edited, which the pending count leaves out."""
+        return [item for item in self._submissions if isinstance(item, QueuedPrompt)]
 
     def _return_index(self) -> int:
         after = self._editing_after
@@ -224,11 +265,12 @@ class LivePrompt:
 
         While the recall walk lasts, Down still restores that draft, so it is not added twice. Joined, a
         `/command` or `!` line on either side would turn the other into part of the command, or itself into
-        prompt text, so the set-aside draft goes to history instead, where Up finds it.
+        prompt text, so the set-aside draft goes to history instead, where Up finds it. A composer a queue
+        action set aside is not joined: sending the draft brings it back whole.
         """
         if self._editing is None:
             return
-        if self.buffer.history_index is None and (shelved := self._shelved_draft):
+        if self._action_draft is None and self.buffer.history_index is None and (shelved := self._shelved_draft):
             edit = self.buffer.text.strip()
             joined = '\n'.join(filter(None, [edit, shelved]))
             # A bare `!` edit is a prompt alone, but joined it would send the draft to the shell.
@@ -243,7 +285,7 @@ class LivePrompt:
         self._drop_editing()
 
     def take_queued(self) -> list[QueuedPrompt]:
-        """Remove the queued prompts and return them, as when another session reads this editor next."""
+        """Remove pending entries without changing their IDs, as another session reads this editor next."""
         self._edit(None)
         queued = self.queued_prompts()
         for entry in queued:
@@ -266,12 +308,9 @@ class LivePrompt:
         Dropping the one being edited ends the edit: the draft stays, and Enter queues it as a new prompt.
         """
         if entry is self._editing:
+            self._delivery_choice = False
             self._keep_edit_as_draft()
         else:
-            if entry is self._editing_after:
-                # The prompt being edited returns after the one before this, not to the front.
-                index = self._submissions.index(entry)
-                self._editing_after = self._submissions[index - 1] if index else None
             self._discard(entry)
         self.paint()
 
@@ -288,6 +327,10 @@ class LivePrompt:
         self._submitted.set()
 
     def _discard(self, entry: QueuedPrompt) -> None:
+        # Removing the anchor does not consume the earlier work ahead of a held edit.
+        if entry is self._editing_after:
+            index = self._submissions.index(entry)
+            self._editing_after = self._submissions[index - 1] if index else None
         self._submissions.remove(entry)
         if not self._submissions and not self._wake_pending:
             self._submitted.clear()
@@ -296,9 +339,11 @@ class LivePrompt:
     async def read(self) -> str:
         """Consume queued submissions in order, first showing the status the shell set up for this read.
 
-        With nothing else queued the shell is idle, so a queued prompt being edited is just the draft now.
+        With nothing else queued the shell is idle, so a queued prompt being edited is just the draft now, unless an
+        explicit delivery choice still holds it.
         """
-        if not self._submissions:
+        # Keep the reserved edit while a delivery choice spans completion of the surrounding queue.
+        if not self._submissions and not self._delivery_choice:
             self._keep_edit_as_draft()
         self.paint()
         await self._submitted.wait()
@@ -306,7 +351,8 @@ class LivePrompt:
         self._animated_at = self.clock()
         self._animate.set()
         if not self._submissions:
-            self._keep_edit_as_draft()
+            if not self._delivery_choice:
+                self._keep_edit_as_draft()
             self._wake_pending = False
             self._submitted.clear()
             raise PromptWakeup
@@ -328,22 +374,37 @@ class LivePrompt:
                 self.buffer.insert(text, paste=True)
             else:
                 self.buffer.insert(self.images.attach(read_images(paths) if text is not None else clipboard_images()))
-                self.images.notice = ATTACHED
+                self.images.notice = ATTACHED.replace('Enter', self.key_label('send'))
         except (OSError, ValueError, NotImplementedError, Image.DecompressionBombError) as exc:
             self.images.paste_failed(exc, clock=self.clock)
 
     def feed(self, key: str, data: str = '') -> None:
         """Route editing, completion and interrupts without rendering a widget tree."""
-        if key == 'ctrl-enter':
-            key = 'alt-enter' if self.ctrl_enter_steers else 'enter'
-        elif key == 'ctrl-j' and self.ctrl_enter_steers:
-            # Windows Terminal sends Ctrl+Enter as LF unless it reports modified keys.
-            key = 'alt-enter'
+        if self.key_test is not None:
+            self.calibrate(key, data)
+            self.paint()
+            return
+        key = self.effective_key(key)
         if key in TRANSCRIPT_KEYS:
             # Leave the draft alone, and the notice unless a drag copied text.
             if self.output.transcript_key(key, data):
                 self.notice = 'Copied the selection to the clipboard.'
                 self.paint()
+            return
+        if self.queue_key(key, data):
+            self.paint()
+            return
+        width, height = self.console.size
+        if self.questions.menu is not None and (key == 'f2' or self.questions.focused) and min(width, height) < 6:
+            # Below six rows a focused question cannot show its choice, so no key may choose one unseen.
+            self.questions.focused = False
+            self.notice = 'Enlarge the terminal to review the question; nothing was chosen.'
+            self.paint()
+            return
+        if self.questions.feed(
+            key, data, draft=self.buffer, bindings=self.bindings(), queue=lambda: self.accept(follow_up=True)
+        ):
+            self.paint()
             return
         self.notice = ''
         if key != 'escape':
@@ -352,8 +413,268 @@ class LivePrompt:
             self._route(key, data)
         self.paint()
 
+    def effective_key(self, key: str) -> str:
+        """Fold Ctrl+Enter into Enter, or into the steer binding where Ctrl+Enter steers.
+
+        Windows Terminal sends Ctrl+Enter as Ctrl+J unless it reports modified keys, so Ctrl+J steers there too.
+        """
+        if self.ctrl_enter_steers and key in ('ctrl-enter', 'ctrl-j'):
+            return canonical_key(self.bindings().steer)
+        return 'enter' if key == 'ctrl-enter' else key
+
+    def key_label(self, action: InputAction) -> str:
+        """Name an action's key as hints show it.
+
+        Newline names Ctrl+J, which every terminal can send, and steer names Ctrl+Enter where Ctrl+Enter steers,
+        since Ctrl+J steers there too.
+        """
+        if action == 'steer' and self.ctrl_enter_steers:
+            return 'Ctrl+Enter'
+        if action == 'newline' and not self.ctrl_enter_steers:
+            return 'Ctrl+J'
+        return self.bindings().label(action, keyboard=self.keyboard_labels())
+
+    def queue_key(self, key: str, data: str) -> bool:
+        """Visible queue actions keep an entry identity, never a position that can race turn completion."""
+        if self._delivery_choice:
+            return self.delivery_key(key, data)
+        if key == 'f4':
+            self._queue_open = not self._queue_open
+            self._queue_selected = next(iter(self.runnable_prompts()), None)
+            self._queue_armed = False
+            # A key that closes the panel reaches the editor, so it must not confirm a question focused before F4.
+            self.questions.focused = self.questions.routing = False
+            asyncio.get_running_loop().call_soon(self.arm_queue)
+            return True
+        if not self._queue_open:
+            return False
+        if not self._queue_armed:
+            if key == 'paste':
+                self.paste(data)
+            elif len(key) == 1 and key.isprintable():
+                self.buffer.insert(key)
+            return True
+        if key == 'm':
+            mode = 'next-checkpoint' if self.busy_delivery() == 'after-turn' else 'after-turn'
+            self.remember_busy_delivery(mode)
+            return True
+        if key in ('escape', 'ctrl-c'):
+            self._queue_open = False
+            return True
+        return self.queue_entry_key(key)
+
+    def delivery_key(self, key: str, data: str) -> bool:
+        """Require fresh, explicit intent before changing a mixed queue's delivery order."""
+        if key == 'paste':
+            self.paste(data)
+        elif not self._queue_armed:
+            if len(key) == 1 and key.isprintable():
+                self.buffer.insert(key)
+        elif key in ('escape', 'ctrl-c'):
+            self._delivery_choice = False
+            self.notice = ''
+        elif key == 'q':
+            self._delivery_choice = False
+            self.notice = ''
+            self.accept(follow_up=True, keep_position=True)
+        elif key == 's':
+            if self._steered(self.buffer.text.strip()):
+                self.finish_steering(self.buffer.text.strip())
+            else:
+                self.notice = 'Cannot steer; nothing was sent.'
+        return True
+
+    def choose_delivery(self) -> None:
+        """Hold the entire draft/edit unchanged while the user chooses actual delivery timing."""
+        self._delivery_choice = True
+        self._queue_open = False
+        self._queue_armed = False
+        asyncio.get_running_loop().call_soon(self.arm_queue)
+
+    def queue_entry_key(self, key: str) -> bool:
+        """Apply an explicit action only while the selected entry is still runnable; other keys close the panel.
+
+        A key the panel does not handle falls through to the editor, so typing after F4 keeps its letters.
+        """
+        entries = self.runnable_prompts()
+        entry = self._queue_selected
+        if entry is None:
+            # The panel opened on an empty queue, so it offers only the delivery mode.
+            self._queue_open = False
+            return False
+        if entry not in entries:
+            # The selected entry ran or was removed while the panel was open: its actions explain why they do nothing,
+            # and any other key reaches the editor.
+            self._queue_open = False
+            if key in ('e', 'd', 's'):
+                self.notice = 'That message is no longer queued.'
+                return True
+            return False
+        match key:
+            case 'up' | 'down':
+                self._queue_selected = entries[(entries.index(entry) + (-1 if key == 'up' else 1)) % len(entries)]
+            case 'e':
+                self.edit_queue_entry(entry)
+                self._queue_open = False
+            case 'd':
+                self.discard(entry)
+                self._queue_open = False
+            case 's':
+                if self._steered(entry.text):
+                    self.discard(entry)
+                else:
+                    self.notice = 'Cannot steer this input now. Commands and shell lines never steer.'
+                self._queue_open = False
+            case _:
+                self._queue_open = False
+                return False
+        return True
+
+    def arm_queue(self) -> None:
+        """Only fresh input after opening the queue can activate its actions."""
+        self._queue_armed = True
+
+    def edit_queue_entry(self, entry: QueuedPrompt) -> None:
+        """Use the prerequisite's held-entry lifecycle, retaining the entire earlier composer."""
+        if self._editing is not None:
+            self.stop_editing()
+        self.questions.focused = self.questions.routing = False
+        # A history search can end an edit and leave the composer set aside; a second edit keeps that composer.
+        if self._action_draft is None:
+            self._action_draft = self.buffer
+        self._shelved_draft = self._action_draft.text
+        self._edit(entry)
+        self.buffer = PromptBuffer(history=self.buffer.history)
+        self.buffer.replace(entry.text)
+        self.refresh_completions()
+
+    def restore_action_draft(self) -> None:
+        """Finish an explicit queue action without losing the earlier cursor or undo history."""
+        if self._action_draft is not None:
+            self.buffer, self._action_draft = self._action_draft, None
+            self.refresh_completions()
+
+    def unrecognized_key(self, _: str) -> None:
+        """Report unsupported controls without echoing bytes that could contain pasted text."""
+        if self.key_test is not None:
+            self.key_test.report = (
+                'Unsupported terminal key report (contents hidden). No action. '
+                'Try Ctrl+J for newline or a tested alternative binding. Ctrl+G closes.'
+            )
+            self.paint()
+
+    def calibrate(self, key: str, data: str) -> None:
+        """Observe keys without executing actions; retain text typed during the test."""
+        assert self.key_test is not None
+        if key == 'ctrl-g':
+            # Keep the rest of this decoder batch in calibration, even held Enter.
+            asyncio.get_running_loop().call_soon(self.end_calibration)
+            return
+        self.key_test.observe(
+            key,
+            keyboard=self.keyboard_labels(),
+            action=self.input_action(key),
+            steer=self.key_label('steer'),
+            newline=self.key_label('newline'),
+        )
+        if key == 'paste' or (len(key) == 1 and key.isprintable()):
+            self.buffer.insert(data if key == 'paste' else key, paste=True)
+
+    def input_action(self, key: str) -> str:
+        """Describe the action calibration suppresses in this composer context."""
+        action = self.bindings().action(self.effective_key(key))
+        if action is not None:
+            return self.binding_action(action)
+        match key:
+            case 'ctrl-c':
+                return 'interrupt' if self.interrupts.active else 'clear draft / exit gesture'
+            case 'escape':
+                return (
+                    'stop editing'
+                    if self._editing is not None
+                    else 'interrupt'
+                    if self.interrupts.active
+                    else 'dismiss / rewind gesture'
+                )
+            case 'ctrl-d':
+                return 'delete' if self.buffer.text else 'exit'
+            case 'ctrl-l':
+                return 'clear transcript'
+            case 'ctrl-v' | 'alt-v':
+                return 'paste image'
+            case 'ctrl-r':
+                return 'search history'
+            case 'tab' | 'backtab':
+                return 'complete'
+            case 'f2':
+                return 'focus question' if self.questions.menu is not None else 'no pending question'
+            case 'f4':
+                return 'queue actions'
+            case _:
+                return 'edit'
+
+    def binding_action(self, action: InputAction) -> str:
+        """Describe remappable actions using the same current state as their handlers."""
+        match action:
+            case 'send':
+                match self.send_route():
+                    case 'save':
+                        return 'save queued edit'
+                    case 'choose-save':
+                        return 'choose save delivery'
+                    case 'question':
+                        return self.questions.hint(
+                            send_label=self.key_label('send'), newline_label=self.key_label('newline')
+                        )
+                    case 'choose':
+                        return 'choose delivery'
+                    case 'send':
+                        return 'send'
+                    case 'after-turn':
+                        return 'after turn'
+                    case 'next-checkpoint':
+                        return 'next checkpoint'
+            case 'steer':
+                if not self.buffer.text.strip():
+                    return (
+                        'steer oldest queued'
+                        if self.interrupts.active and self._submissions
+                        else 'no active steering target'
+                    )
+                return 'steer' if self.interrupts.active else 'send'
+            case 'newline':
+                return 'newline'
+
+    def send_route(self) -> SendRoute:
+        """Whether Send saves, answers, or delivers this draft, and when."""
+        if self._editing is not None:
+            return (
+                'choose-save'
+                if self.busy_delivery() == 'next-checkpoint' and can_steer(expand_bare_command(self.buffer.text))
+                else 'save'
+            )
+        if self.questions.menu is not None:
+            return 'question'
+        if (
+            self._submissions
+            and self.busy_delivery() == 'next-checkpoint'
+            and can_steer(expand_bare_command(self.buffer.text))
+        ):
+            return 'choose'
+        if not self.interrupts.active:
+            return 'send'
+        if not can_steer(expand_bare_command(self.buffer.text)):
+            return 'after-turn'
+        return self.busy_delivery()
+
+    def end_calibration(self) -> None:
+        """Return to the unchanged composer once the explicit close key's batch ends."""
+        self.key_test = None
+        self.paint()
+
     def _route(self, key: str, data: str) -> None:
         cycles = key in ('up', 'down') and self._arrows_cycle_completions()
+        action = self.bindings().action(key)
         match key:
             case 'ctrl-c':
                 self.interrupt()
@@ -373,11 +694,11 @@ class LivePrompt:
                 self.search(key)
             case 'tab' | 'backtab':
                 self.complete(backwards=key == 'backtab')
-            case 'enter':
+            case _ if action == 'send':
                 self.accept()
-            case 'alt-enter':
+            case _ if action == 'steer':
                 self.steer_draft() if self.buffer.text.strip() else self.steer_queued()
-            case 'shift-enter' | 'ctrl-j':
+            case _ if action == 'newline':
                 self.buffer.insert('\n')
             case 'up' | 'down' if cycles:
                 self.complete(backwards=key == 'up', accept_single=False)
@@ -425,7 +746,10 @@ class LivePrompt:
             self._remove_editing()
         self.buffer.search = None
         self.buffer.history_index = None
-        self.buffer.replace(self._shelved_draft)
+        if self._action_draft is None:
+            self.buffer.replace(self._shelved_draft)
+        else:
+            self.restore_action_draft()
         self.refresh_completions()
 
     def _remove_editing(self) -> None:
@@ -496,8 +820,8 @@ class LivePrompt:
             return True
         return False
 
-    def accept(self) -> None:
-        """Accept a completion that changes the draft, or else queue the nonempty draft."""
+    def accept(self, *, follow_up: bool = False, keep_position: bool = False) -> None:
+        """Accept a completion, route a pending question, or choose delivery for the nonempty draft."""
         if self._selection >= 0:
             item = self._completions[self._selection]
             if self.buffer.text[self._completion_start(item) : self.buffer.cursor] != item.text:
@@ -505,7 +829,16 @@ class LivePrompt:
                 return
             # The highlighted command is already typed in full, so Enter runs it.
             self.dismiss_completions()
+        if (
+            not follow_up
+            and self._editing is None
+            and input_kind(self.buffer.text) == 'prompt'
+            and self.questions.route(self.buffer)
+        ):
+            return
         text = self.buffer.text.strip()
+        if not keep_position and text and self.checkpoint_delivery(expand_bare_command(text)):
+            return
         # The prompt being edited is out of the queue: each outcome below returns it or leaves it out.
         target, self._editing = self._editing, None
         if not text and target is None:
@@ -513,23 +846,41 @@ class LivePrompt:
         recalled = self.buffer.history_index is not None
         self.buffer.history_index = None
         self.buffer.reset()
-        if target is not None:
+        if target is not None and self._action_draft is None:
             # Every way out of an edit brings back the draft set aside to make it, as Esc does.
             self.buffer.replace(self._shelved_draft)
             self.refresh_completions()
         if target is not None and not text:
             self.queue_changed()
             telemetry.record('prompt submitted', route='discarded queued')
+            self.restore_action_draft()
             return
         command = expand_bare_command(text)
         if target is not None and command == target.text:
             self._put_back(target)
+            self.restore_action_draft()
             return
         self.output.view.follow()
         self.history.append_string(text)
         self.buffer.history.append(text)
         route = self._deliver(command, recorded=text, target=target)
+        self.restore_action_draft()
         telemetry.record('prompt submitted', route=route, recalled=recalled, **_submission(command, self.commands))
+
+    def checkpoint_delivery(self, command: str) -> bool:
+        """Use native delivery only when unambiguous; otherwise keep the draft for an explicit choice."""
+        if self.busy_delivery() != 'next-checkpoint' or not can_steer(command):
+            return False
+        if not self.interrupts.active and self._editing is None and not self._submissions:
+            return False
+        if self._editing is not None or self._submissions:
+            self.choose_delivery()
+        elif self._steered(command):
+            self.finish_steering(self.buffer.text.strip())
+        else:
+            self.choose_delivery()
+            self.notice = 'Cannot steer; nothing was sent.'
+        return True
 
     def _deliver(self, command: str, *, recorded: str, target: QueuedPrompt | None) -> str:
         """Run, rewrite, or queue an accepted draft, returning the route telemetry records."""
@@ -578,8 +929,23 @@ class LivePrompt:
         """Send the draft to the active run now, or accept it as Enter would when it cannot steer."""
         text = self.buffer.text.strip()
         if not self._steered(text):
-            self.accept()
+            if (
+                self.busy_delivery() == 'next-checkpoint'
+                and self.interrupts.active
+                and can_steer(expand_bare_command(text))
+            ):
+                self.choose_delivery()
+                self.notice = 'Cannot steer; nothing was sent.'
+            else:
+                self.accept()
             return
+        self.finish_steering(text)
+
+    def finish_steering(self, text: str) -> None:
+        """Consume a draft only after native steering accepted it, restoring any earlier composer."""
+        if self.busy_delivery() == 'next-checkpoint':
+            self.notice = f'Next checkpoint (sent to active run): {" ".join(terminal_text(text).split())}'
+        self._delivery_choice = False
         # The steered text may be an edit of a queued prompt, which then no longer waits for its own turn.
         edited = self._editing is not None
         self._drop_editing()
@@ -589,10 +955,11 @@ class LivePrompt:
         self.buffer.history.append(text)
         self.buffer.history_index = None
         self.buffer.reset()
-        if edited:
+        if edited and self._action_draft is None:
             # As every other way out of an edit, steering it brings back the draft set aside by Up.
             self.buffer.replace(self._shelved_draft)
             self.refresh_completions()
+        self.restore_action_draft()
         telemetry.record('prompt steer', steered=True, source='draft')
 
     def steer_queued(self) -> None:
@@ -708,30 +1075,104 @@ class LivePrompt:
             self.buffer.history_index is None and is_command_input(typed) and not any(char.isspace() for char in typed)
         )
 
+    def input_control_frame(self, *, width: int, height: int) -> tuple[str, ...] | None:
+        """Render explicit key testing or queue actions without a second input owner."""
+        if self.key_test is not None:
+            return tuple(
+                self.key_test.report[start : start + width] for start in range(0, len(self.key_test.report), width)
+            )[: max(1, height - 2)]
+        if self._delivery_choice:
+            return self.delivery_frame(width=width, height=height)
+        if self.questions.focused:
+            rows = self.questions.rows(
+                width=width, height=height, send_label=self.key_label('send'), newline_label=self.key_label('newline')
+            )
+            # A focused question the composer frame would cut takes the frame, so its chosen row stays visible.
+            if len(rows) > height - 6 - (self._editing is not None):
+                return rows[: max(1, height - 2)]
+        if not self._queue_open:
+            return None
+        entry = self._queue_selected
+        if entry is None:
+            return (
+                truncate(f'New busy: {self.busy_delivery().replace("-", " ")} - m change - Esc close', width),
+                *self.buffer.rows(width=width, limit=max(1, height - 3)),
+            )
+        preview = ' '.join(terminal_text(entry.text).split())
+        return (
+            truncate('e Edit - d Remove - s Steer - Esc close', width),
+            truncate(f'New busy: {self.busy_delivery().replace("-", " ")} - m change', width),
+            truncate('Queue: Up/Down choose (after turn)', width),
+            truncate(preview, width),
+            *self.buffer.rows(width=width, limit=max(1, height - 6)),
+        )
+
+    def delivery_frame(self, *, width: int, height: int) -> tuple[str, ...]:
+        """Show actual timing and failed steering alongside explicit delivery choices."""
+        timing = 'after turn' if self.interrupts.active else 'separate turn'
+        steer = (
+            's Steer/promote: next checkpoint'
+            if can_steer(expand_bare_command(self.buffer.text))
+            else 'Steer unavailable: commands/shell/blank'
+        )
+        notice = (truncate(' '.join(terminal_text(self.notice).split()), width),) if self.notice else ()
+        return (
+            truncate('Delivery: next checkpoint requested', width),
+            truncate(steer, width),
+            truncate(f'q Keep queue position: {timing}', width),
+            truncate('Esc cancel: keep draft/edit', width),
+            *notice,
+            truncate('Earlier queued entries stay after turn', width),
+            *self.buffer.rows(width=width, limit=max(1, height - 8 - len(notice))),
+        )[: max(1, height - 2)]
+
     def frame(self) -> tuple[str, ...]:
         """Build the reserved rows; transcript contents are deliberately absent."""
         width, height = self.console.size
         width, height = max(1, width), max(2, height)
         muted, reset = theme.sgr(theme.MUTED), '\x1b[0m'
-        if width < 6 or height < 6:
+        controls = self.input_control_frame(width=width, height=height)
+        if controls is not None:
+            return controls
+        if width < 6 or height < 6 + (self._editing is not None):
             self._panel_shown = False
             return tuple(self.buffer.rows(width=width, limit=1))
         # `paint` keeps `height - 2` rows; the title, one draft row, the rule, and the footer need four.
         room = height - 6
         limit = max(1, height // 6)
+        question_rows = list(
+            self.questions.rows(
+                width=width,
+                height=height,
+                send_label=self.key_label('send'),
+                newline_label=self.key_label('newline'),
+            )
+        )
         panel = [truncate(row, width) + reset for row in self.panel(self.spinner().frame(self.clock()))]
+        if question_rows:
+            panel = [*question_rows, *panel]
         self._panel_shown = bool(panel)
-        rows = _capped(panel, limit=limit, room=room, more=muted + '+{} more' + reset)
+        rows = _capped(
+            panel,
+            limit=max(limit, len(question_rows)),
+            room=room - (self._editing is not None),
+            more=muted + '+{} more' + reset,
+        )
+        # Only opt-in checkpoint delivery has two timings for a preview to tell apart.
+        timing = ' (after turn)' if self.busy_delivery() == 'next-checkpoint' else ''
         queued = [
             muted
             + truncate(
-                f'{"Command" if is_command_input(entry.text) else "Follow-up"}'
-                f'{" (editing)" if entry is self._editing else ""}: {" ".join(terminal_text(entry.text).split())}',
+                f'{"Command" if is_command_input(entry.text) else "Follow-up"}{timing}: '
+                f'{" ".join(terminal_text(entry.text).split())}',
                 width,
             )
             + reset
-            for entry in self.queued_prompts()
+            for entry in self.runnable_prompts()
         ]
+        if self._editing is not None:
+            # Keep the non-runnable state visible even when the queue preview is capped.
+            rows.insert(0, muted + truncate("Editing - won't send while you edit it", width) + reset)
         rows += _capped(queued, limit=limit, room=room - len(rows), more=muted + '+{} more queued' + reset)
         title = self._working_title(width, muted=muted) if self.interrupts.active else ''
         rows.append(muted + title + '─' * max(0, width - visible_length(title)) + reset)
@@ -758,6 +1199,10 @@ class LivePrompt:
         if pinned:
             rows.append(truncate(pinned, width) + reset)
         rows.append(muted + truncate(self._footer(width, muted=muted), width) + reset)
+        # Hints use spare space, without displacing the draft, pinned status, or pending work. Until an input
+        # setting changes, they show only while a question waits in the composer.
+        if len(rows) < height - 2 and (self.input_changed() or self.questions.menu is not None):
+            rows.insert(-1 - bool(pinned), muted + truncate(self.input_hint(), width) + reset)
         return tuple(rows)
 
     def _working_title(self, width: int, *, muted: str) -> str:
@@ -769,15 +1214,14 @@ class LivePrompt:
         elapsed = format_duration(self.interrupts.elapsed)
         if self._editing is not None:
             # Esc stops the edit rather than interrupting, so the edit's keys replace the Esc hint.
-            keys = ['Enter to save', 'Esc to stop editing', 'Clear it to remove']
+            keys = self.working_keys()
             candidates = [[elapsed, *keys], keys, ['Esc to stop editing']]
         else:
             # Esc, unlike Ctrl+C, never counts toward the double press that quits.
             candidates = [[elapsed, 'Esc to interrupt']]
             # Queue and steer hints only matter once there is something to send.
-            if self.queued_messages or self.buffer.text.strip():
-                keys = ['Enter to queue', f'{"Ctrl+Enter" if self.ctrl_enter_steers else "Alt+Enter"} to steer']
-                candidates = [[*candidates[0], *keys], [elapsed, *keys], keys]
+            if keys := self.working_keys():
+                candidates = [[elapsed, 'Esc to interrupt', *keys], [elapsed, *keys], keys]
             candidates.append(['Esc to interrupt'])
         title = ''
         for parts in candidates:
@@ -789,14 +1233,53 @@ class LivePrompt:
             title = f'{head}{theme.sgr(theme.ACCENT)}{glyph}{reset}{muted}{title[len(head + glyph) :]}'
         return title
 
+    def working_keys(self) -> list[str]:
+        """The working title's keys: queue edits and question routing come before generic sending.
+
+        After-turn delivery keeps "Enter to queue"; only opt-in delivery names its timing.
+        """
+        send = self.key_label('send')
+        if self._editing is not None:
+            save = 'choose delivery' if self.send_route() == 'choose-save' else 'save'
+            return [f'{send} to {save}', 'Esc to stop editing', 'Clear it to remove']
+        if self.questions.menu is not None:
+            return [self.questions.hint(send_label=send, newline_label=self.key_label('newline'))]
+        if not (self.queued_messages or self.buffer.text.strip()):
+            return []
+        route = self.send_route()
+        if self.busy_delivery() == 'after-turn':
+            action = 'queue'
+        elif route == 'choose':
+            action = 'choose delivery'
+        else:
+            action = 'send at next checkpoint' if route == 'next-checkpoint' else 'queue after turn'
+        return [f'{send} to {action}', f'{self.key_label("steer")} to steer']
+
+    def input_hint(self) -> str:
+        """Keep effective controls discoverable without truncating notices or model status."""
+        send, newline = self.key_label('send'), self.key_label('newline')
+        if self._editing is not None:
+            steer = self.key_label('steer')
+            action = 'Choose delivery' if self.send_route() == 'choose-save' else 'Save/requeue'
+            return f'{send}: {action} - Esc: Stop editing - {steer}: Steer/send - Clear to remove'
+        if self.questions.menu is not None:
+            return self.questions.hint(send_label=send, newline_label=newline)
+        if self.queued_messages:
+            return f'F4 Queue: Edit / Remove / Steer / Delivery - {newline} newline - /input setup'
+        action = self.binding_action('send')
+        return f'{send}: {action} - F4 Delivery - {newline} newline - /input'
+
     def _footer(self, width: int, *, muted: str) -> str:
         """The bottom row: the history search, or else a notice or the toolbar, with the queue's length."""
         if self.buffer.search is not None:
             return f'reverse-i-search: {self.buffer.search}'
         notice = self.notice or self.images.notice or self._completion_error
         queued = ''
-        if self.queued_messages and (self.queue_in_toolbar is None or (notice and self.queue_in_toolbar())):
-            queued = f'{muted} | queued: {len(self.queued_messages)}'
+        # The count is of what can run, so a prompt being edited is not in it.
+        if (runnable := self.runnable_prompts()) and (
+            self.queue_in_toolbar is None or (notice and self.queue_in_toolbar())
+        ):
+            queued = f'{muted} | queued: {len(runnable)}'
         footer = (
             ' '.join(terminal_text(notice).split())
             if notice

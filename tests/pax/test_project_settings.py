@@ -1063,3 +1063,12 @@ def test_the_banner_prints_unknown_keys_as_written_and_inert(tmp_path: Path) -> 
     text = output.getvalue()
     assert 'Ignoring unknown settings: [red]key[/red], esc\\x1b]0;title, line\\x0abreak\n' in text
     assert '\x1b' not in text
+
+
+def test_the_launch_banner_names_input_setup_in_its_static_hints() -> None:
+    output = io.StringIO()
+    print_welcome(ProjectSettings(), Console(file=output, width=300))
+    assert (
+        '/new starts a session; /resume restores one; /input sets up keys; /exit quits. Esc or Ctrl+C interrupts a turn.\n'
+        in output.getvalue()
+    )

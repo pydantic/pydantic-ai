@@ -117,10 +117,27 @@ A few keys to know:
 | <kbd>Esc</kbd> or <kbd>Ctrl</kbd>+<kbd>C</kbd> | Stop the current turn. Your draft stays, and queued messages run next, in order. |
 | <kbd>Up</kbd> | Edit a queued message. <kbd>Esc</kbd> stops editing; clear it to remove it. |
 | <kbd>Esc</kbd> <kbd>Esc</kbd> | Rewind to an earlier prompt ([see below](#rewind-a-conversation)). |
+| <kbd>Ctrl</kbd>+<kbd>J</kbd> | Insert a newline, including when Shift+Enter arrives as plain Enter. On Windows it steers. |
+| <kbd>F2</kbd> | With `input.questions=composer`, review a pending question or approval without losing your draft. |
+| <kbd>F4</kbd> | Queue actions: Edit, Remove, Steer, and persistent busy delivery mode. |
 | <kbd>Ctrl</kbd>+<kbd>V</kbd> | Paste an image from the clipboard. |
 | <kbd>Ctrl</kbd>+<kbd>O</kbd> | Show or hide the full output of commands. Output already in the terminal's scrollback is shown on the alternate screen, which stays for the session. |
 | <kbd>@</kbd> then <kbd>Tab</kbd> | Complete a file path. |
 | <kbd>Ctrl</kbd>+<kbd>D</kbd> or `/exit` | Quit. |
+
+Run `/input` to configure send, steer, and newline keys and choose Mac, PC, or neutral
+labels. `/input test` safely shows the keys your connection actually reports; Ctrl+G
+closes the test. Labels cannot recover modifiers lost over SSH. The defaults above
+stay unchanged unless you remap them. Mac hints use Return and Option.
+
+F4 then `m` switches new busy prompts between **after turn** (the default) and
+**next checkpoint**, after current tool work and before the next feasible model
+request. With older queued entries or a saved edit, choose **Steer/promote** at the
+next checkpoint or **Keep queue position** for after-turn delivery. Nothing silently
+falls back; commands keep their own routing. Held edits say
+**Editing - won't send while you edit it** and do not count as pending.
+See [Prompt area](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#prompt-area)
+for queue ordering, Save/requeue, and Stop editing.
 
 Type `/` to see every command, or `/help` for the full list.
 
@@ -203,6 +220,11 @@ rows.
 When a task could go more than one way, the model can ask you instead of guessing. Pick
 an answer with the arrow keys and <kbd>Enter</kbd>, or press its number. **Other** lets you type
 your own answer. <kbd>Esc</kbd> declines; the model is told, and carries on with a choice it states.
+
+To keep typing while questions and approvals wait, set `input.questions` to `composer` in `/input`.
+Press <kbd>F2</kbd> to review a waiting question's choices; <kbd>F2</kbd> returns to your draft. Sending
+your draft while a question waits offers **Answer this question** or **Queue follow-up**, with a
+remember-my-choice option. It never approves tools: approvals require explicitly focusing their choices.
 
 ![The model asking which CI service to use, with three numbered choices](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/ask-user.png)
 

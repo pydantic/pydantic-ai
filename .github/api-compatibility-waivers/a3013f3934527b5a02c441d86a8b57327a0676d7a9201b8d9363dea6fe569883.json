@@ -1,0 +1,5 @@
+{
+  "against": "v2.77.0",
+  "reason": "Not a compatibility impact: `LivePrompt.keys` keeps its `PromptKeys` type. The instance now passes the new optional `unknown` callback, which defaults to ignoring the sequence as before, so `/input` key calibration can report a key the decoder does not recognize.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/13162"
+}

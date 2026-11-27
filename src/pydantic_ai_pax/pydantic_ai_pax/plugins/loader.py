@@ -16,11 +16,12 @@ from uuid import uuid4
 from anyio import CancelScope, fail_after, to_thread
 from anyio.lowlevel import checkpoint
 from pydantic import BaseModel, JsonValue, ValidationError
-from rich.console import Console
+from rich.console import Console, RenderableType
 
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, Hooks, WrapperCapability
 from pydantic_ai.models import Model
 from pydantic_ai.settings import ModelSettings
+from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_pax.commands import Commands, added_plugin
 from pydantic_ai_pax.config import PluginSettings
 from pydantic_ai_pax.config.features import CAPABILITY_REQUIREMENTS
@@ -34,6 +35,7 @@ from pydantic_ai_pax.config.plugin_requirements import (
 from pydantic_ai_pax.config.settings_store import SettingsStore, canonical_plugin_declarations, canonical_plugin_id
 from pydantic_ai_pax.models.profiles import provider_of
 from pydantic_ai_pax.plugins import (
+    ComposerAnswerer,
     Conversation,
     DepsT,
     ForkInfo,
@@ -207,6 +209,7 @@ class SessionPlugins(Generic[DepsT]):
         default_model_name: Callable[[], Awaitable[str | None]] | None = None,
         resolve_model: Callable[[str], Awaitable[Model | str]] | None = None,
         model_settings: Callable[[str], ModelSettings | None] | None = None,
+        composer: ComposerAnswerer | None = None,
     ) -> None:
         """Join `process`, the plugins every live session of this Pax shares.
 
@@ -218,7 +221,7 @@ class SessionPlugins(Generic[DepsT]):
 
         `full_screen` is handed to every host; the shell binds it to the live renderer per prompt.
         `conversation`, `status`, `submit_prompt`, `send_input`, `interrupt`, `sessions`, `setting`, `tasks`,
-        `workspace`, `default_model`, `default_model_name`, and `commands` are handed to every host; see `PluginHost` for the defaults. `running`
+        `workspace`, `default_model`, `default_model_name`, `composer`, and `commands` are handed to every host; see `PluginHost` for the defaults. `running`
         says whether a turn runs, `inputs` the prompt holding the input that waits for it, `queued` how much waits
         when there is no prompt, `forks` lists its background `/fork` runs, and `live_id` names the session in `host.live`, by default a new ID.
         """
@@ -247,6 +250,7 @@ class SessionPlugins(Generic[DepsT]):
         self._default_model_name = default_model_name
         self._resolve_model = resolve_model
         self._model_settings = model_settings
+        self._composer = composer
         self._project = canonical_plugin_declarations(project)
         self._entries: dict[str, PluginEntry[DepsT]] = {}
         self._loaded: dict[str, LoadedPlugin[DepsT]] = {}
@@ -278,6 +282,7 @@ class SessionPlugins(Generic[DepsT]):
             workspace=workspace,
             resolve_model=resolve_model,
             model_settings=model_settings,
+            composer=composer,
         )
         self.live_session = LiveRuntime(
             live_id=live_id or uuid4().hex,
@@ -549,6 +554,11 @@ class SessionPlugins(Generic[DepsT]):
         def here() -> PluginHost[None]:
             return self._process.here(self)._base
 
+        async def ask_here(
+            request: AskUserRequest, /, *, approval: bool, preamble: RenderableType | None
+        ) -> AskUserResponse | None:
+            return await here().ask_in_composer(request, approval=approval, preamble=preamble)
+
         submit_prompt, send_input, setting = self._submit_prompt, self._send_input, self._setting
         host = PluginHost[DepsT](
             name=entry.name,
@@ -577,6 +587,7 @@ class SessionPlugins(Generic[DepsT]):
             default_model_name=self._default_model_name,
             resolve_model=(lambda name: here().resolve_model(name)) if process else self._resolve_model,
             model_settings=(lambda name: here().model_settings(name)) if process else self._model_settings,
+            composer=ask_here if process else self._composer,
         )
         return host
 

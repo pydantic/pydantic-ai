@@ -1464,6 +1464,28 @@ The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel on screen. The draft
 is restored on exit, and the question and your picks are printed to the transcript afterwards.
+
+With `input.questions=composer`, each question instead waits above the composer without
+taking focus or changing the draft, cursor, undo history, or attachments. F2 focuses its
+numbered picker and returns to the composer; the configured send key (Enter by default)
+or an option's number selects. Ctrl+C while focused declines the whole request, and Esc
+backs out of custom entry or returns from choices to the composer. The composer's own key
+reader serves the question; no second reader or `host.full_screen()` handoff starts.
+
+In the composer, sending text while a question waits offers **Answer this question** or
+**Queue follow-up**. The optional remembered choice is `input.question_submit`,
+editable/resettable through `/input`. Only the interaction preference is saved,
+not answer text or authorization. A successful text answer moves the draft;
+cancellation leaves it intact. Image-bearing drafts must be queued instead.
+Each later question in a batch needs review or an explicit routing choice so
+held Enter or pasted typeahead cannot silently answer it. Ctrl+J inserts a newline
+in custom answers, except on Windows, where it steers; it never confirms a choice.
+
+`/input` also sets Mac/PC/neutral labels and composer bindings, without detecting
+the remote keyboard. Mac hints say Return, Option, and Cmd for the effective
+bindings, independently of the server OS. `/input test` explicitly captures decoded keys without
+sending, steering, interrupting, or recording draft/paste contents. Ctrl+G closes
+it. See [Keyboard setup](docs/reference.md#keyboard-setup).
 Drag over the question, its header, or an option, or double- or triple-click one, to
 select text; releasing copies it to the clipboard without choosing an answer. Transcript
 text remains selectable too.
@@ -1477,7 +1499,15 @@ is harness `approval_ask`, which puts each held call to the answerer as a questi
 session`, and `Deny`; a typed answer denies the call with it as the reason. The held command is printed in full above the
 picker first, since the picker cuts its question to the rows it has (`TerminalAnswerer.ask_approval`); a
 replacement approver should show it in full too. A replacement for this plugin that should answer approvals binds
-`approval_handler` with its own approver; without one, held calls are denied.
+`approval_handler` with its own approver; without one, held calls are denied. With `input.questions=composer`,
+approvals wait in the live composer without taking focus and require explicit F2 focus before a choice
+authorizes a call. Generic
+send, steering, queue actions, custom text, and remembered question routing never
+approve tools. On that path, each held command is printed once its own approval's choices are the
+ones shown, and again after the terminal redraws the session to show it, so concurrent
+approvals never leave one command printed above another's choices, and a question or approval of a session
+the terminal does not show waits until the terminal shows that session: nothing reads keys or prints a
+picker for it meanwhile, and the browser can still answer it while the `web` plugin is loaded.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
@@ -3184,14 +3214,52 @@ never lands in the middle of a paragraph.
 messages, so a renderer for those also draws resumed turns. Events that only
 streamed, such as `FileWrittenEvent`, are not saved and are not sent again.
 
+### Ask in the composer: `await self.host.ask_in_composer(request)`
+
+A plugin that answers `ask_user` questions or held calls itself, such as a replacement
+for the built-in `ask_user`, asks in the session's composer with
+`await self.host.ask_in_composer(request)`. The request waits above the draft without
+taking its focus; F2 focuses it. Pass `approval=True` for a held call, which only a
+choice made with that focus answers, and `preamble` for text printed in the transcript
+just before the request appears, such as the held command. A session the terminal does
+not show keeps the request until the terminal shows it, so race it with another way to
+answer, as the `web` plugin does, and cancel the call once that one answers. It returns
+`None` when no composer serves the session, as while the user keeps questions in the picker
+(`input.questions`, the default), on a host built outside the shell, before the editor opens, or in a
+Pax with no terminal or one that reads lines: ask in a picker of your own then.
+`TerminalAnswerer(full_screen=..., console=..., composer=self.host.ask_in_composer)`
+does all of this.
+
 ### Take the whole screen mid-run: `async with self.host.full_screen()`
 
 A widget opened from inside a tool call, including the inline `ask_user` picker,
-needs streamed text written out and the editor and status row out of the way.
-`host.full_screen()` writes pending streamed text at once, suspends the editor's
-input reader, and restores the editor and its draft when the block exits.
-The editor remains active during agent turns. Enter queues a separate turn with
-its own `turn_start` and `turn_end` hooks. Alt+Enter (Option+Enter; Ctrl+Enter on Windows) sends the typed
+has to wait for streamed text to finish and the editor and status row to
+get out of the way. `host.full_screen()` flushes pending output, suspends the
+editor's input reader, and restores the editor and its draft when the block exits.
+The editor remains active during agent turns. By default, Enter queues a separate
+turn with its own `turn_start` and `turn_end` hooks. Opt-in
+`input.busy_delivery=next-checkpoint` instead steers new busy composer prompts
+through the same native enqueue path described below. F4 shows the saved delivery
+mode; `m` changes it, including when no input is queued. Current tool work finishes
+before the next feasible model request receives that input. It never answers
+questions or grants approval. With saved edits or older queued entries, Send opens
+a delivery choice: `s` Steer/promote only the eligible draft at the next checkpoint,
+explicitly bypassing older entries, or `q` Keep queue position for after-turn delivery
+(a separate turn once work ends). Esc/Ctrl+C cancels the choice without moving the
+draft/edit. If steering fails, the choice and draft remain; there is no silent fallback.
+Commands and shell lines keep their explicit routing and are never steered. Changing
+the mode does not promote existing entries. Accepted checkpoint input joins the
+active run and transcript, not the editable after-turn queue. Plugin `send_input`
+and browser submissions keep their existing queue behavior. See
+[Prompt area](docs/reference.md#prompt-area).
+
+A held queue edit shows **Editing - won't send while you edit it** and is left out
+of the terminal's pending count; `LiveSession.queue` still lists it at its place.
+Save/requeue in after-turn mode, or Keep queue position in the delivery choice,
+restores its stable ID and reserved ordering slot. Stop editing (Esc) restores the
+unchanged entry, or removes it if cleared; explicit Steer/send is a different action.
+
+Alt+Enter (Option+Return with Mac labels; Ctrl+Enter on Windows) sends the typed
 draft, or with an empty draft the oldest queued follow-up, to the active run
 through core's `RunContext.enqueue(priority='asap')`. Accepted steering messages
 appear immediately in the transcript and are enqueued for the next model request,
@@ -4133,7 +4201,8 @@ What changes for a process-scoped plugin:
   `on_conversation_changed`, `on_command_end`, `on_task_progress`, and the rest reach it
   each time any session fires them. `self.host.live.current()` names that session.
 - **The host follows the session being handled.** `self.host.session_id`, `workspace`,
-  `tasks`, `plugins`, `setting`, `send_input`, `submit_prompt`, and `interrupt` act on
+  `tasks`, `plugins`, `setting`, `send_input`, `submit_prompt`, `interrupt`, and
+  `ask_in_composer` act on
   `host.live.current()`: the session whose moment, command, or agent run is being
   handled. A task started meanwhile, such as a server started from a command, keeps
   that session. Outside one, they act on the session that loaded the plugin, or the

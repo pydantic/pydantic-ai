@@ -108,6 +108,11 @@ class LiveRuntimes(JoinedSessions):
         """Builds the sessions `open` and `new` start; `None` where Pax opens no others, as with `-p`."""
         self.focused: str | None = None
         """The session the terminal shows, never closed for being idle; `None` while no terminal shows one."""
+        self.composer = False
+        """Whether the terminal shows sessions with an editor, where a hidden session's request waits to be shown.
+
+        `False` with no terminal, as with `-p` or `pax --web`, and with a line prompt, which never opens an editor.
+        """
         self.dialogs: Dialogs | None = None
         """A remote UI's dialogs, where a command asks while Pax has no terminal; the web UI sets its own."""
         self._group: TaskGroup | None = None

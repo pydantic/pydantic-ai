@@ -3,6 +3,7 @@
 from collections.abc import AsyncGenerator, AsyncIterable, Sequence
 from contextlib import asynccontextmanager
 from io import StringIO
+from itertools import takewhile
 from pathlib import Path
 
 import anyio
@@ -357,7 +358,9 @@ def queue(live: LivePrompt, *texts: str) -> None:
 
 
 def queue_rows(live: LivePrompt) -> list[str]:
-    return [Text.from_ansi(row).plain for row in live.frame()[: len(live.queued_messages)]]
+    """The queue's rows, which lead the frame; an unexpected row among them ends the list, so assertions see it."""
+    rows = [Text.from_ansi(row).plain for row in live.frame()]
+    return list(takewhile(lambda row: row.startswith(('Follow-up', 'Command', 'Editing -')), rows))
 
 
 async def test_up_walks_queue_newest_first_then_history() -> None:
@@ -390,14 +393,25 @@ async def test_enter_rewrites_recalled_queued_prompt_in_place() -> None:
         queue(live, 'a', 'b', 'c')
         live.feed('up')
         live.feed('up')
-        assert queue_rows(live) == ['Follow-up: a', 'Follow-up (editing): b', 'Follow-up: c']
+        assert queue_rows(live) == [
+            "Editing - won't send while you edit it",
+            'Follow-up: a',
+            'Follow-up: c',
+        ]
+        # Plugins still list the prompt being edited at its place; the pending count leaves it out.
+        assert live.queued_messages == ('a', 'b', 'c')
+        assert Text.from_ansi(live.frame()[-1]).plain.endswith(' | queued: 2')
         live.feed('ctrl-u')
         live.buffer.insert('b2')
         live.feed('enter')
         assert live.queued_messages == ('a', 'b2', 'c')
         assert live.buffer.text == ''
         assert live.buffer.history[-1] == 'b2'
-        assert queue_rows(live) == ['Follow-up: a', 'Follow-up: b2', 'Follow-up: c']
+        assert queue_rows(live) == [
+            'Follow-up: a',
+            'Follow-up: b2',
+            'Follow-up: c',
+        ]
         live.feed('up')
         live.feed('enter')
         assert live.queued_messages == ('a', 'b2', 'c')
@@ -467,7 +481,7 @@ async def test_restoring_a_queued_edit_draft_restores_its_own_target() -> None:
         for key in ('up', 'x', 'up', 'up', 'y', 'down', 'down'):
             live.feed(key)
         assert live.buffer.text == 'secondx'
-        assert queue_rows(live) == ['Follow-up: first', 'Follow-up (editing): second']
+        assert queue_rows(live) == ["Editing - won't send while you edit it", 'Follow-up: first']
         live.feed('enter')
         assert live.queued_messages == ('first', 'secondx')
 
@@ -539,7 +553,7 @@ async def test_a_queued_prompt_being_edited_waits_while_the_queue_runs() -> None
         live.feed('up')
         # `b` is out of the queue while it is edited, so the run takes the others around it.
         assert await live.read() == 'a'
-        assert queue_rows(live) == ['Follow-up (editing): b', 'Follow-up: c']
+        assert queue_rows(live) == ["Editing - won't send while you edit it", 'Follow-up: c']
         assert await live.read() == 'c'
         live.buffer.insert('2')
         live.feed('enter')

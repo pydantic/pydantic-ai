@@ -31,6 +31,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/login [NAME[@PROFILE]]` | Sign in: `openai-codex`, `github-copilot`, or one a plugin adds; `@PROFILE` adds another account |
 | `/accounts` | Add, rename, reorder, and sign out of accounts |
 | `/keys` | Manage saved API keys |
+| `/input [test\|reset]` | Keyboard setup, safe key testing, send/steer/newline bindings and question routing |
 | `/permissions [full\|auto\|read-only]` | Show or set what runs without asking |
 | `/project [approve NAME...\|all \| revoke NAME...\|all]` | Review what `.clai/settings.json` sets, and approve or revoke its keys for this repository |
 | `/trust [yes\|no]` | Show whether you trust this session's folder, or trust it or not; see [Folder trust](#folder-trust) |
@@ -95,6 +96,11 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 |---|---|---|
 | `model` | `openai-codex:gpt-6-astra` | Provider-qualified model for every turn. Overrides the model baked into the agent. |
 | `run.request_limit` | `10000` | Most model requests one prompt may make before the turn stops. |
+| `input.bindings` | `{"send":"enter","steer":"alt-enter","newline":"shift-enter"}` | User-only decoded composer keys; `/input` edits each action. Ctrl+J inserts a newline, except on Windows, where it steers. |
+| `input.keyboard_labels` | `neutral` | User-only keyboard labels: `neutral`, `mac`, or `pc`. Labels do not detect terminal transport. |
+| `input.question_submit` | `ask` | User-only interaction preference: `ask`, `answer`, or `follow-up`. Never grants tool approval. |
+| `input.questions` | `picker` | User-only: where questions and tool approvals wait. `picker` takes the keys as each one arrives; opt-in `composer` keeps your draft and keys, and F2 reviews them. |
+| `input.busy_delivery` | `after-turn` | User-only busy composer delivery: `after-turn` or opt-in `next-checkpoint`. F4 inspects/changes it. |
 | `display.thinking` | `true` | Show the model's thinking as it streams. |
 | `display.task_models` | `true` | Name the model each subagent runs on in its start row, which waits for the child to report it. Off, the row prints at once without it. |
 | `display.theme` | `default` | Keep Pax colours, readable on light and dark terminals, or select a bundled Termflow palette with /theme. |
@@ -648,8 +654,9 @@ prompt history. Queued messages come first, newest first, because they are
 your most recent input; Up then continues into history, skipping the copies of
 queued messages that history already holds. A recalled queued message leaves the
 queue while you edit it, so it does not run when the turn ends; the messages around
-it still do. Its queue row shows `(editing)` at the place it keeps, and the input
-box shows `Enter to save · Esc to stop editing · Clear it to remove`. Enter puts the
+it still do. The queue preview shows `Editing - won't send while you edit it` above
+the other queued messages, and the input box shows
+`Enter to save · Esc to stop editing · Clear it to remove`. Enter puts the
 edited message back in its place. Esc puts it back unchanged; it does not interrupt
 the turn, so a second Esc does. To remove the message, clear the draft and press
 Enter, Esc, or Ctrl+C. Each of these, and Alt+Enter, restores the draft you had
@@ -1270,6 +1277,40 @@ response has omitted usage information.
 
 ## The prompt
 
+### Keyboard setup
+
+Run `/input` to choose Mac, PC, or neutral key labels and configure **Send**,
+**Steer**, and **Newline**. The launch hints name `/input`.
+The defaults stay Enter to send or queue, Alt/Option+Enter to steer, and a
+distinctly reported Shift+Enter to insert a newline. Ctrl+J inserts a
+newline, including in custom question answers, except on
+[Windows](#windows-terminal), where Ctrl+Enter and Ctrl+J steer with whatever
+key you bind to **Steer**.
+
+Mac labels use Return, Option, and Cmd, including modified Return bindings.
+PC labels name the Super key Win; neutral labels call it Super.
+Keyboard labels describe your keyboard, not the remote server's OS. Choosing Mac
+cannot recover a modifier lost by your terminal, SSH client, or multiplexer.
+Choose **Test a key**, or run `/input test`, to see the actual decoded key and its
+effective action. No prompts, steering, or interrupts execute during testing;
+paste contents and your draft stay out of the report. Ctrl+G closes the test.
+Text typed or pasted during testing stays in the draft; control keys are tested,
+not executed. No probe runs without this explicit action.
+
+If Shift+Enter or Option+Enter reports Enter, it is indistinguishable from Enter
+on that connection. Test Ctrl+J for newline or another offered binding before
+remapping. Ctrl+M, Ctrl+Enter and Ctrl+Shift+Enter act as Enter (Ctrl+Enter
+steers on Windows), so they cannot be bound separately; `/set` rejects bindings that collide. In `/input`, choosing a
+key another action holds swaps the two, so Enter can become the newline and Alt+Enter send; resetting one action
+swaps the same way when another action holds its default. Unsupported shortcuts are refused
+rather than silently taking over editing keys. The hint row below the composer follows effective
+bindings. It appears once you change an `input.*` setting, and while a question waits in the composer.
+
+`/input` and `/set` can edit or reset `input.keyboard_labels`, `input.bindings`,
+`input.question_submit`, `input.questions`, and `input.busy_delivery`. `/input reset` resets all five. These are user-only
+preferences, not project settings. A remap affects the composer and focused
+questions, not unrelated full-screen menus or the browser's shortcuts.
+
 ### Prompt area
 
 ```text
@@ -1343,23 +1384,67 @@ Holding Shift (Option in iTerm2) still uses the terminal's own selection in most
 terminals. On exit, Pax prints the retained
 transcript into native terminal scrollback, without output cleared by Ctrl+L. Typing updates the draft row; a
 nonblinking highlighted cell marks the cursor. Full-screen menus temporarily hide it along
-with the editor. Enter submits a message to an in-memory queue. Pending text appears above the editor as `Follow-up:`
-previews, with queued slash commands labeled `Command:`. Previews are shown in
+with the editor. By default, Enter submits a message to an in-memory queue.
+Pending text appears above the editor as `Follow-up:` previews, with queued
+slash commands labeled `Command:`; in next-checkpoint mode they read
+`Follow-up (after turn):` and `Command (after turn):`. Previews are shown in
 execution order and disappear as each submission starts. Long or multiline messages
 have a single-line preview; large queues show a `+N more queued` summary to leave
 room for the editor. The original message text is unchanged. The footer also shows
-the number waiting when the `queued` footer field is visible. Press Up to edit one (see Up/down above). Control bytes in completion-derived
+the number waiting when the `queued` footer field is visible, excluding the entry held for editing. Press F4 for visible
+**Edit**, **Remove**, **Steer**, and **Delivery** controls.
+Up/Down chooses an entry; `e` edits, `d` removes, `s` steers, and Esc closes without
+interrupting. Any other key closes the panel and acts as it would without it, so typing keeps its letters. Edit shows **Editing - won't send while you edit it**.
+The held entry cannot run and keeps its reserved ordering slot. The send key
+**Save/requeue** returns it to that slot in after-turn mode. In next-checkpoint
+mode, the send key opens **Choose delivery**, described below. Esc, **Stop editing**,
+restores the original entry unchanged, unless you cleared it to remove it.
+The steer key explicitly sends eligible text to the active run. If no run accepts
+it, after-turn mode sends/queues it as usual; next-checkpoint mode asks instead.
+Saving or stopping the edit restores your earlier composer, including cursor and undo history. An entry
+that has already run cannot be removed or steered accidentally in its place.
+Up also recalls queued messages (see Up/down above). Control bytes in completion-derived
 text are escaped in previews and prompt echoes; the submitted text is unchanged.
 
-Messages and slash commands run in submission order, after the current turn and its cleanup
-finish, whether it ends or you interrupt it. They do not interrupt or
-steer the active turn. Bare settings menus such as
+With the default `input.busy_delivery=after-turn`, messages and slash commands
+run in submission order after the current turn and cleanup finish, including
+after an interrupt; queued entries do not steer the active turn.
+
+For new busy composer prompts, press F4 then `m` to switch delivery persistently,
+or use `/set input.busy_delivery next-checkpoint`. **Next checkpoint** transfers
+the prompt to the active run through native steering, without cancelling current
+work. It waits for current tool work, including parallel tools and explicit
+approval questions, then reaches the next feasible model request. If a response
+would end the run, native enqueue requests another response. It cannot change a
+request already sent. Accepted prompts show a **Next checkpoint (sent to active
+run)** preview and join the transcript; they are no longer editable queue entries.
+This never answers a question or approves a tool.
+
+With older queued entries or a saved edit, **next-checkpoint** mode asks before
+changing delivery order. The draft stays intact and the held edit stays non-runnable:
+
+- `s` **Steer/promote** sends only the eligible draft text at the next checkpoint.
+  Earlier queued entries keep their after-turn timing; this explicitly bypasses them.
+- `q` **Keep queue position** chooses after-turn delivery, or a separate turn if
+  work has already ended. A saved edit retains its stable ID and reserved slot.
+- Esc or Ctrl+C cancels the delivery choice, preserving the draft/edit. Cancelling
+  the edit itself is a separate Esc action after closing this choice.
+
+If steering is unavailable, the draft and choice remain; nothing silently changes
+to after-turn delivery. Pasted text and same-batch typeahead cannot select a delivery
+action. Commands and shell lines retain their explicit routing and are never steered.
+Delivery actions never answer questions or approve tools.
+
+Changing delivery mode does not promote existing entries. F4 opens delivery controls
+even with an empty queue, showing only the delivery mode then. `/input` and `/set` also edit/reset the preference; reset
+restores `after-turn`. Bare settings menus such as
 `/set` are the exception: they open during the turn (see "Settings and commands"). An unsubmitted draft stays
 in the editor as turns finish. Queued messages are not saved as conversation turns
 until execution starts, and are discarded on exit or `/reload`.
 
 Full-screen question menus and slash-command menus temporarily take over input.
-The editor and its draft return when the menu closes.
+The editor and its draft return when the menu closes. With `input.questions=composer`,
+questions do not take composer focus: see [Questions from the model](#questions-from-the-model).
 Small terminals omit the border to leave room for output.
 
 ### Pasting images
@@ -2269,6 +2354,22 @@ edit the text. Multiline paste is inserted as text and waits for Enter; it does
 not submit an answer or select choices. The conversation stays visible while you type. Custom answers
 appear in the transcript and reach the model as a one-item list under the question's header.
 
+Set `input.questions` to `composer`, in `/input` or with `/set`, to keep typing instead. A pending
+question then appears above the composer without taking focus, leaving your cursor, undo history,
+draft, and attachments intact. Press F2 to review its numbered choices; F2 or Esc returns to the
+composer, and Ctrl+C while focused declines the request. A question from a session the terminal does
+not show, such as one the browser opened, waits until you show that session there with `/resume`;
+the web UI can answer it meanwhile.
+
+In the composer, sending text while a question waits offers **Answer this question** (`a`)
+or **Queue follow-up** (`q`), naming the answer target. Enter does not choose for
+you. `r` toggles **Remember my choice**; `/input` changes or resets the preference
+later. Cancellation preserves the draft; a successful text answer clears it.
+Question answers cannot carry images: queue an image-bearing draft instead.
+The setting remembers interaction preference only, never answer text or approval.
+Each subsequent question in a batch requires review or an explicit routing choice;
+held Enter and pasted text do not answer the next question.
+
 The menu is the built-in `ask_user` plugin around the harness's
 [`AskUser`](../../../docs/harness/ask-user.md) capability. The capability only knows an
 `Answerer`; the terminal menu is one, and [PLUGINS.md](../PLUGINS.md#ask_user-questions-answered-from-the-terminal)
@@ -2287,7 +2388,10 @@ shows how to put a different one, a web form for instance, in its place.
 
 A held call waits for your answer: the inline picker in the terminal, or an approval card in the web UI,
 showing the command or the file change; the terminal prints the command (or a path too long for the
-picker) in full above it. **Approve** runs it once, **Approve for this session** also runs the
+picker) in full above it. With `input.questions=composer`, the approval waits above the composer
+instead: F2 focuses it before an option can authorize the call, and a call held in a session the terminal
+does not show waits until the terminal shows it, or the web UI answers it. Generic send, steering, queued
+text and the remembered question preference never approve a tool. A custom text answer always denies it. **Approve** runs it once, **Approve for this session** also runs the
 same tool on the same command (or the same file) without asking for the rest of the conversation, and **Deny** tells
 the model the call did not run, with the reason you type, if any. The web UI shows the mode as a chip by the
 prompt box and changes it there too. A change applies from the next tool call, also during a turn, except

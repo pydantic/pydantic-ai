@@ -15,6 +15,13 @@ from pydantic import (
     model_validator,
 )
 
+from pydantic_ai_pax.config.input_bindings import (
+    BusyDelivery,
+    InputBindings,
+    KeyboardLabels,
+    QuestionPlacement,
+    QuestionSubmit,
+)
 from pydantic_ai_pax.config.theme_names import names
 
 _WORKTREE_COMMAND_PLACEHOLDER = re.compile(r'{[A-Za-z_]\w*}')
@@ -81,6 +88,32 @@ class Settings(BaseModel):
         default='openai-codex:gpt-6-astra',
         min_length=1,
         description='Provider-qualified model for every turn. Overrides the model baked into the agent.',
+    )
+    input_bindings: InputBindings = Field(
+        default=InputBindings(),
+        description='Decoded send, steer and newline keys. /input test checks your terminal.',
+    )
+    keyboard_labels: KeyboardLabels = Field(
+        default='neutral',
+        description='Keyboard labels only: neutral, mac or pc. Does not detect SSH keys.',
+    )
+    busy_delivery: BusyDelivery = Field(
+        default='after-turn',
+        description=(
+            'Busy composer prompts: after-turn queues a separate turn; next-checkpoint uses native steering '
+            'after current tool work, before the next feasible model request. Mixed queues and saved edits ask '
+            'whether to steer or keep queue position. Commands retain their own routing.'
+        ),
+    )
+    question_submit: QuestionSubmit = Field(
+        default='ask', description='When a question waits: ask, answer it, or queue a follow-up. Never approves tools.'
+    )
+    question_placement: QuestionPlacement = Field(
+        default='picker',
+        description=(
+            'Where questions and tool approvals wait: picker takes the keys as each one arrives; composer keeps '
+            'your draft and keys, and F2 reviews the choices.'
+        ),
     )
     request_limit: int = Field(
         default=10000, gt=0, description='Most model requests one prompt may make before the turn stops.'
@@ -284,6 +317,11 @@ SETTING_FIELDS = {
     'repo_context.walk_up_roots': 'repo_context_walk_up_roots',
     'repo_context.autoload_symlink_roots': 'repo_context_autoload_symlink_roots',
     'worktrees.remove_commands': 'worktree_remove_commands',
+    'input.bindings': 'input_bindings',
+    'input.keyboard_labels': 'keyboard_labels',
+    'input.question_submit': 'question_submit',
+    'input.questions': 'question_placement',
+    'input.busy_delivery': 'busy_delivery',
 }
 
 SETTING_KEYS = {name: key for key, name in SETTING_FIELDS.items()}
@@ -291,6 +329,11 @@ SETTING_KEYS = {name: key for key, name in SETTING_FIELDS.items()}
 
 USER_ONLY_SETTINGS = frozenset(
     {
+        'input_bindings',
+        'keyboard_labels',
+        'question_submit',
+        'question_placement',
+        'busy_delivery',
         'repo_context_walk_up_roots',
         'repo_context_autoload_symlink_roots',
         'worktree_remove_commands',
@@ -303,6 +346,10 @@ STRING_SETTINGS = frozenset(
     {
         'model',
         'run.instructions',
+        'input.keyboard_labels',
+        'input.question_submit',
+        'input.questions',
+        'input.busy_delivery',
         'run.permissions',
         'display.theme',
         'display.spinner',

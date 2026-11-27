@@ -132,7 +132,7 @@ Plugins load and unload while Pax runs. The rules that make that safe:
   once, when unloaded (after every running turn that bound it) or when the last
   session closes; sessions load a name one at a time, so it is built once.
   Its host's `session_id`, `workspace`, `tasks`, `plugins`, `setting`, `send_input`,
-  `submit_prompt`, and `interrupt` follow the session being handled (moments,
+  `submit_prompt`, `interrupt`, and `ask_in_composer` follow the session being handled (moments,
   commands, and runs set it); its other attributes are the loading session's.
   `restart` keeps it. A process plugin that includes a session plugin (`web` and
   `ask_user`) keeps it off in every session. `Plugin.scope`, `host.live`, and the
@@ -344,10 +344,11 @@ one that is not.
   Cycle choices in declaration order and wrap. Start at the first choice when the current value is absent or unlisted.
   Keep searchable field lists without eligible rows on type-to-filter with uppercase `R` reset.
   Keep nonsearchable field lists without search and with lowercase `r` reset.
-- A widget opened mid-run (including the inline `ask_user` picker) goes inside
+- A widget opened mid-run (including the standalone inline `ask_user` picker) goes inside
   `async with host.full_screen()`, which flushes streamed text and suspends the
   editor's input reader first, preserving its draft. Slash-command handlers
-  already run with the editor suspended. Do not start a second input reader
+  already run with the editor suspended. Composer questions and approvals use its
+  existing reader through `PromptQuestions`. Do not start a second input reader
   alongside the live editor.
 - Adding a plugin is not in the menu. It needs free text, so it stays
   `/plugins add ID MODULE[:ATTR] [JSON]` or `/plugins add GIT_URL`. Git installs
@@ -598,9 +599,10 @@ anchor. `SIGWINCH` invalidates the next frame; it must not perform terminal IO.
 A `MarkdownBlock` shows its streamed rows until its writer calls `end`, and
 renders its source again only after that: rendering a streaming part again per
 frame costs the whole part every frame.
-Full-screen menus leave the live panel temporarily. Inline questions borrow it
-with `run_worker(inline=True)` and pin the question text in their rows, not the
-transcript, so output streamed meanwhile cannot push it away. Streamed text and thinking keep Markdown source,
+Full-screen menus leave the live panel temporarily. Composer questions keep its
+reader and focus until the user explicitly focuses the question. Standalone
+questions borrow the released panel with `run_worker(inline=True)` and pin the
+question text in their rows, not the transcript, so output streamed meanwhile cannot push it away. Streamed text and thinking keep Markdown source,
 a tool-call group its call names, and a shell call's header its command, for width/theme repaint
 (syntax colours share hex values with brand roles under a palette, so translating them would guess;
 a part still streaming is translated like tool output until it ends, then renders again);
@@ -614,6 +616,9 @@ successful shell rebuild, including migration from the pre-live Text-line buffer
 The suspended `chat` coroutine still holds that transcript; do not only replace
 it on the new shell or mutate it before a rebuild that can fail.
 
-The `ask_user` picker borrows the released `PromptSurface` while the editor is
-suspended. Keep its numbered choices and Enter toggles; do not switch screens
-inside the picker or reintroduce Space-to-toggle.
+The standalone `ask_user` picker, the default, borrows the released `PromptSurface` while the editor
+is suspended. Keep its numbered choices and Enter toggles; do not switch screens inside the picker or
+reintroduce Space-to-toggle. With `input.questions=composer`, the effective send binding toggles choices;
+Ctrl+J inserts a newline in custom answers (it steers on Windows) and never confirms a choice.
+Keep composer question state on its `SessionRuntime`, not on the shared terminal.
+Generic send, steering, and remembered question routing never authorize tools.

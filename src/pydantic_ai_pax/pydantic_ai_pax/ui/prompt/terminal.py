@@ -12,6 +12,7 @@ from prompt_toolkit.history import History
 from rich.console import Console
 
 from pydantic_ai_pax.commands import Commands
+from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.plugins import SessionEndReason
 from pydantic_ai_pax.ui.prompt.completion_adapter import COMPLETION_STYLE, PromptCompleter
 from pydantic_ai_pax.ui.prompt.image_input import ImageInput
@@ -26,6 +27,10 @@ if TYPE_CHECKING:
 
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
+
+# The composer shows its hint row once the shown session's `input.*` settings differ from these. It runs on every
+# paint, so it compares fields rather than serializing them.
+_DEFAULTS = Settings.model_construct()
 
 
 class _Nowhere(io.StringIO):
@@ -100,11 +105,12 @@ class Terminal(Generic[DepsT, OutputT]):
 
     async def show(self, runtime: 'SessionRuntime[DepsT, OutputT]') -> None:
         """Show `runtime`, live in this process, as `/resume` would: on a clear screen, with its history."""
-        self.attach(runtime)
-        await runtime.sessions.show_resumed()
-        runtime.console.print(
-            f'Showing session {runtime.session.conversation_id}, which is live in this Pax.', markup=False
-        )
+        with runtime.redrawn():
+            self.attach(runtime)
+            await runtime.sessions.show_resumed()
+            runtime.console.print(
+                f'Showing session {runtime.session.conversation_id}, which is live in this Pax.', markup=False
+            )
 
     def ended(self, runtime: 'SessionRuntime[DepsT, OutputT]', reason: SessionEndReason) -> None:
         """Note that the session shown, `runtime`, ended for `reason`, which ends `drive`.
@@ -172,6 +178,17 @@ class Terminal(Generic[DepsT, OutputT]):
             spinner=lambda: self._shown().spinners.active(),
             panel=lambda glyph: (*self._shown().tasks.rows(glyph), *self._shown().forks.rows(glyph)),
             queue_changed=lambda: self._shown().live_session.changed(),
+            bindings=lambda: self._shown().context.settings.input_bindings,
+            keyboard_labels=lambda: self._shown().context.settings.keyboard_labels,
+            busy_delivery=lambda: self._shown().context.settings.busy_delivery,
+            remember_busy_delivery=lambda mode: self._shown().context.set_setting(['input.busy_delivery', mode]),
+            input_changed=lambda: (
+                (settings := self._shown().context.settings).input_bindings != _DEFAULTS.input_bindings
+                or settings.keyboard_labels != _DEFAULTS.keyboard_labels
+                or settings.question_submit != _DEFAULTS.question_submit
+                or settings.question_placement != _DEFAULTS.question_placement
+                or settings.busy_delivery != _DEFAULTS.busy_delivery
+            ),
             queue_in_toolbar=lambda: 'queued' in self._shown().context.settings.footer_fields,
             full_screen=self._shown().context.settings.full_screen,
         )

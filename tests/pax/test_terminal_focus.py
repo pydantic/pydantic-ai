@@ -17,15 +17,20 @@ from rich.console import Console
 from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
-from pydantic_ai.messages import BinaryContent, ModelMessage, UserContent, UserPromptPart
+from pydantic_ai.messages import BinaryContent, ModelMessage, ToolCallPart, UserContent, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.ask_user import AskUserAnswer, AskUserResponse
+from pydantic_ai_harness.permissions import PermissionRequest
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_ai_pax import chat
+from pydantic_ai_pax.builtin_plugins.web import WebPlugin
 from pydantic_ai_pax.config import PluginSettings, Settings
+from pydantic_ai_pax.config.input_bindings import QuestionPlacement
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins import LiveSessions, Plugin, SessionStart
+from pydantic_ai_pax.plugins.process_plugins import handling
 from pydantic_ai_pax.runtime.live_runtimes import LiveRuntimes
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.ui.menus import dialogs
@@ -37,14 +42,24 @@ from pydantic_ai_pax.ui.prompt.terminal import NOWHERE, Terminal
 from tests.pax.dialog_script import ScriptedDialogs
 from tests.pax.menu_script import Script, pick
 from tests.pax.surface_terminal import SurfaceTerminal
-from tests.pax.test_live_runtimes import Fleet, Recorder, blocked, until
+from tests.pax.test_input_ergonomics import question_request
+from tests.pax.test_live_runtimes import RECORDER, Fleet, Recorder, blocked, until
+from tests.pax.test_permissions import COMMAND, removing_agent
+from tests.pax.test_web_sessions import WEB
 
 
 class Desk(Fleet):
     """A terminal Pax: the session it started with, shown in a terminal, beside sessions the browser opens."""
 
-    def __init__(self, root: Path, *, agent: Agent[None, str] | None = None) -> None:
-        super().__init__(root)
+    def __init__(
+        self,
+        root: Path,
+        *,
+        agent: Agent[None, str] | None = None,
+        builtin: tuple[PluginSettings, ...] = (RECORDER,),
+        settings: Settings | None = None,
+    ) -> None:
+        super().__init__(root, builtin=builtin)
         self.screen = SurfaceTerminal(width=100, height=30)
         self.home = create_shell(
             agent or Agent(TestModel()),
@@ -53,7 +68,7 @@ class Desk(Fleet):
             usage_limits=None,
             # A terminal by `isatty`, as a real one: `force_terminal` would hide a file handed elsewhere.
             console=Console(file=self.screen, width=100, height=30),
-            settings=None,
+            settings=settings,
             store=None,
             builtin_plugins=(),
             project=ProjectSettings(),
@@ -342,6 +357,29 @@ async def test_line_mode_terminal_follows_the_session_shown(tmp_path: Path) -> N
     await desk.home.close('exit')
 
 
+async def test_a_line_mode_terminal_has_no_composer_for_a_hidden_session_to_wait_for(tmp_path: Path) -> None:
+    desk = Desk(tmp_path, settings=Settings(model=None, question_placement='composer'))
+    terminal = Terminal[None, str](
+        console=Console(file=io.StringIO()), transcript=TranscriptBuffer(), history=InMemoryHistory()
+    )
+    answers: list[AskUserResponse | None] = []
+    async with desk.live.serving():
+        b = desk.runtimes[(await desk.live.new(workspace=desk.folder('b'))).id]
+        terminal.attach(desk.home)
+        terminal.attach(b)
+        assert desk.home.terminal is None and desk.live.focused == b.live_session.id
+
+        async def ask() -> None:
+            answers.append(await desk.home.ask_in_composer(question_request(), approval=False, preamble=None))
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(ask)
+            await anyio.wait_all_tasks_blocked()
+            group.cancel_scope.cancel()
+    assert answers == [None], 'a line prompt never opens an editor, so nothing would ever show the request'
+    await desk.home.close('exit')
+
+
 async def test_the_terminal_raises_what_its_session_raises(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     desk = Desk(tmp_path)
 
@@ -468,6 +506,262 @@ async def test_a_session_shown_mid_answer_streams_the_rest_in_the_terminal(tmp_p
     assert 'half a line' in desk.shown() and 'late words' in desk.shown()
     assert 'early words' not in desk.shown(), 'streamed while hidden'
     await home.close('exit')
+
+
+HELD = 'waits for approval to run'
+
+
+async def settle(check: Callable[[], bool]) -> None:
+    """Let every task run until `check` holds."""
+    while not check():
+        await anyio.wait_all_tasks_blocked()
+
+
+async def test_a_session_shown_before_its_editor_opens_leaves_questions_to_the_picker(tmp_path: Path) -> None:
+    home = Desk(tmp_path, settings=Settings(model=None, question_placement='composer')).home
+    assert home.terminal is not None and home.editor is None
+    assert await home.ask_in_composer(question_request(), approval=False, preamble=None) is None
+
+
+@pytest.mark.parametrize('answerer', ['picker', 'composer'])
+async def test_questions_keep_the_picker_unless_the_composer_is_chosen(
+    tmp_path: Path, answerer: QuestionPlacement
+) -> None:
+    desk = Desk(tmp_path, settings=Settings(model=None, question_placement=answerer))
+    home, terminal = desk.home, desk.terminal
+
+    async def body() -> None:
+        (recorder,) = [
+            entry.loaded.plugin for entry in home.loader.entries() if entry.loaded and entry.name == 'recorder'
+        ]
+        await settle(lambda: terminal.editor is not None)
+        assert terminal.editor is not None
+        responses: list[AskUserResponse | None] = []
+
+        async def ask() -> None:
+            responses.append(await recorder.host.ask_in_composer(question_request()))
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(ask)
+            await settle(lambda: bool(responses) or home.questions.menu is not None)
+            if answerer == 'picker':
+                assert responses == [None], 'no composer serves the session, so the picker asks'
+            else:
+                assert responses == [] and home.questions.menu is not None
+                terminal.editor.feed('f2')
+                await anyio.lowlevel.checkpoint()
+                terminal.editor.feed('ctrl-c')
+        if answerer == 'composer':
+            (response,) = responses
+            assert response is not None and response.cancelled
+        home.live_session.send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
+
+
+@pytest.mark.parametrize('answered_in', ['browser', 'terminal'])
+async def test_a_hidden_sessions_approval_waits_to_be_shown_while_the_browser_can_answer(
+    tmp_path: Path, answered_in: str
+) -> None:
+    """The approval a session asks while the terminal shows another is neither declined nor read from unseen keys."""
+    ran: list[str] = []
+    desk = Desk(
+        tmp_path,
+        agent=removing_agent(tmp_path, ran),
+        builtin=(RECORDER, WEB),
+        settings=Settings(model=None, question_placement='composer'),
+    )
+    home, terminal = desk.home, desk.terminal
+
+    async def body() -> None:
+        (web,) = [entry.loaded.plugin for entry in home.loader.entries() if entry.loaded and entry.name == 'web']
+        assert isinstance(web, WebPlugin)
+        answerer = web.service.answerer
+        b = await desk.live.new(workspace=desk.folder('b'))
+        other = desk.runtimes[b.id]
+        home.send_input('/permissions auto')
+        home.send_input(f'/resume {b.conversation.conversation_id}')
+        await until(desk.live, lambda: terminal.shown is other and home.idle)
+        home.send_input('clean up')
+        await settle(lambda: bool(answerer.questions) or home.idle)
+        assert answerer.questions, 'the browser card stays open'
+        assert terminal.editor is not None and terminal.editor.questions is other.questions
+        assert other.questions.menu is None, 'the session shown is not asked'
+        if answered_in == 'browser':
+            (card,) = answerer.questions
+            question = answerer.request(card.id).questions[0]
+            answerer.reply(card.id, [AskUserAnswer(header=question.header, selected=(question.options[0].label,))])
+        else:
+            b.send_input(f'/resume {home.session.conversation_id}')
+            await settle(lambda: terminal.shown is home and home.questions.menu is not None)
+            printed = terminal.transcript.printed(width=100)
+            assert printed.find(f'run_command {HELD}:\n{COMMAND}') > printed.find('Showing session'), 'once shown'
+            terminal.editor.feed('f2')
+            await anyio.lowlevel.checkpoint()
+            terminal.editor.feed('enter')
+        await until(desk.live, lambda: home.idle)
+        assert ran == [COMMAND]
+        (b if answered_in == 'browser' else home.live_session).send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
+
+
+async def test_showing_a_session_again_drops_its_approvals_focus(tmp_path: Path) -> None:
+    """An approval focused with F2 loses focus when another session is shown, so Enter later cannot approve it unseen."""
+    ran: list[str] = []
+    desk = Desk(
+        tmp_path,
+        agent=removing_agent(tmp_path, ran),
+        builtin=(RECORDER, WEB),
+        settings=Settings(model=None, question_placement='composer'),
+    )
+    home, terminal = desk.home, desk.terminal
+
+    async def body() -> None:
+        b = await desk.live.new(workspace=desk.folder('b'))
+        home.send_input('/permissions auto')
+        home.send_input('clean up')
+        await settle(lambda: home.questions.menu is not None)
+        assert terminal.editor is not None
+        terminal.editor.feed('f2')
+        await anyio.lowlevel.checkpoint()
+        assert home.questions.focused
+        await terminal.show(desk.runtimes[b.id])
+        terminal.editor.feed('f4')
+        await anyio.lowlevel.checkpoint()
+        await terminal.show(home)
+        terminal.editor.feed('enter')
+        await anyio.wait_all_tasks_blocked()
+        assert ran == [] and home.questions.menu is not None, 'Enter through the open panel approved unseen'
+        terminal.editor.feed('f2')
+        await anyio.lowlevel.checkpoint()
+        terminal.editor.feed('ctrl-c')
+        await until(desk.live, lambda: home.idle)
+        assert ran == []
+        home.live_session.send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
+
+
+async def test_closing_a_hidden_session_ends_the_approval_it_waits_to_show(tmp_path: Path) -> None:
+    """Closing the session cancels its approval's wait to be shown; the command never runs."""
+    ran: list[str] = []
+    desk = Desk(
+        tmp_path,
+        agent=removing_agent(tmp_path, ran),
+        builtin=(RECORDER, WEB),
+        settings=Settings(model=None, question_placement='composer'),
+    )
+    home, terminal = desk.home, desk.terminal
+
+    async def body() -> None:
+        (web,) = [entry.loaded.plugin for entry in home.loader.entries() if entry.loaded and entry.name == 'web']
+        assert isinstance(web, WebPlugin)
+        answerer = web.service.answerer
+        b = await desk.live.new(workspace=desk.folder('b'))
+        home.send_input('/permissions auto')
+        home.send_input(f'/resume {b.conversation.conversation_id}')
+        await until(desk.live, lambda: terminal.shown is desk.runtimes[b.id] and home.idle)
+        home.send_input('clean up')
+        await settle(lambda: bool(answerer.questions) or home.idle)
+        assert answerer.questions, 'the approval waits for its session to be shown'
+        await desk.live.close(home.live_session.id)
+        await settle(lambda: not answerer.questions)
+        assert ran == []
+        assert [session.id for session in desk.live.listing()] == [b.id]
+        b.send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
+    assert terminal.home_closed
+
+
+def held(command: str, call_id: str) -> PermissionRequest:
+    return PermissionRequest(
+        call=ToolCallPart('run_command', {'command': command}, tool_call_id=call_id),
+        action='command',
+        subject=command,
+        reason='Asks.',
+    )
+
+
+async def test_an_approval_shown_again_prints_its_held_command_after_the_redraw(tmp_path: Path) -> None:
+    ran: list[str] = []
+    desk = Desk(
+        tmp_path,
+        agent=removing_agent(tmp_path, ran),
+        builtin=(RECORDER, WEB),
+        settings=Settings(model=None, question_placement='composer'),
+    )
+    home, terminal = desk.home, desk.terminal
+
+    async def body() -> None:
+        b = await desk.live.new(workspace=desk.folder('b'))
+        home.send_input('/permissions auto')
+        home.send_input('clean up')
+        await settle(lambda: home.questions.menu is not None)
+        assert await home.show_live(b.conversation.conversation_id) == ''
+        await terminal.show(home)
+        printed = terminal.transcript.printed(width=100)
+        assert printed.find(HELD) > printed.find('Showing session'), 'the redraw drops it, so it is printed after'
+        assert terminal.editor is not None
+        terminal.editor.feed('f2')
+        await anyio.lowlevel.checkpoint()
+        terminal.editor.feed('enter')
+        await until(desk.live, lambda: home.idle)
+        assert ran == [COMMAND]
+        home.live_session.send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
+
+
+async def test_an_approval_whose_turn_comes_while_hidden_prints_its_command_once_shown(tmp_path: Path) -> None:
+    desk = Desk(tmp_path, builtin=(RECORDER, WEB), settings=Settings(model=None, question_placement='composer'))
+    home, terminal = desk.home, desk.terminal
+
+    async def body() -> None:
+        (web,) = [entry.loaded.plugin for entry in home.loader.entries() if entry.loaded and entry.name == 'web']
+        assert isinstance(web, WebPlugin)
+        answerer = web.service.answerer
+        b = await desk.live.new(workspace=desk.folder('b'))
+        await settle(lambda: home.editor is not None)
+
+        async def approve(request: PermissionRequest) -> None:
+            with handling(home.live_session):
+                await answerer.approve(request)
+
+        async with anyio.create_task_group() as group:
+            group.start_soon(approve, held('rm -rf first', 'first'))
+            await settle(lambda: home.questions.menu is not None)
+            group.start_soon(approve, held('rm -rf second', 'second'))
+            await settle(lambda: len(answerer.questions) == 2)
+            assert await home.show_live(b.conversation.conversation_id) == ''
+            question = answerer.request('first').questions[0]
+            answerer.reply('first', [AskUserAnswer(header=question.header, selected=(question.options[0].label,))])
+            await settle(lambda: len(answerer.questions) == 1 and home.questions.menu is not None)
+            assert 'rm -rf second' not in terminal.transcript.printed(width=100), 'its turn came while hidden'
+            await terminal.show(home)
+            await anyio.wait_all_tasks_blocked()
+            assert f'{HELD}:\nrm -rf second' in terminal.transcript.printed(width=100)
+            answerer.reply('second', None)
+        home.live_session.send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
+
+
+async def test_a_pax_without_a_terminal_has_no_composer_to_ask_in(tmp_path: Path) -> None:
+    runtime = Fleet(tmp_path).build(None)
+    runtime.context.settings = runtime.context.settings.model_copy(update={'question_placement': 'composer'})
+    assert runtime.terminal is None and not runtime.process.live.composer
+    answers: list[AskUserResponse | None] = []
+
+    async def ask() -> None:
+        answers.append(await runtime.ask_in_composer(question_request(), approval=False, preamble=None))
+
+    async with anyio.create_task_group() as group:
+        group.start_soon(ask)
+        await anyio.wait_all_tasks_blocked()
+        group.cancel_scope.cancel()
+    assert answers == [None]
 
 
 async def test_queued_images_stay_with_their_prompt_as_the_terminal_moves(

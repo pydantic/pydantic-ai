@@ -24,7 +24,8 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai_pax import DEFAULT_PLUGINS, Session, chat
 from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.commands import Command, Commands, set_completions
-from pydantic_ai_pax.config import PluginSettings
+from pydantic_ai_pax.config import PluginSettings, Settings
+from pydantic_ai_pax.config.input_bindings import InputBindings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins import Plugin, TurnEnd, TurnStart
 from pydantic_ai_pax.ui.prompt.prompt_surface import PromptSurface
@@ -272,6 +273,8 @@ async def test_prompt_frame_stays_visible_during_tools(
             agent,
             deps=None,
             console=Console(file=output, force_terminal=True, width=80, height=height),
+            # The shown session's keys and labels reach the composer, which names them in its hints.
+            settings=Settings(model=None, keyboard_labels='mac', input_bindings=InputBindings(steer='alt-s')),
             store=store,
         )
         done.set()
@@ -283,7 +286,9 @@ async def test_prompt_frame_stays_visible_during_tools(
             top = next(row for row, line in enumerate(frame) if line and set(line) == {'─'})
             bottom = max(row for row, line in enumerate(frame) if line and set(line) == {'─'})
             assert bottom - top == 2
-            assert bottom == len(frame) - 2
+            # The input hint takes the spare row between the box and the footer.
+            assert bottom == len(frame) - 3
+            assert frame[bottom + 1].startswith('Return: send - F4 Delivery - Ctrl+J newline - /input')
             pipe.send_text('\x12')
             await searched.wait()
             top = next(row for row, line in enumerate(frame) if line and set(line) == {'─'})
@@ -296,7 +301,7 @@ async def test_prompt_frame_stays_visible_during_tools(
             assert bottom - top == 8
             assert any('display.thinking' in row for row in frame[top + 1 : bottom])
             assert all('display.thinking' not in row for row in frame[bottom + 1 :])
-            assert bottom == len(frame) - 2
+            assert bottom == len(frame) - 3
             pipe.send_text('\x15\x1b[200~first line\nsecond line\x1b[201~')
             await pasted.wait()
             top = next(row for row, line in enumerate(frame) if line and set(line) == {'─'})
@@ -316,6 +321,7 @@ async def test_prompt_frame_stays_visible_during_tools(
             indicator = next(row for row, line in enumerate(frame) if 'Working ' in line)
             draft = next(row for row, line in enumerate(frame) if 'retained draft' in line)
             assert editor_top == indicator
+            assert 'Return to queue · Option+S to steer' in frame[editor_top]
             assert draft == editor_top + 1
             assert calls == 1
             assert store.load().thinking

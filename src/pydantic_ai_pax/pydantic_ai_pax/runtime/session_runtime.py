@@ -18,11 +18,19 @@ from functools import partial
 from pathlib import Path
 from typing import Generic, TypeVar, cast
 
-from anyio import CancelScope, Lock, create_memory_object_stream, create_task_group, get_cancelled_exc_class, to_thread
+from anyio import (
+    CancelScope,
+    Event,
+    Lock,
+    create_memory_object_stream,
+    create_task_group,
+    get_cancelled_exc_class,
+    to_thread,
+)
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from prompt_toolkit import PromptSession
 from pydantic import ValidationError
-from rich.console import Console
+from rich.console import Console, RenderableType
 
 from pydantic_ai import AgentRunResult, AgentStreamEvent
 from pydantic_ai._context_size import context_tokens
@@ -31,6 +39,7 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserPromptPart
 from pydantic_ai.models import Model, infer_model_profile
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
 from pydantic_ai_harness.sub_agents import DelegationTask, TaskQuestionAskedEvent
 from pydantic_ai_pax.cli.command_context import CommandContext, CommandProvider
@@ -52,7 +61,13 @@ from pydantic_ai_pax.commands import (
     is_silent,
     set_completions,
 )
-from pydantic_ai_pax.config import PERMISSION_MODES, PERMISSIONS_SETTING as PERMISSIONS, PluginSettings, Settings
+from pydantic_ai_pax.config import (
+    PERMISSION_MODES,
+    PERMISSIONS_SETTING as PERMISSIONS,
+    SETTING_FIELDS,
+    PluginSettings,
+    Settings,
+)
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore, canonical_plugin_declarations
 from pydantic_ai_pax.errors import error_message
@@ -102,6 +117,7 @@ from pydantic_ai_pax.runtime.tasks import Tasks, question_row, resume_prompt
 from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust
 from pydantic_ai_pax.ui import telemetry
 from pydantic_ai_pax.ui.menus.dialogs import run_settings_menu
+from pydantic_ai_pax.ui.menus.input_menu import input_menu
 from pydantic_ai_pax.ui.menus.key_menu import keys_command, keys_menu
 from pydantic_ai_pax.ui.menus.menu_worker import without_terminal
 from pydantic_ai_pax.ui.menus.model_picker import MODEL_SUBCOMMANDS, model_command, model_completions, models_menu
@@ -115,8 +131,10 @@ from pydantic_ai_pax.ui.menus.theme_picker import theme_command
 from pydantic_ai_pax.ui.menus.update_menu import update_menu
 from pydantic_ai_pax.ui.prompt.image_input import ImageInput
 from pydantic_ai_pax.ui.prompt.input_history import input_history
+from pydantic_ai_pax.ui.prompt.input_setup import KeyTest
 from pydantic_ai_pax.ui.prompt.interrupts import Interrupts
 from pydantic_ai_pax.ui.prompt.live_prompt import LivePrompt, PromptRewind, PromptWakeup
+from pydantic_ai_pax.ui.prompt.prompt_questions import PromptQuestions
 from pydantic_ai_pax.ui.prompt.prompt_queue import PromptInbox, QueuedPrompt, can_steer, find_queued, input_kind
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.prompt.screen import Screen
@@ -573,6 +591,12 @@ def create_shell(
         )
     )
     screen = Screen()
+
+    async def ask_in_composer(
+        request: AskUserRequest, /, *, approval: bool, preamble: RenderableType | None
+    ) -> AskUserResponse | None:
+        return await shell.ask_in_composer(request, approval=approval, preamble=preamble)
+
     status = Status(fields=lambda: context.settings.footer_fields, permissions=lambda: context.settings.permissions)
     _attach_trust(session, trust, process=process, status=status, commands=commands)
     status.restore_text_age(session.messages)
@@ -599,6 +623,7 @@ def create_shell(
         default_model_name=partial(_default_model_name, store=store, fallback=agent.model),
         resolve_model=models.resolve,
         model_settings=context.model_settings,
+        composer=ask_in_composer,
         inputs=lambda: shell,
         forks=lambda: shell.forks.listing(),
     )
@@ -656,6 +681,15 @@ def create_shell(
         session_settings=session_settings,
         spinners=spinners,
         updates=updates,
+    )
+    commands.register(
+        Command(
+            name='input',
+            description='Keyboard setup, bindings and question preference; /input test safely tests a key',
+            handler=shell.input_command,
+            during_turn=True,
+            args_during_turn=True,
+        )
     )
     commands.register(
         Command(name='reload', description='Reload Pax code without restarting', handler=shell.request_reload)
@@ -806,6 +840,12 @@ class SessionRuntime(Generic[DepsT, OutputT]):
     """Whether it runs with no terminal of its own, as one the browser opened: it restarts Pax only while shown."""
     editor: LivePrompt | None = None
     """The terminal's editor, while the terminal shows this session and its console is a terminal."""
+    questions: PromptQuestions = field(init=False)
+    """The questions and approvals asked in this session's composer, shown while the terminal shows it."""
+    _editor_bound: Event = field(init=False, repr=False)
+    """Set while an editor reads for this session, so a request asked while hidden waits for it."""
+    _redrawing: bool = field(default=False, init=False, repr=False)
+    """Whether the terminal redraws this session to show it; see `redrawn`."""
     forks: Forks[DepsT, OutputT] = field(init=False)
     tasks: Tasks = field(init=False)
     permissions: tuple[AgentCapability[DepsT], ...] = field(init=False)
@@ -971,6 +1011,14 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         telemetry.conversation_selected()
 
     def __post_init__(self) -> None:
+        self.questions = PromptQuestions(
+            paint=lambda: self.editor.paint() if self.editor is not None else None,
+            preference=lambda: self.context.settings.question_submit,
+            remember=lambda preference: self.context.set_setting(['input.question_submit', preference]),
+            # A preamble printed while hidden, or before a show's redraw, is lost: `redrawn` prints it again.
+            show=lambda preamble: None if self.editor is None or self._redrawing else self.console.print(preamble),
+        )
+        self._editor_bound = Event()
         self._question_status = QuestionStatus(self.live_session)
         # Stable capability identity keeps the stock agent bound across turns and layout edits.
         self._footer_activity = FooterActivity(status=self.status, run_id=lambda: self.session.summary.run_id)
@@ -985,7 +1033,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             show_task_models=lambda: self.context.settings.task_models,
         )
         self.status.subagent = self.tasks.focused
-        self.status.queued = lambda: self.queued
+        # The footer counts what can run: a prompt the terminal edits stays in the queue plugins see, not in the count.
+        self.status.queued = lambda: len(self.editor.runnable_prompts()) if self.editor is not None else self.queued
         self.status.updates = self.updates.segment
         self.status.live = self._live_segment
         self.forks = Forks(
@@ -1047,6 +1096,57 @@ class SessionRuntime(Generic[DepsT, OutputT]):
                 partial(child.repl_states.copy, source=self.session.summary.id, target=child.summary.id)
             )
         return child
+
+    async def ask_in_composer(
+        self, request: AskUserRequest, /, *, approval: bool = False, preamble: RenderableType | None = None
+    ) -> AskUserResponse | None:
+        """Ask in the composer of the terminal showing this session; `None` while it shows it with no editor open.
+
+        While the terminal shows another session, the request waits to be shown, printing nothing and reading no
+        keys meanwhile: a browser racing it can still answer it. `None` too unless `input.questions` chooses the
+        composer, so questions and approvals keep the picker by default.
+        """
+        if self.context.settings.question_placement != 'composer':
+            return None
+        if self.editor is None and (self.terminal is not None or not self.process.live.composer):
+            # Shown before its editor opens, or in a Pax whose terminal, if any, never opens one.
+            return None
+        while self.editor is None:
+            await self._editor_bound.wait()
+        return await self.questions.ask(request, approval=approval, preamble=preamble)
+
+    @contextmanager
+    def redrawn(self) -> Generator[None]:
+        """Defer held-command prints while the terminal redraws this session to show it, then print the active one's.
+
+        The redraw prints the history on a clear screen, which drops a held command printed before it. A request
+        asked meanwhile takes the composer at once; one asked while the session was hidden wakes once the redraw ends.
+        """
+        self._redrawing = True
+        try:
+            yield
+        finally:
+            self._redrawing = False
+            if self.editor is not None:
+                self._editor_bound.set()
+                self.questions.show_preamble()
+
+    def test_input_key(self) -> None:
+        """Capture only after an explicit action; the editor remains the sole input reader."""
+        if self.editor is None:
+            raise ValueError('Key testing needs the terminal composer.')
+        self.editor.key_test = KeyTest()
+
+    async def input_command(self, args: list[str]) -> str:
+        """Open setup, or explicitly start safe key capture after the command releases the screen."""
+        if args == ['test']:
+            self.test_input_key()
+            return 'Test a key now. Ctrl+G closes.'
+        if args == ['reset']:
+            return '\n'.join(self.context.reset_setting(key) for key in SETTING_FIELDS if key.startswith('input.'))
+        if args:
+            raise ValueError('Usage: /input [test|reset]')
+        return '\n'.join(await run_settings_menu(input_menu(self.context, start_test=self.test_input_key)))
 
     async def tasks_command(self, args: list[str]) -> str:
         if not args:
@@ -1233,6 +1333,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self.interrupts.focus(signals=terminal is not None)
         if terminal is not None:
             self.process.live.focused = self.live_session.id
+            self.process.live.composer = not terminal.lines
         self.bind(terminal.editor if terminal is not None else None)
         # Both now hold every image; each keeps those its own texts use, so none counts twice against the limit.
         self._retain_images()
@@ -1246,6 +1347,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     def bind(self, editor: LivePrompt | None) -> None:
         """Read from `editor`, the open editor of the terminal showing this session; `None` stops that."""
+        # Focus taken with F2 never outlives the screen it was taken on: a key read later must not answer unseen.
+        self.questions.focused = self.questions.routing = False
         if self.editor is not None and editor is None:
             # Prompts queued for this session stay its own while the terminal shows another.
             for entry in self.editor.take_queued():
@@ -1254,11 +1357,16 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self.screen.editor = editor.suspended if editor is not None else None
         self.tasks.wake = editor.wake if editor is not None else None
         if editor is not None:
+            editor.questions = self.questions
+            if not self._redrawing:
+                self._editor_bound.set()
             # Input a plugin entered while the editor read for another session, or did not exist yet.
             for entry in self._inbox.take():
                 editor.submit(entry)
             if self.tasks.waiting(self.session.summary.id):
                 editor.wake()
+        elif self._editor_bound.is_set():
+            self._editor_bound = Event()
         if self._reading is not None:
             self._reading.cancel()
 

@@ -6,6 +6,12 @@ from pydantic_ai.models import known_model_names
 from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.config import SETTING_FIELDS, TOOL_CALL_DISPLAYS, UPDATE_CHANNELS, Settings
 from pydantic_ai_pax.config.api_keys import set_api_key
+from pydantic_ai_pax.config.input_bindings import (
+    BUSY_DELIVERIES,
+    KEYBOARD_LABELS,
+    QUESTION_PLACEMENTS,
+    QUESTION_SUBMITS,
+)
 from pydantic_ai_pax.plugins.menus import SettingsMenu
 from pydantic_ai_pax.ui.menus.dialogs import run_settings_menu
 from pydantic_ai_pax.ui.menus.field_menu import ChoicePreview, FieldMenu, FieldRow, first_error, shown
@@ -31,31 +37,41 @@ class SettingsSource:
         `run.instructions` is left to `/system_prompt`: a one-line input would lose its line breaks.
         """
         rows: list[FieldRow] = []
+        defaults = Settings().model_dump(mode='json')
         for key, field in SETTING_FIELDS.items():
             if key == 'run.instructions' or (self._keys and key not in self._keys):
                 continue
             info = Settings.model_fields[field]
             preview: ChoicePreview | None = None
-            if info.annotation is bool:
-                choices: tuple[str, ...] = ('true', 'false')
-            elif key == 'display.theme':
-                choices = names()
-            elif key == 'display.spinner':
-                choices = tuple(BUILTIN_SPINNERS)
-            elif key == 'model':
-                choices = tuple(known_model_names())
-            elif key == 'display.tool_calls':
-                choices = TOOL_CALL_DISPLAYS
-                preview = tool_calls_preview
-            elif key == 'updates.channel':
-                choices = UPDATE_CHANNELS
-            else:
-                choices = ()
+            match key:
+                case _ if info.annotation is bool:
+                    choices: tuple[str, ...] = ('true', 'false')
+                case 'display.theme':
+                    choices = names()
+                case 'display.spinner':
+                    choices = tuple(BUILTIN_SPINNERS)
+                case 'model':
+                    choices = tuple(known_model_names())
+                case 'display.tool_calls':
+                    choices = TOOL_CALL_DISPLAYS
+                    preview = tool_calls_preview
+                case 'updates.channel':
+                    choices = UPDATE_CHANNELS
+                case 'input.keyboard_labels':
+                    choices = KEYBOARD_LABELS
+                case 'input.busy_delivery':
+                    choices = BUSY_DELIVERIES
+                case 'input.question_submit':
+                    choices = QUESTION_SUBMITS
+                case 'input.questions':
+                    choices = QUESTION_PLACEMENTS
+                case _:
+                    choices = ()
             rows.append(
                 FieldRow(
                     key=key,
                     description=info.description or '',
-                    default=shown(info.default),
+                    default=shown(defaults[field]),
                     choices=choices,
                     note='project' if self._context.from_project(key) else '',
                     preview=preview,
