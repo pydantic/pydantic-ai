@@ -59,3 +59,38 @@ def test_uuid7_counter_overflow() -> None:
     finally:
         uuid_mod._last_timestamp_v7 = saved_ts  # pyright: ignore[reportPrivateUsage]
         uuid_mod._last_counter_v7 = saved_counter  # pyright: ignore[reportPrivateUsage]
+
+
+def test_uuid7_same_millisecond_timestamp_preserved() -> None:
+    """When calls occur in the same millisecond, the 48-bit timestamp ms prefix must not increment."""
+    saved_ts = uuid_mod._last_timestamp_v7  # pyright: ignore[reportPrivateUsage]
+    saved_counter = uuid_mod._last_counter_v7  # pyright: ignore[reportPrivateUsage]
+    try:
+        uuid_mod._last_timestamp_v7 = None  # pyright: ignore[reportPrivateUsage]
+        uuid_mod._last_counter_v7 = 0  # pyright: ignore[reportPrivateUsage]
+        with patch.object(uuid_mod.time, 'time_ns', return_value=5_000_000_000_000_000):
+            u1 = uuid7()
+            u2 = uuid7()
+        assert u1.hex[:12] == u2.hex[:12]
+    finally:
+        uuid_mod._last_timestamp_v7 = saved_ts  # pyright: ignore[reportPrivateUsage]
+        uuid_mod._last_counter_v7 = saved_counter  # pyright: ignore[reportPrivateUsage]
+
+
+def test_uuid7_counter_boundary_no_premature_overflow() -> None:
+    """When the 42-bit counter increments up to exactly 0x3FF_FFFF_FFFF, it must not overflow prematurely."""
+    saved_ts = uuid_mod._last_timestamp_v7  # pyright: ignore[reportPrivateUsage]
+    saved_counter = uuid_mod._last_counter_v7  # pyright: ignore[reportPrivateUsage]
+    try:
+        uuid_mod._last_timestamp_v7 = None  # pyright: ignore[reportPrivateUsage]
+        uuid_mod._last_counter_v7 = 0  # pyright: ignore[reportPrivateUsage]
+        with patch.object(uuid_mod.time, 'time_ns', return_value=6_000_000_000_000_000):
+            u1 = uuid7()
+            uuid_mod._last_counter_v7 = 0x3FF_FFFF_FFFF - 1  # pyright: ignore[reportPrivateUsage]
+            u2 = uuid7()
+            assert u1.hex[:12] == u2.hex[:12]
+            counter_val = ((u2.int >> 64) & 0x0FFF) << 30 | ((u2.int >> 32) & 0x3FFF_FFFF)
+            assert counter_val == 0x3FF_FFFF_FFFF
+    finally:
+        uuid_mod._last_timestamp_v7 = saved_ts  # pyright: ignore[reportPrivateUsage]
+        uuid_mod._last_counter_v7 = saved_counter  # pyright: ignore[reportPrivateUsage]
