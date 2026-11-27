@@ -696,6 +696,7 @@ omit = [
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
     "tests/harness/**/*_live.py",  # live sandbox tiers; run only with provider credentials
     "tests/ui_roundtrip/*.py",  # need Node and the JS UI clients; run only in `ui-roundtrip.yml`
+    "tests/pax/test_image_clipboard_native.py",  # runs only in the coverage-free `test-clai2-clipboard` job
 ]
 branch = true
 # Disable include-ignored warnings as --source is enabled automatically causing a self conflict as per:
@@ -741,7 +742,7 @@ exclude_lines = [
     'except ImportError as _import_error:',
     '$\s*pass$',
     'assert False',
-    '@pytest\.mark\.skip',
+    '@pytest\.mark\.skip\b(?!if)',
     '@pytest\.mark\.xfail',
 ]
 
