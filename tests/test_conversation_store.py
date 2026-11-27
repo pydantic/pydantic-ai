@@ -1341,15 +1341,29 @@ async def test_an_edit_to_a_run_s_history_after_it_reaches_its_conversation() ->
 
 
 @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
-async def test_an_edit_to_a_trimmed_run_s_history_after_it_doesn_t_reach_its_conversation() -> None:
-    """The conversation of a run a capability trimmed is the full history as it was when the run ended."""
-    result = await _trimming_agent(_LookUp(calls=3)).run('look it up')
-    whole = conversation_view(result.conversation.messages)
+async def test_an_edit_to_a_trimmed_run_s_history_after_it_is_saved_as_a_branch() -> None:
+    """An edit after the run reaches the conversation even when a capability trimmed what the model saw.
 
+    The run can't tell what the edit meant, so the store compares the edited messages with its own and branches where
+    they differ, keeping the conversation as it was stored.
+    """
+    store = InMemoryConversationStore()
+    model = _LookUp(calls=3)
+    agent = _trimming_agent(model)
+    await store.save((await agent.run('look it up', conversation=Conversation(conversation_id='c'))).conversation)
+    stored = await store.load('c')
+    assert stored is not None
+
+    model.calls = 3
+    result = await agent.run('and again', conversation=stored)
     result.all_messages()[-1:] = [ModelRequest(parts=[UserPromptPart('later')])]
+    await store.save(result.conversation)
 
-    assert len(whole) > len(conversation_view(result.all_messages()))
-    assert conversation_view(result.conversation.messages) == whole
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == conversation_view(result.all_messages())
+    record = await store.read_record('c')
+    assert record is not None and len(record.branches) == 1
 
 
 @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)

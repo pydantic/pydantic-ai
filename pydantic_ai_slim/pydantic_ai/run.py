@@ -1300,8 +1300,7 @@ class AgentRunResult(Generic[OutputDataT]):
 
         Messages appended to `all_messages()` after the run are added to the conversation. Any other
         edit to it after the run makes the conversation the edited messages, with none known to be
-        stored, so a store compares them all, when the conversation was the same as `all_messages()`.
-        Otherwise the conversation stays as the run ended.
+        stored, so a store compares them with what it has and branches where they differ.
         """
         output = self.output
         return conversation_from_state(

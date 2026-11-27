@@ -145,8 +145,8 @@ class ConversationLog:
         """The conversation for `history`, the run's message history, with how many of its messages are stored.
 
         Also returns whether the stored ones are checked: see `checked`. After the run ended, messages appended to its
-        history are added. Any other edit makes the conversation the edited history, with none known to be stored, when
-        it was the history the run ended with, and leaves the conversation as the run ended otherwise.
+        history are added. Any other edit makes the conversation the edited history, with none known to be stored, so
+        its store compares it with what it has and branches where they differ.
         """
         if self.messages is None:
             return list(history), None, False
@@ -160,9 +160,8 @@ class ConversationLog:
             logged = {id(message) for message in resolved}
             added = [message for message in history[len(final) :] if id(message) not in logged]
             return [*resolved, *added], self.stored, self.checked
-        if len(resolved) == len(final) and all(map(_same, resolved, final)):
-            return list(history), None, False
-        return resolved, self.stored, self.checked
+        # Edited some other way after the run: the edit is the conversation, and its store compares and branches.
+        return list(history), None, False
 
     def settled(self, history: list[ModelMessage], start: int, logged_from: int) -> ConversationLog:
         """This log for the copy of the history a streamed result keeps, which holds the messages from `start` on itself.
