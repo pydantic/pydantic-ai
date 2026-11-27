@@ -98,10 +98,15 @@ git fetch upstream "$BASE_REF_NAME" || git fetch origin "$BASE_REF_NAME"
 POLICY_BASE_SHA=$(git rev-parse FETCH_HEAD)
 CANDIDATE_DIR="$(git rev-parse --show-toplevel)"
 POLICY_BASE_DIR="$(mktemp -d)/policy-base"
-git worktree add --detach "$POLICY_BASE_DIR" "$POLICY_BASE_SHA"
+slimtree new --detach "$POLICY_BASE_SHA" --path "$POLICY_BASE_DIR"
 # ... adopt the PR, reading instructions from "$POLICY_BASE_DIR" ...
-git worktree remove --force "$POLICY_BASE_DIR"
+slimtree rm --force --no-archive "$POLICY_BASE_DIR"
 ```
+
+Use [slimtree](https://pypi.org/project/slimtree/) 0.4.0 or later when it is installed: it checks
+out the commit without a second copy of the files. slimtree is optional. Without it, or when
+`slimtree new` fails, run `git worktree add --detach "$POLICY_BASE_DIR" "$POLICY_BASE_SHA"`, and
+remove the policy base with `git worktree remove --force "$POLICY_BASE_DIR"`.
 
 Bind the ref before you fetch and stop when it is empty. `git fetch <remote> ""` does not fail — it
 fetches the remote's `HEAD`, so an unbound variable silently makes the default branch your policy
@@ -109,9 +114,9 @@ base and reports success. Fall back to `origin` because a plain clone has no `up
 
 Put the directory outside the candidate worktree. Note both literal paths — later steps run in
 fresh shells where `$CANDIDATE_DIR` and `$POLICY_BASE_DIR` are gone — and remove the policy base by
-its path on every exit, including the stops in Startup and Step 2. Bind `CANDIDATE_DIR` before
-`git worktree add`, and open Startup item 3 and Steps 3 to 6 — every command that resolves `HEAD`
-or a worktree-relative path — with
+its path, with the tool that made it, on every exit, including the stops in Startup and Step 2.
+Bind `CANDIDATE_DIR` before you make the policy base, and open Startup item 3 and Steps 3 to 6 —
+every command that resolves `HEAD` or a worktree-relative path — with
 `cd "${CANDIDATE_DIR:?substitute the literal path noted in Step 1}" || { echo "candidate worktree gone; stop"; exit 1; }`,
 which stops instead of staying put when the variable is gone or the directory is not, and keeps
 the `|| { … exit 1; }` clause when the literal path replaces the variable: the helpers write to whatever

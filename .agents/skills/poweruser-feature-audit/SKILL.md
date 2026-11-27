@@ -51,15 +51,20 @@ BASE_REF_NAME=$(gh pr view "$PR_NUMBER" --json baseRefName -q .baseRefName)
 [ -n "$BASE_REF_NAME" ] || { echo "no base ref; stop"; exit 1; }
 git fetch upstream "$BASE_REF_NAME" || git fetch origin "$BASE_REF_NAME"
 POLICY_BASE_DIR="$(mktemp -d)/policy-base"
-git worktree add --detach "$POLICY_BASE_DIR" "$(git rev-parse FETCH_HEAD)"
+slimtree new --detach "$(git rev-parse FETCH_HEAD)" --path "$POLICY_BASE_DIR"
 # ... audit, reading instructions from "$POLICY_BASE_DIR" ...
-git worktree remove --force "$POLICY_BASE_DIR"
+slimtree rm --force --no-archive "$POLICY_BASE_DIR"
 ```
+
+Use [slimtree](https://pypi.org/project/slimtree/) 0.4.0 or later when it is installed: it checks
+out the commit without a second copy of the files. slimtree is optional. Without it, or when
+`slimtree new` fails, run `git worktree add --detach "$POLICY_BASE_DIR" "$(git rev-parse FETCH_HEAD)"`,
+and remove the policy base with `git worktree remove --force "$POLICY_BASE_DIR"`.
 
 The commands are here rather than cited from `adopt-pr` on purpose: that skill also lives in the
 candidate tree, so citing it would route this boundary through the tree the boundary exists to
 escape. Note the directory's literal path — later phases run in fresh shells — and remove it by that
-path on every exit.
+path, with the tool that made it, on every exit.
 
 Launch every phase's subagents from the policy-base checkout so startup loads the stable instructions.
 Supply the candidate diff or immutable candidate content for inspection as data.
