@@ -606,6 +606,43 @@ async def test_a_hidden_sessions_approval_waits_to_be_shown_while_the_browser_ca
     assert await desk.run(body) == 'exit'
 
 
+async def test_showing_a_session_again_drops_its_approvals_focus(tmp_path: Path) -> None:
+    """An approval focused with F2 loses focus when another session is shown, so Enter later cannot approve it unseen."""
+    ran: list[str] = []
+    desk = Desk(
+        tmp_path,
+        agent=removing_agent(tmp_path, ran),
+        builtin=(RECORDER, WEB),
+        settings=Settings(model=None, question_placement='composer'),
+    )
+    home, terminal = desk.home, desk.terminal
+
+    async def body() -> None:
+        b = await desk.live.new(workspace=desk.folder('b'))
+        home.send_input('/permissions auto')
+        home.send_input('clean up')
+        await settle(lambda: home.questions.menu is not None)
+        assert terminal.editor is not None
+        terminal.editor.feed('f2')
+        await anyio.lowlevel.checkpoint()
+        assert home.questions.focused
+        await terminal.show(desk.runtimes[b.id])
+        terminal.editor.feed('f4')
+        await anyio.lowlevel.checkpoint()
+        await terminal.show(home)
+        terminal.editor.feed('enter')
+        await anyio.wait_all_tasks_blocked()
+        assert ran == [] and home.questions.menu is not None, 'Enter through the open panel approved unseen'
+        terminal.editor.feed('f2')
+        await anyio.lowlevel.checkpoint()
+        terminal.editor.feed('ctrl-c')
+        await until(desk.live, lambda: home.idle)
+        assert ran == []
+        home.live_session.send_input('/exit')
+
+    assert await desk.run(body) == 'exit'
+
+
 async def test_closing_a_hidden_session_ends_the_approval_it_waits_to_show(tmp_path: Path) -> None:
     """Closing the session cancels its approval's wait to be shown; the command never runs."""
     ran: list[str] = []

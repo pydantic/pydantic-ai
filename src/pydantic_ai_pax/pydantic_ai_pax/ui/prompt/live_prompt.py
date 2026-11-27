@@ -503,9 +503,9 @@ class LivePrompt:
             self._queue_open = False
             return False
         if entry not in entries:
+            # The selected entry ran or was removed while the panel was open.
             self._queue_open = False
-            self.notice = 'That message is no longer queued.'
-            return True
+            return False
         match key:
             case 'up' | 'down':
                 self._queue_selected = entries[(entries.index(entry) + (-1 if key == 'up' else 1)) % len(entries)]

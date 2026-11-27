@@ -1320,6 +1320,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
 
     def bind(self, editor: LivePrompt | None) -> None:
         """Read from `editor`, the open editor of the terminal showing this session; `None` stops that."""
+        # Focus taken with F2 never outlives the screen it was taken on: a key read later must not answer unseen.
+        self.questions.focused = self.questions.routing = False
         if self.editor is not None and editor is None:
             # Prompts queued for this session stay its own while the terminal shows another.
             for entry in self.editor.take_queued():

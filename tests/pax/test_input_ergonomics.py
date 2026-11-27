@@ -562,6 +562,22 @@ async def test_a_key_the_queue_panel_does_not_handle_closes_it_and_reaches_the_d
         assert [entry.id for entry in live.queued_prompts()] == [first.id]
 
 
+@pytest.mark.parametrize('kind', ['letter', 'paste'])
+async def test_typing_after_the_panels_entry_ran_reaches_the_draft(kind: str) -> None:
+    """The entry F4 selected runs while the panel is open; what is typed next still reaches the draft."""
+    async with editor() as (live, _, _):
+        live.submit('first')
+        live.feed('f4')
+        await anyio.lowlevel.checkpoint()
+        assert await live.read() == 'first'
+        if kind == 'letter':
+            live.feed('h')
+            live.feed('i')
+        else:
+            live.feed('paste', 'hi')
+        assert live.buffer.text == 'hi'
+
+
 async def test_visible_queue_remove_and_steer_cannot_execute_a_finished_entry() -> None:
     async with editor() as (live, _, _):
         live.steer = steered = Steered()
@@ -571,18 +587,19 @@ async def test_visible_queue_remove_and_steer_cannot_execute_a_finished_entry() 
         live.feed('f4')
         await anyio.lowlevel.checkpoint()
         assert await live.read() == 'first'
-        live.feed('s')  # Selected first already ran; never steer the next entry instead.
-        assert steered == [] and live.queued_messages == ('second',)
+        # Selected first already ran: the key closes the panel and types, never steering the next entry instead.
+        live.feed('s')
+        assert steered == [] and live.queued_messages == ('second',) and live.buffer.text == 'drafts'
         live.feed('f4')
         await anyio.lowlevel.checkpoint()
         live.feed('s')
         assert steered == ['second'] and live.queued_messages == ()
-        assert live.buffer.text == 'draft'
+        assert live.buffer.text == 'drafts'
         live.submit('remove me')
         live.feed('f4')
         await anyio.lowlevel.checkpoint()
         live.feed('d')
-        assert live.queued_messages == () and live.buffer.text == 'draft'
+        assert live.queued_messages == () and live.buffer.text == 'drafts'
 
 
 async def test_explicit_focused_approval_still_authorizes_only_its_current_call() -> None:
