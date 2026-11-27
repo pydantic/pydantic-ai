@@ -75,6 +75,7 @@ _HARNESS_DOCS = (
     'step_persistence',
     'sub_agents',
     'tool_call_judge',
+    'wrap_up_at_limits',
 )
 """The harness capabilities Pax uses, whose READMEs ship in the `pydantic-ai-harness` package."""
 
