@@ -42,7 +42,7 @@ from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .conftest import IsStr, try_import
-from .models.conftest import serve_text_files
+from .models.conftest import scale_download_limits, serve_text_files
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -582,11 +582,9 @@ async def test_text_documents_by_url_are_downloaded_one_at_a_time(monkeypatch: p
     seen: list[list[ModelMessage]] = []
     agent = _text_document_agent(seen)
 
-    with (
-        patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 1024),
-        patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 10 * 1024),
-    ):
-        await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
+    scale_download_limits(monkeypatch)
+
+    await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
 
     assert in_flight == [1] * 11
     assert [len(item.splitlines()[1]) for item in last_prompt(seen) if isinstance(item, str)] == [5] * 11
@@ -603,11 +601,9 @@ async def test_text_documents_by_url_are_downloaded_while_the_total_has_room(mon
     seen: list[list[ModelMessage]] = []
     agent = _text_document_agent(seen)
 
-    with (
-        patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 1024),
-        patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 10 * 1024),
-    ):
-        await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
+    scale_download_limits(monkeypatch)
+
+    await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
 
     assert [len(item.splitlines()[1]) for item in last_prompt(seen) if isinstance(item, str)] == [1000] * 9 + [5] * 10
 
@@ -627,15 +623,13 @@ async def test_text_documents_by_url_are_downloaded_while_the_total_has_room(mon
 async def test_text_documents_by_url_are_refused_past_the_download_limits(
     sizes: dict[str, int], error: str, monkeypatch: pytest.MonkeyPatch
 ):
-    """The text documents one request downloads are refused past the per-request total, as well as the per-file limit."""
+    """The text documents one request downloads are refused past the per-request total and the per-file limit."""
     serve_text_files(monkeypatch, sizes)
     agent = _text_document_agent([])
 
-    with (
-        patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 1024),
-        patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 10 * 1024),
-        pytest.raises(ValueError) as exc_info,
-    ):
+    scale_download_limits(monkeypatch)
+
+    with pytest.raises(ValueError) as exc_info:
         await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
 
     assert str(exc_info.value) == error

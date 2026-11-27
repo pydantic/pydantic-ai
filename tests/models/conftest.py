@@ -188,8 +188,17 @@ def mock_downloads(
     monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_http_client)
 
 
+def scale_download_limits(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Scale the file URL download limits down to 1 KiB per file and 10 KiB per model request."""
+    monkeypatch.setattr('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 1024)
+    monkeypatch.setattr('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 10 * 1024)
+
+
 def serve_text_files(monkeypatch: pytest.MonkeyPatch, sizes: dict[str, int]) -> list[int]:
-    """Serve a text file of `sizes[name]` bytes at `/<name>.txt`, and return how many downloads were in flight as each arrived."""
+    """Serve a text file of `sizes[name]` bytes at `/<name>.txt`.
+
+    Returns how many downloads were in flight as each one arrived.
+    """
     in_flight: list[int] = []
     downloading = 0
 

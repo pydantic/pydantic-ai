@@ -254,7 +254,7 @@ with workflow.unsafe.imports_passed_through():
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsInt, IsList, IsSameStr, IsStr
-    from ...models.conftest import serve_text_files
+    from ...models.conftest import scale_download_limits, serve_text_files
     from ...workspace_fakes import FakeWorkspace
     from ..decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
     from ..preamble_text import (
@@ -9550,32 +9550,29 @@ async def test_durability_file_understanding_text_downloads_have_the_per_file_li
     """
     sizes = {**{f'doc{i}': 1000 for i in range(11)}, 'big': 2000}
     in_flight = serve_text_files(monkeypatch, sizes)
+    scale_download_limits(monkeypatch)
 
-    with (
-        patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 1024),
-        patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 10 * 1024),
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FileUnderstandingTextWorkflow],
+        plugins=[AgentPlugin(_file_understanding_agent)],
     ):
-        async with Worker(
-            client,
+        output = await client.execute_workflow(
+            FileUnderstandingTextWorkflow.run,
+            args=[[f'https://93.184.215.14/doc{i}.txt' for i in range(11)]],
+            id=f'{FileUnderstandingTextWorkflow.__name__}-within-the-per-file-limit',
             task_queue=TASK_QUEUE,
-            workflows=[FileUnderstandingTextWorkflow],
-            plugins=[AgentPlugin(_file_understanding_agent)],
-        ):
-            output = await client.execute_workflow(
+            execution_timeout=timedelta(seconds=30),
+        )
+        with workflow_activity_raises(DownloadTooLargeError, 'Download exceeds the maximum size of 1024 bytes.'):
+            await client.execute_workflow(
                 FileUnderstandingTextWorkflow.run,
-                args=[[f'https://93.184.215.14/doc{i}.txt' for i in range(11)]],
-                id=f'{FileUnderstandingTextWorkflow.__name__}-within-the-per-file-limit',
+                args=[['https://93.184.215.14/big.txt']],
+                id=f'{FileUnderstandingTextWorkflow.__name__}-past-the-per-file-limit',
                 task_queue=TASK_QUEUE,
                 execution_timeout=timedelta(seconds=30),
             )
-            with workflow_activity_raises(DownloadTooLargeError, 'Download exceeds the maximum size of 1024 bytes.'):
-                await client.execute_workflow(
-                    FileUnderstandingTextWorkflow.run,
-                    args=[['https://93.184.215.14/big.txt']],
-                    id=f'{FileUnderstandingTextWorkflow.__name__}-past-the-per-file-limit',
-                    task_queue=TASK_QUEUE,
-                    execution_timeout=timedelta(seconds=30),
-                )
 
     assert output == 'ok'
     assert len(in_flight) == 12

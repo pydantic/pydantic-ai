@@ -10,7 +10,6 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
-from unittest.mock import patch
 
 import pytest
 from inline_snapshot import snapshot
@@ -79,7 +78,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from ..batch_utils import FAST_BATCH_SETTINGS
 from ..conftest import try_import
 from ..model_lifecycle_utils import LifecycleTrackingModel
-from ..models.conftest import serve_text_files
+from ..models.conftest import scale_download_limits, serve_text_files
 from .preamble_text import (
     RunAndStreamResult,
     StructuredOutput,
@@ -2826,11 +2825,9 @@ async def test_dbos_file_understanding_text_downloads_share_one_total(
     async def workflow() -> None:
         await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
 
-    with (
-        patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 1024),
-        patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 10 * 1024),
-        SetWorkflowID(workflow_id),
-    ):
+    scale_download_limits(monkeypatch)
+
+    with SetWorkflowID(workflow_id):
         if error is None:
             await workflow()
         else:
@@ -2858,15 +2855,13 @@ async def test_prefect_file_understanding_text_downloads_share_one_total(
     async def run() -> None:
         await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
 
-    with (
-        patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 1024),
-        patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 10 * 1024),
-    ):
-        if error is None:
+    scale_download_limits(monkeypatch)
+
+    if error is None:
+        await run()
+    else:
+        with pytest.raises(ValueError) as exc_info:
             await run()
-        else:
-            with pytest.raises(ValueError) as exc_info:
-                await run()
-            assert str(exc_info.value) == error
+        assert str(exc_info.value) == error
 
     assert in_flight == [1] * 11
