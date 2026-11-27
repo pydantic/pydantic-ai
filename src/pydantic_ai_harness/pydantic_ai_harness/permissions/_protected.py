@@ -61,9 +61,6 @@ _LENGTH_LIMIT = 4096
 _BRACE_LIMIT = 64
 """How many words a word's brace expansion is followed to; a word expanding to more counts as protected."""
 
-_SEQUENCE = re.compile(r'(-?\d+\.\.-?\d+|[A-Za-z]\.\.[A-Za-z])(\.\.-?\d+)?')
-"""The inside of a brace sequence, such as `{1..3}` or `{a..e..2}`, whose values hold no `/` or `.`."""
-
 
 class _Char(NamedTuple):
     """One part of a pattern: a character, or a wildcard for any one or, with `star`, any number of them."""
@@ -272,9 +269,28 @@ def _brace_group(word: str) -> tuple[int, int, list[str]] | None:
         if start in commas:
             bounds = [start, *commas[start], end]
             return start, end, [word[a + 1 : b] for a, b in zip(bounds, bounds[1:])]
-        if _SEQUENCE.fullmatch(word, start + 1, end):
+        if _is_sequence(word[start + 1 : end]):
             return start, end, ['*']
     return None
+
+
+def _is_sequence(inner: str) -> bool:
+    """Whether `inner` is the inside of a brace sequence, such as `{1..3}` or `{a..e..2}`, whose values hold no `/`.
+
+    Read without a regular expression, which would backtrack over a long run of digits.
+    """
+    parts = inner.split('..')
+    if len(parts) not in (2, 3) or (len(parts) == 3 and not _is_integer(parts[2])):
+        return False
+    first, last = parts[0], parts[1]
+    letters = all(len(end) == 1 and end.isascii() and end.isalpha() for end in (first, last))
+    return letters or (_is_integer(first) and _is_integer(last))
+
+
+def _is_integer(text: str) -> bool:
+    """Whether `text` is an optionally negative run of ASCII digits."""
+    digits = text.removeprefix('-')
+    return digits.isascii() and digits.isdecimal()
 
 
 def _names_a_dot(location: str, *, posix: bool) -> bool:
