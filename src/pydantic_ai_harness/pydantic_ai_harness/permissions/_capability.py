@@ -303,7 +303,7 @@ class Permissions(AbstractCapability[AgentDepsT]):
         asked = self._mode_asks(mode, tool_def=tool_def, args=args, command=command, allowed=rule is not None)
         if asked is not None:
             return _Decision('ask', 'mode', asked, asked.reason)
-        return _Decision('allow', 'mode' if rule is None else 'rule')
+        return _Decision('allow', 'mode') if rule is None else _Decision('allow', 'rule', reason=rule.reason)
 
     def _mode_asks(
         self,
