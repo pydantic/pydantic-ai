@@ -477,13 +477,13 @@ def relaunch_argv(
     executable: str,
     session_id: str | None,
     new_session_id: str | None = None,
-    launch_plugins: 'Sequence[str] | None' = None,
+    launch_plugins: 'Sequence[str]' = (),
 ) -> list[str]:
     """The launch options to restart with after `/update`, resuming `session_id` instead of any `--resume`.
 
     An unsaved conversation started with `--session-id` restarts under `new_session_id`. The token
-    `--token-file` names stays in its file. `launch_plugins`, the `-x` plugins the launch still loads,
-    replaces `args.plugin`, so one disabled or removed meanwhile stays off.
+    `--token-file` names stays in its file. `launch_plugins` are the `-x` plugins the launch still loads,
+    read from the process rather than `args.plugin`, so one disabled or removed meanwhile stays off.
     """
     argv = [executable]
     if args.web:
@@ -498,7 +498,7 @@ def relaunch_argv(
         argv += ['--model', args.model]
     if args.request_limit is not None:
         argv += ['--request-limit', str(args.request_limit)]
-    for name in args.plugin if launch_plugins is None else launch_plugins:
+    for name in launch_plugins:
         argv += ['--plugin', name]
     if args.database is not None:
         argv += ['--database', str(args.database)]

@@ -830,9 +830,9 @@ def test_relaunch_argv(tmp_path: Path) -> None:
         '--resume',
         'abc',
     ]
-    # `--plugin` choices are for the launch, so the restarted build loads them too.
-    plugins = _args(plugin=['sandbox', 'mcp'])
-    assert relaunch_argv(plugins, executable='/b/pax', session_id='s') == [
+    # The launch's `-x` plugins still loaded restart too; one dropped since launch (`gone`) stays off.
+    plugins = _args(plugin=['sandbox', 'gone', 'mcp'])
+    assert relaunch_argv(plugins, executable='/b/pax', session_id='s', launch_plugins=['sandbox', 'mcp']) == [
         '/b/pax',
         '--plugin',
         'sandbox',
