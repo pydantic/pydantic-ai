@@ -12,7 +12,17 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel, Field, JsonValue, WithJsonSchema, field_validator
 
-from pydantic_ai import Agent, BinaryContent, BoolCriteria, DocumentUrl, ModelRetry, RunContext, Tool, ToolOutput
+from pydantic_ai import (
+    Agent,
+    BinaryContent,
+    BinaryImage,
+    BoolCriteria,
+    DocumentUrl,
+    ModelRetry,
+    RunContext,
+    Tool,
+    ToolOutput,
+)
 from pydantic_ai.capabilities import Capability, FileUnderstanding, Instrumentation
 from pydantic_ai.exceptions import ModelAPIError, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
@@ -166,7 +176,7 @@ class ImageEnabledDecisionModel(InMemoryDecisionModel):
 
 async def test_decision_model_preserves_image_evidence_in_state(allow_model_requests: None):
     prior_image = BinaryContent(b'prior', media_type='image/png')
-    assistant_image = BinaryContent(b'assistant', media_type='image/png')
+    assistant_image = BinaryImage(b'assistant', media_type='image/png')
     tool_image = BinaryContent(b'tool', media_type='image/png')
     native_image = BinaryContent(b'native', media_type='image/png')
     failed_image = BinaryContent(b'failed', media_type='image/png')
