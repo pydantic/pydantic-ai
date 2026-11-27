@@ -323,6 +323,59 @@ async def test_a_bundle_is_recorded_once_with_its_members() -> None:
     )
 
 
+async def test_a_deferred_bundle_is_recorded_with_its_own_id_and_state() -> None:
+    """A deferred bundle registers itself, so its record uses its own id, `defer_loading` and `active`."""
+    capability, exporter = instrumentation()
+    deferred = SupportBundle(
+        [Capability(id='refunds', instructions='Refund.')],
+        id='refund_desk',
+        description='Refund requests.',
+        defer_loading=True,
+    )
+    agent = Agent(TestModel(call_tools=[]), capabilities=[capability, deferred])
+
+    await agent.run('Hello')
+
+    assert run_span_composition(exporter)['capabilities'] == snapshot(
+        {
+            'pydantic_ai.capabilities.Instrumentation': [
+                {'id': 'instrumentation', 'defer_loading': False, 'active': True}
+            ],
+            'pydantic_ai.capabilities.CombinedCapability': [
+                {
+                    'id': 'refund_desk',
+                    'user_class': 'tests.test_instrumentation_composition.SupportBundle',
+                    'defer_loading': True,
+                    'active': False,
+                    'members': {
+                        'pydantic_ai.capabilities.Capability': [
+                            {'id': 'refunds', 'defer_loading': False, 'active': False}
+                        ]
+                    },
+                }
+            ],
+            'pydantic_ai.capabilities.ToolSearch': [{'id': 'tool_search', 'defer_loading': False, 'active': True}],
+        }
+    )
+
+
+def test_capability_records_without_a_root_capability() -> None:
+    """Without a root capability there are no bundles, so each capability is its own record."""
+    from pydantic_ai._instrumentation import capability_records
+
+    records = capability_records(
+        {'billing': Capability(id='billing', instructions='Bill.')},
+        None,
+        {'billing'},
+        set(),
+        include_content=True,
+    )
+
+    assert records == snapshot(
+        {'pydantic_ai.capabilities.Capability': [{'id': 'billing', 'defer_loading': False, 'active': True}]}
+    )
+
+
 @pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_dynamic_toolset_is_recorded_as_resolved_on_each_step() -> None:
     """A `DynamicToolset` resolves per step, so the run records every toolset it resolved to."""
