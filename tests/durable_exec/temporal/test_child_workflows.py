@@ -12,7 +12,14 @@ import pytest
 from pydantic_ai import Agent, DeferredToolRequests, FunctionToolset, ToolCallPart, ToolDefinition, ToolReturnPart
 from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
 from pydantic_ai.durable_exec._operation import ToolsetCallToolId
-from pydantic_ai.exceptions import CallDeferred, ContentFilterError, ModelRetry, ToolFailed, UserError
+from pydantic_ai.exceptions import (
+    CallDeferred,
+    ContentFilterError,
+    FallbackExceptionGroup,
+    ModelRetry,
+    ToolFailed,
+    UserError,
+)
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
@@ -418,6 +425,63 @@ async def test_child_workflow_retry_policy_skips_subclasses_of_non_retryable_err
     child_id = _child_start(await client.get_workflow_handle(workflow_id).fetch_history()).workflow_id
     child_history = await client.get_workflow_handle(child_id).fetch_history()
     assert child_history.events[0].workflow_execution_started_event_attributes.attempt == 1
+
+
+_RETRYING_CHILD_WORKFLOW = ChildWorkflowConfig(
+    retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=1))
+)
+fallback_group_toolsets = {
+    retryable: FunctionToolset[None](id=f'fallback_group_child_tools_{retryable}') for retryable in (True, False)
+}
+
+
+@fallback_group_toolsets[True].tool_plain(metadata={'temporal': {'child_workflow': _RETRYING_CHILD_WORKFLOW}})
+async def partly_retryable_fallback_group_child_tool() -> str:
+    raise FallbackExceptionGroup('All models failed.', [ValueError('Unavailable.'), UserError('Misconfigured.')])
+
+
+@fallback_group_toolsets[False].tool_plain(metadata={'temporal': {'child_workflow': _RETRYING_CHILD_WORKFLOW}})
+async def non_retryable_fallback_group_child_tool() -> str:
+    raise FallbackExceptionGroup(
+        'All models failed.', [UserError('Misconfigured.'), ContentFilterError('Content filter triggered.')]
+    )
+
+
+fallback_group_agents = {
+    retryable: _metadata_error_agent(f'fallback_group_child_workflow_agent_{retryable}', toolset)
+    for retryable, toolset in fallback_group_toolsets.items()
+}
+
+
+@workflow.defn
+class FallbackGroupChildWorkflowAgentWorkflow:
+    @workflow.run
+    async def run(self, retryable: bool) -> str:
+        return (await fallback_group_agents[retryable].run('call the tool')).output
+
+
+@pytest.mark.parametrize('retryable', [True, False], ids=['some_member_retryable', 'no_member_retryable'])
+async def test_child_workflow_retries_a_fallback_group_unless_no_member_is_retryable(
+    client: Client, retryable: bool
+) -> None:
+    """A child's `FallbackExceptionGroup` is retried like an activity's: unless every member is non-retryable."""
+    workflow_id = f'test_child_workflow_retries_a_fallback_group_unless_no_member_is_retryable_{retryable}'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FallbackGroupChildWorkflowAgentWorkflow],
+        plugins=[AgentPlugin(agent) for agent in fallback_group_agents.values()],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                FallbackGroupChildWorkflowAgentWorkflow.run, retryable, id=workflow_id, task_queue=TASK_QUEUE
+            )
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert (cause.type, cause.non_retryable) == ('FallbackExceptionGroup', not retryable)
+    child_id = _child_start(await client.get_workflow_handle(workflow_id).fetch_history()).workflow_id
+    child_history = await client.get_workflow_handle(child_id).fetch_history()
+    assert child_history.events[0].workflow_execution_started_event_attributes.attempt == (3 if retryable else 1)
 
 
 @activity.defn
