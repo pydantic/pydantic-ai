@@ -973,6 +973,7 @@ See [Iterating Over an Agent's Graph](../agent.md#iterating-over-an-agents-graph
 
 | Hook | Signature | Purpose |
 |---|---|---|
+| [`process_history`][pydantic_ai.capabilities.AbstractCapability.process_history] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, messages: list[`[`ModelMessage`][pydantic_ai.messages.ModelMessage]`]) -> list[`[`ModelMessage`][pydantic_ai.messages.ModelMessage]`]` | Rewrite the message history before the request step's attempts, keeping the result (see [processing history](#processing-history)) |
 | [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`) -> `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] | Modify messages, settings, parameters, or model before the model call |
 | [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`) -> `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext] | Prepare each attempt at the request for the model about to serve it (see [attempts](#model-request-attempts)) |
 | [`after_model_request`][pydantic_ai.capabilities.AbstractCapability.after_model_request] | `(ctx: `[`RunContext`][pydantic_ai.tools.RunContext]`, *, request_context: `[`ModelRequestContext`][pydantic_ai.models.ModelRequestContext]`, response: `[`ModelResponse`][pydantic_ai.messages.ModelResponse]`) -> `[`ModelResponse`][pydantic_ai.messages.ModelResponse] | Modify the model's response |
@@ -989,6 +990,49 @@ To skip the model call entirely and provide a replacement response, raise [`Skip
 `before_model_request` hooks see the full `request_context.messages` list, including any [message history](../message-history.md) passed to `agent.run()`. See [Changing what the model sees](#steering-messages-and-reminders) for how to add steering messages and reminders, and how to change only what one request sends.
 
 To change the [instructions](../agent.md#instruction-parts) for a request, rewrite `request_context.model_request_parameters.instruction_parts` — that's what the model is sent, and the [`ModelRequest`][pydantic_ai.messages.ModelRequest] recorded in message history is re-rendered from it once the hooks have run, so history and traces show what was actually sent. Assigning to that message's `instructions` is not propagated back into the parts and does not reach the model. The parts also include the instructions of any [on-demand capability](on-demand.md) the model has loaded, which reach the model through message history rather than the prefix: [`instruction_visibility_of(part)`][pydantic_ai.models.ModelRequestParameters.instruction_visibility_of] is `'via_history'` for those, and a change you make to them is [appended](on-demand.md) as an update.
+
+#### Processing history {#processing-history}
+
+[`process_history`][pydantic_ai.capabilities.AbstractCapability.process_history] rewrites the message history before it's sent, to filter, redact or trim it. It runs once per request step, right before the same capability's `before_model_request`, and what it returns is both sent and kept: it replaces the run's history, so later requests and [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] start from it.
+
+```python {title="redact_emails.py"}
+import re
+from dataclasses import dataclass, replace
+from typing import Any
+
+from pydantic_ai import Agent, ModelMessage, ModelRequest, RunContext, UserPromptPart
+from pydantic_ai.capabilities import AbstractCapability
+
+EMAIL = re.compile(r'[\w.+-]+@[\w-]+(\.[\w-]+)+')
+
+
+def redacted(message: ModelMessage) -> ModelMessage:
+    if not isinstance(message, ModelRequest):
+        return message
+    parts = [
+        replace(part, content=EMAIL.sub('[email]', part.content))
+        if isinstance(part, UserPromptPart) and isinstance(part.content, str)
+        else part
+        for part in message.parts
+    ]
+    return replace(message, parts=parts)
+
+
+@dataclass
+class RedactEmails(AbstractCapability[Any]):
+    async def process_history(self, ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [redacted(message) for message in messages]
+
+
+agent = Agent('{{ openai:medium }}', capabilities=[RedactEmails()])
+result = agent.run_sync('Write to me at jane@example.com.')
+request = result.all_messages()[0]
+assert isinstance(request, ModelRequest)
+print([part.content for part in request.parts if isinstance(part, UserPromptPart)])
+#> ['Write to me at [email].']
+```
+
+Return new message and part objects for what you change, as `dataclasses.replace` does here, rather than mutating the ones the history holds. [`ProcessHistory`](process-history.md) runs a history processor function as this hook. [Which hook to use for the history](../hooks.md#which-hook-when) compares it with compaction and request-only changes.
 
 #### Changing what the model sees: steering messages and reminders {#steering-messages-and-reminders}
 
@@ -1037,7 +1081,8 @@ Unlike [`ModelRetry`][pydantic_ai.exceptions.ModelRetry], which starts a new ste
 
 ```text
 wrap_model_request(handler)              once per step
-  └─ handler: before_model_request      once per step
+  └─ handler: process_history,          once per step, for each capability in turn
+              before_model_request
        └─ for each attempt:
             prepare_model_request        the model about to serve this attempt is known
             compact_history              only when compaction was requested
@@ -1046,7 +1091,7 @@ wrap_model_request(handler)              once per step
               └─ success → after_model_request ────┴─ RetryModelRequest → next attempt
 ```
 
-Everything that depends on which model serves the request runs per attempt: `prepare_model_request`, the model's own message preparation, and token counting for [`UsageLimits.count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request]. An attempt at another model than the one `before_model_request` left the request on also resolves the agent's and capabilities' instructions and the model settings again, including [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions] and [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] callables, with that model as `ctx.model`; settings and instruction parts a `before_model_request` hook changed are kept. That happens before `prepare_model_request` runs, so to move an attempt to another model with that model's instructions and settings, raise `RetryModelRequest(model)` rather than assigning `request_context.model`. Each attempt starts from the request `before_model_request` produced, so an attempt never inherits preparation done for a different model. Put per-model work like context-window fitting in `prepare_model_request`, and work that should happen once per step, like a history processor or an injected message, in `before_model_request`; compaction has a hook of its own, [`compact_history`](compaction.md#the-compaction-hook), which runs after `prepare_model_request`, so it sees the instructions and settings resolved for the model serving the attempt. Changes `prepare_model_request` makes to `request_context` shape the request that is sent for that attempt and are not persisted to message history, including on an attempt that compacts it: see [request-only changes and compaction](#request-only-changes-and-compaction). Changes made through [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], the run's persistent history, do persist and are not rolled back for a further attempt: use them for state that doesn't depend on the attempt, such as a record later turns should reuse.
+Everything that depends on which model serves the request runs per attempt: `prepare_model_request`, the model's own message preparation, and token counting for [`UsageLimits.count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request]. An attempt at another model than the one `before_model_request` left the request on also resolves the agent's and capabilities' instructions and the model settings again, including [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions] and [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] callables, with that model as `ctx.model`; settings and instruction parts a `before_model_request` hook changed are kept. That happens before `prepare_model_request` runs, so to move an attempt to another model with that model's instructions and settings, raise `RetryModelRequest(model)` rather than assigning `request_context.model`. Each attempt starts from the request `before_model_request` produced, so an attempt never inherits preparation done for a different model. Put per-model work like context-window fitting in `prepare_model_request`, and work that should happen once per step in `process_history`, for a history processor, or `before_model_request`, for an injected message; compaction has a hook of its own, [`compact_history`](compaction.md#the-compaction-hook), which runs after `prepare_model_request`, so it sees the instructions and settings resolved for the model serving the attempt. Changes `prepare_model_request` makes to `request_context` shape the request that is sent for that attempt and are not persisted to message history, including on an attempt that compacts it: see [request-only changes and compaction](#request-only-changes-and-compaction). Changes made through [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], the run's persistent history, do persist and are not rolled back for a further attempt: use them for state that doesn't depend on the attempt, such as a record later turns should reuse.
 
 A response that was rejected never reaches history, but its tokens and cost still count toward the run's usage and its token and cost limits. `usage.requests` counts the step once. A streamed request can be re-attempted only while the stream is being opened: raising `RetryModelRequest` from `after_model_request` on a streamed request raises [`UserError`][pydantic_ai.exceptions.UserError], because the response has already been streamed. A step can make at most 100 attempts, after which a `UserError` is raised.
 

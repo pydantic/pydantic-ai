@@ -225,7 +225,7 @@ To let the users of an open-source or local app run it on their own ChatGPT plan
 | `PrefixTools` | Wraps a capability and prefixes its tool names | Yes |
 | `NativeTool` | Registers a provider-native tool with the agent | Yes |
 | `Toolset` | Wraps an `AbstractToolset` | No |
-| `ProcessHistory` | Wraps a history processor function — a thin wrapper over the `before_model_request` hook | No |
+| `ProcessHistory` | Wraps a history processor function, run as the `process_history` hook | No |
 | `ModelFallback` | Attempts other models when a request fails or its response is rejected | Yes |
 | `RetryOnModelErrors` | Retries the same model on rate limits, overloaded or unavailable models, 5xx and connection errors, with backoff | Yes |
 | `Caching` | Prompt caching across providers; several providers cache nothing without it | Yes |

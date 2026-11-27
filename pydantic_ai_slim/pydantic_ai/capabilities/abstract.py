@@ -13,6 +13,7 @@ from pydantic import ValidationError
 from typing_extensions import TypedDict, deprecated
 
 from pydantic_ai import _utils
+from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._instructions import (
     AgentInstruction,
     AgentInstructions,
@@ -154,6 +155,7 @@ _REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
     'after_node_run',
     'wrap_node_run',
     'on_node_run_error',
+    'process_history',
     'before_model_request',
     'prepare_model_request',
     'after_model_request',
@@ -522,6 +524,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     @property
     def _has_prepare_model_request(self) -> bool:
         return type(self).prepare_model_request is not AbstractCapability.prepare_model_request
+
+    @property
+    def _has_process_history(self) -> bool:
+        return type(self).process_history is not AbstractCapability.process_history
 
     @property
     def _has_compact_history(self) -> bool:
@@ -1296,6 +1302,56 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
     # --- Model request lifecycle hooks ---
 
+    async def process_history(self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]) -> list[ModelMessage]:
+        """Rewrite the message history before it's sent to the model, or return `messages` unchanged.
+
+        Called inside `wrap_model_request` once per request step, before any attempt at the model call, with the
+        messages the request would send. What it returns is sent, and replaces the run's message history: later
+        requests, [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] and the hooks after it start from
+        it. Use it to filter, redact or trim the history. To change only what one request sends, use
+        [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] or
+        [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] instead.
+        [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] implements this hook with a history processor
+        function.
+
+        Each capability's `process_history` runs right before its own `before_model_request`, in capability order,
+        so it gets the messages the capabilities ahead of it left, and the capabilities after it get its result.
+        Every attempt of the step, such as each model [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] tries,
+        is sent the same processed history, and the next step processes the history again, as it then stands.
+
+        Compaction has a hook of its own,
+        [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history], which runs per attempt,
+        after this one, so it compacts the processed history. A call to
+        [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction] from here is served by the
+        step's first attempt. A compaction keeps the standing system prompt of the history it's given ahead of its
+        summary, so a processor that drops or reorders the leading system prompt changes what it keeps.
+
+        Return new message and part objects for what you change, for instance with `dataclasses.replace`, rather than
+        mutating the ones the history holds. Under durable execution this runs in workflow code, like
+        `before_model_request`, so it runs again on replay and has to be deterministic. For I/O, such as a model
+        that summarizes, decorate the hook itself with
+        [`durable_operation`][pydantic_ai.capabilities.durable_operation], which makes it one durable unit per step,
+        or call a `durable_operation` from it.
+        """
+        return messages
+
+    async def _before_model_request_step(
+        self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        """This capability's part of a request step's before-chain: `process_history`, then `before_model_request`.
+
+        The processed history is what the request sends, and is written back to the run's history before the next
+        hook runs, so the attempts and their compaction see it. Containers run their children's steps in order.
+        """
+        if self._has_process_history:
+            previous = request_context.messages
+            messages = await self.process_history(ctx, list(previous))
+            request_context.messages = messages.copy()
+            ctx.messages[:] = messages
+            # This capability's own `before_model_request` may still append to history the deprecated way.
+            keep_mirroring(previous, request_context)
+        return await self.before_model_request(ctx, request_context)
+
     async def before_model_request(
         self,
         ctx: RunContext[AgentDepsT],
@@ -1304,7 +1360,9 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         """Called inside `wrap_model_request` once per request step, before any attempt at the model call.
 
         Can modify the model, request-only messages, settings, and parameters. Persistent history
-        changes must be made through [`RunContext.messages`][pydantic_ai.tools.RunContext.messages].
+        changes must be made through [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], or by
+        [`process_history`][pydantic_ai.capabilities.AbstractCapability.process_history], which runs right before
+        this hook.
         [`model_request_parameters.instruction_parts`][pydantic_ai.models.ModelRequestParameters.instruction_parts]
         is the source of truth for instructions: rewriting them changes what the model receives.
 
@@ -1336,8 +1394,9 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         It runs again for every attempt a hook asks for by raising
         [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest], so a capability never
         inherits preparation done for a different model. Anything that should happen once per
-        request step regardless of how many models are tried — a history processor, an injected
-        message — belongs in `before_model_request` instead.
+        request step regardless of how many models are tried belongs in
+        [`process_history`][pydantic_ai.capabilities.AbstractCapability.process_history] for a history
+        processor, or `before_model_request`, such as for an injected message.
 
         Changes to `request_context` shape the request that goes on the wire for this attempt and are
         not persisted to the agent's message history; the next attempt starts again from what
@@ -1383,7 +1442,7 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     ) -> ModelResponse:
         """Wraps the complete model-request lifecycle.
 
-        Calling `handler(request_context)` runs `before_model_request`, then one or more attempts,
+        Calling `handler(request_context)` runs `process_history` and `before_model_request`, then one or more attempts,
         each of which runs `prepare_model_request`, the model call with `on_model_request_error`
         recovery, and `after_model_request`. A hook makes another attempt by raising
         [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest]. Returning without calling

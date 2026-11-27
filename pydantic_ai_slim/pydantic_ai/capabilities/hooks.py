@@ -34,7 +34,7 @@ from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._run_context import dispatched_immediately
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.exceptions import AgentRunError, ModelRetry, RetryModelRequest
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 
 from ._on_event import collect_on_event_methods, marked_listens_to
@@ -160,6 +160,10 @@ class OnEventHookFunc(Protocol, Generic[EventT]):
     def __call__(
         self, ctx: RunContext[Any], event: EventT, /
     ) -> None | AgentStreamEvent | Awaitable[None | AgentStreamEvent]: ...
+
+class ProcessHistoryHookFunc(Protocol):
+    """Protocol for [`process_history`][pydantic_ai.capabilities.AbstractCapability.process_history] hook functions."""
+    def __call__(self, ctx: RunContext[Any], messages: list[ModelMessage], /) -> list[ModelMessage] | Awaitable[list[ModelMessage]]: ...
 
 class BeforeModelRequestHookFunc(Protocol):
     """Protocol for [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook functions."""
@@ -465,6 +469,15 @@ class _HookRegistration(Generic[AgentDepsT]):
         return decorator
 
     # --- Model request ---
+
+    @overload
+    def process_history(self, func: ProcessHistoryHookFunc, /) -> ProcessHistoryHookFunc: ...
+    @overload
+    def process_history(
+        self, *, timeout: float | None = None
+    ) -> Callable[[ProcessHistoryHookFunc], ProcessHistoryHookFunc]: ...
+    def process_history(self, func: ProcessHistoryHookFunc | None = None, *, timeout: float | None = None) -> Any:
+        return _bare_or_parameterized(self._r, 'process_history', func, timeout=timeout)
 
     @overload
     def before_model_request(self, func: BeforeModelRequestHookFunc, /) -> BeforeModelRequestHookFunc: ...
@@ -825,6 +838,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
         run_event_stream: WrapRunEventStreamHookFunc | None = None,
         event: OnEventHookFunc[AgentStreamEvent] | None = None,
         # Model request
+        process_history: ProcessHistoryHookFunc | None = None,
         before_model_request: BeforeModelRequestHookFunc | None = None,
         prepare_model_request: PrepareModelRequestHookFunc | None = None,
         after_model_request: AfterModelRequestHookFunc | None = None,
@@ -878,6 +892,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'on_node_run_error': node_run_error,
             'wrap_run_event_stream': run_event_stream,
             'on_event': event,
+            'process_history': process_history,
             'before_model_request': before_model_request,
             'prepare_model_request': prepare_model_request,
             'after_model_request': after_model_request,
@@ -941,6 +956,10 @@ class Hooks(AbstractCapability[AgentDepsT]):
         return type(self).prepare_model_request is not Hooks.prepare_model_request or bool(
             self._get('prepare_model_request')
         )
+
+    @property
+    def _has_process_history(self) -> bool:
+        return type(self).process_history is not Hooks.process_history or bool(self._get('process_history'))
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
@@ -1097,6 +1116,11 @@ class Hooks(AbstractCapability[AgentDepsT]):
                 ctx._event_stream_replacements[id(original_event)] = replacement  # pyright: ignore[reportPrivateUsage]
         # A `Hooks` subclass can carry marked listeners of its own; the base dispatches them.
         await super().on_event(ctx, event=event)
+
+    async def process_history(self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]) -> list[ModelMessage]:
+        for entry in self._get('process_history'):
+            messages = await _call_entry(entry, 'process_history', ctx, messages)
+        return messages
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext

@@ -898,6 +898,7 @@ class MockMCPServer(AbstractToolset[Any]):
 
 
 text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
+    'Write to me at [email].': 'I will.',
     # docs/models/openai.md
     'Triage the open tickets.': 'The open tickets are triaged.',
     'Draft the replies.': 'The replies are drafted.',

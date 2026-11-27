@@ -13,8 +13,6 @@ from .abstract import AbstractCapability
 if TYPE_CHECKING:
     from collections.abc import Awaitable, Callable
 
-    from pydantic_ai.models import ModelRequestContext
-
     _MsgList = list[_messages.ModelMessage]
     _AsyncWithCtx = Callable[[RunContext[Any], _MsgList], Awaitable[_MsgList]]
     _AsyncNoCtx = Callable[[_MsgList], Awaitable[_MsgList]]
@@ -24,20 +22,19 @@ if TYPE_CHECKING:
 
 @dataclass
 class ProcessHistory(AbstractCapability[AgentDepsT]):
-    """A capability that processes message history before model requests."""
+    """A capability that processes message history before model requests.
+
+    It runs its history processor as its
+    [`process_history`][pydantic_ai.capabilities.AbstractCapability.process_history] hook, once per request step: the
+    processed messages are sent, and replace the run's message history.
+    """
 
     processor: HistoryProcessorFunc[AgentDepsT]
 
-    async def before_model_request(
-        self,
-        ctx: RunContext[AgentDepsT],
-        request_context: ModelRequestContext,
-    ) -> ModelRequestContext:
-        messages = await _run_history_processor(self.processor, ctx, list(request_context.messages))
-        request_context.messages = messages.copy()
-        ctx.messages[:] = messages
-
-        return request_context
+    async def process_history(
+        self, ctx: RunContext[AgentDepsT], messages: list[_messages.ModelMessage]
+    ) -> list[_messages.ModelMessage]:
+        return await _run_history_processor(self.processor, ctx, messages)
 
     @classmethod
     def get_serialization_name(cls) -> str | None:

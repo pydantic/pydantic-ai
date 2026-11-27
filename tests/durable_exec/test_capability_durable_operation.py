@@ -1962,6 +1962,38 @@ async def test_decorated_model_request_hook_round_trips_request_only_mutation() 
     assert sent_request.parts[0].content == 'replaced'
 
 
+class DurableProcessHistory(AbstractCapability[Any]):
+    id = 'trim'
+
+    @durable_operation('process_history')
+    async def process_history(self, ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[-1:]
+
+
+async def test_decorated_process_history_runs_as_one_durable_operation_per_step() -> None:
+    """The `process_history` hook itself can be a durable operation; its result is sent and replaces the history."""
+    agent = Agent(
+        TestModel(call_tools=[]), name='trimmed', capabilities=[DurableProcessHistory(), RecordingDurability()]
+    )
+
+    result = await agent.run('latest', message_history=[ModelRequest(parts=[UserPromptPart('earlier')])])
+
+    durability = RecordingDurability.from_agent(agent)
+    assert durability is not None
+    assert [name for name, _ in durability.calls if '__capability__' in name] == [
+        'trimmed__capability__trim.process_history'
+    ]
+    model_call = next(cache_key for name, cache_key in durability.calls if name == 'trimmed__model.request')
+    sent = cast(list[ModelMessage], model_call[1])
+    assert [part.content for message in sent if isinstance(message, ModelRequest) for part in message.parts] == [
+        'latest'
+    ]
+    first = result.all_messages()[0]
+    assert isinstance(first, ModelRequest)
+    assert isinstance(first.parts[0], UserPromptPart)
+    assert first.parts[0].content == 'latest'
+
+
 class RecordModelInBeforeModelRequest(AbstractCapability[Any]):
     id = 'record_model'
 

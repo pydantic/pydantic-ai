@@ -155,6 +155,7 @@ Node hooks fire no matter how the run is driven: [`agent.run()`][pydantic_ai.age
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
 |---|---|---|
+| `process_history` | `process_history=` | `process_history` |
 | `before_model_request` | `before_model_request=` | `before_model_request` |
 | `prepare_model_request` | `prepare_model_request=` | `prepare_model_request` |
 | `after_model_request` | `after_model_request=` | `after_model_request` |
@@ -174,6 +175,8 @@ Model request hooks fire around each model request step, which usually makes one
 
 [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] and compaction deliberately update both, preserving their existing history-rewriting contract. Because a history processor transforms the current request view and makes its whole result persistent, its position relative to other message hooks remains significant.
 
+A history processor is a [`process_history`][pydantic_ai.capabilities.AbstractCapability.process_history] hook. [Which hook to use for the history](#which-hook-when) compares it with compaction and request-only changes.
+
 !!! warning "Message objects may still be shared"
     [`ModelRequestContext.messages`][pydantic_ai.models.ModelRequestContext.messages] is an independent shallow top-level list, not an independent object graph. Apart from the deprecated appends above, changing that outer list only affects the current request. Retained messages and their nested parts may be the same objects as those in `ctx.messages`, so mutating a contained message or part in place can also change persistent history and later requests. For an isolated change below the list level, construct replacement messages and parts down to the level being changed, for example with [`dataclasses.replace`](https://docs.python.org/3/library/dataclasses.html#dataclasses.replace).
 
@@ -188,6 +191,23 @@ To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_a
 
 !!! note "Context variables in streamed model requests"
     In [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], context-variable values set by an async `before_model_request` hook are available to later tool, output, and run hooks, as in a non-streamed run. Values set later in that model request (for example, after a wrapper's handler returns) may not be. Use mutable [dependencies](dependencies.md) for state that must be shared throughout the run.
+
+#### Which hook to use for the history {#which-hook-when}
+
+Three kinds of hook change the messages a model is sent. They differ in when they run and in whether what they change stays in the run's history:
+
+| | Compacting history (summaries) | Other history changes (filter, redact, trim) | Request-only changes |
+| --- | --- | --- | --- |
+| **Use** | [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history], or a compaction strategy built on it ([`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction], [Pydantic AI Harness](capabilities/compaction.md#pydantic-ai-harness) `SummarizingCompaction`) | [`process_history`][pydantic_ai.capabilities.AbstractCapability.process_history] ([`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory]) | `before_model_request`; `prepare_model_request` when the change depends on the model serving the attempt |
+| **Runs** | Only when compaction is [asked for](capabilities/compaction.md#requesting-compaction) (`request_compaction()`, `compact=`) or after a context overflow, once per attempt | Once per request step, before compaction | `before_model_request` once per request step; `prepare_model_request` once per attempt |
+| **Stored history or only what's sent** | Both: once the attempt's response is accepted, the compacted history replaces the run's history, with the persistent originals of the messages it kept | Both: its result is what's sent and is written back to the run's history (`all_messages()`, later requests) | Only what's sent: assigning `request_context.messages` changes the current request. Changing stored history means mutating `ctx.messages` explicitly |
+| **`ModelFallback` and retries** | Per attempt, for the model serving it. A compaction for an attempt that then fails is discarded, and its usage counts like a failed attempt's. On a context overflow it compacts and sends to the same model once more. `NativeCompaction` doesn't compact for a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], since which of its models answers isn't known in advance | Per step, so every fallback candidate, and every retry of the step (`RetryModelRequest`), sees the same processed history. A later step (a tool round, an output retry) processes the history again, as it now stands | `before_model_request`: per step, every candidate sees its change. `prepare_model_request`: again for each attempt, with that attempt's model |
+| **Durable execution** | Runs in workflow code. A request through `request.conversation_request.model` is a durable model operation; other I/O belongs in a [`durable_operation`][pydantic_ai.capabilities.durable_operation]. `request_compaction()` raises inside a durable unit | Runs in workflow code, where `before_model_request` runs, so it's re-run on replay and has to be deterministic. For I/O (such as an LLM summarizer), decorate the hook itself with `durable_operation`, which makes it one durable unit per step, or call one from it; or do the summarizing in compaction instead | Runs in workflow code, with the same rule: deterministic, I/O in a `durable_operation` |
+| **Realtime sessions** | Doesn't run: sessions don't compact | Doesn't run yet. Opening a session warns about it | Doesn't run: sessions make no model requests. Opening a session warns about these hooks |
+
+Within one request step, the order is: `process_history`, then `before_model_request`, for each capability in turn; then, for each attempt, `prepare_model_request`, `compact_history` (if compaction was asked for), the model's own message preparation, and the request. So compaction always compacts the processed history, and a call to `request_compaction()` from a processor is served by the step's first attempt.
+
+Compaction keeps the standing system prompt that the history it's given opens with ahead of its summary, and the run raises a [`UserError`][pydantic_ai.exceptions.UserError] for a compaction that doesn't. That history is the processed one, so a processor that drops or reorders the leading system prompt changes what every later compaction has to keep.
 
 ### Tool validation hooks
 
