@@ -754,7 +754,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                 deltas[:] = [''.join(deltas)]
             # The consumer already got an event for each of these deltas, so this update's own event is dropped.
             for _ in self._parts_manager.handle_thinking_delta(
-                vendor_part_id=item_id, provider_details={'raw_content': [deltas[0] for deltas in entries]}
+                vendor_part_id=item_id, provider_details={'raw_content': [joined[0] for joined in entries]}
             ):
                 pass
         self._unwritten_raw_content.clear()

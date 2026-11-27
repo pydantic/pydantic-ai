@@ -235,13 +235,13 @@ async def test_negative_content_index(allow_model_requests: None):
 
 
 @pytest.mark.parametrize('deltas', [10, 100])
-async def test_raw_content_is_built_once_per_read(
+async def test_raw_content_is_not_rebuilt_per_delta(
     allow_model_requests: None, monkeypatch: pytest.MonkeyPatch, deltas: int
 ):
-    """The stream builds `raw_content` once per reasoning item and read, not once per delta, so it costs linear time.
+    """The stream applies only the first delta's updater and joins the rest when the part is read, so it takes linear time.
 
-    Each delta event still carries an updater, which a consumer that rebuilds the parts applies itself. The count is
-    the same at both sizes: only the first delta's updater runs in the stream, and the one read is `get()` at the end.
+    Each delta event still carries an updater, which a consumer that rebuilds the parts applies itself. The count stays
+    1 at both sizes, where rebuilding `raw_content` for each delta would make it the number of deltas.
     """
     calls = 0
     make_updater = responses_streaming.make_raw_content_updater
