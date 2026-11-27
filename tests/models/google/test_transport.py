@@ -364,11 +364,11 @@ def test_flash_image_thinking_levels_follow_the_client_transport(case: FlashImag
     ('make_provider', 'profile', 'expected'),
     [
         pytest.param(lambda: GoogleProvider(api_key='mock-api-key'), None, ('LOW', 'XHIGH'), id='gemini_api'),
-        pytest.param(lambda: GoogleCloudProvider(api_key='mock-api-key'), None, ('MINIMAL', 'HIGH'), id='google_cloud'),
+        pytest.param(lambda: GoogleCloudProvider(api_key='mock-api-key'), None, ('LOW', 'XHIGH'), id='google_cloud'),
         pytest.param(
             lambda: GoogleProvider(client=Client(vertexai=True, project='test-project', location='us-central1')),
             None,
-            ('MINIMAL', 'HIGH'),
+            ('LOW', 'XHIGH'),
             id='google_cloud_client_in_google_provider',
         ),
         pytest.param(
@@ -379,16 +379,15 @@ def test_flash_image_thinking_levels_follow_the_client_transport(case: FlashImag
         ),
     ],
 )
-def test_neon_thinking_levels_follow_the_client_transport(
+def test_neon_thinking_levels_on_every_transport(
     make_provider: Callable[[], Provider[Client]],
     profile: GoogleModelProfile | None,
     expected: tuple[GoogleThinkingLevel, GoogleThinkingLevel],
 ) -> None:
-    """`gemini-4-neon` takes `LOW` to `XHIGH` only when requests go to the Gemini API.
+    """`gemini-4-neon` takes `LOW` to `XHIGH` on both the Gemini API and Vertex, which both reject `MINIMAL`.
 
-    The Gemini API rejects `MINIMAL` on this model; Vertex isn't probed, so it keeps the default levels, where
-    `thinking=False` sends `MINIMAL` and `'xhigh'` snaps to `HIGH`. Not a VCR test: the level is decided before
-    the request is built. The body-matched `google-gemini-4-neon-xhigh` cassette in
+    So `thinking=False` sends `LOW` and `'xhigh'` sends `XHIGH` on every transport. Not a VCR test: the level is
+    decided before the request is built. The body-matched `google-gemini-4-neon-xhigh` cassette in
     `tests/test_thinking_wire_contract.py` pins the Gemini API side.
     """
     m = GoogleModel('gemini-4-neon', provider=make_provider(), profile=profile)
