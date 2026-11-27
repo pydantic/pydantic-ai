@@ -614,7 +614,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
 
     @staticmethod
     def _map_binary_content(item: BinaryContent) -> ChatCompletionInputMessageChunk:
-        if not item.is_image:  # pragma: no cover
+        if not item.is_image:
             raise RuntimeError(f'Unsupported binary content type: {item.media_type}')
         url = ChatCompletionInputURL(url=item.data_uri)
         return ChatCompletionInputMessageChunk(type='image_url', image_url=url)
