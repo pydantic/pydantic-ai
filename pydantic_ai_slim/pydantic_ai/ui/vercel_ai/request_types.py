@@ -216,6 +216,8 @@ class ToolOutputAvailablePart(BaseUIPart):
     output: Any | None = None
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    result_provider_metadata: ProviderMetadata | None = None
+    """Where the AI SDK keeps the `providerMetadata` of the chunk that gave the part its output or error."""
     preliminary: bool | None = None
     approval: ToolApproval | None = None
 
@@ -232,6 +234,8 @@ class ToolOutputErrorPart(BaseUIPart):
     error_text: str
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    result_provider_metadata: ProviderMetadata | None = None
+    """Where the AI SDK keeps the `providerMetadata` of the chunk that gave the part its output or error."""
     approval: ToolApproval | None = None
 
 
@@ -327,6 +331,8 @@ class DynamicToolOutputAvailablePart(BaseUIPart):
     output: Any
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    result_provider_metadata: ProviderMetadata | None = None
+    """Where the AI SDK keeps the `providerMetadata` of the chunk that gave the part its output or error."""
     preliminary: bool | None = None
     approval: ToolApproval | None = None
 
@@ -343,6 +349,8 @@ class DynamicToolOutputErrorPart(BaseUIPart):
     error_text: str
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
+    result_provider_metadata: ProviderMetadata | None = None
+    """Where the AI SDK keeps the `providerMetadata` of the chunk that gave the part its output or error."""
     approval: ToolApproval | None = None
 
 

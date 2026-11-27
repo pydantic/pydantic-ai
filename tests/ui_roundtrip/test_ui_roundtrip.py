@@ -59,6 +59,8 @@ from pydantic_ai import Agent, ModelRetry, RunContext, ToolOutput
 from pydantic_ai.capabilities import AbstractCapability, Capability
 from pydantic_ai.conversation_store import InMemoryConversationStore
 from pydantic_ai.messages import (
+    INTERRUPTED_TOOL_RETURN_CONTENT,
+    AgentStreamEvent,
     BinaryContent,
     BinaryImage,
     CompactionPart,
@@ -71,6 +73,9 @@ from pydantic_ai.messages import (
     ModelResponsePart,
     ModelSettingsDeltaPart,
     OperatorSource,
+    OutputToolResultEvent,
+    PartEndEvent,
+    PartStartEvent,
     StructuredContent,
     SystemPromptPart,
     TextPart,
@@ -106,7 +111,7 @@ from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.usage import UsageLimits
 
 from .._inline_snapshot import snapshot
-from ..conftest import sse_data, try_import
+from ..conftest import IsDatetime, sse_data, try_import
 from .conftest import HERE, JSDriver
 
 with try_import() as imports_successful:
@@ -120,7 +125,7 @@ with try_import() as imports_successful:
     from pydantic_ai.ui import UIAdapter
     from pydantic_ai.ui._utils import INTERNAL_METADATA_KEY
     from pydantic_ai.ui.ag_ui import AGUIAdapter
-    from pydantic_ai.ui.vercel_ai import VercelAIAdapter
+    from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
 
     from ..models.mock_openai import (
         MockOpenAI,
@@ -391,6 +396,8 @@ class Scenario:
     prompts: tuple[str, ...] = ('Question 1', 'Question 2')
     canonical_system: str | None = None
     """The `canonical_system` the script's streamed responses carry, as a provider model's do."""
+    server_held_warnings: tuple[str, ...] = ()
+    """`filterwarnings` specs for warnings a server-held run of the scenario emits, each with its reason beside it."""
     gaps: dict[GapKey, str] = field(default_factory=dict[GapKey, str])
     """Known round-trip losses, as `(property, path, protocol)` -> a reason naming the issue or PR.
 
@@ -643,6 +650,17 @@ def _retry_tools(agent: Agent[None, str]) -> None:
         return 'ok'
 
 
+def _skipped_calls_script(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """An output tool call, then a function tool call and a second output tool call the run skips."""
+    return ModelResponse(
+        parts=[
+            ToolCallPart('final_result', {'response': 'Done.'}, tool_call_id=f'output-{len(messages)}'),
+            ToolCallPart('get_weather', {'city': 'Paris'}, tool_call_id=f'skipped-{len(messages)}'),
+            ToolCallPart('final_result', {'response': 'Again.'}, tool_call_id=f'second-output-{len(messages)}'),
+        ]
+    )
+
+
 def _responses_since_question(messages: list[ModelMessage]) -> int:
     """How many answers the model has given since the user last asked a question."""
     count = 0
@@ -887,6 +905,15 @@ SCENARIOS = [
         script=_retry_script,
         setup=_retry_tools,
         gaps=_gaps(_RETRY, ('load', 'stream', 'vercel')),
+    ),
+    Scenario(
+        id='skipped_tool_calls',
+        script=_skipped_calls_script,
+        setup=_get_weather,
+        agent_kwargs={'output_type': ToolOutput(str), 'end_strategy': 'early'},
+        # The stored history ends with the output tool's returns, which the client sends back too, and the
+        # server-held turn warns that it dropped them, though the provider requests match; no issue yet.
+        server_held_warnings=('ignore:3 client-submitted tool result:UserWarning',),
     ),
     Scenario(
         id='output_validation_feedback',
@@ -1286,6 +1313,8 @@ def _params(prop: Property) -> list[Any]:
                     values = (scenario, path, protocol) if provider is None else (scenario, path, protocol, provider)
                     # A gap that rewrites the stored history moves the prompt-cache prefix the autouse check guards.
                     marks = [pytest.mark.moves_cache_prefix(reason=gap)] if gap in _PREFIX_MOVING_GAPS else []
+                    if prop == 'server_wire':
+                        marks += [pytest.mark.filterwarnings(spec) for spec in scenario.server_held_warnings]
                     params.append(pytest.param(*values, Gap(f'{prop}-{key}', gap), id=key, marks=marks))
     return params
 
@@ -1680,6 +1709,23 @@ async def test_vercel_discarded_tool_call_never_reaches_on_tool_call(js_driver: 
         }
     )
 
+    # Sent back, the call keeps its arguments, which the AI SDK holds as `rawInput` only.
+    sent = client.received(client.adapter(agent, client.submit('Hello again', None)), []).sent
+    assert [part for message in sent for part in message.parts if part.part_kind in ('tool-call', 'tool-return')] == (
+        snapshot(
+            [
+                ToolCallPart(tool_name='frontend_tool', args={'query': 'hi'}, tool_call_id='call_1'),
+                ToolReturnPart(
+                    tool_name='frontend_tool',
+                    content='Tool execution was interrupted by an error.',
+                    tool_call_id='call_1',
+                    timestamp=IsDatetime(),
+                    outcome='failed',
+                ),
+            ]
+        )
+    )
+
 
 async def test_vercel_skipped_tool_call_never_reaches_on_tool_call(js_driver: JSDriver) -> None:
     """A function tool call skipped because the output tool already ended the run doesn't reach `onToolCall`.
@@ -1703,7 +1749,7 @@ async def test_vercel_skipped_tool_call_never_reaches_on_tool_call(js_driver: JS
     result = client.receive([chunk async for chunk in adapter.encode_stream(adapter.run_stream())])
 
     # The output tool call reaches `onToolCall` like any other output tool call; the skipped call must not.
-    assert 'skipped_call' not in result['toolCalls']
+    assert result['toolCalls'] == ['output_call']
     [tool_part] = [part for part in result['messages'][-1]['parts'] if part['type'] == 'tool-frontend_tool']
     assert tool_part == snapshot(
         {
@@ -1712,5 +1758,55 @@ async def test_vercel_skipped_tool_call_never_reaches_on_tool_call(js_driver: JS
             'state': 'output-error',
             'rawInput': {'query': 'hi'},
             'errorText': 'Tool not executed - a final result was already processed.',
+            'resultProviderMetadata': {'pydantic_ai': {'outcome': 'success'}},
         }
+    )
+
+
+async def test_vercel_interrupted_output_call_reloads_with_its_metadata(js_driver: JSDriver) -> None:
+    """An output tool call a cancelled run cut off reloads with its arguments, provider metadata and `'interrupted'` outcome.
+
+    The AI SDK keeps the `providerMetadata` of the `tool-input-error` chunk that closes the call as the part's
+    `resultProviderMetadata`, so the request has to accept it and loading has to read the outcome claim from it. A
+    unit test of the stream: no model in the test suite streams a tool call with an `id`, so the events are built by
+    hand, as the base class sends them for an output tool call the cancellation cut off before its call event.
+    """
+    call = ToolCallPart('final_result', {'response': 'done'}, tool_call_id='out_1', id='fc_1', provider_name='openai')
+
+    async def events() -> AsyncIterator[AgentStreamEvent]:
+        yield PartStartEvent(index=0, part=call)
+        yield PartEndEvent(index=0, part=call)
+        yield OutputToolResultEvent(
+            ToolReturnPart('final_result', INTERRUPTED_TOOL_RETURN_CONTENT, tool_call_id='out_1', outcome='interrupted')
+        )
+
+    client = VercelClient(js_driver, 'interrupted-output-call', {})
+    client.submit('Hello', None)
+    event_stream = VercelAIEventStream[None, Any](sdk_version=6)
+    result = client.receive(
+        [chunk async for chunk in event_stream.encode_stream(event_stream.transform_stream(events()))]
+    )
+    assert result['toolCalls'] == []
+
+    agent = Agent(FunctionModel(_text_script))
+    sent = client.received(client.adapter(agent, client.submit('Hello again', None)), []).sent
+    assert [part for message in sent for part in message.parts if part.part_kind in ('tool-call', 'tool-return')] == (
+        snapshot(
+            [
+                ToolCallPart(
+                    tool_name='final_result',
+                    args={'response': 'done'},
+                    tool_call_id='out_1',
+                    id='fc_1',
+                    provider_name='openai',
+                ),
+                ToolReturnPart(
+                    tool_name='final_result',
+                    content='The tool call was interrupted before a result was produced.',
+                    tool_call_id='out_1',
+                    timestamp=IsDatetime(),
+                    outcome='interrupted',
+                ),
+            ]
+        )
     )

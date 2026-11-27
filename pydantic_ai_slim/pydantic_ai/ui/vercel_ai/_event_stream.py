@@ -223,7 +223,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             )
             visibility = return_ui_visibility(closeout, self._call_ui_visibilities, self.default_ui_visibility)
             if (client_closeout := client_tool_return(closeout, visibility)) is not None:
-                yield self._tool_input_error_chunk(part, client_error_text(client_closeout))
+                yield self._tool_input_error_chunk(part, client_closeout)
         self._streamed_call_parts.clear()
 
         # No `MessageMetadataChunk` here: an errored run has no `AgentRunResultEvent` to source
@@ -386,8 +386,14 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             ),
         )
 
-    def _tool_input_error_chunk(self, part: ToolCallPart, error_text: str) -> ToolInputErrorChunk:
-        """Build the `tool-input-error` chunk closing a tool call that didn't run, in place of `tool-input-available`."""
+    def _tool_input_error_chunk(self, part: ToolCallPart, result: ToolReturnPart) -> ToolInputErrorChunk:
+        """Build the `tool-input-error` chunk closing a tool call that didn't run, in place of `tool-input-available`.
+
+        The client keeps the call in `output-error`, which reloads as a `'failed'` return. A discarded call's
+        closeout can be a `'success'` stub ("Tool not executed …") or `'interrupted'`, so that outcome rides the
+        metadata channel as the claim `load_messages` restores, as `dump_messages` does for an outcome the part
+        state can't represent.
+        """
         return ToolInputErrorChunk(
             tool_call_id=part.tool_call_id,
             tool_name=part.tool_name,
@@ -398,8 +404,9 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                 provider_details=part.provider_details,
                 canonical_system=self._canonical_system_for(part.provider_name),
                 tool_kind=part.tool_kind,
+                outcome=result.outcome if result.outcome in ('success', 'interrupted') else None,
             ),
-            error_text=error_text,
+            error_text=client_error_text(result),
         )
 
     async def handle_function_tool_call(self, event: FunctionToolCallEvent) -> AsyncIterator[BaseChunk]:
@@ -581,7 +588,7 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
             # `ToolReturnPart.model_response_str()` — the retry feedback itself, the synthetic
             # interruption message, or the status part on the exhaustive output-strategy skip path
             # (which says e.g. "Output tool not used …").
-            yield self._tool_input_error_chunk(input_error_part, client_error_text(part))
+            yield self._tool_input_error_chunk(input_error_part, part)
         elif part.outcome in ERROR_OUTCOMES:
             # A retry takes the error channel like a failure does, and its `error_text` is the
             # feedback itself — unwrapped, and with none of the instruction framing the retry part

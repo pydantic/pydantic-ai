@@ -28,6 +28,7 @@ from pydantic_ai.conversation import Conversation
 from pydantic_ai.conversation_store import ConversationEntry, ConversationRecord, InMemoryConversationStore
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
+    INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentInstructionSource,
     AudioUrl,
     BinaryContent,
@@ -3922,6 +3923,57 @@ async def test_run_stream_error_closes_open_tool_call():
     )
 
 
+async def _error_while_streaming(*parts: ToolCallPart) -> AsyncIterator[PartStartEvent]:
+    """Start each part at its own index, then raise as a model provider error does mid-stream."""
+    for index, part in enumerate(parts):
+        yield PartStartEvent(index=index, part=part)
+    raise RuntimeError('The model provider is down.')
+
+
+async def _error_closeout_events(*parts: ToolCallPart) -> list[Any]:
+    event_stream = VercelAIEventStream[None, Any](sdk_version=6)
+    return [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(_error_while_streaming(*parts)))
+        if '[DONE]' not in event
+    ]
+
+
+async def test_run_stream_error_closeout_of_redacted_call_sends_the_placeholder():
+    """A `'redacted'` call cut off by a run error is closed with `tool-input-error`, and the placeholder as its error text."""
+    part = ToolCallPart('lookup_order', {'order_id': 'o_1'}, tool_call_id='call_1', ui_visibility='redacted')
+
+    events = await _error_closeout_events(part)
+
+    assert [event for event in events if event['type'] == 'tool-input-error'] == snapshot(
+        [
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'call_1',
+                'toolName': 'lookup_order',
+                'input': {'order_id': 'o_1'},
+                'errorText': '[REDACTED]',
+            }
+        ]
+    )
+
+
+async def test_run_stream_error_closeout_skips_call_whose_id_a_private_call_reused():
+    """A `'private'` call that reuses a streaming call's `tool_call_id` takes over the id, so nothing closes the call.
+
+    A unit test of the stream: no model in the test suite repeats a `tool_call_id`, so the events are built by hand.
+    """
+    public = ToolCallPart('lookup_order', {'order_id': 'o_1'}, tool_call_id='dup')
+    private = ToolCallPart('lookup_margin', {}, tool_call_id='dup', ui_visibility='private')
+
+    events = await _error_closeout_events(public, private)
+
+    assert [event['type'] for event in events] == snapshot(
+        ['start', 'start-step', 'tool-input-start', 'tool-input-delta', 'error', 'finish-step', 'finish']
+    )
+    assert 'lookup_margin' not in json.dumps(events)
+
+
 async def test_run_stream_error_closes_open_tool_call_v5():
     """AI SDK v5 has no `tool-input-error`, so an errored run still closes its streaming tool call with `tool-input-available`."""
     agent = Agent(model=FunctionModel(stream_function=_stream_tool_call_until_usage_limit))
@@ -4046,6 +4098,7 @@ async def test_run_stream_closes_call_skipped_after_final_result_with_input_erro
                 'toolCallId': 'skipped_call',
                 'toolName': 'my_tool',
                 'input': {'query': 'hi'},
+                'providerMetadata': {'pydantic_ai': {'outcome': 'success'}},
                 'errorText': 'Tool not executed - a final result was already processed.',
             },
             {
@@ -4137,6 +4190,7 @@ async def test_run_stream_closes_output_call_skipped_after_final_result_with_inp
                 'toolCallId': 'skipped_output',
                 'toolName': 'final_result',
                 'input': {'response': 'again'},
+                'providerMetadata': {'pydantic_ai': {'outcome': 'success'}},
                 'errorText': 'Output tool not used - a final result was already processed.',
             },
         ]
@@ -6108,6 +6162,7 @@ async def test_adapter_dump_messages_with_tools():
                         'provider_executed': False,
                         'output': {'results': ['result1', 'result2']},
                         'call_provider_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -6810,6 +6865,7 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                         'provider_executed': False,
                         'output': 'Data sent',
                         'call_provider_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -6884,6 +6940,7 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                         'provider_executed': False,
                         'output': 'Events sent',
                         'call_provider_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -6974,6 +7031,7 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                         'provider_executed': False,
                         'output': 'Data sent',
                         'call_provider_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -7142,6 +7200,7 @@ async def test_adapter_dump_messages_with_builtin_tools():
                                 },
                             }
                         },
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     }
@@ -7388,6 +7447,7 @@ async def test_adapter_dump_messages_with_retry():
                         'provider_executed': False,
                         'error_text': 'Tool failed with error',
                         'call_provider_metadata': {'pydantic_ai': {'outcome': 'retried'}},
+                        'result_provider_metadata': None,
                         'approval': None,
                     }
                 ],
@@ -7647,6 +7707,7 @@ async def test_adapter_dump_messages_text_with_interruption():
                                 'return_meta': {'provider_name': 'test'},
                             }
                         },
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -9571,6 +9632,7 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                                 'provider_details': {'index': 0, 'type': 'function'},
                             }
                         },
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     }
@@ -9936,6 +9998,7 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                                 },
                             }
                         },
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     }
@@ -10014,6 +10077,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                                 },
                             }
                         },
+                        'result_provider_metadata': None,
                         'approval': None,
                     }
                 ],
@@ -10273,6 +10337,7 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
                                 'outcome': 'retried',
                             }
                         },
+                        'result_provider_metadata': None,
                         'approval': None,
                     }
                 ],
@@ -10713,7 +10778,7 @@ async def test_event_stream_output_tool_input_error_with_status_return_part():
                 'toolCallId': 'out_skipped',
                 'toolName': 'final_result',
                 'input': {'value': 'bad'},
-                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id', 'outcome': 'success'}},
                 'errorText': 'Output tool not used - output failed validation.',
             },
             {'type': 'finish-step'},
@@ -10735,14 +10800,37 @@ async def _output_tool_interrupted_before_call_event(outcome: Literal['failed', 
     # Note: no `OutputToolCallEvent` — the agent graph would normally yield one,
     # but `UnexpectedModelBehavior` raised before validation runs short-circuits it.
     # The base class then synthesizes an error result for the pending call.
-    yield OutputToolResultEvent(
-        ToolReturnPart(
-            tool_name='final_result',
-            content='Tool execution was interrupted by an error.',
-            tool_call_id='out_interrupted',
-            outcome=outcome,
-        )
+    # The content the base class gives each synthetic closeout: a cancelled run's call was interrupted.
+    content = (
+        INTERRUPTED_TOOL_RETURN_CONTENT if outcome == 'interrupted' else 'Tool execution was interrupted by an error.'
     )
+    yield OutputToolResultEvent(
+        ToolReturnPart(tool_name='final_result', content=content, tool_call_id='out_interrupted', outcome=outcome)
+    )
+
+
+EXPECTED_DISCARDED_CALL_INPUT_ERROR: dict[str, Any] = {
+    'failed': snapshot(
+        {
+            'type': 'tool-input-error',
+            'toolCallId': 'out_interrupted',
+            'toolName': 'final_result',
+            'input': {'value': 'x'},
+            'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+            'errorText': 'Tool execution was interrupted by an error.',
+        }
+    ),
+    'interrupted': snapshot(
+        {
+            'type': 'tool-input-error',
+            'toolCallId': 'out_interrupted',
+            'toolName': 'final_result',
+            'input': {'value': 'x'},
+            'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id', 'outcome': 'interrupted'}},
+            'errorText': 'The tool call was interrupted before a result was produced.',
+        }
+    ),
+}
 
 
 @pytest.mark.parametrize('outcome', ['failed', 'interrupted'])
@@ -10767,7 +10855,8 @@ async def test_event_stream_tool_call_end_closes_discarded_call_with_input_error
     ]
 
     # The `tool-input-error` carries the raw args and provider metadata from the
-    # stashed `ToolCallPart`, so the frontend still sees the call's input.
+    # stashed `ToolCallPart`, so the frontend still sees the call's input. An
+    # `'interrupted'` outcome rides along as a claim, as `output-error` reloads as `'failed'`.
     assert events == snapshot(
         [
             {'type': 'start'},
@@ -10779,14 +10868,7 @@ async def test_event_stream_tool_call_end_closes_discarded_call_with_input_error
                 'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
             },
             {'type': 'tool-input-delta', 'toolCallId': 'out_interrupted', 'inputTextDelta': '{"value":"x"}'},
-            {
-                'type': 'tool-input-error',
-                'toolCallId': 'out_interrupted',
-                'toolName': 'final_result',
-                'input': {'value': 'x'},
-                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
-                'errorText': 'Tool execution was interrupted by an error.',
-            },
+            EXPECTED_DISCARDED_CALL_INPUT_ERROR[outcome],
             {'type': 'finish-step'},
             {'type': 'finish'},
             '[DONE]',
@@ -11299,6 +11381,7 @@ async def test_adapter_dump_messages_tool_return_error():
                 'error_text': 'Something went wrong',
                 'provider_executed': False,
                 'call_provider_metadata': None,
+                'result_provider_metadata': None,
                 'approval': None,
             }
         ]
@@ -11345,6 +11428,7 @@ async def test_adapter_dump_messages_builtin_tool_error_backward_compat():
                 'error_text': 'Rate limit exceeded',
                 'provider_executed': True,
                 'call_provider_metadata': None,
+                'result_provider_metadata': None,
                 'approval': None,
             }
         ]
@@ -11433,6 +11517,7 @@ async def test_adapter_dump_messages_tool_return_interrupted_is_neutral():
                 'output': 'The tool call was interrupted before a result was produced.',
                 'provider_executed': False,
                 'call_provider_metadata': {'pydantic_ai': {'outcome': 'interrupted'}},
+                'result_provider_metadata': None,
                 'preliminary': None,
                 'approval': None,
             }
