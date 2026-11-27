@@ -236,7 +236,8 @@ def test_repr_hides_sandbox_url() -> None:
         dynamic_workflow.get_toolset(),
     ]
 
-    assert [obj for obj in objects if 'sandbox.example.com' in repr(obj)] == []
+    for obj in objects:
+        assert 'sandbox.example.com' not in repr(obj)
 
 
 async def test_monty_sandbox_builds_each_run_pool(capability: _MontyCapability) -> None:
