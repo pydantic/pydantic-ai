@@ -9708,7 +9708,11 @@ def test_bedrock_drops_stop_sequences_where_converse_rejects_them(
 def test_bedrock_declares_citations_on_models_that_never_cite(
     bedrock_provider: BedrockProvider, model_name: str, cites: bool
 ):
-    """Only the models with `bedrock_supports_citations` cite, so the others declare `citations` unsupported."""
+    """Only the models with `bedrock_supports_citations` cite, so the others declare `citations` unsupported.
+
+    Not a VCR test: the declaration is computed from the model profile and changes no request and emits no warning, so
+    no recorded exchange can show it.
+    """
     model = BedrockConverseModel(model_name, provider=bedrock_provider)
 
     assert ('citations' in model._unsupported_settings()) is not cites  # pyright: ignore[reportPrivateUsage]
