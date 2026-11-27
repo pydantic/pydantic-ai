@@ -210,13 +210,9 @@ class AnthropicModelProfile(ModelProfile, total=False):
     """
 
     anthropic_supports_on_demand_compaction: bool
-    """Whether the model accepts the `compaction` request parameter, and the signed block it returns. Default: `False`.
+    """Deprecated: use [`supports_compaction_on_demand`][pydantic_ai.profiles.ModelProfile.supports_compaction_on_demand] instead.
 
-    [`AnthropicModel.compact_messages`][pydantic_ai.models.anthropic.AnthropicModel.compact_messages] raises a
-    `UserError` for a model without it. It's a fact about the Messages API, which no `AnthropicModel` client narrows,
-    so `AnthropicProvider` sets it for Claude
-    Fable 5, 5.1 and 5.2, Mythos 5, 5.1, 5.2 and Preview, Opus 4.6, 4.7, 4.8, 5 and 5.5, Sonnet 4.6, 5 and 5.5, and Haiku 5.5;
-    see [Anthropic's docs](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand).
+    Translated (with a deprecation warning) whenever profiles are merged.
     """
 
     anthropic_supports_forced_tool_choice: bool
@@ -401,6 +397,27 @@ def resolve_anthropic_effort(
     if effort == 'max' and not supports_max:
         return 'xhigh' if supports_xhigh else 'high'
     return effort
+
+
+AnthropicThinkingDisplay: TypeAlias = Literal['summarized', 'omitted']
+"""Values Pydantic AI sends at `thinking.display`: a summary of the model's thinking, or only its signature."""
+
+
+def resolve_anthropic_thinking_display(
+    display: AnthropicThinkingDisplay | None, thinking_summary: bool | None
+) -> AnthropicThinkingDisplay | None:
+    """Resolve the `thinking.display` the settings ask for, or `None` when they leave it unset.
+
+    A provider-specific `display` setting wins over the unified `thinking_summary`. A thinking block built from the
+    unified `thinking` setting falls back to `'summarized'` when this returns `None`, since the newer Claude models
+    default to `'omitted'` and would otherwise return empty thinking.
+
+    Shared between the direct Anthropic path and Bedrock Converse for Claude models, like
+    [`resolve_anthropic_effort`][pydantic_ai.profiles.anthropic.resolve_anthropic_effort].
+    """
+    if display is not None or thinking_summary is None:
+        return display
+    return 'summarized' if thinking_summary else 'omitted'
 
 
 def anthropic_model_profile(model_name: str) -> ModelProfile | None:

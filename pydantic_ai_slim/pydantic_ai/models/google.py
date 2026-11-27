@@ -593,6 +593,32 @@ See https://ai.google.dev/gemini-api/docs/thinking#set-budget.
 """
 
 
+def _still_thinking(config: ThinkingConfigDict, thinking_summary: bool | None) -> ThinkingConfigDict:
+    """A `thinking=False` config that leaves the model thinking, with thoughts only when `thinking_summary` asks."""
+    if thinking_summary:
+        config['include_thoughts'] = True
+    return config
+
+
+def _thinking_off_config(profile: GoogleModelProfile, thinking_summary: bool | None) -> ThinkingConfigDict:
+    """The thinking config for unified `thinking=False`."""
+    if not profile.get('google_supports_thinking_level', True):
+        # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0, which Gemini 2.5 Pro rejects
+        # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
+        if profile.get('thinking_always_enabled', False):
+            return _still_thinking(
+                ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET), thinking_summary
+            )
+        return ThinkingConfigDict(thinking_budget=0)
+    if profile.get('google_disables_thinking_with_zero_budget', False):
+        return ThinkingConfigDict(thinking_budget=0)
+    # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
+    return _still_thinking(
+        ThinkingConfigDict(thinking_level=cast(Any, _google_common.resolve_google_thinking_level('minimal', profile))),
+        thinking_summary,
+    )
+
+
 def _batch_module():
     """The batch module, imported on first use.
 
@@ -1192,6 +1218,10 @@ class GoogleModel(Model[Client]):
         # An explicit thinking config replaces the unified one in `_translate_thinking`.
         return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
 
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # An explicit thinking config replaces the unified one in `_translate_thinking`, `include_thoughts` included.
+        return ('google_thinking_config',) if model_settings.get('google_thinking_config') else ()
+
     def _translate_thinking(
         self,
         model_settings: GoogleModelSettings,
@@ -1201,28 +1231,22 @@ class GoogleModel(Model[Client]):
         if config := model_settings.get('google_thinking_config'):
             return config
         thinking = model_request_parameters.thinking
+        thinking_summary = model_settings.get('thinking_summary')
         if thinking is None:
+            # Thoughts are left out unless asked for, so only `True` changes anything, and only on a model that thinks.
+            if thinking_summary and self._request_thinks(model_settings, model_request_parameters):
+                return ThinkingConfigDict(include_thoughts=True)
             return None
+        include_thoughts = thinking_summary is not False
         profile = self.profile
         supports_thinking_level = profile.get('google_supports_thinking_level', True)
         if thinking is False:
-            if not supports_thinking_level:
-                # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget=0, which Gemini 2.5 Pro rejects
-                # ("Budget 0 is invalid. This model only works in thinking mode."), so it gets its minimum budget.
-                if profile.get('thinking_always_enabled', False):
-                    return ThinkingConfigDict(thinking_budget=_GEMINI_2_5_PRO_MIN_THINKING_BUDGET)
-                return ThinkingConfigDict(thinking_budget=0)
-            if profile.get('google_disables_thinking_with_zero_budget', False):
-                return ThinkingConfigDict(thinking_budget=0)
-            # Default Gemini 3+ behaviour represents `thinking=False` as its lowest supported thinking level.
-            return ThinkingConfigDict(
-                thinking_level=cast(Any, _google_common.resolve_google_thinking_level('minimal', profile))
-            )
+            return _thinking_off_config(profile, thinking_summary)
 
         if not supports_thinking_level:
             # Older model behaviour (e.g. Gemini 2.5) uses thinking_budget
             if thinking is True:
-                return ThinkingConfigDict(include_thoughts=True)
+                return ThinkingConfigDict(include_thoughts=include_thoughts)
             budget_map: dict[ThinkingEffort, int] = {
                 'minimal': profile.get('google_minimal_thinking_budget', _GEMINI_2_5_PRO_MIN_THINKING_BUDGET),
                 'low': 2048,
@@ -1231,13 +1255,13 @@ class GoogleModel(Model[Client]):
                 'xhigh': 24576,  # max for Flash; Pro goes to 32768 but we use a safe common max
                 'max': 24576,
             }
-            return ThinkingConfigDict(include_thoughts=True, thinking_budget=budget_map[thinking])
+            return ThinkingConfigDict(include_thoughts=include_thoughts, thinking_budget=budget_map[thinking])
 
         # Default Gemini 3+ behaviour uses thinking_level
         if thinking is True:
-            return ThinkingConfigDict(include_thoughts=True)
+            return ThinkingConfigDict(include_thoughts=include_thoughts)
         return ThinkingConfigDict(
-            include_thoughts=True,
+            include_thoughts=include_thoughts,
             thinking_level=cast(Any, _google_common.resolve_google_thinking_level(thinking, profile)),
         )
 
@@ -1766,6 +1790,8 @@ class GeminiStreamedResponse(StreamedResponse):
     async def _get_event_iterator(self) -> AsyncIterator[ModelResponseStreamEvent]:
         if self._provider_timestamp is not None:
             self.provider_details = {'timestamp': self._provider_timestamp}
+        # A stream that ends before a chunk reports a finish reason or a blocked prompt was cut off.
+        self.state = 'incomplete'
         try:
             async for chunk in MapStreamDecodeErrors(self._response, self._model_name, errors.UnknownApiResponseError):
                 for event in self._map_chunk(chunk):
@@ -1797,6 +1823,7 @@ class GeminiStreamedResponse(StreamedResponse):
             finish_reason, finish_details = finished
             self.provider_details = {**(self.provider_details or {}), **finish_details}
             self.finish_reason = finish_reason
+            self.state = 'complete'
 
         if candidate.grounding_metadata is not None:
             self._grounding_metadata = candidate.grounding_metadata
@@ -1843,6 +1870,7 @@ class GeminiStreamedResponse(StreamedResponse):
         self._has_content_filter = True
         self.provider_details = {**(self.provider_details or {}), **blocked_details}
         self.finish_reason = 'content_filter'
+        self.state = 'complete'
         if chunk.response_id:  # pragma: no branch
             self.provider_response_id = chunk.response_id
 

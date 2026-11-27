@@ -9,7 +9,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import partial
 from types import FunctionType, MethodType, NoneType
-from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_origin, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_args, get_origin, overload
 
 import pydantic_core
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
@@ -26,6 +26,7 @@ from typing_extensions import TypedDict, TypeForm, TypeVar
 from pydantic_ai._utils import get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
+from ._json_schema_validation import VALIDATING_PARTIAL_OUTPUT
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from .output import (
@@ -119,13 +120,16 @@ def _build_output_handlers(
 
 
 def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
-    """`isinstance(value, type_)` that also works for generics like `list[Bar]` and for `Annotated[Bar, ...]`.
+    """`isinstance(value, type_)` that also works for generics like `list[Bar]`, `Literal[...]` and `Annotated[Bar, ...]`.
 
     `isinstance(x, list[Bar])` raises `TypeError`; we fall back to the generic origin
     (here `list`), so union output resolution still matches the collection type when the
     element type can't be checked at runtime.
     """
     type_ = _utils.unwrap_annotated(type_)
+    if get_origin(type_) is Literal:
+        # `isinstance` can't check a `Literal`, nor its origin; a value matches it if it's one of its values.
+        return value in get_args(type_)
     try:
         return isinstance(value, type_)
     except TypeError:
@@ -1141,14 +1145,18 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         if isinstance(data, str):
             data = _utils.strip_markdown_fences(data)
         pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
-        if isinstance(data, str):
-            return self.validator.validate_json(
-                data or '{}', allow_partial=pyd_allow_partial, context=validation_context
-            )
-        else:
-            return self.validator.validate_python(
-                data or {}, allow_partial=pyd_allow_partial, context=validation_context
-            )
+        token = VALIDATING_PARTIAL_OUTPUT.set(allow_partial)
+        try:
+            if isinstance(data, str):
+                return self.validator.validate_json(
+                    data or '{}', allow_partial=pyd_allow_partial, context=validation_context
+                )
+            else:
+                return self.validator.validate_python(
+                    data or {}, allow_partial=pyd_allow_partial, context=validation_context
+                )
+        finally:
+            VALIDATING_PARTIAL_OUTPUT.reset(token)
 
     async def call(
         self,
