@@ -4685,12 +4685,22 @@ async def test_openai_web_search_tool_model_not_supported(allow_model_requests: 
         await agent.run('What day is today?')
 
 
-async def test_openai_chat_image_output_not_supported(allow_model_requests: None, openai_api_key: str):
-    """Chat Completions can't return images, though the OpenAI profile allows image output for the Responses API.
+@pytest.mark.parametrize('provider_name', ['openai', 'azure'])
+async def test_openai_chat_image_output_not_supported(allow_model_requests: None, provider_name: str):
+    """OpenAI's Chat Completions can't return images, though the OpenAI profile allows image output for Responses.
 
     Not a VCR test: the request is rejected before it is sent.
     """
-    m = OpenAIChatModel('gpt-4o', provider=OpenAIProvider(api_key=openai_api_key))
+    provider = (
+        AzureProvider(
+            openai_client=AsyncAzureOpenAI(
+                azure_endpoint='https://example.openai.azure.com', api_version='2024-10-21', api_key='test'
+            )
+        )
+        if provider_name == 'azure'
+        else OpenAIProvider(api_key='test')
+    )
+    m = OpenAIChatModel('gpt-4o', provider=provider)
     assert m.profile.get('supports_image_output') is False
     agent = Agent(m, output_type=BinaryImage)
 

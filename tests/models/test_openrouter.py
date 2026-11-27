@@ -3632,3 +3632,13 @@ async def test_eager_input_streaming_sent_to_openrouter(
     assert ('eager_input_streaming' in tool_param) is expected_eager_key
     if expected_eager_key:
         assert tool_param['eager_input_streaming'] is True
+
+
+def test_openrouter_gemini_image_model_keeps_image_output():
+    """An OpenRouter Gemini image model keeps the Google profile's image output, unlike OpenAI's Chat Completions.
+
+    Not a VCR test: it checks that the request passes the profile check, and no response image is mapped yet.
+    """
+    model = OpenRouterModel('google/gemini-2.5-flash-image', provider=OpenRouterProvider(api_key='test'))
+    assert model.profile.get('supports_image_output') is True
+    model.prepare_request(None, ModelRequestParameters(allow_image_output=True))
