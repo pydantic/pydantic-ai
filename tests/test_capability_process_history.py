@@ -132,7 +132,7 @@ class LoggingWrapper(WrapperCapability[Any]):
     async def before_model_request(
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        self.log.append('wrapper.before_model_request')
+        self.log.append('container.before_model_request')
         return await super().before_model_request(ctx, request_context)
 
 
@@ -177,16 +177,38 @@ async def test_each_capability_processes_history_right_before_its_before_model_r
     assert texts(result.all_messages()) == ['hi', 'one', 'note', 'three', 'done']
 
 
-async def test_a_wrapper_with_its_own_before_model_request_processes_first():
-    """A wrapper that overrides one of the two hooks runs its wrapped capabilities' processors, then its own hook."""
+@dataclass
+class LoggingCombination(CombinedCapability[Any]):
+    """A combination with a `before_model_request` of its own, around its children's hooks."""
+
+    log: list[str] = field(default_factory=list[str], kw_only=True)
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        self.log.append('container.before_model_request')
+        return await super().before_model_request(ctx, request_context)
+
+
+@pytest.mark.parametrize('container', ['wrapper', 'combination'])
+async def test_a_container_with_its_own_before_model_request_processes_first(container: str):
+    """A wrapper or combination that overrides one of the two hooks runs its children's processors, then its own hook.
+
+    The combination is wrapped, since an agent dispatches to the children of a combination it's given directly.
+    """
     log: list[str] = []
-    wrapper = LoggingWrapper(CombinedCapability([Logged('one', log), OnlyBefore('two', log)]), log=log)
-    result = await Agent(recording([]), capabilities=[wrapper]).run('hi')
+    children: list[AbstractCapability[Any]] = [Logged('one', log), OnlyBefore('two', log)]
+    capability = (
+        LoggingWrapper(CombinedCapability(children), log=log)
+        if container == 'wrapper'
+        else WrapperCapability(LoggingCombination(children, log=log))
+    )
+    result = await Agent(recording([]), capabilities=[capability]).run('hi')
 
     assert log == snapshot(
         [
             "one.process_history ['hi']",
-            'wrapper.before_model_request',
+            'container.before_model_request',
             "one.before_model_request ['hi', 'one']",
             "two.before_model_request ['hi', 'one']",
         ]

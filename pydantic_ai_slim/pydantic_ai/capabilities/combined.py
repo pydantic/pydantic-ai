@@ -788,6 +788,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     async def _before_model_request_step(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext
     ) -> ModelRequestContext:
+        if (
+            type(self).process_history is not CombinedCapability.process_history
+            or type(self).before_model_request is not CombinedCapability.before_model_request
+        ):
+            # A subclass that overrides either hook runs its own, each dispatching to the children as it chooses.
+            return await super()._before_model_request_step(ctx, request_context)
         # Each child's `process_history` runs at its own position in the chain, right before its `before_model_request`.
         for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
