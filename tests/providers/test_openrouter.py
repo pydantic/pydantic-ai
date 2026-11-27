@@ -1,5 +1,7 @@
+import ast
 import re
 from copy import deepcopy
+from pathlib import Path
 from typing import Literal
 
 import pytest
@@ -42,6 +44,29 @@ pytestmark = [
 ]
 
 Key = TypeAliasType('Key', str)
+
+
+def test_openrouter_provider_name_docstring_links_live_page():
+    """The providers-list link in the `OpenRouterProviderName` docstring points to OpenRouter's live page.
+
+    Assignment docstrings aren't exposed at runtime for a plain type alias, so read them from the module source.
+    """
+    source = (Path(__file__).parents[2] / 'pydantic_ai_slim' / 'pydantic_ai' / 'models' / 'openrouter.py').read_text()
+    tree = ast.parse(source)
+    doc = None
+    for node, sibling in zip(tree.body, tree.body[1:]):
+        targets = node.targets if isinstance(node, ast.Assign) else []
+        if any(isinstance(target, ast.Name) and target.id == 'OpenRouterProviderName' for target in targets):
+            assert isinstance(sibling, ast.Expr) and isinstance(sibling.value, ast.Constant), 'docstring not found'
+            doc = sibling.value.value
+            break
+    else:
+        raise AssertionError('OpenRouterProviderName assignment not found')
+    assert isinstance(doc, str)
+    # Whitespace-normalized so rewrapping the docstring does not break the assertion.
+    doc = ' '.join(doc.split())
+    assert 'https://openrouter.ai/docs/api-reference/list-available-providers' not in doc
+    assert '[the OpenRouter API](https://openrouter.ai/docs/api/api-reference/providers/list-all-providers)' in doc
 
 
 def test_openrouter_provider():
