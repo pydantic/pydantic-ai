@@ -2282,3 +2282,18 @@ async def test_compacting_a_run_s_first_request_keeps_the_stored_requests_it_mer
             'return pyd_ai_tool_call_id__final_result: Final result processed.',
         ]
     )
+
+
+async def test_a_requested_compaction_no_capability_can_serve_warns_once_and_starts_nothing():
+    """With no `compact_history` hook, a requested compaction is dropped with a warning, not a start without an end."""
+    events = RecordEvents()
+    agent = Agent(TestModel(), capabilities=[events, RequestOnce()])
+
+    with pytest.warns(UserWarning, match='no capability of this agent has a `compact_history` hook') as caught:
+        result = await agent.run('hi', compact=True)
+
+    assert events.events == []
+    assert result.compactions == []
+    # The run's own request and `RequestOnce`'s merge into one, and the run warns about it once.
+    assert len([warning for warning in caught if 'compact_history' in str(warning.message)]) == 1
+    assert conversation_view(result.all_messages()) == ['user-prompt: hi', 'text: success (no tool calls)']

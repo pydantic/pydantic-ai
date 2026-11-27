@@ -240,11 +240,10 @@ class AnthropicProvider(Provider[AsyncAnthropicClient]):
             AnthropicModelProfile(anthropic_enforces_strict_schema_limits=True),
             # On-demand compaction is likewise a Messages API feature, so the Bedrock Converse API and the
             # OpenAI-compatible gateways that share `anthropic_model_profile()` don't get it. Its `instructions`
-            # replace Anthropic's summarization prompt, and the block it returns holds the summary as plain text.
+            # replace Anthropic's summarization prompt.
             AnthropicModelProfile(
                 supports_compaction_on_demand=True,
                 compaction_instructions='replaces_prompt',
-                compaction_result_readable=True,
             )
             if model_name.startswith(_ON_DEMAND_COMPACTION_MODEL_PREFIXES)
             else AnthropicModelProfile(supports_compaction_on_demand=False),

@@ -303,7 +303,6 @@ def test_anthropic_claude_sonnet_4_6():
             'anthropic_enforces_strict_schema_limits': True,
             'supports_compaction_on_demand': True,
             'compaction_instructions': 'replaces_prompt',
-            'compaction_result_readable': True,
             'supports_auto_cache': True,
         }
     )
@@ -361,7 +360,6 @@ def test_anthropic_claude_opus_4_7():
             'anthropic_enforces_strict_schema_limits': True,
             'supports_compaction_on_demand': True,
             'compaction_instructions': 'replaces_prompt',
-            'compaction_result_readable': True,
             'supports_auto_cache': True,
         }
     )
@@ -497,7 +495,6 @@ def test_openai_gpt_5_4():
             'may_tokenize_special_tokens_in_content': False,
             'supports_compaction_on_demand': True,
             'compaction_instructions': 'system_prompt',
-            'compaction_result_readable': False,
             'openai_chat_function_tools_require_reasoning_off': True,
             'rejects_unpaired_tool_calls': True,
         }
@@ -582,7 +579,6 @@ def test_openai_gpt_5_6():
             'may_tokenize_special_tokens_in_content': False,
             'supports_compaction_on_demand': True,
             'compaction_instructions': 'system_prompt',
-            'compaction_result_readable': False,
             'openai_chat_function_tools_require_reasoning_off': True,
             'rejects_unpaired_tool_calls': True,
         }
@@ -648,7 +644,6 @@ def test_openai_gpt_6_astra():
             'may_tokenize_special_tokens_in_content': False,
             'supports_compaction_on_demand': True,
             'compaction_instructions': 'system_prompt',
-            'compaction_result_readable': False,
             'openai_chat_function_tools_require_reasoning_off': True,
             'rejects_unpaired_tool_calls': True,
         }
@@ -847,7 +842,6 @@ def test_openai_gpt_4o():
             'may_tokenize_special_tokens_in_content': False,
             'supports_compaction_on_demand': True,
             'compaction_instructions': 'system_prompt',
-            'compaction_result_readable': False,
             'rejects_unpaired_tool_calls': True,
         }
     )
@@ -885,7 +879,6 @@ def test_openai_o3_mini():
             'may_tokenize_special_tokens_in_content': False,
             'supports_compaction_on_demand': True,
             'compaction_instructions': 'system_prompt',
-            'compaction_result_readable': False,
             'rejects_unpaired_tool_calls': True,
             'deprecation': ModelDeprecation(
                 source_url='https://developers.openai.com/api/docs/deprecations#2026-04-22-legacy-gpt-model-snapshots',
@@ -938,7 +931,6 @@ def test_openai_codex_gpt_5_6():
             'may_tokenize_special_tokens_in_content': False,
             'supports_compaction_on_demand': False,
             'compaction_instructions': 'system_prompt',
-            'compaction_result_readable': False,
             'openai_responses_requires_streaming': True,
             'openai_responses_requires_store_false': True,
             'openai_supports_input_token_counting': False,
@@ -2666,7 +2658,6 @@ def test_azure_openai_gpt_5():
             'openai_supports_phase': True,
             'supports_compaction_on_demand': True,
             'compaction_instructions': 'system_prompt',
-            'compaction_result_readable': False,
             'delegates_unprompted': True,
             'reinterprets_malformed_inputs': True,
             'omits_handoff_evidence': True,

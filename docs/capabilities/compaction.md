@@ -47,7 +47,6 @@ Which models compact on demand, and how, is in their [profile](../models/overvie
 |---|---|---|---|
 | [`supports_compaction_on_demand`][pydantic_ai.profiles.ModelProfile.supports_compaction_on_demand] | `compact_messages` works | OpenAI and Azure OpenAI, not through the Pydantic AI Gateway | Claude models that compact on demand |
 | [`compaction_instructions`][pydantic_ai.profiles.ModelProfile.compaction_instructions] | What instructions, such as a focus, are | `'system_prompt'` | `'replaces_prompt'` |
-| [`compaction_result_readable`][pydantic_ai.profiles.ModelProfile.compaction_result_readable] | Whether the compaction part holds a readable summary | `False`, it's encrypted | `True`, with a signature |
 
 To compact without either, call [`Model.compact_messages`][pydantic_ai.models.Model.compact_messages] directly. It returns a `ModelResponse` holding the compaction part to put in the message history.
 
@@ -59,7 +58,7 @@ A run compacts when something on it asks: the history is compacted before the ru
 - [`agent_run.request_compaction()`][pydantic_ai.run.AgentRun.request_compaction] on the [`AgentRun`][pydantic_ai.run.AgentRun] of an [`iter()`][pydantic_ai.agent.AbstractAgent.iter] loop, or [`events.request_compaction()`][pydantic_ai.agent.AgentRunEvents.request_compaction] on what [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] returns, once it's started. [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream]'s result has no `request_compaction()`: once it streams output, the run makes no further model request to compact for, so pass `compact=` instead. Realtime sessions don't compact: `compact_history` hooks don't run there.
 - `compact=` on [`run()`][pydantic_ai.agent.AbstractAgent.run], [`run_sync()`][pydantic_ai.agent.AbstractAgent.run_sync], [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], [`run_stream_sync()`][pydantic_ai.agent.AbstractAgent.run_stream_sync], [`run_stream_events()`][pydantic_ai.agent.AbstractAgent.run_stream_events] or [`iter()`][pydantic_ai.agent.AbstractAgent.iter], to compact before the run's first request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` (default `'manual'`) and a `focus`. This is what a `/compact` command does: the next message is answered from the compacted history.
 
-Requests from any of these merge while one is pending, as [above](#the-compaction-hook), so a `/compact` command's focus survives an automatic request a capability makes before the same model request.
+Requests from any of these merge while one is pending, as described [below](#the-compaction-hook), so a `/compact` command's focus survives an automatic request a capability makes before the same model request.
 
 ```python {title="run_compact.py" test="skip" gateway_toggle="skip"}
 from pydantic_ai import Agent
@@ -79,7 +78,7 @@ async def main():
     print(result.output)
 ```
 
-It's a run like any other: its whole lifecycle runs, `after_run` gets its result, and under [durable execution](../durable_execution/overview.md) the compaction request is a durable model operation like the run's other requests. If no capability compacts, or a [`CompactionStartEvent`](#compaction-events) listener cancels the compaction, the run goes on with the history as it was.
+It's a run like any other: its whole lifecycle runs, `after_run` gets its result, and under [durable execution](../durable_execution/overview.md) the compaction request is a durable model operation like the run's other requests. If no capability compacts, or a [`CompactionStartEvent`](#compaction-events) listener cancels the compaction, the run goes on with the history as it was. When the agent has no capability with a `compact_history` hook at all, no compaction starts and the run warns once that the request was dropped.
 
 Pydantic AI treats a compaction part as a visibility boundary for state that feeds future requests. Tool discoveries and on-demand capability loads before the boundary reset, so later requests advertise them again. Capability and toolset authors should apply the same rule to their own derived state: compute anything the model needs to have seen — announcements, disclosures, catalogs — from [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] rather than remembering it in instance attributes, so it self-heals when compaction replaces the history that carried it.
 

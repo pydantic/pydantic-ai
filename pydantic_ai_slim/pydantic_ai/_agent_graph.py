@@ -4663,6 +4663,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # also covers a batch request waiting for its batch's result: it's a suspended response the step resumes.
         if requested is None or resumed_response(prepared.messages) is not None:
             return
+        if not ctx.deps.root_capability._handles_compact_history(run_context):  # pyright: ignore[reportPrivateUsage]
+            # Nothing could serve it, so no compaction starts: a start event would never be followed by an end.
+            # An overflow only gets here when a hook can run (see `_overflow_retry`), so this is a pending request.
+            assert pending is not None
+            requests.drop_unserved(pending)
+            return
         # Made from the persistent history as this request shows it, without what only this request adds, so nothing
         # request-only reaches the history through the compaction. See `CompactionView`.
         view = CompactionView.of(ctx.state.message_history, prepared.messages)
