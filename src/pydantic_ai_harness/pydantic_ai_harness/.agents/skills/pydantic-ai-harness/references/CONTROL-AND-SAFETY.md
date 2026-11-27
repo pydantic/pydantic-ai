@@ -470,6 +470,8 @@ Gotchas:
   skips asking about the same tool and command or path for the rest of the conversation, via the caller-ownable
   `remembered` set; inside durable execution it is kept in the message history instead.
 - Delegates are only checked when `Permissions` reaches them: pass it in `SubAgents(shared_capabilities=[...])`.
+- Each decision is recorded on core's `execute_tool` span as `permissions.decision`, `.source` (`rule`, `mode`,
+  `approved`, `remembered`) and `.mode`; `.reason` only with `trace_include_content`.
 - `ask_commands` patterns and `rules` are a convenience, not a sandbox: use a sandbox workspace when the agent
   must not reach something. An allow rule trusts everything after its words (`find` allows `find . -delete`).
 - Commands with `$`, backticks, quoted operators, brace expansion, globbed command names, subshells,

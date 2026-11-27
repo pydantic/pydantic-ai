@@ -150,7 +150,16 @@ permissions = Permissions(lambda ctx: current)
 
 ## Telemetry
 
-`Permissions` emits no spans of its own. A held call shows up in core's tool spans and in the run's deferred tool requests and results, which carry the request's `subject` and `reason` as metadata. A call a rule denies shows up in core's tool span with the denial as its result, and in the history as a `ToolReturnPart` with `outcome='denied'`.
+`Permissions` emits no spans of its own. It records each decision as attributes on core's `execute_tool` span for the call, whatever the content settings, so a denied or held call can be told apart from one that ran:
+
+| Attribute | Value |
+| --- | --- |
+| `permissions.decision` | `allow`, `ask`, or `deny` |
+| `permissions.source` | what decided: `rule`, `mode`, `approved` (a held call a person approved), or `remembered` (an approval given with `remember=True`) |
+| `permissions.mode` | the permission mode in effect |
+| `permissions.reason` | the rule's reason, or why the mode asks, only when `trace_include_content` is on |
+
+A held call also shows up in the run's deferred tool requests and results, which carry the request's `subject` and `reason` as metadata. A call a rule denies shows up in the history as a `ToolReturnPart` with `outcome='denied'`.
 
 ## Related
 
