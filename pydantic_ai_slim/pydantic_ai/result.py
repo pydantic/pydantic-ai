@@ -769,7 +769,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         from ._appended_messages import AppendedMessages
 
         if not record.full or record.messages is None:
-            return AppendedMessages()
+            return AppendedMessages(given=record.given, cleaned=record.cleaned)
         # The run kept its full history when it ended, with the streamed response, which the run commits itself, but
         # not the request with the tool returns the stream added to its copy after it. Content queued at a deferred
         # pause is in both, recorded before the run committed the response, so the copy's order is kept for it.

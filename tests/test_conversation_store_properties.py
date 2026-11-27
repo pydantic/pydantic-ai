@@ -664,31 +664,6 @@ class KnownFinding:
     reason: str
 
 
-def _requests_in_a_row(turn: Turn) -> bool:
-    """Whether the turn puts two requests in a row after the stored messages: appended ones, or one and the new prompt."""
-    kinds = [
-        kind
-        for appended in turn.appended
-        for kind in (['request'] if appended == 'prompt' else ['request', 'response'])
-    ]
-    kinds += ['request'] if turn.prompt else []
-    return any(a == b == 'request' for a, b in itertools.pairwise(kinds))
-
-
-def _stores_requests_in_a_row(turn: Turn) -> bool:
-    """Whether the turn can store two requests in a row: appended, enqueued or added by a hook, or a summary."""
-    return turn.hook is not None or turn.capability == 'summarize' or _requests_in_a_row(turn)
-
-
-def _without_requests_in_a_row(turn: Turn, **changes: Any) -> Turn:
-    """The turn without what can store two requests in a row."""
-    if _stores_requests_in_a_row(turn):
-        changes |= {'hook': None, 'appended': (), 'prompt': True}
-        if turn.capability == 'summarize':
-            changes['capability'] = None
-    return dataclasses.replace(turn, **changes)
-
-
 KNOWN_FINDINGS = [
     KnownFinding(
         'summary-after-appended-messages',
@@ -710,45 +685,6 @@ KNOWN_FINDINGS = [
         ((Turn(), Turn(hook='append_before_run')),),
         'A message a `before_run` hook adds with `ctx.messages.append(...)` to a continued conversation is in '
         '`result.conversation` but not saved: the save starts after it.',
-    ),
-    KnownFinding(
-        'conversation-comes-back-cleaned',
-        frozenset({'S4', 'S7'}),
-        lambda turn, earlier: _without_requests_in_a_row(
-            turn, source='load' if turn.source == 'window' else turn.source
-        ),
-        (
-            (Turn(appended=('prompt',)), Turn()),
-            (Turn(hook='enqueue_before_run'), Turn()),
-            (Turn(mode='tool'), Turn(source='window', window=2)),
-        ),
-        'A run returns the stored messages it was given as it cleaned them to send, not as they were stored: two '
-        'requests in a row, like an appended prompt and the new one, a prompt and an enqueued message, or a summary '
-        'and a tool result, come back merged, and a window that starts with a tool result comes back without it. '
-        'The store keeps them as they were, so `load()` no longer equals the conversation that was saved.',
-    ),
-    KnownFinding(
-        'merging-unsaved-requests-branches-off-adjacent-stored-ones',
-        frozenset({'S1', 'S3'}),
-        lambda turn, earlier: dataclasses.replace(turn, appended=(), prompt=True) if _requests_in_a_row(turn) else turn,
-        ((Turn(appended=('prompt',)), Turn(source='load', appended=('prompt', 'prompt'), prompt=False)),),
-        'When the stored history has two requests in a row and the run also merges unsaved requests, the save '
-        'compares the whole history, finds the stored requests merged, and branches from there: an unedited save '
-        'replaces the stored messages with merged copies and records a branch.',
-    ),
-    KnownFinding(
-        'edit-after-merged-stored-requests-stores-a-prompt-twice',
-        frozenset({'S2', 'S7'}),
-        lambda turn, earlier: (
-            dataclasses.replace(turn, edit=None) if any(map(_stores_requests_in_a_row, [*earlier, turn])) else turn
-        ),
-        (
-            (Turn(appended=('prompt',)), Turn(edit='replace', edit_at=1)),
-            (Turn(appended=('prompt',)), Turn(edit='replace')),
-        ),
-        'After a run merged two stored requests in its conversation, an edit to that conversation is saved against '
-        'the stored requests as they were: editing a later reply keeps the first stored request and adds the merged '
-        'copy after it, so a prompt is on the head twice, and editing the merged request replaces only one of the two.',
     ),
     KnownFinding(
         'message-appended-in-a-trimmed-run-is-lost',
@@ -788,6 +724,40 @@ KNOWN_FINDINGS = [
 )
 def test_known_finding_is_still_present(finding: KnownFinding, reproducer: tuple[Turn, ...]):
     assert [v for v in drive(reproducer) if v[0] in finding.fails] == []
+
+
+FIXED_FINDINGS: dict[str, tuple[tuple[Turn, ...], ...]] = {
+    # Two requests in a row, like an appended prompt and the new one, a prompt and an enqueued message, came back
+    # merged, and a window that starts with a tool result came back without it, so `load()` didn't equal the
+    # conversation that was saved.
+    'conversation-comes-back-cleaned': (
+        (Turn(appended=('prompt',)), Turn()),
+        (Turn(hook='enqueue_before_run'), Turn()),
+        (Turn(mode='tool'), Turn(source='window', window=2)),
+    ),
+    # With two stored requests in a row and unsaved ones the run merged, an unedited save branched.
+    'merging-unsaved-requests-branches-off-adjacent-stored-ones': (
+        (Turn(appended=('prompt',)), Turn(source='load', appended=('prompt', 'prompt'), prompt=False)),
+    ),
+    # An edit after a run merged two stored requests stored a prompt twice, or replaced only one of the two.
+    'edit-after-merged-stored-requests-stores-a-prompt-twice': (
+        (Turn(appended=('prompt',)), Turn(edit='replace', edit_at=1)),
+        (Turn(appended=('prompt',)), Turn(edit='replace')),
+    ),
+}
+"""Minimal lists of turns that broke a property on main before a fix, kept as regression tests."""
+
+
+@pytest.mark.parametrize(
+    'reproducer',
+    [
+        pytest.param(reproducer, id=f'{finding}-{index}')
+        for finding, reproducers in FIXED_FINDINGS.items()
+        for index, reproducer in enumerate(reproducers)
+    ],
+)
+def test_fixed_finding_stays_fixed(reproducer: tuple[Turn, ...]):
+    assert drive(reproducer) == []
 
 
 # --- properties -------------------------------------------------------------------------------------------

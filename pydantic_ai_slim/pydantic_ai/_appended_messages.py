@@ -29,6 +29,17 @@ class AppendedMessages:
     full: bool = False
     """Whether `messages` is the full history kept once the run ended, rather than the record kept while it runs."""
 
+    given: list[ModelMessage] | None = None
+    """The history the run was given, when cleaning it to send changed it, say merging adjacent requests. `None` otherwise."""
+
+    cleaned: list[ModelMessage] | None = None
+    """The history as cleaning left it, when that changed `given`."""
+
+    def record_given(self, given: list[ModelMessage], cleaned: list[ModelMessage]) -> None:
+        """Record the history the run was given and how cleaning left it, if cleaning changed it."""
+        if len(given) != len(cleaned) or any(message is not kept for message, kept in zip(given, cleaned)):
+            self.given, self.cleaned = list(given), list(cleaned)
+
     def start(self, history: list[ModelMessage]) -> list[ModelMessage]:
         """Record `history` as the history the run was given, unless the run already appended to it."""
         if self.messages is None:

@@ -52,8 +52,7 @@ def conversation_from_state(
     The usage and the deferred tool requests are copies, so the conversation can be carried and mutated without
     touching the run's own accounting or the conversation the run was given.
     """
-    full = full_history(state)
-    messages, new_message_index = _split_merged_tail(state, *(full or (messages, new_message_index)))
+    messages, new_message_index = _as_given(state, *(full_history(state) or (messages, new_message_index)))
     conversation = Conversation(
         messages=list(messages),
         usage=copy(state.usage),
@@ -115,46 +114,51 @@ def failed_run_conversation(
     )
 
 
-def _split_merged_tail(
+def given_history(
+    state: _agent_graph.GraphAgentState, messages: list[_messages.ModelMessage], new_message_index: int
+) -> list[_messages.ModelMessage] | None:
+    """The history the run was given, if cleaning it to send changed it and `messages` still starts with it as cleaned.
+
+    Cleaning makes a history valid to send: it merges adjacent requests, like an output tool's result and the
+    prompt appended after it, and drops a tool result whose call isn't in the history, as at the start of a
+    window. A history the run changed otherwise, say in a hook, keeps the change instead. Filling in or adding
+    to a request it sends, as `rewritten` allows, doesn't count, and neither does the new timestamp of the
+    request a run resuming without a new prompt sends again. The unsaved requests that request merged get what
+    the run filled in on it.
+    """
+    given, cleaned = state.appended_messages.given, state.appended_messages.cleaned
+    if given is None or cleaned is None or new_message_index != len(cleaned) or len(messages) < len(cleaned):
+        return None
+    if any(map(rewritten, messages, [_unstamped(message) for message in cleaned])):
+        return None
+    sent = messages[len(cleaned) - 1] if cleaned else None
+    if sent is None or sent is cleaned[-1] or not isinstance(sent, _messages.ModelRequest):
+        return given
+    unsaved = {id(message) for message in state.conversation_unsaved or ()}
+    given = list(given)
+    index = len(given) - 1
+    while index >= 0 and isinstance(request := given[index], _messages.ModelRequest) and id(request) in unsaved:
+        given[index] = dataclasses.replace(
+            request,
+            **{name: getattr(sent, name) for name in STAMPED_FIELDS if getattr(request, name) is None},
+        )
+        index -= 1
+    return given
+
+
+def _unstamped(message: _messages.ModelMessage) -> _messages.ModelMessage:
+    """`message` without a timestamp, which a run resuming without a new prompt sets anew on the request it sends again."""
+    return dataclasses.replace(message, timestamp=None) if isinstance(message, _messages.ModelRequest) else message
+
+
+def _as_given(
     state: _agent_graph.GraphAgentState, messages: list[_messages.ModelMessage], new_message_index: int
 ) -> tuple[list[_messages.ModelMessage], int]:
-    """Put the stored request the run merged the unsaved ones after it into, and those, back in place of the merged request.
-
-    The unsaved requests get the fields the run filled in on the merged request it sent, and the last one any part
-    it added. See `GraphAgentState.conversation_merged_tail`.
-    """
-    tail, unsaved = state.conversation_merged_tail, state.conversation_unsaved or []
-    appended = _agent_graph.leading_requests(unsaved)
-    if tail is None or not appended:
+    """`messages` and where the run's own start, with the history the run was given in place of it as cleaned."""
+    given = given_history(state, messages, new_message_index)
+    if given is None:
         return messages, new_message_index
-    start = new_message_index - (len(unsaved) - len(appended) + 1)
-    merged = messages[start] if 0 <= start < len(messages) else None
-    if not isinstance(merged, _messages.ModelRequest):
-        # A history shorter than its index says, as a payload dumped without some of its messages has.
-        return messages, new_message_index
-    added: list[Any] = list(merged.parts)
-    for part in [part for request in (tail, *appended) for part in request.parts]:
-        if part not in added:
-            # Something edited the merged request in place, so which of its parts are stored isn't known.
-            return messages, new_message_index
-        added.remove(part)
-    # The merged request has the latest timestamp of the ones it merged, unless the run stamped its own.
-    given_timestamps = [request.timestamp for request in (tail, *appended)]
-    split = [
-        dataclasses.replace(
-            request,
-            parts=[*request.parts, *(added if request is appended[-1] else ())],
-            **{
-                name: value
-                for name in STAMPED_FIELDS
-                if getattr(request, name) is None
-                and (value := getattr(merged, name)) is not None
-                and (name != 'timestamp' or value not in given_timestamps)
-            },
-        )
-        for request in appended
-    ]
-    return [*messages[:start], tail, *split, *messages[start + 1 :]], new_message_index + len(appended)
+    return [*given, *messages[new_message_index:]], len(given)
 
 
 def full_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.ModelMessage], int] | None:
@@ -181,8 +185,10 @@ def keep_full_history(state: _agent_graph.GraphAgentState) -> None:
     if full is None:
         appended.messages = None
     else:
-        appended.messages, appended.new_message_index = full
+        appended.messages, appended.new_message_index = _as_given(state, *full)
         appended.full = True
+        # The full history holds the history as it was given now.
+        appended.given = appended.cleaned = None
 
 
 def _merged_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.ModelMessage], int] | None:
