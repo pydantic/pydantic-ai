@@ -12740,9 +12740,10 @@ async def test_a_response_that_does_not_complete_closes_its_tool_call(status: Li
         json.loads(event.removeprefix('data: '))
         async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
     ]
-    assert [(chunk['type'], chunk.get('toolCallId'), chunk.get('content')) for chunk in chunks] == snapshot(
-        {
-            'failed': [
+    actual = [(chunk['type'], chunk.get('toolCallId'), chunk.get('content')) for chunk in chunks]
+    expected = {
+        'failed': snapshot(
+            [
                 ('RUN_STARTED', None, None),
                 ('TEXT_MESSAGE_START', None, None),
                 ('TEXT_MESSAGE_END', None, None),
@@ -12752,8 +12753,10 @@ async def test_a_response_that_does_not_complete_closes_its_tool_call(status: Li
                 ('TOOL_CALL_RESULT', 'call-1', 'Tool execution was interrupted by an error.'),
                 ('REASONING_ENCRYPTED_VALUE', None, None),
                 ('RUN_FINISHED', None, None),
-            ],
-            'superseded': [
+            ]
+        ),
+        'superseded': snapshot(
+            [
                 ('RUN_STARTED', None, None),
                 ('TEXT_MESSAGE_START', None, None),
                 ('TEXT_MESSAGE_END', None, None),
@@ -12766,6 +12769,7 @@ async def test_a_response_that_does_not_complete_closes_its_tool_call(status: Li
                 ('TOOL_CALL_ARGS', 'call-1', None),
                 ('TOOL_CALL_END', 'call-1', None),
                 ('RUN_FINISHED', None, None),
-            ],
-        }
-    )[status]
+            ]
+        ),
+    }
+    assert actual == expected[status]

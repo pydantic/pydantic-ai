@@ -15420,11 +15420,12 @@ async def test_a_response_that_does_not_complete_closes_its_tool_call(status: Li
         async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
         if '[DONE]' not in event
     ]
-    assert [
+    actual = [
         (chunk['type'], chunk.get('toolCallId'), chunk.get('output') or chunk.get('errorText')) for chunk in chunks
-    ] == snapshot(
-        {
-            'failed': [
+    ]
+    expected = {
+        'failed': snapshot(
+            [
                 ('start', None, None),
                 ('start-step', None, None),
                 ('tool-input-start', 'call-1', None),
@@ -15433,8 +15434,10 @@ async def test_a_response_that_does_not_complete_closes_its_tool_call(status: Li
                 ('tool-output-error', 'call-1', 'Tool execution was interrupted by an error.'),
                 ('finish-step', None, None),
                 ('finish', None, None),
-            ],
-            'superseded': [
+            ]
+        ),
+        'superseded': snapshot(
+            [
                 ('start', None, None),
                 ('start-step', None, None),
                 ('tool-input-start', 'call-1', None),
@@ -15445,6 +15448,7 @@ async def test_a_response_that_does_not_complete_closes_its_tool_call(status: Li
                 ('tool-input-delta', 'call-1', None),
                 ('finish-step', None, None),
                 ('finish', None, None),
-            ],
-        }
-    )[status]
+            ]
+        ),
+    }
+    assert actual == expected[status]

@@ -9194,7 +9194,16 @@ def _scheduled_activity_kinds(history: WorkflowHistory) -> list[str]:
             ModelSettingsDeltaEvent,
             snapshot(['event_stream_handler', 'model_request_stream']),
             snapshot(['model_request_stream']),
-            snapshot(['ModelSettingsDeltaEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']),
+            snapshot(
+                [
+                    'ModelSettingsDeltaEvent',
+                    'ModelResponseStartEvent',
+                    'PartStartEvent',
+                    'FinalResultEvent',
+                    'PartEndEvent',
+                    'ModelResponseEndEvent',
+                ]
+            ),
             id='thinking-level',
         ),
         pytest.param(
@@ -9230,18 +9239,24 @@ def _scheduled_activity_kinds(history: WorkflowHistory) -> list[str]:
             ),
             snapshot(
                 [
+                    'ModelResponseStartEvent',
                     'PartStartEvent',
                     'PartEndEvent',
+                    'ModelResponseEndEvent',
                     'FunctionToolCallEvent',
                     'FunctionToolResultEvent',
                     'ToolAvailabilityDeltaEvent',
+                    'ModelResponseStartEvent',
                     'PartStartEvent',
                     'PartEndEvent',
+                    'ModelResponseEndEvent',
                     'FunctionToolCallEvent',
                     'FunctionToolResultEvent',
+                    'ModelResponseStartEvent',
                     'PartStartEvent',
                     'FinalResultEvent',
                     'PartEndEvent',
+                    'ModelResponseEndEvent',
                 ]
             ),
             id='tool-population-change',

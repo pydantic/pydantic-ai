@@ -5348,7 +5348,16 @@ population_change_handler_agent = Agent(
                     'durability_thinking_level_handler__model.request_stream',
                 ]
             ),
-            snapshot(['ModelSettingsDeltaEvent', 'PartStartEvent', 'FinalResultEvent', 'PartEndEvent']),
+            snapshot(
+                [
+                    'ModelSettingsDeltaEvent',
+                    'ModelResponseStartEvent',
+                    'PartStartEvent',
+                    'FinalResultEvent',
+                    'PartEndEvent',
+                    'ModelResponseEndEvent',
+                ]
+            ),
             id='thinking-level',
         ),
         pytest.param(
@@ -5367,18 +5376,24 @@ population_change_handler_agent = Agent(
             ),
             snapshot(
                 [
+                    'ModelResponseStartEvent',
                     'PartStartEvent',
                     'PartEndEvent',
+                    'ModelResponseEndEvent',
                     'FunctionToolCallEvent',
                     'FunctionToolResultEvent',
                     'ToolAvailabilityDeltaEvent',
+                    'ModelResponseStartEvent',
                     'PartStartEvent',
                     'PartEndEvent',
+                    'ModelResponseEndEvent',
                     'FunctionToolCallEvent',
                     'FunctionToolResultEvent',
+                    'ModelResponseStartEvent',
                     'PartStartEvent',
                     'FinalResultEvent',
                     'PartEndEvent',
+                    'ModelResponseEndEvent',
                 ]
             ),
             id='tool-population-change',
