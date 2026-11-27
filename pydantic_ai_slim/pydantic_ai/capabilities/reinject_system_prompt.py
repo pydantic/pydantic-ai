@@ -42,8 +42,10 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
     agent's dynamic system prompts and any copy of its configured prompt, and keeps server-side
     history's other system prompts. Add it explicitly with
     `Agent(..., capabilities=[ReinjectSystemPrompt()])` or per-run via the `capabilities=`
-    argument on [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] to get the same behavior
-    anywhere.
+    argument on [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] to reinject the system prompt
+    anywhere. An instance you add with `replace_existing=True` can't tell a client's system prompt
+    from one an earlier server-side run persisted, so it replaces every system prompt in the
+    history the run starts with, including one an earlier run enqueued.
     """
 
     replace_existing: bool = False
