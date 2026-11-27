@@ -1504,6 +1504,15 @@ class ToolResultAttachment:
     capability_id: str | None = None
     """The ID of the capability that contributed the tool, if any, which the note names instead of the tool."""
 
+    def __post_init__(self) -> None:
+        # Checked here, as `UserPromptPart` checks its items, so a mapping shaped like a file can't be stored as one
+        # and rebuilt as a file reference when the history is loaded. `ValueError`: see `UserPromptPart.__post_init__`.
+        if not isinstance(self.content, _USER_CONTENT_TYPES):
+            raise ValueError(
+                '`ToolResultAttachment.content` must be a `UserContent` item, '
+                f'got `{type(self.content).__name__}`. {_NOT_USER_CONTENT}'
+            )
+
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 

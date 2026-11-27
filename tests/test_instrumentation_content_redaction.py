@@ -76,6 +76,7 @@ from pydantic_ai.messages import (
     NativeToolReturnPart,
     OperatorSource,
     OperatorText,
+    ToolResultAttachment,
     ToolResultSource,
     UploadedFile,
 )
@@ -606,6 +607,56 @@ async def test_only_url_derived_mcp_ids_are_masked(include_content: bool, native
     else:
         assert json.loads(serialized)['function_tools'][0]['toolset_id'] == '[REDACTED]'
         assert any(tool.toolset_id == capability.id for tool in observed_parameters[0].function_tools)
+
+
+@pytest.mark.skipif(not mcp_installed(), reason='fastmcp not installed')
+@pytest.mark.parametrize('include_binary_content', [True, False])
+async def test_url_derived_mcp_id_on_a_tool_results_attachments_is_masked(include_binary_content: bool) -> None:
+    """A tool that runs other tools, such as Code Mode's `run_code`, keeps their content as attachments naming the
+    capability that contributed each one; on its span, a URL-derived MCP id is masked as it is on tool definitions."""
+    server = FastMCP('test')
+
+    @server.tool
+    def ping() -> str:
+        return 'pong'
+
+    capability = MCP('https://mcp.example.test/private/SENTINEL-path', native=False, local=Client(server))
+    assert capability.id == 'mcp.example.test'
+
+    def relay() -> ToolReturn:
+        return ToolReturn(
+            return_value='ok',
+            attachments=[
+                ToolResultAttachment(
+                    content='pong', tool_call_id='c1__1', tool_name='ping', capability_id=capability.id
+                ),
+                ToolResultAttachment(content='page', tool_call_id='c1__2', tool_name='fetch', capability_id='docs'),
+            ],
+        )
+
+    def respond(messages: list[ModelMessage], _: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('relay', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    settings = InstrumentationSettings(
+        include_content=True, include_binary_content=include_binary_content, tracer_provider=provider
+    )
+    result = await Agent(
+        FunctionModel(respond), tools=[relay], capabilities=[capability, Instrumentation(settings=settings)]
+    ).run('go')
+    tool_span = next(span for span in exporter.get_finished_spans() if span.name == 'execute_tool relay')
+    assert tool_span.attributes is not None
+    recorded = tool_span.attributes['gen_ai.tool.call.result']
+    assert isinstance(recorded, str)
+    assert [attachment['capability_id'] for attachment in json.loads(recorded)['attachments']] == ['[REDACTED]', 'docs']
+    # Only the telemetry is masked: the history keeps the id, which the model's note names.
+    tool_return = result.all_messages()[2].parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert [attachment.capability_id for attachment in tool_return.attachments] == [capability.id, 'docs']
 
 
 @pytest.mark.parametrize('include_content', [True, False])

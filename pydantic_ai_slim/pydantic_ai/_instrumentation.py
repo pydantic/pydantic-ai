@@ -607,6 +607,29 @@ def mcp_telemetry_url_ids(
     return identities
 
 
+def redact_mcp_attachment_ids(value: Any, capabilities: Iterable[AbstractCapability[Any]]) -> Any:
+    """`value` with the URL-derived MCP capability IDs on a `ToolReturn`'s attachments masked, as on tool definitions.
+
+    A tool that runs other tools keeps their content as attachments naming the capability that contributed each
+    one, so its tool span would otherwise carry the ID that `_redact_mcp_tool_definition` masks.
+    """
+    from pydantic_ai.messages import ToolReturn
+
+    if not isinstance(value, ToolReturn):
+        return value
+    tool_return = cast(ToolReturn[Any], value)
+    if not tool_return.attachments:
+        return tool_return
+    url_ids = mcp_telemetry_url_ids(capabilities)
+    return replace(
+        tool_return,
+        attachments=[
+            replace(attachment, capability_id='[REDACTED]') if attachment.capability_id in url_ids else attachment
+            for attachment in tool_return.attachments
+        ],
+    )
+
+
 def mcp_telemetry_url_toolset_ids(toolset: AbstractToolset[AgentDepsT]) -> set[str]:
     """Collect URL-derived identities owned by local MCP toolsets."""
     identities: set[str] = set()

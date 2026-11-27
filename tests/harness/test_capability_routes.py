@@ -20,7 +20,7 @@ from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from itertools import groupby
 from pathlib import Path
-from typing import Literal, cast, get_args
+from typing import Literal, get_args
 
 import anyio
 import pytest
@@ -37,9 +37,11 @@ from pydantic_ai.messages import (
     ModelRequest,
     OperatorSource,
     OperatorText,
+    StructuredContent,
     ToolCallPart,
     ToolResultAttachment,
     ToolReturnPart,
+    UserContent,
 )
 from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.tools import ToolDefinition
@@ -186,12 +188,12 @@ class Seen:
     """What a capability part tells the model, compared only for the probes, whose content is fixed."""
 
 
-def _said(content: object) -> object:
+def _said(content: str | StructuredContent | Sequence[UserContent]) -> object:
     """`content` as the model reads it: one item alone reads the same as that item."""
-    if isinstance(content, list | tuple):
-        items = tuple(cast(Sequence[object], content))
-        return items[0] if len(items) == 1 else items
-    return content
+    if isinstance(content, str | StructuredContent):
+        return content
+    items = tuple(content)
+    return items[0] if len(items) == 1 else items
 
 
 def _seen(part: CapabilityPart, *, with_content: bool) -> Seen:

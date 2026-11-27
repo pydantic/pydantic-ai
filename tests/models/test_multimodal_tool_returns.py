@@ -231,8 +231,9 @@ NOTED_IN_TOOL_RESULTS: frozenset[tuple[ProviderName, FileType]] = frozenset(
 )
 """Pairs whose file, returned directly by a tool, is replaced by a note: the model's profile says it can't read it.
 
-The SUPPORT_MATRIX error still applies to the same file sent through `ToolReturn.content`, which goes on
-the user channel as the developer wrote it, and to an `UploadedFile`, which only its provider can read.
+The SUPPORT_MATRIX error still applies to the same file sent through `ToolReturn.content`, which is kept on the
+`ToolReturnPart` as an attachment and sent after the tool results as `<tool_content>` data behind a note naming the
+tool, with the file itself rather than a note about it, and to an `UploadedFile`, which only its provider can read.
 """
 
 # Overrides for specific (provider, file_type, content_source, return_style) combos where
