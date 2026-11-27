@@ -48,6 +48,9 @@ from pydantic_ai.durable_exec.temporal import AgentPlugin, PydanticAIPlugin, Tem
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal')]
 
 TASK_QUEUE = 'capability-cases'
+# The worker and the `Replayer` run the workflow on the same runner, unsandboxed for the reason the module docstring
+# gives. It holds no state, so one instance serves both.
+_RUNNER = UnsandboxedWorkflowRunner()
 
 _AGENTS: dict[str, Agent[None, str]] = {}
 """The agent that makes each case's calls, which the workflow runs by case name; `temporal` builds them."""
@@ -77,10 +80,6 @@ def _activity_config() -> ActivityConfig:
     )
 
 
-def _runner() -> UnsandboxedWorkflowRunner:
-    return UnsandboxedWorkflowRunner()
-
-
 @pytest.fixture(scope='module')
 async def temporal(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[_Temporal]:
     """One dev server, and one worker for every case's agent, built here rather than at collection."""
@@ -108,7 +107,7 @@ async def temporal(tmp_path_factory: pytest.TempPathFactory) -> AsyncIterator[_T
             task_queue=TASK_QUEUE,
             workflows=[CaseWorkflow],
             plugins=[AgentPlugin(agent) for agent in _AGENTS.values()],
-            workflow_runner=_runner(),
+            workflow_runner=_RUNNER,
         ):
             yield _Temporal(client, refused)
     _AGENTS.clear()
@@ -138,7 +137,7 @@ async def _breaks(name: str, temporal: _Temporal, count_requests: Callable[[], C
     replayer = Replayer(
         workflows=[CaseWorkflow],
         plugins=[PydanticAIPlugin(), AgentPlugin(_AGENTS[name])],
-        workflow_runner=_runner(),
+        workflow_runner=_RUNNER,
     )
     replay = await replayer.replay_workflow(history, raise_on_replay_failure=False)
     failure = replay.replay_failure
