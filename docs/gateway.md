@@ -163,7 +163,7 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 #### Observability {#observability}
 
-With [Pydantic AI instrumentation](logfire.md) turned on, each model request through the Gateway shows as two `chat {model}` spans: one from Pydantic AI, under the instrumentation scope `pydantic-ai`, and one from the Gateway. Both carry token counts under `gen_ai.usage.*`, and the Pydantic AI span also carries the request's cost as `operation.cost`, so summing over every `chat` span counts each request twice. To total tokens or cost, filter on `otel_scope_name = 'pydantic-ai'`. For tokens alone, you can also sum `gen_ai.aggregated_usage.*` on the `invoke_agent` spans, which carry no cost.
+With [Pydantic AI instrumentation](logfire.md) turned on, each model request through the Gateway shows as two `chat {model}` spans: one from Pydantic AI, under the instrumentation scope `pydantic-ai`, and one from the Gateway. Both carry token counts under `gen_ai.usage.*`, and the Pydantic AI span also carries the request's cost as `operation.cost`, so summing over every `chat` span counts each request twice. To total tokens or cost, keep only the spans from the `pydantic-ai` instrumentation scope (in Logfire, `otel_scope_name = 'pydantic-ai'`). For tokens alone, you can also sum `gen_ai.aggregated_usage.*` on the `invoke_agent` spans, which carry no cost.
 
 ### Claude Code
 
