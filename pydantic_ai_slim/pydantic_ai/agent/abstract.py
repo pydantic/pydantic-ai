@@ -965,8 +965,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         If no capability compacts, or a [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent] listener
         cancels the compaction, the result holds the history as it was given and no compactions. On an agent with no
         capability that has a `compact_history` hook, no compaction starts and the run also warns, with a
-        `UserWarning`, that the request was dropped. A message a hook queues during the run with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] isn't answered, so
-        `all_messages()` ends with it as a request, and the next run sends it with its prompt.
+        `UserWarning`, that the request was dropped. A capability that answers the request itself, like a
+        `wrap_model_request` that doesn't call its handler, or that ends the step another way, such as with a retry or
+        a submitted output, also means nothing is compacted: its response is discarded, and the run never continues
+        the conversation. A message a hook queues during the run with
+        [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] isn't answered, so `all_messages()` ends with it
+        as a request, and the next run sends it with its prompt.
 
         It relies on this agent's [`run()`][pydantic_ai.agent.AbstractAgent.run] reaching an
         [`Agent`][pydantic_ai.agent.Agent] run, and the first `Agent` run it starts is the one that compacts: a

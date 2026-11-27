@@ -6,6 +6,7 @@ standing in for a provider, none of which is sent a request.
 
 from __future__ import annotations
 
+import asyncio
 import copy
 from collections.abc import AsyncIterable
 from contextlib import AbstractContextManager, nullcontext
@@ -17,6 +18,7 @@ import pytest
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    CallToolsNode,
     CompactionEndEvent,
     CompactionPart,
     CompactionRunResult,
@@ -35,19 +37,30 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     CompactionRequest,
     CompactionResult,
+    Hooks,
     Instrumentation,
     ModelFallback,
     NativeCompaction,
+    ProcessHistory,
     WrapModelRequestHandler,
     WrapRunHandler,
     on_event,
 )
-from pydantic_ai.exceptions import ModelAPIError, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelRetry,
+    RunCancelled,
+    SkipModelRequest,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.usage import RequestUsage
+from pydantic_ai.result import FinalResult
+from pydantic_ai.usage import RequestUsage, UsageLimits
+from pydantic_graph import End
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
@@ -61,7 +74,7 @@ COMPACTION_USAGE = RequestUsage(input_tokens=1000, output_tokens=50)
 def warns_without_a_hook(no_hook: bool) -> AbstractContextManager[object]:
     """Expect the warning a compaction request no capability can serve gets, when the agent has no `compact_history` hook."""
     if no_hook:
-        return pytest.warns(UserWarning, match='no capability of this agent has a `compact_history` hook')
+        return pytest.warns(UserWarning, match='Compaction was requested')
     return nullcontext()
 
 
@@ -685,3 +698,248 @@ async def test_an_agent_whose_run_never_starts_an_agent_run_cant_compact():
     # Its own `run()` ran, and the wrapped agent sent no model request and didn't compact.
     assert answered == ['answered elsewhere']
     assert summarize.calls == []
+
+
+@pytest.mark.parametrize('streamed', [False, True])
+@pytest.mark.parametrize('answered_by', ['wrap_model_request', 'before_model_request'])
+@pytest.mark.parametrize('answer', ['text', 'tool call'])
+async def test_a_capability_that_answers_the_request_itself_means_nothing_is_compacted(
+    streamed: bool, answered_by: str, answer: str
+):
+    """A step that gets a response without reaching the compaction ends the run, like a hook that declines.
+
+    A `wrap_model_request` that returns without calling its handler, like a cache, or a `before_model_request` that
+    raises `SkipModelRequest`, answers the request itself, so nothing reaches the compaction. The run still never
+    continues the conversation: the response is discarded, with the request the run added, and no tool it calls runs.
+    """
+    ran: list[str] = []
+    response = ModelResponse(
+        parts=[ToolCallPart('lookup', {}, tool_call_id='call')] if answer == 'tool call' else [TextPart('cached')]
+    )
+
+    class AnswerItself(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            if answered_by == 'before_model_request':
+                raise SkipModelRequest(response)
+            return request_context
+
+        async def wrap_model_request(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            if answered_by == 'wrap_model_request':
+                return response
+            return await handler(request_context)
+
+    summarize = Summarize()
+    lifecycle = Lifecycle()
+    agent = Agent(FunctionModel(not_sent), capabilities=[lifecycle, AnswerItself(), summarize])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        ran.append('lookup')  # pragma: no cover
+        return 'found'  # pragma: no cover
+
+    async def handler(ctx: RunContext[Any], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    given = history()
+    result = await agent.compact_history(given, event_stream_handler=handler if streamed else None)
+
+    assert result.all_messages() == given
+    assert result.compactions == []
+    assert result.new_messages() == []
+    assert result.usage.requests == 0
+    assert (ran, summarize.calls) == ([], [])
+    [run_result] = lifecycle.results
+    assert run_result.output is None
+
+
+class EndsTheStepItself(AbstractCapability[Any]):
+    """Ends a `compact_history()` run's step some way other than compacting, before or around the compaction."""
+
+    def __init__(self, how: str) -> None:
+        self.how = how
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        if self.how == 'submit_output from before_run':
+            await ctx.submit_output(next(iter(ctx.output_tools)), {'response': 'submitted'})
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if self.how == 'ModelRetry from before_model_request':
+            raise ModelRetry('try again')
+        if self.how == 'submit_output from before_model_request':
+            await ctx.submit_output(next(iter(ctx.output_tools)), {'response': 'submitted'})
+        return request_context
+
+    async def wrap_model_request(
+        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        if self.how != 'wrap_model_request swallows the end':
+            return await handler(request_context)
+        try:
+            return await handler(request_context)
+        except BaseException:
+            return ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='call')])
+
+
+@pytest.mark.parametrize('streamed', [False, True])
+@pytest.mark.parametrize(
+    'how',
+    [
+        'ModelRetry from before_model_request',
+        'submit_output from before_model_request',
+        'submit_output from before_run',
+        'wrap_model_request swallows the end',
+    ],
+)
+async def test_a_step_that_ends_another_way_ends_the_run_with_the_history_as_given(streamed: bool, how: str):
+    """However a `compact_history()` run's step ends, the run ends there and never continues the conversation.
+
+    A retry would make another step with its feedback in the history, a submitted output would end the run with an
+    output, and a hook that swallows the end of the step continues with its own response. Each ends the run as a
+    hook that declines does: with the history as given, no compactions, and no tool run, unless the compaction ran
+    first, as it does before the step ends around it.
+    """
+    ran: list[str] = []
+    summarize = Summarize()
+    lifecycle = Lifecycle()
+    agent = Agent(FunctionModel(not_sent), capabilities=[lifecycle, EndsTheStepItself(how), summarize])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        ran.append('lookup')  # pragma: no cover
+        return 'found'  # pragma: no cover
+
+    async def handler(ctx: RunContext[Any], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    given = history()
+    result = await agent.compact_history(given, event_stream_handler=handler if streamed else None)
+
+    if how == 'wrap_model_request swallows the end':
+        # The compaction ran and was kept before the hook swallowed the end of the step, so the run ends compacted.
+        assert shapes(result.all_messages()) == snapshot(['ModelRequest: CompactionPart', 'ModelResponse: TextPart'])
+        assert [record.handler for record in result.compactions] == ['summarize']
+    else:
+        assert result.all_messages() == given
+        assert result.compactions == []
+        assert summarize.calls == []
+    assert result.usage.requests == 0
+    assert ran == []
+    assert 'after_model_request' not in lifecycle.calls
+    [run_result] = lifecycle.results
+    assert run_result.output is None
+
+
+async def test_an_error_hook_that_recovers_from_a_failed_compaction_ends_the_run_with_the_history_as_given():
+    """A response an `on_model_request_error` hook recovers a failed compaction with isn't acted on."""
+
+    class FailToCompact(AbstractCapability[Any]):
+        async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+            raise ModelAPIError(model_name='primary', message='compaction rate limited')
+
+    async def recover(ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('recovered')])
+
+    agent = Agent(FunctionModel(not_sent), capabilities=[FailToCompact(), Hooks(model_request_error=recover)])
+    given = history()
+    result = await agent.compact_history(given)
+
+    assert result.all_messages() == given
+    assert result.compactions == []
+    assert result.usage.requests == 0
+
+
+@pytest.mark.parametrize('replacement', ['tool execution', 'end'])
+async def test_a_node_hook_that_replaces_the_model_request_step(replacement: str):
+    """A node hook that replaces the run's model request step can't have it run tools; one that ends it, ends it."""
+    ran: list[str] = []
+
+    class Replace(AbstractCapability[Any]):
+        async def before_node_run(self, ctx: RunContext[Any], *, node: Any) -> Any:
+            if replacement == 'tool execution' and Agent.is_model_request_node(node):
+                return CallToolsNode[Any, Any](ModelResponse(parts=[ToolCallPart('lookup', {}, tool_call_id='call')]))
+            return node
+
+        async def wrap_node_run(self, ctx: RunContext[Any], *, node: Any, handler: Any) -> Any:
+            if replacement == 'end' and Agent.is_model_request_node(node):
+                return End(FinalResult('ended'))
+            return await handler(node)
+
+    summarize = Summarize()
+    agent = Agent(FunctionModel(not_sent), capabilities=[Replace(), summarize])
+
+    @agent.tool_plain
+    def lookup() -> str:
+        ran.append('lookup')  # pragma: no cover
+        return 'found'  # pragma: no cover
+
+    given = history()
+    if replacement == 'end':
+        result = await agent.compact_history(given)
+        assert result.all_messages() == given
+        assert result.compactions == []
+    else:
+        with pytest.raises(UserError, match='reached tool execution'):
+            await agent.compact_history(given)
+    assert (ran, summarize.calls) == ([], [])
+
+
+@pytest.mark.parametrize('compacts', [True, False], ids=['compacted', 'nothing-compacted'])
+async def test_history_rewrites_by_hooks(compacts: bool):
+    """What a hook changes only for the request isn't kept; what a history processor changes is, as in any run.
+
+    `ProcessHistory` makes its result the run's history, so a `compact_history()` run returns the processed history
+    when nothing compacts, like the message a hook queues.
+    """
+
+    async def note(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        request_context.messages = [*request_context.messages[:-1], ModelRequest(parts=[UserPromptPart('only now')])]
+        return request_context
+
+    capabilities: list[AbstractCapability[Any]] = [
+        ProcessHistory(lambda messages: messages[2:]),
+        Hooks(before_model_request=note),
+    ]
+    if compacts:
+        capabilities.append(Summarize())
+    agent = Agent(FunctionModel(not_sent), capabilities=capabilities)
+    given = history()
+
+    with warns_without_a_hook(not compacts):
+        result = await agent.compact_history(given)
+
+    if compacts:
+        assert shapes(result.all_messages()) == snapshot(['ModelRequest: CompactionPart', 'ModelResponse: TextPart'])
+        [record] = result.compactions
+        # The processed history is what the compaction replaced: the request-only note isn't in it.
+        assert record.replaced == given[2:]
+    else:
+        assert result.all_messages() == given[2:]
+        assert result.compactions == []
+
+
+async def test_a_usage_limit_the_compaction_crosses_fails_the_run():
+    agent = Agent(FunctionModel(not_sent), capabilities=[Summarize()])
+    with pytest.raises(UsageLimitExceeded):
+        await agent.compact_history(history(), usage_limits=UsageLimits(input_tokens_limit=10))
+
+
+async def test_cancelling_the_run_from_the_compaction_cancels_it():
+    """A compaction that cancels the run ends it cancelled, rather than with the compaction."""
+
+    class CancelWhileCompacting(AbstractCapability[Any]):
+        async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+            ctx.cancel()
+            await asyncio.sleep(0)
+            return None  # pragma: no cover
+
+    agent = Agent(FunctionModel(not_sent), capabilities=[CancelWhileCompacting()])
+    with pytest.raises(RunCancelled):
+        await agent.compact_history(history())

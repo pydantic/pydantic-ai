@@ -5128,7 +5128,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         record_usage: bool,
         described: Sequence[_messages.ModelRequestAttempt] = (),
-    ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
+    ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT] | SetFinalResult[DepsT, NodeRunEndT]:
         """`_finish_handling`, then settle the pending response the request returned, if any, with `response`.
 
         A pending response the hooks accepted is only settled once the run ends, as the run may still end another way.
@@ -5157,7 +5157,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         *,
         record_usage: bool,
         described: Sequence[_messages.ModelRequestAttempt] = (),
-    ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
+    ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT] | SetFinalResult[DepsT, NodeRunEndT]:
+        if self._ends_compaction_only_step(ctx):
+            # A response, as a hook answered the request itself or recovered from a failed compaction: in a
+            # `compact_history` run, nothing compacted, and the response is discarded rather than acted on.
+            return self._end_after_compaction(ctx)
         assert self.last_request_context is not None
         # A response a capability supplied, or one a hook replaced, has unstamped calls; the model's own are stamped.
         response = _stamp_ui_visibility(response, self.last_request_context.model_request_parameters)
@@ -5310,12 +5314,25 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         The request stays in history, so the tool returns it carries still answer their calls.
         """
+        if self._ends_compaction_only_step(ctx):
+            # A `compact_history` run has no output, so the submission ends it as a hook declining would.
+            return self._end_after_compaction(ctx)
         submission = ctx.deps.run_submission
         assert submission is not None and submission.status == 'accepted'
         # No response will answer this step's request-scoped prompts.
         _drop_unanswered_request_scoped_prompts(ctx.state)
         self._result = SetFinalResult(result.FinalResult(cast(NodeRunEndT, submission.output)))
         return self._result
+
+    @staticmethod
+    def _ends_compaction_only_step(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> bool:
+        """Whether this step is a `compact_history` run's, which ends the run however the step ends.
+
+        It ends after compacting by raising `_Compacted` from the attempt. When the step ends any other way before
+        that, like a hook answering the request itself, asking for a retry or submitting an output, it ends the run
+        too, as when nothing compacts: a `compact_history` run never continues the conversation.
+        """
+        return ctx.deps.compaction_only
 
     def _end_after_compaction(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
@@ -5345,11 +5362,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         error: exceptions.ModelRetry,
-    ) -> ModelRequestNode[DepsT, NodeRunEndT]:
+    ) -> ModelRequestNode[DepsT, NodeRunEndT] | SetFinalResult[DepsT, NodeRunEndT]:
         """Build a retry ModelRequestNode from a ModelRetry exception.
 
         Increments the retry counter and creates a new request with a `RetryFeedbackPart`.
         """
+        if self._ends_compaction_only_step(ctx):
+            # A retry would make another request step, with the feedback in the history.
+            return self._end_after_compaction(ctx)
         self._emit_capability_load_records(ctx)
         _discard_output_submitted_during_step(ctx)
         m = _messages.RetryFeedbackPart(content=error.message, retry=_messages.RetryInfo(cause='model_retry'))
@@ -5415,6 +5435,13 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> AsyncGenerator[AsyncIterator[_messages.AgentStreamEvent]]:
         """Process the model response and yield events for the start and end of each function tool call."""
+        if ctx.deps.compaction_only:
+            # A `compact_history` run's only step is a model request step, which ends the run. A node hook that
+            # replaced it with this one would have it run tools, which a compaction must never do.
+            raise exceptions.UserError(
+                'A `compact_history()` run reached tool execution, as a node hook replaced its model request step: '
+                'it can only compact the history.'
+            )
         stream = self._wrapped_stream(ctx)
         try:
             yield stream
