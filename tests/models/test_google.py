@@ -7399,6 +7399,8 @@ async def test_google_prompt_feedback_streaming(
     response_msg = body_json[0]
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
+    # A blocked prompt ends the stream without a chunk that reports a finish reason.
+    assert response_msg['state'] == 'complete'
     assert response_msg['provider_details']['block_reason'] == 'PROHIBITED_CONTENT'
     if with_details:
         assert response_msg['provider_details']['block_reason_message'] == 'The prompt was blocked.'

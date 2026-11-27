@@ -138,7 +138,8 @@ Playwright Browser, a run that never calls the tool still launches one. When the
 its process group is killed, and its profile directory is removed once Chrome's processes release it. Concurrent runs each get their own Chrome.
 
 An agent with a durability capability (such as [Temporal](../durable_execution/temporal.md)'s `TemporalDurability`) is
-rejected at construction: a live browser cannot survive activity replay or a worker restart.
+rejected at construction, and so is wrapping the agent in a deprecated wrapper agent such as `TemporalAgent`: a live
+browser cannot survive activity replay or a worker restart.
 
 `CDPBrowser` emits no spans of its own. Core's tool-call spans record each `browser_cdp` call, with its arguments and
 result under the usual content settings. Requests the egress policy refuses get no span: Chrome reports them on its
