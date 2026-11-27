@@ -12170,23 +12170,9 @@ async def test_ag_ui_server_history_continuation_does_not_warn_for_already_answe
         ModelRequest(parts=[ToolReturnPart(tool_name='get_time', content='noon', tool_call_id='srv-1')]),
     ]
 
-    def view(messages: list[ModelMessage]) -> list[str]:
-        parts: list[str] = []
-        for msg in messages:
-            for part in msg.parts:
-                if isinstance(part, UserPromptPart):
-                    parts.append(f'user: {part.content}')
-                elif isinstance(part, ToolCallPart):
-                    parts.append(f'call {part.tool_call_id}')
-                elif isinstance(part, ToolReturnPart):
-                    parts.append(f'return {part.tool_call_id}: {part.content}')
-                elif isinstance(part, TextPart):
-                    parts.append(f'text: {part.content}')
-        return parts
-
     with warnings.catch_warnings():
         warnings.simplefilter('error')
-        await _server_history_turn(
+        result = await _server_history_turn(
             agent,
             create_input(
                 UserMessage(id='u1', content='what time is it?'),
@@ -12197,7 +12183,18 @@ async def test_ag_ui_server_history_continuation_does_not_warn_for_already_answe
             stored,
         )
 
-    assert view(seen[-1]) == ['user: what time is it?', 'call srv-1', 'return srv-1: noon', 'user: thanks!']
+    assert conversation_view(seen[-1]) == snapshot(
+        ['user-prompt: what time is it?', 'call srv-1', 'return srv-1: noon', 'user-prompt: thanks!']
+    )
+    assert conversation_view(result) == snapshot(
+        [
+            'user-prompt: what time is it?',
+            'call srv-1',
+            'return srv-1: noon',
+            'user-prompt: thanks!',
+            'text: ok',
+        ]
+    )
 
 
 async def test_server_message_history_drops_client_supplied_capability_loads():
