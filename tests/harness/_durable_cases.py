@@ -1,91 +1,37 @@
-"""What the D1 suites share: the model that makes a case's calls, how a case is built, and how a journal is read.
+"""What the built-in engines' `DurableEngineSuite` subclasses share: the cases and scenarios, and how requests count.
 
-`tests/harness/test_durable_tool_io.py` runs every case with `calls` in a DBOS workflow, and
-`tests/harness/test_durable_temporal_replay.py` in a Temporal one; each checks what the run journaled against the
-case's `durable_steps`.
+`tests/harness/test_durable_tool_io.py` runs the suite under DBOS, and `tests/harness/test_durable_temporal_replay.py`
+under Temporal. `BuiltInEngineSuite` feeds them every case D1 applies to and every scenario `SCENARIO_RUNS` scripts,
+and pins the units each case records to its `durable_steps`.
 """
 
 from __future__ import annotations
 
-import importlib.util
-import json
 import os
-import re
 from collections import Counter
-from collections.abc import AsyncIterator, Callable, Sequence
+from collections.abc import Callable, Collection, Mapping, Sequence
 from dataclasses import dataclass
 from pathlib import Path
-from typing import ParamSpec, TypeVar
+from typing import ClassVar, Literal, ParamSpec, TypeVar
 from unittest.mock import patch
 
 import pytest
 
-from pydantic_ai import Agent, CapabilityEvent, CustomEvent, FunctionToolset, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import (
-    AgentStreamEvent,
-    EnqueuedMessagesEvent,
-    ModelMessage,
-    ModelResponse,
-    TextPart,
-    ToolCallPart,
-    UserPromptPart,
-)
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.durable_exec.conformance import DurableEngineSuite
+from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai_harness.capability_creation import CapabilityStore
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.memory import InMemoryMemoryStore
 from pydantic_ai_harness.planning import SqlitePlanStore
 
-from ..append_only import ToolCall
-from ..capability_cases import (
-    BROKEN_SIGNATURES,
-    SCENARIO_RUNS,
-    SCENARIO_SUPPORT,
-    Engine,
-    Scenario,
-    ScenarioCapabilityNote,
-    ScenarioNote,
-)
-from ._contracts import CASES
+from ..append_only import ToolCall, skip_unless_installed
+from ..capability_cases import SCENARIO_RUNS, Contract, Scenario
+from ._contracts import CASES, PUBLIC
 from ._counting_clients import AWS_CLI_COUNT_VARIABLE, REQUESTS
-
-PROMPT = 'go'
-"""The prompt a case's run starts with, which tells its requests apart from a nested run's."""
 
 P = ParamSpec('P')
 T = TypeVar('T')
-
-UNPROMPTED_REQUEST = 'model.unprompted_request'
-"""What `REQUESTS` counts a request without `PROMPT` under: a nested run's, or one after compaction dropped it."""
-
-
-def one_call_per_response(made: tuple[ToolCall, ...]) -> FunctionModel:
-    """A model that makes the calls in order, one per response, then answers; call `i` gets the ID `call_{i}`.
-
-    It doesn't stream, so a run makes one model request per call and one to answer. A request whose first message
-    isn't the run's `PROMPT` gets the answer, and is counted in `REQUESTS`: it is a capability's own run on the
-    run's model, such as `BrowserUse`'s browser agent, whose requests recovery must not make again.
-    """
-
-    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        del info
-        step = sum(isinstance(message, ModelResponse) for message in messages)
-        if not any(isinstance(part, UserPromptPart) and part.content == PROMPT for part in messages[0].parts):
-            REQUESTS[UNPROMPTED_REQUEST] += 1
-            return ModelResponse(parts=[TextPart('done')])
-        if step >= len(made):
-            return ModelResponse(parts=[TextPart('done')])
-        name, args = made[step]
-        return ModelResponse(parts=[ToolCallPart(name, args, tool_call_id=f'call_{step}')])
-
-    return FunctionModel(respond)
-
-
-def installed(name: str) -> bool:
-    """Whether the optional dependency the case of `name` needs, if any, is installed: the test skips it if not."""
-    requires = CASES[name].requires
-    return requires is None or importlib.util.find_spec(requires) is not None
 
 
 def build_case(name: str, directory: Path) -> list[AbstractCapability[None]]:
@@ -97,40 +43,47 @@ def build_case(name: str, directory: Path) -> list[AbstractCapability[None]]:
     return [built] if isinstance(built, AbstractCapability) else list(built)
 
 
-def journal_breaks(
-    recorded: Sequence[str],
-    *,
-    prefix: str,
-    model_requests: tuple[str, ...],
-    calls: int,
-    expected: tuple[str, ...],
-    engine: str,
-) -> list[str]:
-    """How the durable units a run recorded differ from what its case's `durable_steps` lists for `engine`.
+@dataclass(frozen=True)
+class SuiteCase:
+    """A case's calls, as the suite runs them: skipped when its optional dependency isn't installed."""
 
-    `recorded` holds the units' names, each starting with `prefix`. The run's own model requests, under any of the
-    `model_requests` names, are left out of the comparison, but there must be one per call and one to answer: a
-    case whose capability listens for events streams them, under the streamed request's name.
-    """
-    units = [unit.removeprefix(prefix) for unit in recorded]
-    requests = sum(unit in model_requests for unit in units)
-    journaled = tuple(unit for unit in units if unit not in model_requests)
-    names = '/'.join(f'`{name}`' for name in model_requests)
-    counted = (
-        []
-        if requests == calls + 1
-        else [f'the run recorded {requests} {names} units, not one per call and one to answer']
-    )
-    drifted = (
-        []
-        if journaled == expected
-        else [
-            f'the calls record `{engine}={journaled!r}`, not {expected!r}. A recorded name is what a workflow from an '
-            'earlier release replays by: change the case only with a compatibility note '
-            '(agent_docs/capability-conformance.md, "Durable execution")'
-        ]
-    )
-    return counted + drifted
+    name: str
+    made: tuple[ToolCall, ...]
+    follow_ups: int = 0
+
+    def build(self, directory: Path, /) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
+        skip_unless_installed(self.name, CASES[self.name].requires)
+        return build_case(self.name, directory)
+
+
+@dataclass(frozen=True)
+class SuiteScenario:
+    """A scenario `SCENARIO_RUNS` scripts, as the suite runs it: one `work` call, then an answer."""
+
+    name: Scenario
+    made: tuple[ToolCall, ...] = (('work', {}),)
+    follow_ups: int = 0
+
+    @property
+    def observed(self) -> tuple[str, ...]:
+        return SCENARIO_RUNS[self.name].observed
+
+    def build(self, directory: Path, /) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
+        del directory
+        return list(SCENARIO_RUNS[self.name].build())
+
+
+def suite_cases(contract: Contract) -> dict[str, SuiteCase]:
+    """The public cases `contract` applies to, for the suite to run."""
+    return {
+        name: SuiteCase(name, case.calls.made, case.calls.follow_ups)
+        for name, case in CASES.items()
+        if name in PUBLIC and contract.applies(name, case) and case.calls is not None
+    }
+
+
+SUITE_SCENARIOS = {scenario: SuiteScenario(scenario) for scenario in SCENARIO_RUNS}
+"""Every scenario `SCENARIO_RUNS` scripts, for the suite to run."""
 
 
 def _counted(key: str, method: Callable[P, T]) -> Callable[P, T]:
@@ -146,7 +99,7 @@ def _counted(key: str, method: Callable[P, T]) -> Callable[P, T]:
 def counting_requests(monkeypatch: pytest.MonkeyPatch, directory: Path) -> Callable[[], Counter[str]]:
     """Count every request the cases' stand-ins, the `aws` stand-in, and the stores make, from now on.
 
-    Both D1 suites count with it, so a request means the same thing in each. `directory` holds the `aws` count.
+    Both built-in suites count with it, so a request means the same thing in each. `directory` holds the `aws` count.
     """
     REQUESTS.clear()
     aws_count = directory / 'aws_cli_count'
@@ -173,111 +126,40 @@ def counting_requests(monkeypatch: pytest.MonkeyPatch, directory: Path) -> Calla
     return snapshot
 
 
-def streaming_one_call_per_response(made: tuple[ToolCall, ...]) -> FunctionModel:
-    """`one_call_per_response` that also streams, which a run with an event listener needs."""
-    respond = one_call_per_response(made).function
-    assert respond is not None
+class BuiltInEngineSuite(DurableEngineSuite):
+    """`DurableEngineSuite` with the built-in cases and scenarios, the stand-ins' counts, and the case units pinned.
 
-    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        response = respond(messages, info)
-        assert isinstance(response, ModelResponse)
-        for part in response.parts:
-            if isinstance(part, TextPart):
-                yield part.content
-            else:
-                assert isinstance(part, ToolCallPart)
-                yield {0: DeltaToolCall(part.tool_name, json.dumps(part.args), tool_call_id=part.tool_call_id)}
-
-    return FunctionModel(respond, stream_function=stream)
-
-
-_EVENTS: dict[str, list[str]] = {}
-"""What each scenario agent's `ScenarioRecorder` has seen in its current run, by agent name."""
-
-
-@dataclass
-class ScenarioRecorder(AbstractCapability[None]):
-    """Records the custom and capability events and enqueued messages a scenario's run observes, in workflow code.
-
-    It keeps them by agent name rather than on itself, as an engine may run a copy of it.
+    The cases' units are pinned by their `durable_steps`, and their model request unit by `durable_steps.streams`; a
+    scenario's run streams for its recorder, so its units aren't pinned.
     """
 
-    agent_name: str
+    durable_steps: ClassVar[Literal['dbos', 'temporal']]
+    """The `DurableSteps` field that pins the units each case records under the engine."""
+    model_request_units: ClassVar[tuple[str, str]]
+    """The engine's unit for a model request, and for a streamed one."""
+    scenarios = SUITE_SCENARIOS
 
-    async def on_event(self, ctx: RunContext[None], *, event: AgentStreamEvent) -> None:
-        seen = _EVENTS.setdefault(self.agent_name, [])
-        if isinstance(event, ScenarioNote | ScenarioCapabilityNote):
-            seen.append(f'event:{event.text}')
-        elif isinstance(event, CustomEvent | CapabilityEvent):
-            seen.append(f'unexpected event: {event!r}')
-        elif isinstance(event, EnqueuedMessagesEvent):
-            seen.extend(f'enqueued:{content}' for content in _prompts(event.messages))
+    @pytest.fixture
+    def count_requests(self, monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[[], Mapping[str, int]]:
+        return counting_requests(monkeypatch, tmp_path)
 
+    def expected_units(self, name: str) -> Sequence[str] | None:
+        calls = CASES[name].calls if name in CASES else None
+        steps = None if calls is None else calls.durable_steps
+        return None if steps is None else steps.dbos if self.durable_steps == 'dbos' else steps.temporal
 
-def _prompts(messages: Sequence[ModelMessage]) -> list[str]:
-    """The user prompts in `messages` other than the run's own `PROMPT`: the enqueued ones."""
-    return [
-        str(part.content)
-        for message in messages
-        for part in message.parts
-        if isinstance(part, UserPromptPart) and part.content != PROMPT
-    ]
+    def model_request_unit(self, name: str) -> str | None:
+        calls = CASES[name].calls if name in CASES else None
+        requested, streamed = self.model_request_units
+        return None if calls is None else streamed if calls.durable_steps.streams else requested
 
-
-def scenario_agent(scenario: Scenario, durability: AbstractCapability[None]) -> Agent[None, str]:
-    """The agent that runs `scenario` under `durability`, with a `ScenarioRecorder` as its first capability."""
-    built = list(SCENARIO_RUNS[scenario].build())
-    name = f'scenario_{scenario.partition(".")[2]}'
-    return Agent(
-        streaming_one_call_per_response((('work', {}),)),
-        name=name,
-        deps_type=type(None),
-        toolsets=[part for part in built if isinstance(part, FunctionToolset)],
-        capabilities=[
-            ScenarioRecorder(name),
-            *(part for part in built if isinstance(part, AbstractCapability)),
-            durability,
-        ],
-    )
-
-
-OBSERVED: dict[str, list[str]] = {}
-"""What the last run of each scenario agent observed, by agent name: a replay's run leaves its own here."""
-
-
-async def observe_run(agent: Agent[None, str]) -> list[str]:
-    """Run a `scenario_agent` from workflow code, and return what it observed: events, then enqueued messages."""
-    assert agent.name is not None
-    _EVENTS[agent.name] = []
-    result = await agent.run(PROMPT)
-    observed = [*_EVENTS[agent.name], *(f'message:{prompt}' for prompt in _prompts(result.all_messages()))]
-    OBSERVED[agent.name] = observed
-    return observed
-
-
-def scenario_breaks(scenario: Scenario, first: Sequence[str], recovered: Sequence[str]) -> list[str]:
-    """How the first run and its recovery or replay break `scenario`: each item once, and none lost or added."""
-    expected = list(SCENARIO_RUNS[scenario].observed)
-    breaks = [] if list(first) == expected else [f'the run observed {list(first)}, not {expected}']
-    lost = sorted((Counter(first) - Counter(recovered)).elements())
-    added = sorted((Counter(recovered) - Counter(first)).elements())
-    breaks += [f'recovery lost {lost}'] if lost else []
-    breaks += [f'recovery added {added}'] if added else []
-    return breaks
-
-
-def assert_scenario_cell(engine: Engine, scenario: Scenario, breaks: Sequence[str]) -> None:
-    """`breaks` must be what the scenario's `SCENARIO_SUPPORT` cell for `engine` says: none, a refusal or the bug."""
-    cell = SCENARIO_SUPPORT[scenario][engine]
-    if cell.level in ('supported', 'limited'):
-        assert not breaks, '; '.join(breaks)
-    elif cell.level == 'refused':
-        assert cell.raises is not None
-        assert any(re.search(cell.raises, line) for line in breaks), (
-            f'{scenario} no longer raises {cell.raises!r} under {engine}: update its cell ({breaks})'
-        )
-    else:
-        assert cell.level == 'broken' and cell.issue is not None, f'{scenario} is {cell.level} under {engine}'
-        assert any(re.search(BROKEN_SIGNATURES[cell.issue], line) for line in breaks), (
-            f'{scenario} no longer shows #{cell.issue} under {engine}: update its cell ({breaks})'
-        )
+    def marks(self, name: str) -> Collection[pytest.MarkDecorator]:
+        calls = CASES[name].calls if name in CASES else None
+        if calls is None:
+            return ()
+        marks: list[pytest.MarkDecorator] = []
+        if reason := calls.moves_cache_prefix:
+            marks.append(pytest.mark.moves_cache_prefix(reason=reason))
+        if reason := calls.launches_python:
+            marks.append(pytest.mark.subprocess(reason=reason, conditional=True))
+        return marks

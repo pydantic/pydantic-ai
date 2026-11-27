@@ -97,6 +97,30 @@ paths, and verify that resources created inside a durable unit do not escape it.
 teardown, control-flow exceptions, persisted-output upgrades, and behavior outside the durable
 context in the engine's own suite.
 
+### Checking an engine
+
+Every engine runs `DurableEngineSuite` from `pydantic_ai.durable_exec.conformance`. Subclass it and
+provide an `engine` fixture implementing `DurableEngine`: `durability()` returns a new durability
+capability, `run(agent, prompt)` runs the agent in process the way the engine runs a workflow and
+returns an `EngineRun` with the units it recorded (agent name left out) and the output or the error,
+and `recover(run, after=None)` recovers the run from its record, keeping only the first `after` units
+when given. Unwrap a refusal the engine wraps back into `UserError`. Return `False` from
+`can_fork_mid_run` when the engine can't recover from part of its record, and document the limit.
+Start the engine once per class (`scope='class'`, as a `classmethod`), with no real waits.
+
+Each built-in engine already declares its support as plain data in its own package, `_conformance.py`:
+`SUPPORT` (each `Support` with its `reason`, `match`, `check` and `issue` as its level requires) and
+`RECOVERY`, `Recovery('restart', ...)` for an engine that restarts a run instead of replaying it. It
+imports nothing from the engine's SDK. While the engine is in `PENDING_ENGINES`
+(`tests/harness/test_engine_support.py`), its table lists every cell measured elsewhere, `supported`
+ones included. When it joins the suite, point its subclass at both, take it out of `PENDING_ENGINES`,
+keep only the cells that aren't `supported`, and regenerate the docs table with
+`uv run python scripts/durable_exec_support.py --write`. A new engine adds its table to
+`ENGINE_SUPPORT_MODULES` (`tests/capability_cases.py`) and `TABLES` in that script. A built-in
+engine's subclass extends `BuiltInEngineSuite` (`tests/harness/_durable_cases.py`), which runs every
+case and scenario and pins the case units to `Calls.durable_steps`. `TestDBOS` and `TestTemporal` are the examples, and
+`agent_docs/capability-conformance.md` ("Durable execution") says what each level checks.
+
 ## Core changes that engines depend on
 
 `scripts/durable_exec_contract.json` lists the core definitions the durable engines import,

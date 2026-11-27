@@ -1,38 +1,69 @@
-"""The engine x case table, `ENGINE_SUPPORT`: every engine has a column, and every cell says what its level needs.
+"""The engines' support tables: every engine runs `DurableEngineSuite` or is pending, and every cell names a real one.
 
-The durable suites check the cells themselves: `tests/harness/test_durable_tool_io.py` the DBOS column and
-`tests/harness/test_durable_temporal_replay.py` the Temporal one. A `refused` cell must still raise what it names,
-and a `broken` one must still break, through the contract exemptions `ENGINE_SUPPORT` derives.
+Each engine that runs the suite declares its cells in its own package (`ENGINE_SUPPORT_MODULES`), and its subclass
+checks them: `TestDBOS` in `tests/harness/test_durable_tool_io.py`, `TestTemporal` in
+`tests/harness/test_durable_temporal_replay.py`. `scripts/durable_exec_support.py` renders them into the docs.
 """
 
 from __future__ import annotations
 
 import ast
 import importlib.util
-from collections import Counter
-from collections.abc import Callable
+import sys
+from collections.abc import Callable, Mapping
 from pathlib import Path
+from types import ModuleType
 
 import pytest
+
+from pydantic_ai.durable_exec.conformance import EngineRun, Recovery, Support
 
 from .._inline_snapshot import snapshot
 from ..append_only import discover_capabilities
 from ..capability_cases import (
-    BROKEN_SIGNATURES,
+    DURABLE_DBOS,
+    DURABLE_TEMPORAL,
     ENGINE_CAPABILITIES,
-    ENGINE_SUPPORT,
+    ENGINE_SUPPORT_MODULES,
     ENGINES,
+    ID_LESS_TOOLSETS,
+    PENDING_ENGINES,
     SCENARIO_RUNS,
-    SCENARIO_SUPPORT,
     SCENARIOS,
-    Support,
-    engine_support,
+    UNTESTED_ISSUE,
+    Contract,
+    Engine,
+    EngineTable,
+    engine_table,
 )
 from ._contracts import CASES, PUBLIC
 from .capability_cases import HARNESS_CAPABILITY_PACKAGES
 
+REPO_ROOT = Path(__file__).parents[2]
+
+
+def _script(name: str) -> ModuleType:
+    """The module of `scripts/<name>.py`, imported from its path: `scripts/` is no package."""
+    spec = importlib.util.spec_from_file_location(name, REPO_ROOT / 'scripts' / f'{name}.py')
+    assert spec is not None and spec.loader is not None
+    module = importlib.util.module_from_spec(spec)
+    # A dataclass resolves its module's annotations through `sys.modules`.
+    sys.modules[name] = module
+    spec.loader.exec_module(module)
+    return module
+
+
+durable_exec_contract = _script('durable_exec_contract')
+durable_exec_support = _script('durable_exec_support')
+
 DURABILITY_PACKAGES = ('pydantic_ai.durable_exec', *HARNESS_CAPABILITY_PACKAGES)
 """The packages that define durability capabilities, one per engine."""
+
+SUITES: Mapping[Engine, tuple[str, str]] = {
+    'dbos': ('tests/harness/test_durable_tool_io.py', 'TestDBOS'),
+    'temporal': ('tests/harness/test_durable_temporal_replay.py', 'TestTemporal'),
+}
+"""The `DurableEngineSuite` subclass of each engine that runs the suite: its module and class."""
 
 
 def _module_file(module: str) -> Path:
@@ -52,10 +83,18 @@ def _is_durability(name: str, module: str) -> bool:
     return any(isinstance(base, ast.Name) and base.id == 'BaseDurabilityCapability' for base in bases)
 
 
-def test_every_durability_capability_is_an_engine() -> None:
-    """A new engine can't land without a column: its durability capability must be in `ENGINE_CAPABILITIES`.
+def _table(engine: Engine) -> EngineTable:
+    """The support table of `engine`, skipped when its SDK, which its package imports, isn't installed."""
+    try:
+        return engine_table(engine)
+    except ImportError as error:  # pragma: lax no cover
+        pytest.skip(f'the {engine} SDK is not installed: {error}')
 
-    It reads test tables or source, with no provider exchange to record, so it isn't a VCR test.
+
+def test_every_durability_capability_is_an_engine() -> None:
+    """A new engine can't land unnamed: its durability capability must be in `ENGINE_CAPABILITIES`.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
     found = {
         ref.name for ref in discover_capabilities(DURABILITY_PACKAGES).values() if _is_durability(ref.name, ref.module)
@@ -63,81 +102,126 @@ def test_every_durability_capability_is_an_engine() -> None:
     assert found == set(ENGINE_CAPABILITIES.values())
 
 
-def test_every_cell_is_a_case_with_calls() -> None:
-    """A cell only means something for a case whose calls a suite runs.
+def test_every_durability_capability_has_a_suite() -> None:
+    """Every engine runs `DurableEngineSuite` against a support table of its own, or is still pending.
 
-    It reads test tables or source, with no provider exchange to record, so it isn't a VCR test.
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
-    for name in ENGINE_SUPPORT:
-        assert name in PUBLIC, f'`ENGINE_SUPPORT` names {name}, which is not a public capability'
-        assert CASES[name].calls is not None, f'`ENGINE_SUPPORT` names {name}, which has no `calls` to run'
+    assert set(SUITES).isdisjoint(PENDING_ENGINES)
+    assert {*SUITES, *PENDING_ENGINES} == set(ENGINES) == set(ENGINE_CAPABILITIES)
+    assert PENDING_ENGINES == snapshot(('prefect', 'aws_lambda', 'absurd', 'pgtask', 'azure_durable_task', 'render'))
+    assert set(ENGINE_SUPPORT_MODULES) == set(ENGINES)
+    for path, class_name in SUITES.values():
+        tree = ast.parse((REPO_ROOT / path).read_text())
+        assert any(isinstance(node, ast.ClassDef) and node.name == class_name for node in tree.body), path
 
 
-def test_untested_cells_are_pinned() -> None:
-    """How many cases with `calls` each engine runs no suite for.
+def test_measured_cells_only_go_up() -> None:
+    """How many cases each engine's suite measures: an engine that joins the suite raises its count, and none lowers it.
 
-    Testing a cell lowers its engine's count. A case that gains `calls` raises the count of every engine without a
-    suite, and the PR that adds them updates the pin.
+    Every cell of an engine with a suite is measured, whatever its level; an engine still pending measures none.
 
-    It reads test tables, with no provider exchange to record, so it isn't a VCR test.
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
-    untested = Counter(
-        engine
-        for name, case in CASES.items()
-        if name in PUBLIC and case.calls is not None
-        for engine in ENGINES
-        if engine_support(name, engine).level == 'untested'
-    )
-    assert dict(untested) == snapshot(
+    measured = sum(name in PUBLIC and case.calls is not None for name, case in CASES.items())
+    counts = {engine: measured if engine in SUITES else 0 for engine in ENGINES}
+    assert counts == snapshot(
         {
-            'prefect': 50,
-            'aws_lambda': 50,
-            'absurd': 50,
-            'pgtask': 50,
-            'azure_durable_task': 50,
-            'render': 50,
+            'dbos': 51,
+            'temporal': 51,
+            'prefect': 0,
+            'aws_lambda': 0,
+            'absurd': 0,
+            'pgtask': 0,
+            'azure_durable_task': 0,
+            'render': 0,
         }
     )
+
+
+def test_the_manifest_and_the_docs_name_every_engine() -> None:
+    """Adding an engine touches the contract manifest's roots, the docs tables and the suites alike.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
+    assert set(durable_exec_contract.ENGINES) - {'durable_exec'} == set(ENGINES)
+    assert {engine: module for engine, (_, module) in durable_exec_support.TABLES.items()} == ENGINE_SUPPORT_MODULES
+    assert durable_exec_support.PENDING == set(PENDING_ENGINES)
+
+
+@pytest.mark.parametrize('engine', ENGINES)
+def test_every_cell_names_a_real_case_or_scenario(engine: Engine) -> None:
+    """A cell only means something for a case whose calls the suite runs, or for a scenario.
+
+    An engine with a suite lists only the cells that aren't `supported`; one still pending lists only the scenarios
+    a test measures, as nothing runs its cases.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
+    table = _table(engine)
+    cells = table.support
+    assert isinstance(table.recovery, Recovery)
+    for name, cell in cells.items():
+        assert isinstance(cell, Support)
+        assert cell.level != 'untested', f'{name}: an unlisted cell is what is untested'
+        assert engine in PENDING_ENGINES or cell.level != 'supported', f'{name}: an unlisted cell is `supported`'
+        if name in SCENARIOS:
+            continue
+        assert engine not in PENDING_ENGINES, (
+            f'{engine} names the case {name}, but no suite runs cases under it yet, so nothing checks the cell: list '
+            f'only scenarios a test measures until it runs `DurableEngineSuite` (#{UNTESTED_ISSUE})'
+        )
+        assert name in PUBLIC, f'{engine} names {name}, which is neither a scenario nor a public capability'
+        assert CASES[name].calls is not None, f'{engine} names {name}, which has no `calls` to run'
+
+
+def test_temporal_refuses_the_id_less_toolsets() -> None:
+    """Temporal refuses exactly the cases whose toolset has no id.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
+    cells = _table('temporal').support
+    refused = {name for name, cell in cells.items() if cell.issue == 9233}
+    assert refused == set(ID_LESS_TOOLSETS)
+
+
+def test_the_d1_exemptions_are_the_cases_a_table_refuses_or_breaks() -> None:
+    """D1's exemptions are the cases an engine's table refuses or breaks, and no others.
+
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
+    """
+    contracts: dict[Engine, Contract] = {'dbos': DURABLE_DBOS, 'temporal': DURABLE_TEMPORAL}
+    for engine, contract in contracts.items():
+        cells = _table(engine).support
+        exempt = {name for name, cell in cells.items() if name in CASES and cell.level in ('refused', 'broken')}
+        assert (set(contract.exempt), len(contract.exempt)) == (exempt, len(exempt))
+    assert DURABLE_TEMPORAL.exempt['Planning'].reason.endswith('https://github.com/pydantic/pydantic-ai/issues/7971')
+
+
+_check: Callable[[EngineRun], None] = lambda run: None  # noqa: E731
 
 
 @pytest.mark.parametrize(
     ('make', 'error'),
     [
-        (lambda: Support('limited'), 'a `limited` cell needs a `reason`'),
-        (lambda: Support('refused', 'no id'), 'names what the engine raises'),
-        (lambda: Support('supported', raises='boom'), 'names what the engine raises'),
-        (lambda: Support('broken', 'wrong order'), 'a `broken` cell needs the `issue`'),
+        (lambda: Support('limited', check=_check, issue=1), 'a `limited` cell needs a `reason`'),
+        (lambda: Support('limited', 'foreground', issue=1), 'asserts its limit in `check`'),
+        (lambda: Support('limited', 'foreground', check=_check), 'a `limited` cell needs the `issue`'),
+        (lambda: Support('supported', check=_check), 'asserts its limit in `check`'),
+        (lambda: Support('refused', 'no id'), 'names what it matches'),
+        (lambda: Support('supported', match='boom'), 'names what it matches'),
+        (lambda: Support('broken', 'wrong order', match='lost'), 'a `broken` cell needs the `issue`'),
         (lambda: Support('untested', 'no suite'), 'an? `untested` cell needs the `issue`'),
+        (lambda: Recovery('restart', 'reruns every call'), 'a `restart` recovery needs'),
     ],
 )
-def test_a_cell_says_what_its_level_needs(make: Callable[[], Support], error: str) -> None:
-    """A cell missing what its level needs is rejected when it's built.
+def test_a_declaration_says_what_it_needs(make: Callable[[], object], error: str) -> None:
+    """A support declaration missing what its level or mode needs is rejected when built.
 
-    It checks a test-only type, with no provider exchange to record, so it isn't a VCR test.
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
     with pytest.raises(ValueError, match=error):
         make()
-
-
-def test_an_exempt_cell_links_its_issue() -> None:
-    """A refused or broken cell's exemption names its issue's URL.
-
-    It checks a test-only type, with no provider exchange to record, so it isn't a VCR test.
-    """
-    assert Support('refused', 'no id', raises='id').exempt.reason == 'no id'
-    assert Support('broken', 'wrong order', issue=1).exempt.reason == (
-        'wrong order: https://github.com/pydantic/pydantic-ai/issues/1'
-    )
-
-
-def test_every_scenario_has_a_cell_for_every_engine() -> None:
-    """Every scenario says what every engine does with it.
-
-    It reads test tables, with no provider exchange to record, so it isn't a VCR test.
-    """
-    assert set(SCENARIO_SUPPORT) == set(SCENARIOS)
-    for scenario, cells in SCENARIO_SUPPORT.items():
-        assert set(cells) == set(ENGINES), scenario
 
 
 SCENARIO_OWNERS_BESIDES_CAPABILITIES = ('RunContext',)
@@ -147,31 +231,28 @@ SCENARIO_OWNERS_BESIDES_CAPABILITIES = ('RunContext',)
 def test_every_scenario_names_its_owner() -> None:
     """A scenario is `<owner>.<scenario>`, and it is no case: D1's exemptions and `calls` never see it.
 
-    It reads test tables, with no provider exchange to record, so it isn't a VCR test.
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
     for scenario in SCENARIOS:
         owner, _, name = scenario.partition('.')
         assert (owner in PUBLIC or owner in SCENARIO_OWNERS_BESIDES_CAPABILITIES) and name, scenario
-        assert scenario not in CASES and scenario not in ENGINE_SUPPORT, scenario
+        assert scenario not in CASES, scenario
 
 
-def test_the_d1_suites_run_every_run_context_scenario() -> None:
-    """No capability's tests run a `RunContext` scenario, so the D1 suites must, through `SCENARIO_RUNS`.
+def test_the_suites_run_every_run_context_scenario() -> None:
+    """No capability's tests run a `RunContext` scenario, so the engine suites must, through `SCENARIO_RUNS`.
 
-    It reads test tables, with no provider exchange to record, so it isn't a VCR test.
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
     run_context = {scenario for scenario in SCENARIOS if scenario.startswith('RunContext.')}
     assert run_context == set(SCENARIO_RUNS)
 
 
-def test_every_broken_scenario_cell_has_a_signature() -> None:
-    """Every `broken` cell's issue has a signature, and a signature no cell uses is stale: the keys stay in sync.
+def test_the_compatibility_page_is_current(capsys: pytest.CaptureFixture[str]) -> None:
+    """`docs/durable_execution/compatibility.md` shows the tables as the engines declare them.
 
-    The scenario's own tests match the signature against the observed outcome: the D1 suites
-    (`tests/harness/test_durable_tool_io.py` and `tests/harness/test_durable_temporal_replay.py`) for the `RunContext`
-    scenarios, and `tests/harness/background_tools/test_durable_engines.py` for the `BackgroundTools` ones.
-
-    It reads test tables, with no provider exchange to record, so it isn't a VCR test.
+    It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
-    broken = {cell.issue for cells in SCENARIO_SUPPORT.values() for cell in cells.values() if cell.level == 'broken'}
-    assert broken == set(BROKEN_SIGNATURES)
+    for engine in ENGINES:
+        _table(engine)
+    assert durable_exec_support.main([]) == 0, capsys.readouterr().err

@@ -1,7 +1,7 @@
 """How each durable engine runs a `BackgroundTools` background tool, and keeps one running across a mid-run approval.
 
-A pinning table: each cell records what the engine does today, and its test fails once that changes, so the cell
-changes with it. One scripted model and one set of tools run under every engine, in that engine's own test harness.
+A pinning table: each cell, in the engine's own support table (`ENGINE_SUPPORT_MODULES`), records what the engine
+does today, and its test fails once that changes, so the cell changes with it. One scripted model and one set of tools run under every engine, in that engine's own test harness.
 """
 
 from __future__ import annotations
@@ -10,7 +10,7 @@ import re
 import sys
 import uuid
 import warnings
-from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, Generator, Mapping, Sequence
 from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import timedelta
@@ -22,18 +22,20 @@ import pytest
 
 from pydantic_ai import Agent, FunctionToolset, Tool
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
+from pydantic_ai.durable_exec.conformance import EngineRun, Support
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai_harness import BackgroundTools
 from tests.capability_cases import (
-    BROKEN_SIGNATURES,
-    SCENARIO_SUPPORT,
+    ENGINE_SUPPORT_MODULES,
+    PENDING_ENGINES,
     SCENARIOS as ALL_SCENARIOS,
+    UNTESTED_ISSUE,
     Engine,
     Scenario,
-    Support,
+    engine_table,
 )
 from tests.harness._temporal import ignore_source_reads_left_open
 
@@ -119,7 +121,8 @@ with try_import() as render_imports:
 BACKGROUND = 'background result'
 """What the model says when the result arrived as a follow-up message: the bar of every scenario."""
 FOREGROUND = 'inline result'
-"""What the model says when the call returned its result inline, as a normal tool return."""
+"""What the model says when the call returned its result inline, as a normal tool return: the answer the `limited`
+cells' `ran_in_foreground` check expects."""
 
 RESULT = 'research result'
 
@@ -197,16 +200,23 @@ def _agent(durability: AbstractCapability[None], scenario: Scenario, name: str, 
     )
 
 
+def _cells(engine: Engine) -> Mapping[str, Support]:
+    """The engine's support table, imported once its SDK is known to be installed."""
+    return engine_table(engine).support
+
+
 def _cell(scenario: Scenario, engine: Engine) -> Support:
-    """The cell under test; an `untested` one skips."""
-    cell = SCENARIO_SUPPORT[scenario][engine]
-    if cell.level == 'untested':
-        pytest.skip(f'#{cell.issue}: {cell.reason}')
-    return cell
+    """The cell under test. One the table doesn't list is `supported` under an engine that runs `DurableEngineSuite`,
+    and untested, so skipped, under one still pending."""
+    if (cell := _cells(engine).get(scenario)) is not None:
+        return cell
+    if engine in PENDING_ENGINES:
+        pytest.skip(f'#{UNTESTED_ISSUE}: {engine} has no cell for {scenario}')
+    return Support('supported')
 
 
 def _foreground(engine: Engine) -> bool:
-    return SCENARIO_SUPPORT['BackgroundTools.runs_in_background'][engine].level == 'limited'
+    return _cell('BackgroundTools.runs_in_background', engine).level == 'limited'
 
 
 def _gate_for(scenario: Scenario, engine: Engine) -> _Gate:
@@ -234,14 +244,15 @@ def _assert_cell(scenario: Scenario, engine: Engine, cell: Support, observed: st
     if cell.level == 'supported':
         assert observed == BACKGROUND
     elif cell.level == 'limited':
-        assert observed == FOREGROUND
+        assert cell.check is not None
+        cell.check(EngineRun('', observed))
     elif cell.level == 'refused':
-        assert cell.raises is not None and re.search(cell.raises, observed), observed
+        assert cell.match is not None and re.search(cell.match, observed), observed
     else:
-        assert cell.issue is not None
-        assert re.search(BROKEN_SIGNATURES[cell.issue], observed), (
-            f'{scenario} no longer breaks the way #{cell.issue} describes under {engine}: update its '
-            f'`SCENARIO_SUPPORT` cell ({observed})'
+        assert cell.match is not None
+        assert re.search(cell.match, observed), (
+            f'{scenario} no longer breaks the way #{cell.issue} describes under {engine}: update its cell in '
+            f'`{ENGINE_SUPPORT_MODULES[engine]}` ({observed})'
         )
 
 
@@ -314,13 +325,17 @@ SCENARIOS: tuple[Scenario, ...] = tuple(
 parametrize_scenarios = pytest.mark.parametrize('scenario', SCENARIOS, ids=lambda scenario: scenario.split('.')[1])
 
 
-def test_an_untested_cell_skips(monkeypatch: pytest.MonkeyPatch) -> None:
-    """An `untested` cell skips its test with the issue that tracks it; a table check, so no request to record."""
-    cells = {scenario: dict(SCENARIO_SUPPORT[scenario]) for scenario in SCENARIOS}
-    cells['BackgroundTools.runs_in_background']['render'] = Support('untested', 'no harness', issue=12291)
-    monkeypatch.setattr(sys.modules[__name__], 'SCENARIO_SUPPORT', cells)
-    with pytest.raises(pytest.skip.Exception, match='#12291: no harness'):
+def test_an_unlisted_cell_skips_under_a_pending_engine(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A pending engine's table lists every cell measured so far, so one it doesn't list is untested and skips; under an
+    engine with a suite it is `supported`. A table check, so no request to record."""
+
+    def no_cells(engine: Engine) -> Mapping[str, Support]:
+        return {}
+
+    monkeypatch.setattr(sys.modules[__name__], '_cells', no_cells)
+    with pytest.raises(pytest.skip.Exception, match='#12291: render has no cell'):
         _cell('BackgroundTools.runs_in_background', 'render')
+    assert _cell('BackgroundTools.runs_in_background', 'dbos') == Support('supported')
 
 
 @dataclass
@@ -328,6 +343,9 @@ class _NoDurability(AbstractCapability[None]):
     """Stands in for an engine where only the error handling is under test."""
 
 
+@pytest.mark.skipif(
+    not (temporal_imports() and aws_lambda_imports()), reason='temporalio or the AWS durable SDK not installed'
+)
 async def test_an_unexpected_error_propagates() -> None:
     """An error that isn't the engine's refusal fails the test instead of becoming the observed outcome.
 

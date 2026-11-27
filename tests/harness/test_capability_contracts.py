@@ -3,8 +3,8 @@
 They run here, where the Harness is installed, because its cases are most of what they apply to, over the public
 capabilities the suites build. A case a contract exempts must still break it, so fixing the capability fails the
 suite until the exemption is removed. The durable contracts run under their engines, in
-`tests/harness/test_durable_tool_io.py` (DBOS) and `tests/harness/test_durable_temporal_replay.py` (Temporal); how
-they read a run's journal is checked here.
+`tests/harness/test_durable_tool_io.py` (DBOS) and `tests/harness/test_durable_temporal_replay.py` (Temporal), through
+`DurableEngineSuite`; how the suite reads a run's journal is checked in `tests/durable_exec/test_durable_engine_suite.py`.
 """
 
 from __future__ import annotations
@@ -50,8 +50,6 @@ from ..capability_cases import (
 )
 from ..function_model_prefix import RequestRecorder, patch_models
 from ._contracts import CASES, PUBLIC, assert_holds as _assert_holds, contract_cases as _cases
-from ._counting_clients import REQUESTS
-from ._durable_cases import PROMPT, UNPROMPTED_REQUEST, journal_breaks, one_call_per_response
 from .capability_cases import (
     CONTRACTS as HARNESS_CONTRACTS,
     HOSTED_MCP_CONNECTION,
@@ -81,7 +79,8 @@ def test_every_exemption_names_a_case_the_contract_applies_to() -> None:
 
 
 def _one_call_per_response(made: tuple[ToolCall, ...], prefix: str) -> FunctionModel:
-    """A model that streams the calls in order, one per response, then answers; call `i` gets the ID `call_{i}`.
+    """A model that streams the calls in order, one per response, then answers every request past them, such as one a
+    call's follow-up causes; call `i` gets the ID `call_{i}`.
 
     The run streams its requests, so a request that isn't streamed is a capability's own run on the run's model, such
     as `BrowserUse`'s browser agent, and gets the answer.
@@ -90,7 +89,7 @@ def _one_call_per_response(made: tuple[ToolCall, ...], prefix: str) -> FunctionM
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         del info
         step = sum(isinstance(message, ModelResponse) for message in messages)
-        if step == len(made):
+        if step >= len(made):
             yield 'done'
             return
         name, args = made[step]
@@ -101,6 +100,10 @@ def _one_call_per_response(made: tuple[ToolCall, ...], prefix: str) -> FunctionM
 
 _GENERATED_ID = re.compile(r'\b[0-9a-f]{8}\b')
 """An ID a tool generates at random, such as a `Planning` step's, which no two runs share."""
+
+
+_PREFIX = 'p'
+"""The prefix the `renamed` contract runs a case's tools under."""
 
 
 def _comparable(content: object, directory: Path) -> object:
@@ -127,22 +130,34 @@ async def _run_calls(
     # Built off the event loop, as an app builds its agent: building can import a client library.
     capabilities = _capabilities(await anyio.to_thread.run_sync(case.calls.build, directory))
     if prefixed:
-        capabilities = [capability.prefix_tools('p') for capability in capabilities]
-    model = _one_call_per_response(case.calls.made, 'p_' if prefixed else '')
+        capabilities = [capability.prefix_tools(_PREFIX) for capability in capabilities]
+    model = _one_call_per_response(case.calls.made, f'{_PREFIX}_' if prefixed else '')
     # Streamed, so a tool that emits a capability event has a handler to deliver it to.
     return await Agent(model, capabilities=capabilities).run(
         'go', event_stream_handler=drain_events, usage_limits=usage_limits
     )
 
 
+def _unprefixed(content: object, names: dict[str, str]) -> object:
+    if not isinstance(content, str):
+        return content
+    for prefixed, plain in names.items():
+        content = content.replace(prefixed, plain)
+    return content
+
+
 async def _tool_results(case: CapabilityCase, directory: Path, *, prefixed: bool) -> list[tuple[str, str, object]]:
     """How each call ended, and what it returned or the retry it asked for, as `_comparable` writes it."""
     result = await _run_calls(case, directory, prefixed=prefixed)
+    assert case.calls is not None
+    # A reply that quotes its tool by the name the model sees, as `BackgroundTools`' acknowledgement does, is the same
+    # reply under a prefix.
+    names = {f"'{_PREFIX}_{name}'": f"'{name}'" for name, _ in case.calls.made} if prefixed else {}
     return [
         (
             part.tool_call_id,
             part.outcome,
-            _comparable(part.content, directory),
+            _comparable(_unprefixed(part.content, names), directory),
         )
         for message in result.all_messages()
         if isinstance(message, ModelRequest)
@@ -437,48 +452,7 @@ def test_a_capability_that_runs_with_tools_declares_calls(
     _assert_holds(DECLARES_CALLS, name, [] if declared else [f'it contributes {contributes} but declares no `calls`'])
 
 
-async def test_a_nested_run_on_a_durable_case_model_is_answered_and_counted() -> None:
-    """The durable suites count it, so a nested run's request a recovery repeats breaks them like any other."""
-    REQUESTS.clear()
-
-    model = one_call_per_response((('ask', {}),))
-
-    async def ask() -> str:
-        return (await Agent(model).run('nested')).output
-
-    try:
-        result = await Agent(model, tools=[ask]).run(PROMPT)
-        assert (result.output, REQUESTS) == ('done', {UNPROMPTED_REQUEST: 1})
-    finally:
-        REQUESTS.clear()
-
-
-def test_a_drifted_journal_breaks_the_durable_contracts() -> None:
-    """A unit renamed, added or dropped breaks them, and so does a model request too many or too few."""
-    expected = ('capability__memory.write_memory',)
-    recorded = ['a__model.request', 'a__capability__memory.write_memory', 'a__model.request']
-
-    def read(units: list[str]) -> list[str]:
-        return journal_breaks(
-            units, prefix='a__', model_requests=('model.request',), calls=1, expected=expected, engine='dbos'
-        )
-
-    assert read(recorded) == []
-    renamed = ['a__model.request', 'a__capability__memory.write', 'a__model.request']
-    assert len(read(renamed)) == 1
-    assert len(read(['a__model.request', 'a__model.request'])) == 1, 'a dropped unit breaks them'
-    assert read(['a__capability__memory.write_memory', 'a__model.request']) == [
-        'the run recorded 1 `model.request` units, not one per call and one to answer'
-    ]
-    assert read([*recorded, 'a__model.request', 'a__capability__memory.read_memory']) == [
-        'the run recorded 3 `model.request` units, not one per call and one to answer',
-        "the calls record `dbos=('capability__memory.write_memory', 'capability__memory.read_memory')`, not "
-        "('capability__memory.write_memory',). A recorded name is what a workflow from an earlier release replays by: "
-        'change the case only with a compatibility note (agent_docs/capability-conformance.md, "Durable execution")',
-    ]
-
-
 def test_pending_calls_backfill() -> None:
     """The cases whose `calls` are still to be written: a PR that writes one lowers the count, and none raises it."""
     pending = sorted(name for name, exempt in DECLARES_CALLS.exempt.items() if exempt.reason.startswith(PENDING_CALLS))
-    assert len(pending) == 10, pending
+    assert len(pending) == 9, pending

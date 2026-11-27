@@ -342,6 +342,7 @@ include = [
     "scripts/check_test_waits.py",
     "scripts/test_check_test_waits.py",
     "scripts/durable_exec_contract.py",
+    "scripts/durable_exec_support.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",

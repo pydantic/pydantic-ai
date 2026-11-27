@@ -34,10 +34,11 @@ from typing import TYPE_CHECKING
 
 import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, RawToolArgs
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, RawToolArgs, Toolset
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition, ToolSelector
+from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness import (
     Advisor,
     AnnounceWorkingDirectory,
@@ -133,6 +134,7 @@ from ..capability_cases import (
     Narrows,
     Rejected,
     Unbuildable,
+    echo,
     with_echo,
 )
 from ..function_model_prefix import COMPACTION_REWRITES_HISTORY
@@ -398,6 +400,14 @@ def _check_advisor(merged: Advisor[None]) -> None:
     assert merged.max_tokens == 4096
 
 
+def _background_echo(_: Path) -> list[AbstractCapability[None]]:
+    """`BackgroundTools` with its default selector, beside an `echo` tool marked to run in the background.
+
+    Selecting by metadata rather than by name keeps the tool selected under a prefix.
+    """
+    return [BackgroundTools(), Toolset(FunctionToolset([echo], id='echo', metadata={'background': True}))]
+
+
 def _check_background_tools(merged: BackgroundTools[None]) -> None:
     assert callable(merged.tools)
 
@@ -536,7 +546,7 @@ CASES: dict[str, CapabilityCase] = {
                     'capability__planning.read_plan',
                     'capability__planning.read_plan',
                 ),
-                # Its run fails under Temporal (a `refused` cell in `ENGINE_SUPPORT`, #7971), so nothing is recorded there.
+                # Its run fails under Temporal (a `refused` cell in its support table, #7971), so nothing is recorded there.
             ),
         ),
     ),
@@ -650,7 +660,7 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('compact_context', {}),),
             lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
-            # Temporal breaks on its per-run toolset (a `broken` cell in `ENGINE_SUPPORT`, #14403), so it records nothing there.
+            # Temporal breaks on its per-run toolset (a `broken` cell in its support table, #14403), so it records nothing there.
             durable_steps=DurableSteps(dbos=('capability__compact_on_request.compact',)),
             moves_cache_prefix=COMPACTION_REWRITES_HISTORY,
         ),
@@ -745,7 +755,8 @@ CASES: dict[str, CapabilityCase] = {
             'one background scheduler per agent; selectors combine without wrapping a tool twice',
             lambda: (BackgroundTools[None](tools=['first']), BackgroundTools[None](tools=['second'])),
             _check_background_tools,
-        )
+        ),
+        calls=Calls(ECHO, _background_echo, durable_steps=ECHO_STEPS, follow_ups=1),
     ),
     'BenchmarkInstructions': CapabilityCase(
         Combines(
@@ -1176,7 +1187,7 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('read_pyai_docs', {'topic': 'hooks'}),),
             _pydantic_ai_docs,
-            # Temporal refuses its id-less toolset (a `refused` cell in `ENGINE_SUPPORT`, #9233), so it records nothing there.
+            # Temporal refuses its id-less toolset (a `refused` cell in its support table, #9233), so it records nothing there.
             durable_steps=DurableSteps(dbos=_workspace_steps(2)),
         ),
     ),
@@ -1297,7 +1308,7 @@ CASES: dict[str, CapabilityCase] = {
     'BrowserUse': CapabilityCase(
         Collides('its toolset registers its browser tools under fixed names'),
         requires='browser_use',
-        # Temporal refuses its id-less toolset (a `refused` cell in `ENGINE_SUPPORT`, #9233). Only the browser-use CI job installs
+        # Temporal refuses its id-less toolset (a `refused` cell in its support table, #9233). Only the browser-use CI job installs
         # `browser_use`, and it doesn't run the durable suites, so neither checks this case in CI.
         calls=Calls((('browse_web', {'task': 'Find the price of the Pro plan.'}),), _browser_use),
     ),

@@ -25,6 +25,8 @@ Pydantic AI supports nine durable execution engines, plus a [builder](./backends
 | [Azure Durable Task](../harness/azure-durable-task.md) | `pydantic-ai-harness[azure-durable-task]` | `AzureDurableTaskDurability` from `pydantic_ai_harness.azure_durable_task` |
 | [Apache Airflow](./airflow.md) | `apache-airflow-providers-common-ai` | `AgentOperator(..., durable=True)` from `airflow.providers.common.ai.operators.agent` |
 
+[Compatibility](./compatibility.md) shows which capabilities and run features each engine supports, limits or refuses, as each engine's tests check them.
+
 Temporal, DBOS, Prefect, Restate, and AWS Lambda are co-maintained by the Pydantic and vendor teams. AWS Lambda, Absurd, pgtask, and Azure Durable Task ship in [Pydantic AI Harness](../harness/index.md); Restate and Airflow ship in the engine's own package.
 
 !!! warning "One durable execution engine per agent"
