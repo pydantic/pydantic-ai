@@ -42,6 +42,8 @@ WAREHOUSE = ExternalModule(
         'total': total,
         'fx_rate': fx_rate,
         'CURRENCY': 'USD',
+        # Hidden by Monty, and never dispatched even when a remote worker names it.
+        '_private': total,
         'util': ExternalModule({'doubled': doubled}, stubs='def doubled(n: int) -> int: ...'),
     },
     stubs='def total(region: str) -> float: ...\nasync def fx_rate(currency: str) -> float: ...\nCURRENCY: str',
