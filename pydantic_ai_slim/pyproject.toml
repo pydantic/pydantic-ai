@@ -68,6 +68,7 @@ dependencies = [
     "pydantic-graph=={{ version }}",
     "opentelemetry-api>=1.28.0",
     "typing-inspection>=0.4.0",
+    # `genai-prices>=0.2.3` has Anthropic's fast mode price variants, which `provider_details['speed'] == 'fast'` selects.
     # `genai-prices>=0.2.4` prices Gemini 4 Hydrogen and Carbon, so their runs report a cost.
     "genai-prices>=0.2.4",
 ]
