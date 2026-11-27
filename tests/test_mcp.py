@@ -20,7 +20,7 @@ import subprocess
 import sys
 import warnings
 import weakref
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
@@ -93,6 +93,8 @@ with try_import() as imports_successful:
     from fastmcp.exceptions import McpError, ToolError
     from fastmcp.prompts import Message
     from fastmcp.server.dependencies import get_http_request
+    from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+    from fastmcp.tools import Tool as FastMCPTool
 
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
@@ -819,6 +821,61 @@ class TestMCPToolsetIntegration:
             assert {'echo', 'add', 'boom'} <= set(tools_first)
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
+
+    async def test_tools_list_changed_during_list_tools_is_not_lost(self):
+        """A tools `list_changed` notification that arrives while `tools/list` is in flight isn't lost.
+
+        The response was produced before the change, so caching it would keep the old tool list until the
+        next notification. The in-flight caller still gets that response, and the next `list_tools()` fetches
+        the changed list.
+        """
+        server: FastMCP[None] = FastMCP('list_changed_server')
+        list_produced = anyio.Event()
+        release_list = anyio.Event()
+
+        class HoldListTools(Middleware):
+            async def on_list_tools(
+                self,
+                context: MiddlewareContext[mcp_types.ListToolsRequest],
+                call_next: CallNext[mcp_types.ListToolsRequest, Sequence[FastMCPTool]],
+            ) -> Sequence[FastMCPTool]:
+                tools = await call_next(context)
+                # Hold only the first listing: the server also lists its tools to handle the tool call below.
+                if not list_produced.is_set():
+                    list_produced.set()
+                    await release_list.wait()
+                return tools
+
+        server.add_middleware(HoldListTools())
+
+        async def added_tool() -> None:
+            """Added while the first listing is in flight."""
+
+        @server.tool()
+        async def add_tool(ctx: Context) -> str:
+            server.add_tool(added_tool)
+            await ctx.send_notification(mcp_types.ToolListChangedNotification())
+            return 'done'
+
+        toolset = MCPToolset(server)
+        in_flight: list[list[str]] = []
+
+        async def list_tools_in_flight() -> None:
+            in_flight.append([tool.name for tool in await toolset.list_tools()])
+
+        async with toolset:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(list_tools_in_flight)
+                try:
+                    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                        await list_produced.wait()
+                    assert await toolset.direct_call_tool('add_tool', {}) == 'done'
+                finally:
+                    # Unblock the held listing even when the test fails, so the task group can drain.
+                    release_list.set()
+            assert in_flight == [['add_tool']]
+
+            assert [tool.name for tool in await toolset.list_tools()] == ['add_tool', 'added_tool']
 
     async def test_get_tools_hides_app_only_tools(self, run_context: RunContext):
         """MCP Apps (SEP-1865) tools whose `_meta.ui.visibility` leaves out `"model"` are hidden from the model."""

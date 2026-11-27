@@ -77,7 +77,7 @@ import random
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'google:gemini-3-flash-preview',
+    'google:gemini-4-hydrogen',
     name='dice_game_agent',
     deps_type=str,
     instructions=(
@@ -118,12 +118,12 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google:gemini-3-flash-preview', name='city_location_agent', output_type=CityLocation)
+agent = Agent('google:gemini-4-hydrogen', name='city_location_agent', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
 print(result.usage)
-#> RunUsage(cost=Decimal('0.0000525'), input_tokens=57, output_tokens=8, requests=1)
+#> RunUsage(cost=Decimal('0.0001455'), input_tokens=57, output_tokens=8, requests=1)
 ```
 
 ### Dependency Injection
