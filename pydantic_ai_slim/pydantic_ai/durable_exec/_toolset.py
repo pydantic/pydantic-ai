@@ -598,7 +598,7 @@ def raw_tool_args_for_unit(
     validated, so validating them in the unit instead reproduces those values.
 
     This returns them only when all of these hold, and `None` otherwise:
-    - Validating the tool's arguments runs no code outside Pydantic, so validating them again is a
+    - Validating the tool's arguments runs no user code, so validating them again is a
       function of the input alone. A tool with a validator function, a custom `default_factory` or a
       post-init hook always crosses as its dump.
     - `loaded_tool_args`, which is `params.tool_args` as the unit will load them after the transport's
