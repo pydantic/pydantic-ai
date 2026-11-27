@@ -6,6 +6,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, replace
 from typing import TYPE_CHECKING
 
+from pydantic_ai._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
@@ -19,7 +20,6 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._work_log_kinds import WORK_LOG_READ_KIND, WORK_LOG_SEARCH_KIND
-from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._shared import (
