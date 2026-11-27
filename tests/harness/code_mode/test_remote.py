@@ -16,7 +16,7 @@ from collections.abc import AsyncGenerator, AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Never
+from typing import Any, Literal, Never
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -39,7 +39,8 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCall
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning
-from pydantic_ai_harness.code_mode import CodeModeToolset
+from pydantic_ai_harness._monty_exec import MontySandbox
+from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeToolset
 from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 from tests.harness.code_mode.grpc_relay import MontyRelay, serve_monty_relay
 from tests.harness.code_mode.repl_store import MemoryReplStore
@@ -69,25 +70,36 @@ def _sub_agent(name: str = 'sub') -> Agent[object, str]:
     return Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')])), name=name)
 
 
+# Code Mode's limits; Dynamic Workflow's accept the subset of keys it has.
+_Limits = CodeModeResourceLimits | Literal['unlimited'] | None
+
+
 @dataclass(frozen=True)
 class _MontyCapability:
     """A capability that runs the model's code in Monty, and the tool the model sends the code to."""
 
     tool_name: str
-    build: Callable[..., AbstractCapability[object]]
+    build: Callable[[MontySandbox | None, _Limits], AbstractCapability[object]]
 
-    def agent(self, *snippets: str, **kwargs: Any) -> Agent[object, str]:
-        """An agent whose model sends `snippets` in turn to this capability, built with `kwargs`."""
-        return Agent(_snippets_model(*snippets, tool_name=self.tool_name), capabilities=[self.build(**kwargs)])
+    def agent(
+        self, *snippets: str, monty_sandbox: MontySandbox | None = None, resource_limits: _Limits = None
+    ) -> Agent[object, str]:
+        """An agent whose model sends `snippets` in turn to this capability."""
+        capability = self.build(monty_sandbox, resource_limits)
+        return Agent(_snippets_model(*snippets, tool_name=self.tool_name), capabilities=[capability])
 
 
-def _dynamic_workflow(**kwargs: Any) -> DynamicWorkflow[object]:
-    return DynamicWorkflow[object](agents=[_sub_agent()], **kwargs)
+def _code_mode(monty_sandbox: MontySandbox | None, resource_limits: _Limits) -> CodeMode[object]:
+    return CodeMode[object](monty_sandbox=monty_sandbox, resource_limits=resource_limits)
+
+
+def _dynamic_workflow(monty_sandbox: MontySandbox | None, resource_limits: _Limits) -> DynamicWorkflow[object]:
+    return DynamicWorkflow[object](agents=[_sub_agent()], monty_sandbox=monty_sandbox, resource_limits=resource_limits)
 
 
 @pytest.fixture(
     params=[
-        pytest.param(_MontyCapability('run_code', CodeMode[object]), id='code_mode'),
+        pytest.param(_MontyCapability('run_code', _code_mode), id='code_mode'),
         pytest.param(_MontyCapability('run_workflow', _dynamic_workflow), id='dynamic_workflow'),
     ]
 )
@@ -189,7 +201,7 @@ async def test_url_beyond_server_root_rejected(capability: _MontyCapability, url
 async def test_remote_turn_deadline_follows_max_duration(
     monkeypatch: pytest.MonkeyPatch,
     capability: _MontyCapability,
-    resource_limits: Any,
+    resource_limits: _Limits,
     request_timeouts: dict[str, float | None],
 ) -> None:
     """The transport's per-turn deadline leaves room for `max_duration_seconds` to fire first."""
@@ -293,7 +305,8 @@ async def test_failing_monty_sandbox_reaches_caller(
 async def test_pool_instead_of_function_rejected(capability: _MontyCapability) -> None:
     """The pool itself, instead of a function that returns it, fails before any code runs."""
     with pytest.raises(UserError, match='not the pool itself'):
-        agent = capability.agent('1 + 1', monty_sandbox=AsyncMontyRemote('https://sandbox.example.com'))
+        pool = AsyncMontyRemote('https://sandbox.example.com')
+        agent = capability.agent('1 + 1', monty_sandbox=pool)  # pyright: ignore[reportArgumentType]
         await agent.run('dial')
 
 
