@@ -32,6 +32,8 @@ from pydantic_ai.capabilities import (
 from pydantic_ai.exceptions import ApprovalRequired
 from pydantic_ai.messages import (
     Authority,
+    BinaryContent,
+    BinaryImage,
     FunctionToolResultEvent,
     ModelMessage,
     ModelMessagesTypeAdapter,
@@ -114,6 +116,47 @@ async def test_wrapper_overrides_apply_to_text_writes():
     await workspace.write_text('file.txt', 'outer')
     assert writes == [('file.txt', b'outer')]
     assert backend.files == {}
+
+
+async def test_read_file_types_the_content_by_extension() -> None:
+    workspace = Workspace(
+        FakeWorkspace(
+            'read-file',
+            {'/workspace/out/chart.png': b'png', '/workspace/report.xlsx': b'xlsx', '/workspace/blob': b'raw'},
+        )
+    )
+
+    assert await workspace.read_file('out/chart.png') == BinaryImage(data=b'png', media_type='image/png')
+    assert await workspace.read_file('/workspace/report.xlsx') == BinaryContent(
+        data=b'xlsx', media_type='application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    )
+    assert await workspace.read_file('blob') == BinaryContent(data=b'raw', media_type='application/octet-stream')
+
+
+async def test_read_file_reads_through_wrapper_overrides() -> None:
+    class ReadingWrapper(WrapperWorkspace):
+        async def read_bytes(self, path: str) -> bytes:
+            return b'outer'
+
+    workspace = ReadingWrapper(Workspace(FakeWorkspace('wrapper', {'/workspace/notes.md': b'inner'})))
+    assert await workspace.read_file('notes.md') == BinaryContent(data=b'outer', media_type='text/markdown')
+
+
+async def test_read_file_gets_a_file_out_after_the_run() -> None:
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('plot', {})])
+        return ModelResponse(parts=[TextPart('[Download the chart](sandbox:/workspace/chart.png)')])
+
+    agent = Agent(FunctionModel(model), capabilities=[WorkspaceCapability()])
+
+    @agent.tool
+    async def plot(ctx: RunContext) -> str:
+        await ctx.workspace.write_bytes('chart.png', b'png')
+        return 'Saved chart.png'
+
+    result = await agent.run('Plot it.')
+    assert await result.workspace.read_file('/workspace/chart.png') == BinaryImage(data=b'png', media_type='image/png')
 
 
 async def test_stacked_wrappers_preserve_delegation_identity_and_refs():

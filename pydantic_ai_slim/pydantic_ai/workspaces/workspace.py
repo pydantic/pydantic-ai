@@ -14,7 +14,11 @@ import anyio
 from typing_extensions import get_protocol_members
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import Authority
+from pydantic_ai.messages import (
+    Authority,
+    BinaryContent,
+    _media_type_from_file_name,  # pyright: ignore[reportPrivateUsage]
+)
 
 from ._authority_paths import AuthorityLayer, is_within, layer_authority, lowest_authority, merge_path_authority
 from .protocol import (
@@ -733,6 +737,21 @@ class Workspace(WorkspaceBackend):
     async def read_text(self, path: str, *, encoding: str = 'utf-8') -> str:
         """Read a file as text; undecodable bytes raise `UnicodeDecodeError`."""
         return (await self.read_bytes(path)).decode(encoding)
+
+    async def read_file(self, path: str) -> BinaryContent:
+        """Read a file as [`BinaryContent`][pydantic_ai.messages.BinaryContent], to hand to a user, an app or a model.
+
+        The media type comes from the file name's extension, as in
+        [`BinaryContent.from_path`][pydantic_ai.messages.BinaryContent.from_path], and is
+        `application/octet-stream` when the extension is unknown. An image comes back as a
+        [`BinaryImage`][pydantic_ai.messages.BinaryImage].
+
+        The whole file is read into memory, with no size limit: check
+        [`stat`][pydantic_ai.workspaces.Workspace.stat]`(path).size` first to refuse large files.
+        """
+        data = await self.read_bytes(path)
+        media_type = _media_type_from_file_name(self.paths.basename(path))
+        return BinaryContent.narrow_type(BinaryContent(data=data, media_type=media_type))
 
     async def write_text(self, path: str, content: str, *, encoding: str = 'utf-8') -> None:
         """Write text to a file."""

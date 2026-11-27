@@ -154,6 +154,9 @@ agent = Agent(
   [`write_text`][pydantic_ai.workspaces.Workspace.write_text] read and write text.
 - [`read_bytes`][pydantic_ai.workspaces.Workspace.read_bytes] and
   [`write_bytes`][pydantic_ai.workspaces.Workspace.write_bytes] read and write exact bytes.
+- [`read_file`][pydantic_ai.workspaces.Workspace.read_file] reads a file as
+  [`BinaryContent`][pydantic_ai.messages.BinaryContent], with its media type, to hand on to a user or a model.
+  See [Get files out of the workspace](#get-files-out).
 - Writing creates missing parent directories.
 - [`list_dir`][pydantic_ai.workspaces.Workspace.list_dir], [`stat`][pydantic_ai.workspaces.Workspace.stat],
   [`exists`][pydantic_ai.workspaces.Workspace.exists], [`make_dir`][pydantic_ai.workspaces.Workspace.make_dir]
@@ -251,6 +254,50 @@ async def main() -> None:
 - [`sanitize_messages`][pydantic_ai.messages.sanitize_messages] and the [UI adapters](ui/overview.md)
   strip references from history a client sends you, so a client can't choose where your agent works.
   Save the reference on your server and pass it as `workspace=`.
+
+## Get files out of the workspace {#get-files-out}
+
+A file the agent made, such as a chart or a spreadsheet, stays in the workspace until you read it.
+[`read_file`][pydantic_ai.workspaces.Workspace.read_file] returns it as
+[`BinaryContent`][pydantic_ai.messages.BinaryContent], ready to save, send to a user, or pass to a model.
+Right after the run, read it from the result:
+
+```python {title="get_chart.py" requires="workspace_agent.py" names="defined"}
+from pydantic_ai import BinaryContent
+
+from workspace_agent import agent
+
+
+async def plot_sales() -> BinaryContent:
+    result = await agent.run('Plot the monthly sales in sales.csv to chart.png.')
+    return await result.workspace.read_file('chart.png')
+```
+
+Later, for example when a user clicks a download link, you may have only the reference you stored. A
+sandbox capability's `backend(ref)` attaches to that sandbox without starting a run:
+
+```python {title="download.py" names="defined"}
+from pydantic_ai_harness.docker_container import DockerContainer
+
+from pydantic_ai import BinaryContent
+from pydantic_ai.workspaces import Workspace, WorkspaceRef
+
+
+async def download(ref: WorkspaceRef, path: str) -> BinaryContent:
+    workspace = Workspace(DockerContainer().backend(ref))
+    return await workspace.read_file(path)
+```
+
+- The media type comes from the file name's extension, as in
+  [`BinaryContent.from_path`][pydantic_ai.messages.BinaryContent.from_path]. An unknown extension
+  gives `application/octet-stream`, and an image comes back as a
+  [`BinaryImage`][pydantic_ai.messages.BinaryImage].
+- The whole file is read into memory, whatever its size. To refuse large files, check
+  [`stat`][pydantic_ai.workspaces.Workspace.stat]`(path).size` first.
+- Use the capability that created the sandbox. If the sandbox is gone, reading raises
+  [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
+- Take the path from your own records, such as a model response you stored. A path sent by the client
+  could name any file in the workspace, secrets included.
 
 ## Cleaning up
 
