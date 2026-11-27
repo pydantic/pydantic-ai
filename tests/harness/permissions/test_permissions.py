@@ -479,6 +479,13 @@ _SHELL_TOOL = Tool(
     _run_command, name='run_command', metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'}
 )
 
+_SHELL_TOOL_REQUIRING_APPROVAL = Tool(
+    _run_command,
+    name='run_command',
+    requires_approval=True,
+    metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'},
+)
+
 _RULES = [
     PermissionRule('allow', command='git status'),
     PermissionRule('allow', command='ls'),
@@ -2003,21 +2010,50 @@ class TestReviewerApprovals:
         ]
         assert _returns(held.all_messages()) == []
 
-    async def test_a_reviewers_approval_does_not_answer_a_managed_ask_on_a_plain_tool(self) -> None:
-        def deploy(env: str) -> str:
-            raise AssertionError('the held call must not run')  # pragma: no cover
+    async def test_a_managed_ask_on_a_plain_tool_with_requires_approval_goes_past_the_reviewer(self) -> None:
+        """Held before core defers the tool, the request says `person_only`, so the reviewer leaves it to the person."""
+        asked: list[object] = []
 
-        agent = Agent[None, 'str | DeferredToolRequests'](
+        def deploy(env: str) -> str:
+            return f'deployed {env}'
+
+        async def person(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            asked.extend(requests.metadata.values())
+            return await _approve_all(ctx, requests)
+
+        agent = Agent[None, str](
             _calls(('deploy', {'env': 'prod'})),
             deps_type=type(None),
-            output_type=[str, DeferredToolRequests],
             tools=[Tool(deploy, requires_approval=True)],
-            capabilities=[Permissions(managed_rules=[PermissionRule('ask', tools=['deploy'])]), _approving_reviewer()],
+            capabilities=[
+                Permissions(managed_rules=[PermissionRule('ask', tools=['deploy'])]),
+                _approving_reviewer(),
+                HandleDeferredToolCalls[None](handler=person),
+            ],
         )
-        held = await agent.run('go')
-        assert isinstance(held.output, DeferredToolRequests)
-        [call] = held.output.approvals
-        assert held.output.metadata == {call.tool_call_id: {'permissions': {'person_only': True}}}
+        assert (await agent.run('go')).output == 'deployed prod'
+        assert asked == [{'permissions': {'person_only': True}}]
+
+    @pytest.mark.parametrize(
+        'permissions',
+        [
+            Permissions[None](managed_rules=[PermissionRule('ask', command='echo')]),
+            Permissions[None](max_mode='read-only'),
+        ],
+        ids=['managed-ask', 'max-mode'],
+    )
+    async def test_a_person_only_hold_on_a_command_with_requires_approval_goes_to_the_person(
+        self, permissions: Permissions[None]
+    ) -> None:
+        person = _Person(PermissionDecision(approved=True))
+        agent = Agent[None, str](
+            _calls(ECHO),
+            deps_type=type(None),
+            tools=[_SHELL_TOOL_REQUIRING_APPROVAL],
+            capabilities=[permissions, _approving_reviewer(), HandleDeferredToolCalls[None](approval_ask(person))],
+        )
+        assert (await agent.run('go')).output == 'ran'
+        assert [(request.subject, request.person_only) for request in person.asked] == [('echo hi', True)]
 
     async def test_an_approval_from_any_other_handler_counts_as_the_persons(self, tmp_path: Path) -> None:
         """Only `ApprovalReviewer` marks its approvals; a handler that approves in code is trusted as the person."""

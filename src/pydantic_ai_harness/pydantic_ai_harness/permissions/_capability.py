@@ -224,9 +224,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
     max_mode: PermissionMode | Callable[[RunContext[AgentDepsT]], PermissionMode] = 'full'
     """The widest mode `mode` may take, or a function returning it for a run: a wider `mode` acts as this one.
 
-    It is checked on its own, after `mode`: only an `'allow'` in `managed_rules` skips the blanket ask of a
-    `'read-only'` `max_mode`, so an `'allow'` in `rules` doesn't lift a call over it. What it asks about is
-    `person_only`.
+    It is checked on its own, before the `'ask'` rules in `rules` and before `mode`: only an `'allow'` in
+    `managed_rules` skips the blanket ask of a `'read-only'` `max_mode`, so an `'allow'` in `rules` doesn't lift
+    a call over it. What it asks about is `person_only`.
     """
 
     managed_rules: Sequence[PermissionRule[AgentDepsT]] = ()
@@ -326,16 +326,25 @@ class Permissions(AbstractCapability[AgentDepsT]):
         tool_def: ToolDefinition,
         args: ValidatedToolArgs,
     ) -> ValidatedToolArgs:
-        """Hold a protected call for a person as soon as its arguments are valid.
+        """Hold a call for a person as soon as its arguments are valid, when only a person may approve it.
 
         This is before core defers a tool registered with `requires_approval=True`, and before any
         `before_tool_execute` hook asks, so whichever mechanism defers the call, its request says that only
-        a person may approve it.
+        a person may approve it: a protected change, a managed `'ask'`, or a hold of `max_mode`.
         """
-        if ctx.tool_call_approved:
+        if ctx.tool_call_approved or not _holds_for_a_person(self):
             return args
-        asked = await self._protected_asks(ctx, tool_def=tool_def, args=args)
-        if asked is not None:
+        try:
+            asked = await self._asks(ctx, tool_def=tool_def, args=args)
+        except SkipToolExecution:
+            # Left to `before_tool_execute`, which refuses it.
+            return args
+        except ApprovalRequired as held:
+            # A managed ask on a tool that neither runs a command nor writes a file.
+            if person_only_request(held.metadata):
+                raise
+            return args
+        if asked is not None and asked.person_only:
             raise ApprovalRequired(metadata=_AskedMetadata(permissions=asked).model_dump())
         return args
 
@@ -427,22 +436,6 @@ class Permissions(AbstractCapability[AgentDepsT]):
         if rule is not None and rule.verdict == 'ask':
             return _rule_asks(ctx, rule, subject)
         return self._mode_asks(person, tool_def=tool_def, args=args, command=command, allowed=rule is not None)
-
-    async def _protected_asks(
-        self, ctx: RunContext[AgentDepsT], *, tool_def: ToolDefinition, args: dict[str, Any]
-    ) -> _Asked | None:
-        """What to ask a person about a call that changes a protected path, unless a rule denies the call."""
-        if not (self.protected_paths or self.protected_commands) or self.mode_for(ctx) == 'full':
-            return None
-        command = shell_command(tool_def, args)
-        posix = ctx.workspace.platform != 'windows'
-        # Managed rules match strictly here too, as in `_asks`, so no one is asked about a call it will refuse.
-        for rules, strict in ((self.managed_rules, True), (self.rules, False)):
-            rule = await _decided(ctx, rules, tool_def=tool_def, args=args, command=command, posix=posix, strict=strict)
-            if rule is not None and rule.verdict == 'deny':
-                # Left to `before_tool_execute`, which refuses it.
-                return None
-        return await self._protected(ctx, _subject(tool_def, args, command), posix=posix)
 
     async def _protected(
         self, ctx: RunContext[AgentDepsT], subject: tuple[PermissionAction, str] | None, *, posix: bool
