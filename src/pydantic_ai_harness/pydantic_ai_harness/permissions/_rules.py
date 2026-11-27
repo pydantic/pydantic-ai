@@ -244,22 +244,25 @@ class _CommandRule(NamedTuple):
     loose: list[str]
 
 
-def _as_data(rule: PermissionRule[Any] | None) -> PermissionRule[Any] | None:
-    """`rule` for a match inside quoted text, which may only be data such as a commit message: a deny asks instead."""
-    return replace(rule, verdict='ask') if rule is not None and rule.verdict == 'deny' else rule
+def _as_data(rule: PermissionRule[Any] | None, *, strict: bool) -> PermissionRule[Any] | None:
+    """`rule` for a match inside quoted text, which may only be data such as a commit message: a deny asks instead.
+
+    A `strict` deny stays a deny, so that no approval can run what it refuses.
+    """
+    return replace(rule, verdict='ask') if rule is not None and rule.verdict == 'deny' and not strict else rule
 
 
-def _segment_rule(rules: Sequence[_CommandRule], segment: _Segment) -> PermissionRule[Any] | None:
+def _segment_rule(rules: Sequence[_CommandRule], segment: _Segment, *, strict: bool) -> PermissionRule[Any] | None:
     """The strictest rule matching one simple command: allow rules by prefix, others in its words or a quoted one."""
     # A number before a redirection may be its file descriptor or an argument, so either reading can match.
     readings = (segment.words, [word for index, word in enumerate(segment.words) if index not in segment.descriptors])
     quoted = [_loose([word]) for word in segment.words if _LOOSE_SPLIT.search(word)]
-    matched = (_match(parsed, segment, readings, quoted) for parsed in rules)
+    matched = (_match(parsed, segment, readings, quoted, strict=strict) for parsed in rules)
     return _strictest(rule for rule in matched if rule is not None)
 
 
 def _match(
-    parsed: _CommandRule, segment: _Segment, readings: Iterable[list[str]], quoted: Iterable[list[str]]
+    parsed: _CommandRule, segment: _Segment, readings: Iterable[list[str]], quoted: Iterable[list[str]], *, strict: bool
 ) -> PermissionRule[Any] | None:
     """What `parsed` makes of one simple command: its rule, the rule as for data, or `None`."""
     if parsed.rule.verdict == 'allow':
@@ -268,7 +271,7 @@ def _match(
     if any(_contains(reading, parsed.words) for reading in readings):
         return parsed.rule
     if any(_contains(parts, parsed.loose) for parts in quoted):
-        return _as_data(parsed.rule)
+        return _as_data(parsed.rule, strict=strict)
     return None
 
 
@@ -300,7 +303,7 @@ def _globbed_name(segments: Iterable[_Segment]) -> bool:
 
 
 def _unsplittable_rule(
-    rules: Sequence[PermissionRule[Any]], command: str, *, expands: bool, posix: bool = True
+    rules: Sequence[PermissionRule[Any]], command: str, *, expands: bool, strict: bool, posix: bool = True
 ) -> PermissionRule[Any] | None:
     """Match a command too complex to split word by word, quotes removed; no rule allows it.
 
@@ -316,22 +319,27 @@ def _unsplittable_rule(
         words = _loose([fold(_REDIRECTION.sub(' ', text))])
         return _strictest(rule for rule, rule_words in restrictive if _contains(words, rule_words))
 
-    everywhere = _as_data(strictest_in(re.sub(r'[\'"\\]', '', command)))
+    everywhere = _as_data(strictest_in(re.sub(r'[\'"\\]', '', command)), strict=strict)
     found = _strictest(rule for rule in (strictest_in(_unquoted(command)), everywhere) if rule is not None)
     return found or (_UNSPLITTABLE_RULE if expands else None)
 
 
-def _command_rule(rules: Sequence[PermissionRule[Any]], command: str, *, posix: bool) -> PermissionRule[Any] | None:
-    """The rule deciding a shell command: the strictest any simple command matches, `'allow'` only if all do."""
+def _command_rule(
+    rules: Sequence[PermissionRule[Any]], command: str, *, posix: bool, strict: bool = False
+) -> PermissionRule[Any] | None:
+    """The rule deciding a shell command: the strictest any simple command matches, `'allow'` only if all do.
+
+    With `strict`, a deny matched only inside quoted text stays a deny instead of asking.
+    """
     if len(command) > COMMAND_LIMIT:
         return _UNSPLITTABLE_RULE if _restricts(rules) else None
     segments = _segments(command) if posix else None
     if segments is None:
-        return _unsplittable_rule(rules, command, expands=_expands(command), posix=posix)
+        return _unsplittable_rule(rules, command, expands=_expands(command), strict=strict, posix=posix)
     if _globbed_name(segments):
-        return _unsplittable_rule(rules, command, expands=True)
+        return _unsplittable_rule(rules, command, expands=True, strict=strict)
     parsed = [_CommandRule(rule, words := _words(rule.command or ''), _loose(words)) for rule in rules]
-    deciders = [_segment_rule(parsed, segment) for segment in segments]
+    deciders = [_segment_rule(parsed, segment, strict=strict) for segment in segments]
     restrictive = _strictest(rule for rule in deciders if rule is not None and rule.verdict != 'allow')
     if restrictive is not None or None in deciders:
         return restrictive
@@ -364,8 +372,11 @@ def decide(
     command_arg: str | None,
     args: Mapping[str, Any],
     posix: bool,
+    strict: bool = False,
 ) -> PermissionRule[Any] | None:
     """The rule deciding a call to a tool `rules` all apply to, or `None` when no rule does.
+
+    With `strict`, as for managed rules, a deny matched only inside quoted text in `command` stays a deny.
 
     An allow rule that globs the shell command argument (`command_arg`) is skipped: only `command` splits a command.
     With `posix=False`, for a Windows workspace, a command is never split, since PowerShell quotes differently.
@@ -379,7 +390,7 @@ def decide(
     found = [rule for rule in applicable if rule.command is None]
     command_rules = [rule for rule in applicable if rule.command is not None]
     if command is not None and command_rules:
-        decided = _command_rule(command_rules, command, posix=posix)
+        decided = _command_rule(command_rules, command, posix=posix, strict=strict)
         if decided is not None:
             found.append(decided)
     return _strictest(found)
@@ -392,8 +403,9 @@ def command_matches(rules: Sequence[PermissionRule[Any]], command: str, *, posix
 
 
 def command_segments(command: str) -> list[tuple[list[str], bool]] | None:
-    """The simple commands in `command`, each with whether it redirects; `None` when it is too complex to split."""
-    if len(command) > COMMAND_LIMIT:
-        return None
+    """The simple commands in `command`, each with whether it redirects; `None` when it is too complex to split.
+
+    The caller checks `COMMAND_LIMIT` first: `Permissions` counts a longer command as protected without splitting it.
+    """
     segments = _segments(command)
     return None if segments is None else [(segment.words, segment.redirected) for segment in segments]
