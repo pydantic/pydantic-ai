@@ -2319,11 +2319,12 @@ back to truncation; other exceptions propagate. The summary request is billed
 to the current model unless `summarization_model` selects another.
 
 The chain runs automatically before requests above `threshold` (85% of the context
-window by default). To compact at a fixed size instead, set `threshold_tokens` in the **Threshold tokens** row of
-`/plugins configure compaction`, or declare it, as in
+window by default). To compact at a fixed size instead, set `threshold_tokens` in the
+**Threshold tokens** row of `/plugins configure compaction`, or declare it, as in
 `/plugins add compaction pydantic_ai_pax.builtin_plugins.compaction '{"threshold_tokens": 150000}'`:
 the chain then runs once a request passes that many tokens, whatever the model's window, and
-`threshold` is ignored. `/compact` runs the same chain between turns regardless of that
+`threshold` is ignored. Keep it below the model's window: above it, the provider rejects the
+request before compaction runs. `/compact` runs the same chain between turns regardless of that
 threshold, but it caps the protected tokens at half the conversation, so it usually has older
 messages to summarise; the protected tail can exceed that cap by the whole message that crosses it. Add free text to say what the summary must keep, for example
 `/compact don't lose the "auth" decisions`. The focus is passed to the summariser
@@ -2356,7 +2357,7 @@ You can also redeclare the plugin with your own settings;
 | `context_window` | unset | overrides the catalog when it is wrong or silent for your model |
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
 | `background_compaction` | `false` | experimental: write the summary in the background before it is due ([below](#background-compaction-experimental)) |
-| `background_start` | `0.85` | experimental: with `background_compaction`, the fraction of `threshold` at which the background summary starts |
+| `background_start` | `0.85` | experimental: with `background_compaction`, the fraction of the trigger (`threshold`, or `threshold_tokens` when set) at which the background summary starts |
 
 The status row shows compact used/max context tokens, such as `128k/1m`.
 The maximum comes from the request's model or the `context_window` override.
@@ -2378,8 +2379,9 @@ refresh with the next request; `/compact` alone does not change them.
 #### Background compaction (experimental)
 
 With `background_compaction` set to `true` (in `/plugins configure compaction`), Pax starts the
-summary early instead of waiting for `threshold`. Once a request, or the end of a turn, passes
-`background_start` of the threshold (by default 85% of 85%, about 72% of the window), the summary is
+summary early instead of waiting for the trigger. Once a request, or the end of a turn, passes
+`background_start` of the trigger (by default 85% of 85%, about 72% of the window; with
+`threshold_tokens`, 85% of that count), the summary is
 written in the background. The turn keeps running, and the summary can finish while you read. A
 turn that ends already over the threshold starts none; the next request compacts as usual.
 

@@ -53,7 +53,8 @@ class CompactionSettings(BaseModel):
         gt=0,
         le=1,
         allow_inf_nan=False,
-        description='Compact once the history exceeds this fraction of the context window.',
+        description='Compact once the history exceeds this fraction of the context window. '
+        'Ignored when Threshold tokens is set.',
     )
     threshold_tokens: int | None = Field(
         default=None,
@@ -84,7 +85,8 @@ class CompactionSettings(BaseModel):
         gt=0,
         lt=1,
         allow_inf_nan=False,
-        description='Experimental: with background compaction on, start the summary at this fraction of the threshold.',
+        description='Experimental: with background compaction on, start the summary at this fraction of the threshold, '
+        'or of Threshold tokens when set.',
     )
 
     @model_serializer(mode='wrap')

@@ -1416,8 +1416,8 @@ so two compaction chains never run together.
 
 `compaction` directly registers harness `FallbackCompaction` with
 `max_fraction=threshold`, or `max_tokens=threshold_tokens` when that is set; harness owns the
-automatic trigger. `/compact` runs the
-same chain unconditionally, with the protected-token target capped at half the
+automatic trigger. `/compact` runs the same chain unconditionally, with the protected-token
+target capped at half the
 conversation, and keeps the history unless the result is smaller, counted as the provider reported
 the tokens. Its optional
 focus is free text, not shell arguments:
