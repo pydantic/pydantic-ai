@@ -2408,8 +2408,8 @@ def parse_tool_kind(value: str) -> ToolPartKind | None:
 
     UI adapters call this at the wire boundary to validate an untrusted client-supplied `tool_kind`
     string before setting it on a part, so an unknown value degrades to `None` rather than asserting a
-    bogus discriminator. A run uses it to refuse a tool with an undefined kind when it collects its
-    tools; a stored [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] with one still loads.
+    bogus discriminator. It's for kinds claimed on parts only: `'output'` marks output tool parts, but a
+    [`ToolDefinition`][pydantic_ai.tools.ToolDefinition] can't declare it, since it isn't a defined `ToolKind`.
     """
     return value if value in _TOOL_KINDS or value == _OUTPUT_TOOL_PART_KIND else None
 
