@@ -378,8 +378,7 @@ Where the tracer comes from:
 
 - Pass the `ctx` of the hook or tool the code runs in.
 - Never store a tracer on a backend, store or session that runs can share: a run sharing it would
-  trace to another run's tracer. Pass the calling `ctx` into the operation instead. Core code with no
-  `ctx`, such as a workspace, uses a private helper that reads the run's tracer at call time.
+  trace to another run's tracer. Pass the calling `ctx` into the operation instead.
 - A standalone helper that users call outside any run takes `tracer: Tracer | None = None` and falls
   back to `NoOpTracer()`, so it emits the same span shape as the in-run path (`compaction`'s
   `compact_messages`).
