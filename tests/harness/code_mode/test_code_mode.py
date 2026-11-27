@@ -73,6 +73,7 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
+    ToolKind,
     ToolReturn as ToolReturnMsg,
     ToolReturnPart,
     ToolSearchReturnContent,
@@ -2132,6 +2133,29 @@ class TestCodeMode:
             UserError, match=r"`CodeMode\(tools=\.\.\.\)` names tool 'model_only', which only allows direct"
         ):
             await wrapper.get_tools(build_run_context(None))
+
+    async def test_naming_a_kinded_direct_only_tool_in_the_list_keeps_it_native(self) -> None:
+        """A `{'direct'}` tool that declares a `tool_kind` is skipped silently, as the framework's own tools are."""
+        kind = ToolKind('test_code_mode', 'screen')
+        screen = ToolDefinition(name='screen', allowed_callers={'direct'}, tool_kind=kind.id)
+        static = _StaticToolset([*_caller_tool_defs(), screen])
+        wrapper = CodeMode[object](tools=['unconstrained', 'screen']).get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+
+        assert 'screen' in tools
+        assert 'unconstrained' not in tools
+
+    async def test_a_direct_only_tool_the_list_does_not_name_stays_direct(self) -> None:
+        static = _StaticToolset(_caller_tool_defs())
+        wrapper = CodeMode[object](tools=['unconstrained']).get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        tools = await wrapper.get_tools(build_run_context(None))
+
+        assert 'model_only' in tools
+        assert 'unconstrained' not in tools
 
     async def test_a_code_mode_rule_conflicting_with_allowed_callers_is_an_error(self) -> None:
         """A native fallback or a code-execution tool can't go in `run_code`, so it can't allow programmatic callers."""
