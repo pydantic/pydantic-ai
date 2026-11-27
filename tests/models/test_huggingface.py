@@ -1581,7 +1581,7 @@ async def test_native_output(allow_model_requests: None, huggingface_api_key: st
         country: str
 
     model = HuggingFaceModel('Qwen/Qwen3.5-397B-A17B', provider=HuggingFaceProvider(api_key=huggingface_api_key))
-    agent = Agent(model, output_type=NativeOutput(CityLocation))
+    agent = Agent(model, output_type=NativeOutput(CityLocation, description='A city and its country.'))
 
     result = await agent.run('What is the largest city in Mexico?')
 
