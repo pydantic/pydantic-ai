@@ -542,6 +542,14 @@ class OpenAIModelProfile(ModelProfile, total=False):
     `tool_call_ids_are_response_scoped` in the same profile wins.
     """
 
+    openai_responses_url_citation_content_offsets: bool
+    """Whether a Responses `url_citation` annotation's offsets span the cited text. Default: `False`.
+
+    OpenAI's offsets span the citation marker the model wrote, such as a Markdown link, so they map to a
+    [`MarkerCitationAnchor`][pydantic_ai.messages.MarkerCitationAnchor]. With `True`, they map to a
+    [`ContentCitationAnchor`][pydantic_ai.messages.ContentCitationAnchor], as DeepSeek's do.
+    """
+
     openai_responses_supports_interleaved_function_calls: bool
     """Whether the Responses API accepts function calls interleaved with other assistant items in one
     assistant turn. Default: `True`.

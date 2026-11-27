@@ -64,7 +64,7 @@ async def test_google_cloud_client_in_google_provider_uses_cloud_service_tier_he
         model_request_parameters=ModelRequestParameters(),
     )
 
-    http_options = config.get('http_options')  # pyright: ignore[reportUnknownMemberType]
+    http_options = config.get('http_options')
     assert http_options is not None
     headers = http_options.get('headers')
     assert headers is not None
@@ -89,7 +89,7 @@ async def test_google_cloud_service_tier_is_dropped_on_a_gemini_api_transport(
         model_request_parameters=ModelRequestParameters(),
     )
 
-    http_options = config.get('http_options')  # pyright: ignore[reportUnknownMemberType]
+    http_options = config.get('http_options')
     assert http_options is not None
     headers = http_options.get('headers')
     assert headers is not None
