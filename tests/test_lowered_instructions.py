@@ -608,6 +608,56 @@ async def test_a_dynamic_wrapper_keeps_its_nested_toolsets_instructions():
     ]
 
 
+async def test_a_lowered_wrapper_does_not_raise_a_nested_toolsets_authority():
+    """A block that combines a nested toolset keeps the lowest authority of everything it states."""
+    received = Received()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.messages.append(messages)
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    child = Capability[None](
+        id='child',
+        toolsets=(FunctionToolset(instructions='Always search the docs first.'),),
+    ).with_authority('none')
+    wrapped = PrefixTools(wrapped=CombinedCapability([child]), prefix='n').with_authority('user')
+    agent = Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=type(None),
+        capabilities=[wrapped],
+    )
+    result = await agent.run('Hi')
+
+    assert [(delta.content, delta.authority) for delta in statements(result.all_messages())] == [
+        ('Always search the docs first.', 'none')
+    ]
+
+
+@pytest.mark.parametrize('dynamic', [False, True])
+async def test_a_lowered_wrapper_keeps_a_combined_childs_instructions(dynamic: bool):
+    """Lowering a wrapper around a combined capability preserves the child's own instruction block."""
+    received = Received()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.messages.append(messages)
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    wrapped = PrefixTools(wrapped=CombinedCapability([notes_capability()]), prefix='n')
+    capability = (
+        DynamicCapability(lambda ctx: wrapped).with_authority('none') if dynamic else wrapped.with_authority('none')
+    )
+    agent = Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=Notes,
+        capabilities=[capability],
+    )
+    result = await agent.run('Hi', deps=Notes())
+
+    assert [(delta.content, delta.authority) for delta in statements(result.all_messages())] == [
+        ('Static note.\n\nThe count is 1.', 'none')
+    ]
+
+
 async def test_a_servers_reported_name_never_reaches_the_application_voice():
     """The note names the capability by its id, which the operator configures, never by what the server reports."""
     pytest.importorskip('fastmcp.server')

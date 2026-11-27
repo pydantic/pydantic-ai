@@ -19,7 +19,13 @@ from pydantic_ai._instructions import (
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
 from pydantic_ai.exceptions import ModelRetry, RetryModelRequest
-from pydantic_ai.messages import AgentStreamEvent, Authority, ModelResponse, ToolCallPart
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    Authority,
+    ModelResponse,
+    ToolCallPart,
+    _lower_authority,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -322,6 +328,14 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         lowered = super().with_authority(authority)
         return lowered._rebound([child.with_authority(authority) for child in self.capabilities])
 
+    @property
+    def _effective_instruction_authority(self) -> Authority:
+        authority = super()._effective_instruction_authority
+        for source in self._instruction_sources:
+            if source.defer_loading is not True:
+                authority = _lower_authority(authority, source._effective_instruction_authority)
+        return authority
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
         new_caps = [capability._keep_authority(capability.for_agent(agent)) for capability in self.capabilities]
         if all(new is old for new, old in zip(new_caps, self.capabilities)):
@@ -384,6 +398,18 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         # `get_instructions` is a public extension point, so a subclass that overrides it decides what
         # this container says. What it hands back is usually its children's own parts, and those stay
         # attributed to whoever authored them; anything else it wrote itself.
+        return self._attribute_container_instructions(normalize_instructions(self.get_instructions()), relayed)
+
+    def _collect_block_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        """Collect every visible child as part of the container's one history block."""
+        relayed = [
+            sourced
+            for capability in self._ordered_instruction_sources()
+            if capability.defer_loading is not True
+            for sourced in capability._collect_block_instructions()
+        ]
+        if type(self).get_instructions is CombinedCapability.get_instructions:
+            return relayed
         return self._attribute_container_instructions(normalize_instructions(self.get_instructions()), relayed)
 
     def _collect_child_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:

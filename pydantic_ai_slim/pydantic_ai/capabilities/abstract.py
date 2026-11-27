@@ -654,6 +654,11 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         ceiling = self._authority_ceiling
         return authority if ceiling is None else _lower_authority(authority, ceiling)
 
+    @property
+    def _effective_instruction_authority(self) -> Authority:
+        """The authority of the instructions this capability contributes to one history block."""
+        return self._effective_authority
+
     def _lowered_instruction_sources(self) -> list[_LoweredInstructionSource[AgentDepsT]]:
         """The capabilities in this tree whose instructions are below `'operator'` authority, in dispatch order.
 
@@ -784,6 +789,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         `get_instructions` is enough.
         """
         return self._collect_own_instructions()
+
+    def _collect_block_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        """Collect the instructions this capability contributes when it is one uniform history block."""
+        return self._collect_instructions()
 
     def _collect_own_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
         """Collect this capability's public contribution without container recursion."""

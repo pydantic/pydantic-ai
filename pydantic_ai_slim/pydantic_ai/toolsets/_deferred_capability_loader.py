@@ -184,7 +184,7 @@ async def resolve_capability_block_instructions(
     below operator authority are both delivered through history this way.
     """
     # Without `own`, an overriding wrapper or container replaced the capability's own instructions: only its toolsets'.
-    sourced = capability._collect_instructions() if own else []  # pyright: ignore[reportPrivateUsage]
+    sourced = capability._collect_block_instructions() if own else []  # pyright: ignore[reportPrivateUsage]
     parts = await resolve_sourced_instructions(sourced, ctx)
 
     for ts in _capability_owned_toolsets(toolset, capability):
