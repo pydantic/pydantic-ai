@@ -23,6 +23,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import os
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import dataclass
 from pathlib import Path
@@ -62,7 +63,13 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     span_include_content,
 )
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, LocalWorkspace
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    Hooks,
+    LocalWorkspace,
+    WindowsWorkspace,
+)
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request
@@ -172,9 +179,25 @@ def redacted_setup(include_content: bool = False) -> tuple[InstrumentationSettin
     return InstrumentationSettings(include_content=include_content, tracer_provider=provider), exporter
 
 
-async def test_workspace_identity_is_recorded_without_content(tmp_path: Path) -> None:
+# The Windows CI job runs a fixed file list that excludes this module, so the `windows` param only runs
+# on a Windows machine; the `local` param keeps this file covered on Linux CI.
+windows_only = pytest.mark.skipif(os.name != 'nt', reason='`WindowsWorkspaceBackend` only runs on Windows')
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='`LocalWorkspaceBackend` only supports POSIX platforms')
+
+
+@pytest.mark.parametrize(
+    'workspace_provider, workspace_type',
+    [
+        pytest.param('windows', WindowsWorkspace, marks=windows_only),
+        pytest.param('local', LocalWorkspace, marks=posix_only),
+    ],
+)
+async def test_workspace_identity_is_recorded_without_content(
+    workspace_provider: str, workspace_type: type[WindowsWorkspace] | type[LocalWorkspace], tmp_path: Path
+) -> None:
     settings, exporter = redacted_setup(include_content=False)
-    agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path), Instrumentation(settings=settings)])
+    workspace = workspace_type(tmp_path)
+    agent = Agent(TestModel(), capabilities=[workspace, Instrumentation(settings=settings)])
     await agent.run('go')
     run_spans = [
         span
@@ -184,7 +207,7 @@ async def test_workspace_identity_is_recorded_without_content(tmp_path: Path) ->
     assert len(run_spans) == 1
     attributes = run_spans[0].attributes
     assert attributes is not None
-    assert attributes['pydantic_ai.workspace.provider'] == 'local'
+    assert attributes['pydantic_ai.workspace.provider'] == workspace_provider
     assert attributes['pydantic_ai.workspace.id'] == str(tmp_path)
 
 
