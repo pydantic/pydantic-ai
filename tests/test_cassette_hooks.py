@@ -141,6 +141,61 @@ def test_safety_identifier_is_scrubbed(content_type: str | None):
     assert b'scrubbed' in response.body
 
 
+def test_account_id_is_scrubbed_from_responses_only():
+    """OpenRouter error responses echo the recording account's id; a request's `user_id` is the caller's own."""
+    json_headers = {'content-type': 'application/json'}
+    response = before_record_response(
+        _response(body=b'{"error":{"code":400},"user_id":"user_synthetic"}', **json_headers)
+    )
+    assert response.body is not None
+    assert json.loads(response.body) == {'error': {'code': 400}, 'user_id': 'scrubbed'}
+    request = before_record_request(_request(body=b'{"user_id":"pydantic-ai-test-user"}', **json_headers))
+    assert request.body is not None
+    assert json.loads(request.body) == {'user_id': 'pydantic-ai-test-user'}
+
+
+@pytest.mark.parametrize(
+    'body, content_type, expected',
+    [
+        pytest.param(
+            b'{"id":"resp_1","access_programs":{"program":"synthetic"}}',
+            'application/json',
+            b'{"id": "resp_1", "access_programs": null}',
+            id='json',
+        ),
+        pytest.param(
+            b'event: response.created\ndata: {"response":{"id":"resp_1","access_programs":{"program":"synthetic"}}}\n\n',
+            'text/event-stream',
+            b'event: response.created\ndata: {"response": {"id": "resp_1", "access_programs": null}}\n\n',
+            id='stream',
+        ),
+        pytest.param(
+            b'{"id":"resp_1","access_programs":null,"metadata":{"access_programs":"mine"}}',
+            'application/json',
+            b'{"id": "resp_1", "access_programs": null, "metadata": {"access_programs": "mine"}}',
+            id='caller-metadata-kept',
+        ),
+        pytest.param(
+            b': keep-alive\n\ndata: {"response":{"access_programs":{"program":"synthetic"}}}\n\ndata: {"type":"done"}\n\n',
+            'text/event-stream',
+            b': keep-alive\n\ndata: {"response": {"access_programs": null}}\n\ndata: {"type":"done"}\n\n',
+            id='stream-with-comment',
+        ),
+        pytest.param(b'not json "access_programs"', 'text/plain', b'not json "access_programs"', id='not-json'),
+        pytest.param(
+            b'data: {"access_programs": cut off\n\n',
+            'text/event-stream',
+            b'data: {"access_programs": cut off\n\n',
+            id='stream-event-not-json',
+        ),
+    ],
+)
+def test_access_programs_are_cleared_from_responses(body: bytes, content_type: str, expected: bytes):
+    """The recorder sets the recording account's `access_programs` in OpenAI Responses bodies to null."""
+    response = before_record_response(_response(body=body, **{'content-type': content_type}))
+    assert response.body == expected
+
+
 @pytest.mark.parametrize('encoding', ['gzip', 'br'])
 def test_compressed_bodies_are_inflated_before_scrubbing(encoding: str):
     raw = b'{"access_token": "secret", "ok": true}'

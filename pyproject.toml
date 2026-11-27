@@ -104,6 +104,7 @@ pydantic-evals = { workspace = true }
 pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
 pydantic-ai-harness = { workspace = true }
+pydantic-ai-pax = { workspace = true }
 pydantic-clai2 = { workspace = true }
 
 [tool.uv.workspace]
@@ -114,6 +115,7 @@ members = [
     "clai",
     "examples",
     "src/pydantic_ai_harness",
+    "src/pydantic_ai_pax",
     "src/pydantic_clai2",
 ]
 
@@ -121,32 +123,12 @@ members = [
 # `exclude-newer` relative durations need >= 0.9.17, `exclude-newer-package` `false` needs >= 0.9.25
 required-version = ">=0.9.25"
 default-groups = ["dev", "lint"]
+# The lock leaves out these environments. Lock-only: the published `requires-python` stays `>=3.11`.
+# - Python < 3.11.5: no patched `soupsieve` (>= 4.0.0, see the floor below) supports it.
+# - emscripten: wheel-only dependencies such as `psycopg-binary` ship no emscripten wheels, so a
+#   lock that forks on `sys_platform == 'emscripten'` has no solution.
+environments = ["python_full_version >= '3.11.5' and sys_platform != 'emscripten'"]
 exclude-newer = "7 days"
-conflicts = [
-    # The `mcp-tasks` extra lives in the FastMCP 4 / MCP SDK v2 universe, while the dev group
-    # deliberately locks FastMCP 3 (the FastMCP 4 CI job layers `--with` overrides onto the
-    # frozen lock). Lock-side forks only: pip resolves `[mcp,mcp-tasks]` together fine — in the
-    # mcp-tasks fork the extra's pre-release floor opts the shared `fastmcp-slim` range into the
-    # FastMCP 4 betas. Every `--all-extras` invocation in CI and the Makefile carries
-    # `--no-extra mcp-tasks` to stay on the dev side of the fork.
-    [
-        { package = "pydantic-ai-slim", extra = "mcp-tasks" },
-        { group = "dev" },
-    ],
-    [
-        { package = "pydantic-ai", extra = "mcp-tasks" },
-        { group = "dev" },
-    ],
-    # `pydantic-ai-harness[stackone]` needs FastMCP 3.
-    [
-        { package = "pydantic-ai-slim", extra = "mcp-tasks" },
-        { package = "pydantic-ai-harness", extra = "stackone" },
-    ],
-    [
-        { package = "pydantic-ai", extra = "mcp-tasks" },
-        { package = "pydantic-ai-harness", extra = "stackone" },
-    ],
-]
 constraint-dependencies = [
     "ray>=2.55.0",
     "authlib>=1.6.7",
@@ -185,7 +167,7 @@ constraint-dependencies = [
     "datasets>=5.0.1",
     "sentence-transformers>=5.6.0",
     "oauthlib>=4.0.0",
-    "soupsieve>=2.9.0",
+    "soupsieve>=4.0.0",
     "certifi>=2026.10.19",
 ]
 # `gradio` (an examples dependency) caps `pillow<13`, even in its latest release, so without
@@ -224,36 +206,15 @@ genai-prices = false
 pydantic-ai-harness = false
 logfire = false
 logfire-api = false
-# certifi 2026.10.19 is the `certifi` floor above: it keeps out the compromised eMudhra
-# `emSign ECC Root CA - G3` and restores the unaffected emSign roots 2026.10.18 dropped.
-# TODO(dsfaccini): Remove after 2026-10-27 02:25 UTC, then run `uv lock` and
+logfire-sdk = false
+# k8s-agent-sandbox 1.0.11 is the `kubernetes` extra's floor: the release the backend is verified against.
+# TODO(adtyavrdhn): Remove after 2026-11-19 19:37 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
-certifi = "2026-10-20T02:25:00Z"
-# pillow 13.0.0 is the `pillow` floor above: it is the first release with the fixes.
-# TODO(dsfaccini): Remove after 2026-10-23 22:19 UTC, then run `uv lock` and
+k8s-agent-sandbox = "2026-11-12T19:37:00Z"
+# boxd 0.3.3 is the `boxd` extra's floor: it added `replace_in` on `secrets.set`.
+# TODO(adtyavrdhn): Remove after 2026-11-30 10:00 UTC, then run `uv lock` and
 # `uv lock --script .github/scripts/pydantic-ai-runner`.
-pillow = "2026-10-16T22:19:00Z"
-# boxlite 0.10.7 is the `boxlite` floor: 0.10.6 has no wheels for Python 3.13 or 3.14.
-# TODO(adtyavrdhn): Remove after 2026-10-25 01:35 UTC.
-boxlite = "2026-10-18T01:35:01Z"
-# prefect 3.9.0 is the `prefect` floor: it is the first release that imports on a current FastAPI.
-# TODO(DouweM): Remove after 2026-10-28 03:46 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-prefect = "2026-10-21T03:46:00Z"
-# boxd 0.2.20 is the `boxd` floor: it is the first release with `machines.fs`.
-# TODO(adtyavrdhn): Remove after 2026-11-03 23:56 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-boxd = "2026-10-27T23:56:00Z"
-# render 1.6.0 provides the stable Sandbox API used by RenderSandbox.
-# TODO(adtyavrdhn): Remove after 2026-11-06 01:06 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-render = "2026-10-30T01:06:03Z"
-# durabletask and durabletask-azuremanaged 1.13.0 are the floors for the `azure-durable-task` extra
-# of pydantic-ai-harness: they are the first releases that close a dispatch's orchestrator generator.
-# TODO(adtyavrdhn): Remove after 2026-11-09 22:34 UTC, then run `uv lock` and
-# `uv lock --script .github/scripts/pydantic-ai-runner`.
-durabletask = "2026-11-02T22:34:00Z"
-durabletask-azuremanaged = "2026-11-02T22:34:00Z"
+boxd = "2026-11-23T10:00:00Z"
 
 [dependency-groups]
 dev = [
@@ -298,7 +259,7 @@ dev = [
     # https://github.com/beartype/beartype/issues/618
     "beartype>=0.23.0rc2; python_version >= '3.15'",
     # The MCP SDK v2 wire types as a standalone pure-Pydantic distribution, so the tests can check
-    # the compat readers' field-name pairs against the real v2 models while running against v1.
+    # the compat readers' field-name pairs against the real v2 models in the FastMCP 3 CI job too.
     "mcp-types>=2.0.0",
     # BlockBuster minor releases may add breaking detection rules; keep this test detector on 1.5.x.
     "blockbuster>=1.5.28,<1.6",
@@ -307,7 +268,8 @@ dev = [
     "azure-identity>=1.25.3",
     # Storage backends `pydantic-ai-harness` supports, faked or run against a live server.
     "mongomock-motor>=0.0.36",
-    "redis>=8.1.0",
+    # Floor below 8.1.0, which `fastmcp-tasks` excludes; the only release after it is a beta.
+    "redis>=8.0.1",
     # Records and replays provider traffic: its pytest plugin owns `@pytest.mark.vcr` and the `vcr` fixture.
     "cassetter>=0.13.0",
     # Drives the deterministic realtime session simulator in `tests/realtime/simulation/`: randomized
@@ -317,6 +279,9 @@ dev = [
     # Serves the gRPC stream `pydantic_monty.AsyncMontyRemote` dials in `tests/harness/code_mode/grpc_relay.py`.
     # Pure Python, so unlike `grpcio` it installs on every supported Python without a source build.
     "grpclib>=0.4.7",
+    # Validates walked schemas, `TestModel` arguments, and the agent spec and dataset instances
+    # `tests/spec_conformance.py` builds against their schemas.
+    "jsonschema>=4.25.1",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted
 # runner. Keeping it out of `dev` means the test matrix -- twenty cells of which run on Ubicloud --
@@ -365,13 +330,17 @@ include = [
     "examples/**/*.py",
     "clai/**/*.py",
     "src/pydantic_ai_harness/**/*.py",
+    "src/pydantic_ai_pax/**/*.py",
     "src/pydantic_clai2/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/_ratchet.py",
     "scripts/check_complexity.py",
     "scripts/test_check_complexity.py",
+    "scripts/check_test_waits.py",
+    "scripts/test_check_test_waits.py",
     "scripts/durable_exec_contract.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
@@ -401,6 +370,7 @@ include = [
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
     ".github/scripts/test_pr_guard.py",
+    ".github/scripts/test_lint_exemptions.py",
     ".github/scripts/test_ci_content_classifier.py",
     ".github/scripts/test_ci_matrix.py",
     ".github/scripts/test_gh_aw_engine_pin_bump.py",
@@ -445,7 +415,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
-known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph", "pydantic_ai_harness", "pydantic_clai2"]
+known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph", "pydantic_ai_harness", "pydantic_ai_pax", "pydantic_clai2"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -472,6 +442,17 @@ banned-module-level-imports = [
 [tool.ruff.lint.flake8-tidy-imports.banned-api]
 "typing.TypedDict".msg = "Use typing_extensions.TypedDict instead."
 "asyncio.Lock".msg = "Use anyio.Lock instead."
+# Backend-neutral code runs on Trio too. `.github/scripts/test_lint_exemptions.py` checks the `TID251`
+# `per-file-ignores` below: the bans above still hold in those files, and each one still uses an `asyncio` primitive.
+# `tests/test_examples.py` lints docs examples without the bans below.
+"asyncio.sleep".msg = "Use anyio.sleep instead."
+"asyncio.Event".msg = "Use anyio.Event instead."
+"asyncio.to_thread".msg = "Use anyio.to_thread.run_sync instead."
+"asyncio.wait_for".msg = "Use anyio.fail_after or anyio.move_on_after instead."
+"asyncio.timeout".msg = "Use anyio.fail_after or anyio.move_on_after instead."
+"asyncio.Queue".msg = "Use anyio.create_memory_object_stream instead."
+"asyncio.Semaphore".msg = "Use anyio.Semaphore instead."
+"asyncio.Condition".msg = "Use anyio.Condition instead."
 
 [tool.ruff.format]
 # don't format python in docstrings, pytest-examples takes care of it
@@ -479,8 +460,14 @@ docstring-code-format = false
 quote-style = "single"
 
 [tool.ruff.lint.per-file-ignores]
-"examples/**/*.py" = ["D101", "D103"]
-"tests/**/*.py" = ["D"]
+# The `asyncio` bans in `banned-api` (`TID251`) are for backend-neutral library code. Tests run on asyncio by default,
+# examples show asyncio usage, and CI and helper scripts are not library code.
+"examples/**/*.py" = ["D101", "D103", "TID251"]
+"tests/**/*.py" = ["D", "TID251"]
+".github/scripts/pydantic_ai_gh_aw_shim/cli.py" = ["TID251"]
+".github/scripts/test_pydantic_ai_runner.py" = ["D", "TID251"]
+"src/pydantic_ai_harness/scripts/**/*.py" = ["TID251"]
+"src/pydantic_ai_harness/integration_tests/**/*.py" = ["TID251"]
 "docs/**/*.py" = ["D"]
 ".github/scripts/ci_duration.py" = ["D"]
 ".github/scripts/shard_durations.py" = ["D"]
@@ -489,7 +476,6 @@ quote-style = "single"
 ".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_check_api_compatibility.py" = ["D"]
 ".github/scripts/test_pr_gates.py" = ["D"]
-".github/scripts/test_pydantic_ai_runner.py" = ["D"]
 ".github/scripts/test_review_lifecycle.py" = ["D"]
 ".github/scripts/test_issue_pr_attention_monitor.py" = ["D"]
 ".github/scripts/test_community_demand.py" = ["D"]
@@ -500,6 +486,7 @@ quote-style = "single"
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
 ".github/scripts/test_pr_guard.py" = ["D"]
+".github/scripts/test_lint_exemptions.py" = ["D"]
 ".github/scripts/test_ci_content_classifier.py" = ["D"]
 ".github/scripts/test_ci_matrix.py" = ["D"]
 ".github/scripts/test_gh_aw_engine_pin_bump.py" = ["D"]
@@ -510,7 +497,11 @@ quote-style = "single"
 ".github/scripts/test_douwebot_opencode_result.py" = ["D"]
 "scripts/test_typecheck_changed.py" = ["D"]
 "scripts/test_check_complexity.py" = ["D"]
-"!src/pydantic_clai2/**/*.py" = ["BLE001"]
+"scripts/test_check_test_waits.py" = ["D"]
+"!src/pydantic_ai_pax/**/*.py" = ["BLE001"]
+# pax owns its asyncio loop (`asyncio.run` in `cli/cli.py`), and agent runs need asyncio today; revisit with
+# https://github.com/pydantic/pydantic-ai/issues/7112.
+"src/pydantic_ai_pax/**/*.py" = ["TID251"]
 "!tests/**/*.py" = ["TID253"]
 # Modules dedicated to one of the heavy dependencies `TID253` bans need it at module level, e.g. for Temporal
 # workflow definitions; the cost is paid only where that dependency is what is being tested.
@@ -527,7 +518,7 @@ paths = [
     "pydantic_graph/pydantic_graph",
     "pydantic_evals/pydantic_evals",
     "src/pydantic_ai_harness/pydantic_ai_harness",
-    "src/pydantic_clai2/pydantic_clai2",
+    "src/pydantic_ai_pax/pydantic_ai_pax",
 ]
 max-complexity-allowed = 15
 cache-dir = ".cache/complexipy"
@@ -547,11 +538,15 @@ include = [
     "examples",
     "clai",
     "src/pydantic_ai_harness",
+    "src/pydantic_ai_pax",
     "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
+    "scripts/_ratchet.py",
     "scripts/check_complexity.py",
     "scripts/test_check_complexity.py",
+    "scripts/check_test_waits.py",
+    "scripts/test_check_test_waits.py",
     "scripts/durable_exec_contract.py",
 ]
 # Pyright always skips paths under a dot directory, even ones named here or on its command line, so
@@ -573,6 +568,7 @@ executionEnvironments = [
     { root = "scripts/typecheck_changed.py", pythonVersion = "3.11" },
     { root = "scripts/test_typecheck_changed.py", extraPaths = ["scripts"], pythonVersion = "3.11", reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = "scripts/test_check_complexity.py", extraPaths = ["scripts"], reportPrivateUsage = false },
+    { root = "scripts/test_check_test_waits.py", extraPaths = ["scripts"], reportPrivateUsage = false },
 ]
 exclude = [
     # Need `browser-use`, which the workspace lock excludes; the `harness browser-use` CI job checks them.
@@ -605,6 +601,7 @@ markers = [
     "smol_live: boots real smolvm VMs; needs a host that can run them",
     "boxlite_live: boots real BoxLite VMs; needs a host that can run them",
     "docker_live: starts real containers; needs a Docker daemon",
+    "kubernetes_live: claims real pods on the kind cluster from `cluster/up.sh`; needs Docker, kind and kubectl",
     "temporal: starts or connects to a local Temporal dev server",
     "subprocess(reason, conditional=False): launches a Python interpreter, which the cost guard otherwise fails; reason required. `conditional=True` skips the stale-marker check for a test that only launches one on some platforms or installs",
     "slow(reason): exempt from the per-test time budget (`PYTEST_TEST_BUDGET_SECONDS`); reason required",
@@ -643,13 +640,6 @@ filterwarnings = [
     "ignore: 'asyncio.iscoroutinefunction' is deprecated:DeprecationWarning:cohere",
     # This is because of google.
     "ignore: '_UnionGenericAlias' is deprecated and slated for removal:DeprecationWarning:google.genai",
-    # TODO(v3): Require `dbos>=3.4.0` and drop `SnapshotStepReservation`, the fallback for
-    # `DBOS.reserve_step` in `pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_operation_backend.py`.
-    # DBOS logs through the `LoggingHandler` that OpenTelemetry SDK 1.40 deprecated, reached whenever
-    # `enable_otlp` is set as `tests/durable_exec/test_dbos.py` does.
-    # TODO(v3): Require `dbos>=2.31.0` and drop this filter.
-    # https://github.com/dbos-inc/dbos-transact-py/pull/822
-    "ignore:`LoggingHandler` in `opentelemetry-sdk` is deprecated:DeprecationWarning:opentelemetry.sdk._logs",
     # TODO(Marcelo): Drop this once voyageai stops using Pydantic V1 functionality.
     # Fixed upstream in 0.4.0: https://github.com/voyage-ai/voyageai-python/pull/60 — drop when we bump past 0.3.7.
     "ignore: Core Pydantic V1 functionality:UserWarning",
@@ -678,12 +668,6 @@ filterwarnings = [
     # TODO: Drop once starlette moves to `anyio.from_thread.BlockingPortal`.
     # https://github.com/Kludex/starlette/issues/3497
     "ignore:The anyio.abc.BlockingPortal alias is deprecated:DeprecationWarning:starlette.testclient",
-    # `anthropic` 1.11.0 warns on every request for `claude-sonnet-4-5`, which reaches end of life on
-    # 2026-11-30. Recordings across the suite were made against it and replay offline, so the warning
-    # carries no signal here; users still get it from the SDK.
-    # TODO: Move these tests to a current model; the API stops serving this one on 2026-11-30, so any
-    # re-recording after that date needs the move first.
-    "ignore:The model 'claude-sonnet-4-5(-20250929)?' is deprecated and will reach end-of-life:DeprecationWarning",
 ]
 
 # https://coverage.readthedocs.io/en/latest/config.html#run
@@ -706,6 +690,8 @@ omit = [
     "pydantic_ai_slim/pydantic_ai/common_tools/exa.py",  # exa-py integration with external API calls
     "tests/models/xai_proto_cassettes.py", # dev-only helpers for recording/replaying xAI gRPC protobuf cassettes
     "tests/_inline_snapshot.py",  # test utility wrapper; branches depend on CLI flags
+    "tests/mcp_server.py",  # MCP test server; mostly run over stdio, where coverage doesn't follow, and each test calls only some of its tools
+    "tests/mcp_task_server.py",  # MCP task test server; its tools run only over stdio, where coverage doesn't follow
     "tests/kw_only_walker.py",  # pauses coverage while importing modules with excluded dependency guards
     "tests/providers/test_gateway_catalog.py",  # live gateway catalog smoke test; execution depends on opt-in flag and credentials
     "tests/harness/**/*_live.py",  # live sandbox tiers; run only with provider credentials

@@ -75,7 +75,10 @@ DEFAULT_SECRET_PATTERNS: Mapping[str, str] = {
     # Legacy AIza and new AQ. Gemini API keys.
     'google_api_key': r'\b(?:AIza[A-Za-z0-9_-]{35}|AQ\.[A-Za-z0-9_-]{45,})',
     'google_oauth_secret': r'\bGOCSPX-[A-Za-z0-9_-]{20,}',
-    'jwt': r'\beyJ[A-Za-z0-9_-]{10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}',
+    # A `-` directly before `eyJ` ends the header segment, so a failed match does
+    # not rescan the rest of the token from each `eyJ` in it. A header segment
+    # that contains `-eyJ` is not matched.
+    'jwt': r'\beyJ(?:[A-Za-z0-9_]|-(?!eyJ)){10,}\.eyJ[A-Za-z0-9_-]{10,}\.[A-Za-z0-9_-]{10,}',
     # A PEM block, terminated or not. The newline after the BEGIN line is
     # required so prose naming both markers in one sentence is not swallowed as
     # a key.

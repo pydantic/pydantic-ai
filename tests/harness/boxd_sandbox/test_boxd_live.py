@@ -22,6 +22,8 @@ Run locally:
 
 from __future__ import annotations
 
+import contextlib
+import json
 import uuid
 from collections.abc import AsyncGenerator, AsyncIterator
 from contextlib import asynccontextmanager
@@ -31,13 +33,17 @@ import boxd
 import pytest
 from pytest_examples import CodeExample
 
+from pydantic_ai.computer_use import Click, Drag, Point, PressKeys, Scroll, TypeText
 from pydantic_ai.workspaces import WorkspaceRef, WorkspaceTimeoutError, WorkspaceUnavailableError
 from pydantic_ai_harness.boxd_sandbox import BoxdSandbox, BoxdSandboxBackend
 from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.computer_use import DisplayAction
 
 from .._docs_examples import documented_cleanup, python_blocks, run_block
 from .._tool_calls import call_tools
-from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT
+from ..computer_use.display_contract_live import check_display_contract
+from ..computer_use.display_fakes import full_display
+from .conftest import LIVE_AUTO_SUSPEND_TIMEOUT, delete_live_machine
 
 pytestmark = pytest.mark.boxd_live
 
@@ -67,21 +73,208 @@ async def client() -> AsyncIterator[boxd.AsyncBoxd]:
 
 
 @asynccontextmanager
-async def _owned(client: boxd.AsyncBoxd, working_dir: str | None = None) -> AsyncGenerator[BoxdSandboxBackend]:
+async def _owned(
+    client: boxd.AsyncBoxd, working_dir: str | None = None, *, desktop: bool | tuple[int, int] = False
+) -> AsyncGenerator[BoxdSandboxBackend]:
     """Create a machine and delete it on the way out, even when the test deleted it already."""
-    backend = BoxdSandboxBackend(client=client, auto_suspend_timeout=LIVE_AUTO_SUSPEND_TIMEOUT, working_dir=working_dir)
+    backend = BoxdSandboxBackend(
+        client=client, auto_suspend_timeout=LIVE_AUTO_SUSPEND_TIMEOUT, working_dir=working_dir, desktop=desktop
+    )
     try:
         await backend.get_sandbox()
         yield backend
     finally:
         if backend.ref is not None:
-            await BoxdSandbox(client=client).destroy(backend.ref)
+            await delete_live_machine(backend.ref, client)
 
 
 async def _wait_for_status(client: boxd.AsyncBoxd, machine_id: str, status: str) -> None:
     with anyio.fail_after(120):
         while (await client.machines.get(machine_id)).status != status:
             await anyio.sleep(0.5)
+
+
+async def test_a_desktop_meets_the_display_contract(client: boxd.AsyncBoxd) -> None:
+    """Validates the fake-encoded assumptions that the first computer call starts the machine's desktop, that the
+    desktop keeps the size it was set to, and that a screenshot, a zoom and the pointer position come back as the
+    display contract expects."""
+    async with _owned(client, desktop=(1440, 900)) as backend:
+        display = full_display(backend)
+        await display.screenshot()
+        assert await display.display_size() == (1440, 900)
+        await check_display_contract(display)
+
+
+# A page that logs the `code` of each key Chromium gets (its `key` when it has none), and `=` plus each character
+# typed into it. It keeps the function keys, Tab and the menu key from Chromium, where they would move
+# the focus off the page or open a dialog.
+_KEY_LOG_PAGE = """<textarea autofocus style="width:600px;height:300px"></textarea><script>
+window.K = [];
+document.addEventListener('keydown', e => {
+  K.push(e.code || e.key);
+  if (/^F[0-9]+$/.test(e.key) || ['Tab', 'ContextMenu'].includes(e.code)) e.preventDefault();
+});
+document.addEventListener('input', e => e.data && K.push('=' + e.data));
+document.addEventListener('contextmenu', e => e.preventDefault());
+</script>"""
+
+# Each key name the driver takes, with the key Chromium gets for it.
+_KEY_CODES: dict[str, str] = {
+    **{'enter': 'Enter', 'escape': 'Escape', 'tab': 'Tab', 'backspace': 'Backspace', 'delete': 'Delete'},
+    **{'insert': 'Insert', 'home': 'Home', 'end': 'End', 'pageup': 'PageUp', 'pagedown': 'PageDown'},
+    **{'up': 'ArrowUp', 'down': 'ArrowDown', 'left': 'ArrowLeft', 'right': 'ArrowRight', 'space': 'Space'},
+    **{'printscreen': 'PrintScreen', 'pause': 'Pause', 'menu': 'ContextMenu', 'capslock': 'CapsLock'},
+    **{'numlock': 'NumLock', 'scrolllock': 'ScrollLock', **{f'f{n}': f'F{n}' for n in range(1, 13)}},
+    **{'a': 'KeyA', 'Z': 'KeyZ', '7': 'Digit7', '+': 'Equal', '!': 'Digit1', 'é': '=é', '\n': 'Enter', '\t': 'Tab'},
+    **{'super': 'MetaLeft'},
+}
+
+
+async def test_the_desktop_takes_every_key_name(client: boxd.AsyncBoxd) -> None:
+    """Validates the fake-encoded assumption that the X key name sent for each key presses that key, alone and with
+    modifiers held. Chromium (`agent-browser`, which boxd's image includes) reads back each key."""
+    async with _owned(client, desktop=True) as backend:
+        display = backend.display
+        assert display is not None
+        await display.screenshot()
+        await backend.write_bytes('/tmp/keys.html', _KEY_LOG_PAGE.encode())
+        await backend.run(['agent-browser', 'open', 'file:///tmp/keys.html'], timeout=120)
+        await display.act(Click(x=300, y=250))
+
+        async def pressed(*keys: str) -> list[str]:
+            await display.act(PressKeys(keys=keys))
+            # Polls Chromium's key log. A key that never arrives leaves the log empty until the deadline.
+            got: list[str] = []
+            # real-wait: the real machine answers on its own clock
+            with anyio.move_on_after(10):
+                while not got:
+                    logged = await backend.run(['agent-browser', 'eval', 'JSON.stringify(K.splice(0))'], timeout=60)
+                    got = json.loads(json.loads(logged.stdout))
+            return got
+
+        missed = {name: got for name, code in _KEY_CODES.items() if code not in (got := await pressed(name))}
+        assert missed == {}
+        assert await pressed('ctrl', 'shift', '+') == ['ControlLeft', 'ShiftLeft', 'Equal']
+
+
+# Starts a terminal on the desktop that saves what is typed into it, as an agent would start a program.
+_TERMINAL = "setsid xterm -e sh -c 'cat > typed.txt' </dev/null >/dev/null 2>&1 &"
+
+
+async def test_a_program_started_from_a_command_opens_on_the_desktop_and_takes_any_text(
+    client: boxd.AsyncBoxd,
+) -> None:
+    """Validates the fake-encoded assumptions that commands get the desktop's `DISPLAY`, and that typed text reaches
+    the focused window as Unicode, with a newline as Enter, even past boxd's 10,000 characters per call."""
+    async with _owned(client, desktop=True) as backend:
+        display = backend.display
+        assert display is not None
+        await display.screenshot()
+        await backend.run(['sh', '-c', _TERMINAL], timeout=60)
+        # No `--onlyvisible`: without a window manager, xdotool calls xterm's window unviewable even while it takes
+        # input.
+        await backend.run(['xdotool', 'search', '--sync', '--class', 'xterm'], timeout=30)
+
+        await display.act(Click(x=50, y=50))
+        # Over boxd's 10,000 characters per call, in lines short enough for a terminal. A terminal keeps at most 4,095
+        # characters of one line.
+        text = 'héllo 😀\n' + ('x' * 99 + '\n') * 101
+        await display.act(TypeText(text=text))
+        await display.act(PressKeys(keys=('ctrl', 'd')))
+
+        with anyio.fail_after(30):  # real-wait: bounds the poll below
+            # real-wait: the real terminal writes the file on its own clock
+            while (typed := await backend.run(['cat', 'typed.txt'], timeout=30)).stdout.count('\n') < 102:
+                await anyio.sleep(0.5)
+        assert typed.stdout == text
+
+
+async def test_the_panel_opens_a_terminal_below_it_that_has_the_keyboard(client: boxd.AsyncBoxd) -> None:
+    """Validates the fake-encoded assumptions that the panel start command, which the fake doesn't run, installs and
+    shows the panel on boxd's desktop, and that its Terminal button opens xterm below the panel with the keyboard,
+    so text typed straight after the click reaches the shell."""
+    async with _owned(client, desktop=True) as backend:
+        display = backend.display
+        assert display is not None
+        await display.screenshot()
+        assert (await backend.run(['xdotool', 'search', '--class', 'tint2'], timeout=30)).exit_code == 0
+
+        await display.act(Click(x=60, y=20))
+        found = await backend.run(['xdotool', 'search', '--sync', '--class', 'xterm'], timeout=30)
+        terminal = found.stdout.split()[0]
+        # A new window can take the keyboard only once a computer call has shown it, as the agent's next look does.
+        with anyio.fail_after(10):  # real-wait: bounds the poll below
+            # real-wait: a real window takes the keyboard only after a later computer call
+            while (await backend.run(['xdotool', 'getwindowfocus'], timeout=30)).stdout.strip() != terminal:
+                await display.display_size()
+                await anyio.sleep(0.2)
+        await display.act(TypeText(text='echo typed > /tmp/typed.txt\n'))
+
+        with anyio.fail_after(30):  # real-wait: bounds the poll below
+            # real-wait: the real shell writes the file on its own clock
+            while (typed := await backend.run(['cat', '/tmp/typed.txt'], timeout=30)).exit_code != 0:
+                await anyio.sleep(0.5)
+        assert typed.stdout == 'typed\n'
+        window = await backend.run(['xwininfo', '-id', terminal], timeout=30)
+        assert 'Absolute upper-left Y:  40' in window.stdout
+
+
+async def test_boxd_takes_scrolls_key_repeats_and_drags_past_its_per_call_limits(client: boxd.AsyncBoxd) -> None:
+    """Validates the fake-encoded assumption that wheel clicks, key repeats and drag points over boxd's limit of 100
+    per call are split into calls that boxd accepts."""
+    async with _owned(client, desktop=True) as backend:
+        display = backend.display
+        assert display is not None
+        await display.screenshot()
+        await display.act(Scroll(x=50, y=50, direction='down', amount=150))
+        await display.act(PressKeys(keys=('shift',), repeat=150))
+        await display.act(Drag(path=tuple(Point(x=600 + n, y=400) for n in range(150))))
+
+
+# A page that logs a drag from the left box that lands on the right one, each key's `code`, and the modifiers held
+# around each click and wheel turn. The boxes fill the window's height, so a point 400 pixels down the screen is on
+# them below Chromium's toolbar.
+_EVENT_LOG_PAGE = """<body style="margin:0">
+<div id="source" draggable="true" style="position:absolute;left:0;width:400px;height:100vh"></div>
+<div id="target" style="position:absolute;left:600px;width:400px;height:100vh"></div><script>
+window.E = [];
+source.addEventListener('dragstart', e => { E.push('dragstart'); e.dataTransfer.setData('text/plain', 'x'); });
+target.addEventListener('dragover', e => e.preventDefault());
+target.addEventListener('drop', e => { e.preventDefault(); E.push('drop'); });
+document.addEventListener('keydown', e => E.push(e.code));
+document.addEventListener('click', e => E.push(`click shift=${e.shiftKey} meta=${e.metaKey}`));
+document.addEventListener('wheel', e => E.push(`wheel ctrl=${e.ctrlKey}`));
+</script></body>"""
+
+
+async def test_drags_key_repeats_and_modifiers_reach_a_browser(client: boxd.AsyncBoxd) -> None:
+    """Validates the fake-encoded assumptions that a browser's drag-and-drop starts and lands both with boxd's `drag`
+    and with a drag split over 100 points, that a key repeated 3 times is pressed 3 times, and that boxd holds
+    modifiers during a click, a wheel turn and a drag, with `super` as the Meta key."""
+    async with _owned(client, desktop=True) as backend:
+        display = full_display(backend)
+        await display.screenshot()
+        await backend.write_bytes('/tmp/events.html', _EVENT_LOG_PAGE.encode())
+        await backend.run(['agent-browser', 'open', 'file:///tmp/events.html'], timeout=120)
+
+        async def logged(action: DisplayAction) -> list[str]:
+            await display.act(action)
+            # real-wait: a stray key press on the real desktop arrives with no event to wait on
+            await anyio.sleep(1)  # lets every event arrive, so an extra key press would show
+            got = await backend.run(['agent-browser', 'eval', 'JSON.stringify(E.splice(0))'], timeout=60)
+            return json.loads(json.loads(got.stdout))
+
+        drag = ['dragstart', 'drop']
+        assert await logged(Drag(path=(Point(x=200, y=400), Point(x=800, y=400)))) == drag
+        assert await logged(Drag(path=tuple(Point(x=200 + 4 * n, y=400) for n in range(150)))) == drag
+        assert await logged(Click(x=500, y=400)) == ['click shift=false meta=false']  # focuses the page
+        assert await logged(PressKeys(keys=('a',), repeat=3)) == ['KeyA'] * 3
+        assert await logged(Click(x=500, y=400, modifiers=('shift',))) == ['ShiftLeft', 'click shift=true meta=false']
+        assert await logged(Click(x=500, y=400, modifiers=('super',))) == ['MetaLeft', 'click shift=false meta=true']
+        scroll = Scroll(x=500, y=400, direction='down', amount=1, modifiers=('ctrl',))
+        assert await logged(scroll) == ['ControlLeft', 'wheel ctrl=true']
+        shift_drag = Drag(path=(Point(x=500, y=400), Point(x=510, y=400)), modifiers=('shift',))
+        assert await logged(shift_drag) == ['ShiftLeft', 'click shift=true meta=false']
 
 
 async def test_creates_an_isolated_machine_and_runs_a_command(client: boxd.AsyncBoxd) -> None:
@@ -133,7 +326,7 @@ async def test_fork_copies_files_and_running_processes_and_the_copies_diverge(cl
             await copy.run(['sh', '-c', 'echo after > state.txt'], timeout=60)
             assert (await source.run(['cat', 'state.txt'], timeout=60)).stdout == 'before\n'
         finally:
-            await sandbox.destroy(ref)
+            await delete_live_machine(ref, client)
 
 
 async def test_fork_wakes_a_suspended_machine_so_the_copy_keeps_its_memory(client: boxd.AsyncBoxd) -> None:
@@ -152,7 +345,7 @@ async def test_fork_wakes_a_suspended_machine_so_the_copy_keeps_its_memory(clien
                 await copy.run(['sh', '-c', f'cat state.txt; {_TICKING}'], timeout=60)
             ).stdout == 'unflushed\nticking\n'
         finally:
-            await sandbox.destroy(ref)
+            await delete_live_machine(ref, client)
 
 
 async def test_timeout_raises_with_the_partial_output_and_stops_the_command(client: boxd.AsyncBoxd) -> None:
@@ -225,7 +418,10 @@ async def test_a_machine_that_is_not_isolated_is_neither_used_nor_deleted(client
     )
     try:
         await client.machines.wait_until_ready(machine.id)
-        probe = await client.machines.exec(machine.id, _BOXD_SERVICES)
+        # boxd writes `boxd-env.sh` a moment after `wait_until_ready` returns, so the probe first waits up to
+        # 30 seconds for it.
+        wait_for_env = "timeout 30 sh -c 'until test -e /etc/profile.d/boxd-env.sh; do sleep 0.1; done'"
+        probe = await client.machines.exec(machine.id, f'{wait_for_env}; {_BOXD_SERVICES}')
         assert str(probe.stdout).splitlines() == ['200', 'env-installed']
         ref = WorkspaceRef(provider='boxd', id=machine.id)
         with pytest.raises(WorkspaceUnavailableError, match='is not isolated'):
@@ -258,7 +454,7 @@ async def test_a_snapshot_of_a_machine_on_a_network_is_refused(client: boxd.Asyn
                     await restored.run(['true'], timeout=30)
             finally:
                 assert restored.ref is not None
-                await BoxdSandbox(client=client).destroy(restored.ref)
+                await delete_live_machine(restored.ref, client)
         finally:
             await client.snapshots.delete(snapshot)
 
@@ -313,6 +509,45 @@ async def test_commands_get_a_usable_environment(client: boxd.AsyncBoxd) -> None
 
         result = await backend.run('echo "$FOO"; echo "$PATH"', shell=True, env={'FOO': '1'}, timeout=60)
         assert result.stdout.splitlines() == ['1', path]
+
+
+async def test_secrets_reach_the_machine_as_stand_ins(client: boxd.AsyncBoxd) -> None:
+    """Validates the fake-encoded assumptions behind `secrets`: boxd refuses `isolated` and `vcpu` beside a
+    spec, so the spec carries them; its `'{n}x{4n}'` size gives the machine `n` vCPUs; a spec combines with
+    `from_snapshot`; and the secret's variable holds a `bxds_` stand-in, not the value. The value is a dummy."""
+    secret = _unique('PYDANTIC_AI_E2E').replace('-', '_').upper()
+    snapshot = _unique('pydantic-ai-e2e-secrets')[:40]
+    probe = f'nproc; v=$(printenv {secret}); echo "${{v%%_*}}_"; [ "$v" = dummy-value ] && echo value || echo no-value'
+    await client.secrets.set(secret, 'dummy-value', scope='private-unattached', domains=['example.com'])
+    machines: list[WorkspaceRef] = []
+    try:
+        backend = BoxdSandboxBackend(
+            client=client, secrets=[secret], vcpu=2, auto_suspend_timeout=LIVE_AUTO_SUSPEND_TIMEOUT
+        )
+        machine = await backend.get_sandbox()
+        assert backend.ref is not None
+        machines.append(backend.ref)
+        assert machine.networking.isolated
+        assert (await backend.run(['sh', '-c', probe], timeout=60)).stdout.split() == ['2', 'bxds_', 'no-value']
+
+        await client.snapshots.create(backend.ref.id, snapshot)
+        with anyio.fail_after(120):
+            while (await client.snapshots.get(snapshot)).status != 'ready':
+                await anyio.sleep(0.5)
+        restored = BoxdSandboxBackend(
+            client=client, snapshot=snapshot, secrets=[secret], auto_suspend_timeout=LIVE_AUTO_SUSPEND_TIMEOUT
+        )
+        machine = await restored.get_sandbox()
+        assert restored.ref is not None
+        machines.append(restored.ref)
+        assert machine.networking.isolated
+        assert (await restored.run(['sh', '-c', probe], timeout=60)).stdout.split()[1:] == ['bxds_', 'no-value']
+    finally:
+        for ref in machines:
+            await delete_live_machine(ref, client)
+        with contextlib.suppress(boxd.NotFoundError):
+            await client.snapshots.delete(snapshot)
+        await client.secrets.delete(secret, scope='private-unattached')
 
 
 # The README's Python blocks are the same as this page's.

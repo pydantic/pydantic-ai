@@ -12,7 +12,7 @@ Give an agent a persistent notebook that it can update, search, and reuse across
 ```mermaid
 flowchart TB
     accTitle: Memory: a notebook the agent keeps across runs
-    accDescr: Your code gives Memory a namespace, such as from ctx.deps. The model calls Memory's four tools, such as write_memory, which read and make compare-and-swap writes in a store, such as FileMemoryStore, with alice/main/MEMORY.md and auth-notes.md. On the first request of each run, Memory sends the model a memory block (MEMORY.md excerpt, names of other files) with the user's prompt.
+    accDescr: Your code gives Memory a namespace, such as from ctx.deps. The model calls Memory's four tools, such as write_memory, which read and make compare-and-swap writes in a store, such as FileMemoryStore, with alice/main/MEMORY.md and auth-notes.md. On the first request of each run, Memory sends the model a memory block (MEMORY.md excerpt, names of other files) before the user's prompt.
     model(["model"])
     code["your code"]
     memory["Memory()<br/>four tools, such as<br/>write_memory"]:::capability
@@ -22,7 +22,7 @@ flowchart TB
     model <-->|"tool call, result"| memory
     memory <-->|"reads,<br/>compare-and-swap<br/>writes"| store
     memory -->|"first request of each run"| snapshot
-    snapshot -->|"with the user's prompt"| model
+    snapshot -->|"before the user's prompt"| model
     classDef capability stroke:#E520E9,stroke-width:2px
     classDef external stroke:#0E9C86,stroke-width:2px
 ```
@@ -31,14 +31,14 @@ flowchart TB
 
 Memory gives each agent a notebook made of Markdown files:
 
-- `MEMORY.md` is the main notebook. By default, a bounded excerpt and the names of other files are recorded with the user's prompt as delimited user-role context, once per run in which they changed.
+- `MEMORY.md` is the main notebook. By default, a bounded excerpt and the names of other files are recorded before the user's prompt as delimited user-role context, once per run in which they changed.
 - Other files hold longer or focused notes. The model reads them on demand or finds them with bounded text search.
 
 The model gets four tools:
 
 | Tool | Purpose |
 | --- | --- |
-| `write_memory` | Append to a file or replace one unique text fragment. Writes use optimistic concurrency and an idempotency identifier derived from the run, its step, and the tool call. |
+| `write_memory` | Append to a file or replace one unique text fragment. In a file with `\r\n` line endings, an `old_text` with `\n` line endings, as the injected snapshot shows them, matches too. Writes use optimistic concurrency and an idempotency identifier derived from the run, its step, and the tool call. |
 | `read_memory` | Read a bounded prefix of one memory file. Left out when `FileSystem` can read the files ([Reading memory with `FileSystem`](#reading-memory-with-filesystem)). |
 | `delete_memory` | Delete a file. The main notebook is protected. |
 | `search_memory` | Search across notebook files, subject to configured result, character, and file-scan limits. |
@@ -72,7 +72,7 @@ The directory includes the namespace. With file tools over the run's workspace, 
 
 ## Injection modes and limits
 
-Automatic injection is on by default. The usage guidance goes in the model instructions, and stored memory goes in a `<memory>` block, a user-role part recorded with the user's prompt. The guidance, `MEMORY.md`, and the list of other files share `max_tokens` (default 2,000, estimated at four characters per token); the default guidance alone uses about 200 of them. `max_lines` also caps the `MEMORY.md` lines shown, and `max_memory_size` caps each backend read. The file listing is bounded by the same budget, so the capability never requests an unbounded file or listing. Whatever does not fit is left out, with a note pointing the model to `read_memory` (or `read_file`, where it replaces `read_memory`) or `search_memory`. When the guidance alone fills the budget, nothing is injected and the `memory.inject` span records `memory.outcome='budget_exhausted'`.
+Automatic injection is on by default. The usage guidance goes in the model instructions, and stored memory goes in a `<memory>` block, a user-role part recorded before the user's prompt. The guidance, `MEMORY.md`, and the list of other files share `max_tokens` (default 2,000, estimated at four characters per token); the default guidance alone uses about 200 of them. `max_lines` also caps the `MEMORY.md` lines shown, and `max_memory_size` caps each backend read. The file listing is bounded by the same budget, so the capability never requests an unbounded file or listing. Whatever does not fit is left out, with a note pointing the model to `read_memory` (or `read_file`, where it replaces `read_memory`) or `search_memory`. When the guidance alone fills the budget, nothing is injected and the `memory.inject` span records `memory.outcome='budget_exhausted'`.
 
 When `heading` is set, the same `## {heading}` labels both the trusted guidance and the user-role memory block.
 
@@ -87,17 +87,17 @@ memory = Memory(
 )
 ```
 
-The snapshot is added to the conversation's message history, so every later request sends it unchanged and the cached prompt prefix holds. `Memory` adds one on the first request of a run, with the user's prompt, and only when memory changed since the latest snapshot in the history (or there is none yet). A conversation therefore carries one snapshot per run in which memory changed; earlier ones stay where they were sent, and the default guidance tells the model that a later `<memory>` block for the same memory supersedes its earlier ones. When memory is emptied, the new snapshot says so, under the memory's `heading`. An empty snapshot is skipped only in a fresh conversation, whose history is just the current prompt: anything earlier, such as an older snapshot a provider still sends after another provider's compaction or a summary that kept memory's facts, could still show what was deleted. A snapshot before the latest compaction boundary no longer counts, so the next run records the current memory again.
+The snapshot is added to the conversation's message history, so every later request sends it unchanged and the cached prompt prefix holds. `Memory` adds one on the first request of a run, [before the user's prompt](../message-history.md#placing-context-before-the-prompt) in the same request, so the question comes last, and only when memory changed since the latest snapshot in the history (or there is none yet). A conversation therefore carries one snapshot per run in which memory changed; earlier ones stay where they were sent, and the default guidance tells the model that a later `<memory>` block for the same memory supersedes its earlier ones. When memory is emptied, the new snapshot says so, under the memory's `heading`. An empty snapshot is skipped only in a fresh conversation, whose history is just the current prompt: anything earlier, such as an older snapshot a provider still sends after another provider's compaction or a summary that kept memory's facts, could still show what was deleted. A snapshot before the latest compaction boundary no longer counts, so the next run records the current memory again.
 
-New or changed memory is not added after tool results, where a model could read it as a new message from the user. The one exception is restoring the run's own snapshot when compaction drops it in the middle of a tool loop, described below. Memory that changes during a run, through `write_memory` or an external update, reaches the model with the next user prompt; the model's own writes are already in the conversation as its tool calls. A snapshot is only added before the model has responded in the run, so a run that starts without a prompt from history ending in tool results or a response (resuming after a deferred tool approval, or continuing a provider-suspended response), or a `Memory` loaded mid-run with `defer_loading=True`, adds none, even if a hook retries its first request; if compaction drops the snapshot such a run started with, that same snapshot is enqueued again, even when the history has none yet: memory reaches the model with the next prompt. A run with no prompt and no tool results, such as `agent.run()` on an empty history, gets its snapshot on that request. If an earlier capability's `before_model_request` retries the run's first request, the snapshot follows the retry feedback, still ahead of any response. Every snapshot is enqueued, so UI adapters stream it as an `EnqueuedMessagesEvent`.
+New or changed memory is not added after tool results, where a model could read it as a new message from the user. The one exception is restoring the run's own snapshot when compaction drops it in the middle of a tool loop, described below. Memory that changes during a run, through `write_memory` or an external update, reaches the model with the next user prompt; the model's own writes are already in the conversation as its tool calls. A snapshot is only added before the model has responded in the run, so a run that starts without a prompt from history ending in tool results or a response (resuming after a deferred tool approval, or continuing a provider-suspended response), or a `Memory` loaded mid-run with `defer_loading=True`, adds none, even if a hook retries its first request; if compaction drops the snapshot such a run started with, that same snapshot is enqueued again, even when the history has none yet: memory reaches the model with the next prompt. A run with no prompt and no tool results, such as `agent.run()` on an empty history, gets its snapshot on that request. If an earlier capability's `before_model_request` retries the run's first request, the request being sent holds the retry feedback rather than the prompt, so the snapshot follows the feedback, still ahead of any response. Every snapshot is enqueued, so UI adapters stream it as an `EnqueuedMessagesEvent`.
 
-Stored memory and the listed file names go into the snapshot as data: the framework's framing tags in them, such as `<system>`, and `<memory>` itself are escaped, so memory can't close its block or read as the application speaking.
+Stored memory and the listed file names go into the snapshot as data, with a note in the application's voice that the agent wrote it in an earlier run, not the user or the application. They go in as stored: text in them that looks like the framework's framing tags, such as `<system>`, or opens or closes `<memory>` itself, gets a further note saying the agent wrote it, so memory can't close its block or read as the application speaking.
 
-Snapshots are part of the conversation history and reach UI clients: UI adapters stream each new one as it is added and include it in the history they send. Keep that in mind when memory holds anything the user of the UI should not see.
+Each snapshot is a `MemorySnapshotPart`, a [capability part](../capabilities/custom.md#capability-parts) holding data the agent wrote in an earlier run, never trusted, and recognized by its type and its `scope_hash` and `memory_id` fields (the hashed scope and the capability's `id`), never by its text. The UI adapters keep capability parts on the server, so a history that goes through a UI client comes back without its snapshots and gets a fresh one on every run. Keep the history on the server when that matters. Snapshots saved by earlier releases, as user text marked with metadata or a plain string, are recognized and kept, and so are ones those releases recorded after the prompt, where they were sent.
 
-Snapshots are recognized by the metadata on their `TextContent`, `{'origin': 'pydantic-ai-harness.memory.v1', 'scope': ..., 'id': ...}` (the hashed scope and the capability's `id`), never by their text. A history that loses that metadata on the way through a UI client, as a Vercel AI round trip does, gets a fresh snapshot on every run, and its earlier snapshots then look like user messages to `SummarizingCompaction`, which keeps them with `keep_user_messages`. Keep the history on the server when that matters. Snapshots saved by earlier releases, which marked them with a plain string, are recognized and kept.
+When combining it with compaction, list compaction before `Memory`, so `Memory` sees the history compaction leaves. If compaction drops the snapshot a run started with, `Memory` enqueues that same snapshot again on the same request, without reading the store again. Unlike the run's first snapshot, it lands at the end of the request being sent, after its tool results, which is the one place every compaction keeps, native compaction included; on a later run's first request it records the current memory again if needed.
 
-When combining it with compaction, list compaction before `Memory`, so `Memory` sees the history compaction leaves. If compaction drops the snapshot a run started with, `Memory` enqueues that same snapshot again on the same request, without reading the store again. It lands at the end of the request being sent, after its tool results, which is the one place every compaction keeps, native compaction included; on a later run's first request it records the current memory again if needed.
+A `FileMemoryStore` whose `MEMORY.md` is below `'operator'` [authority](../workspace.md#workspace-authority), such as one in the run's workspace when that's a repository the operator doesn't control, can hold text the agent never wrote. Its snapshot is still injected as data, but attributed to that file's author rather than to the agent. To keep memory the agent can rely on while working in such a workspace, keep it in an operator workspace of its own with `FileMemoryStore(..., workspace=LocalWorkspaceBackend(...))`. Writes work in either.
 
 Set `inject_memory=False` to keep memory out of the conversation entirely. The tools remain available, and the model can fetch memory only when it needs it. Snapshots that earlier runs added stay in the history:
 
@@ -138,6 +138,8 @@ If a memory path resolves outside its store, the tool asks the model to correct 
 
 `FileMemoryStore` keeps receipts for its 1,024 most recent mutations in `.memory-operations.json` beside the Markdown files, so a replayed tool call is not applied twice; copy it with them. It serializes its own operations but not those of another store or process writing the same directory, so share one `FileMemoryStore` instance, or use `SqliteMemoryStore` or `PostgresMemoryStore` for concurrent writers. Editing a Markdown file outside the capability changes its version, so a write based on the old content fails with a conflict. `FileMemoryStore` listings and searches skip symlinked directories, including links that point outside the store.
 
+On its first call, each `PostgresMemoryStore` instance checks for its three tables, its `{table}_versions` sequence and the columns later releases added, and creates or adds whatever is missing under `pg_advisory_xact_lock`. Only that step needs `CREATE` on the schema and ownership of an existing table: once the schema is current, a role granted `SELECT`, `INSERT`, `UPDATE` and `DELETE` on the tables and `USAGE` on the sequence is enough.
+
 `PostgresMemoryStore` accepts the driver-neutral `PostgresPool` protocol, so the harness does not require a particular PostgreSQL driver. Install and manage the driver in your application, for example:
 
 ```bash
@@ -158,6 +160,8 @@ async def build_memory() -> tuple[Memory[None], asyncpg.Pool]:
 ```
 
 Call `build_memory` during application startup and close the returned pool during shutdown. The store does not manage it.
+
+When the store creates its table, it also creates an index on `path COLLATE "C"`, the binary collation its prefix filters compare in, so listing and searching a scope reads only that scope's rows under any database collation. A table created by an earlier release does not get it automatically, because building an index blocks writes to the table until it finishes. Create it without blocking writes with `CREATE INDEX CONCURRENTLY {table}_path_idx ON {table} (path COLLATE "C")`.
 
 ## Namespaces
 
@@ -290,7 +294,7 @@ agent = Agent(
 
 The bundled stores implement `SearchableMemoryStore`. A store counts as searchable when it has a `search` method, so a custom store's `search` must take the arguments `SearchableMemoryStore.search` declares. For a custom store that implements only `MemoryStore`, `search_memory` requests at most `max_search_files + 1` paths, scans at most `max_search_files`, and performs bounded reads. Lexical scoring uses only each scope-relative filename and its bounded content; tenant namespaces and agent names never affect relevance. Implement the optional search protocol for an indexed or semantic backend while preserving the same tenant boundary and result limits. Semantic ranking is not built in.
 
-The bundled stores search only the files directly in the run's scope and skip a deeper scope nested under it, such as namespace `acme/main` under namespace `acme`. The fallback scan for a custom store skips them too, but they still count toward the `max_search_files + 1` paths it requests.
+The bundled stores search and list only the files directly in the run's scope and skip a deeper scope nested under it, such as namespace `acme/main` under namespace `acme`, so its files do not fill the injected file list or a search's file limit. They implement `ChildListingMemoryStore`, whose `list_child_paths` returns only the paths with no `/` after the prefix. A custom store opts in by implementing it, and `Memory` then uses it for the injected file list and the fallback scan. Without it, both use `list_paths`, so a nested scope's files count toward the paths they request. A subclass of a bundled store that overrides `list_paths` should override `list_child_paths` as well.
 
 Scoring runs on the event loop and yields after each file, so a scan near the limits slows that search without stalling other runs in the process.
 
@@ -358,7 +362,7 @@ Each model request that uses automatic snapshot loading records one bounded snap
 
 ## Security and provenance
 
-Memory is model-written, untrusted content that can re-enter future prompts. Keeping it in a delimited user-role part lowers its authority relative to model instructions, but this is not a hard prompt-injection boundary. In stored content, the `<` of a `<memory>` or `</memory>` tag, in any case or spacing, is injected as `&lt;`, so stored text cannot end the block early. Use `inject_memory=False` when less-trusted actors can write to the store, and expose memory only through application-controlled retrieval when stronger isolation is required. Do not store secrets unless the backend, retention policy, and access controls are appropriate. Sanitize content before rendering it into another trust domain.
+Memory is model-written, untrusted content that can re-enter future prompts. Keeping it in a delimited user-role part lowers its authority relative to model instructions, but this is not a hard prompt-injection boundary. Stored content goes in as written, and a `<memory>` or `</memory>` tag in it gets a note saying the agent wrote it, not the application, so stored text cannot end the block early. Use `inject_memory=False` when less-trusted actors can write to the store, and expose memory only through application-controlled retrieval when stronger isolation is required. Do not store secrets unless the backend, retention policy, and access controls are appropriate. Sanitize content before rendering it into another trust domain.
 
 Memory records do not carry source citations. To record who wrote a file, such as the user in your product or the agent, use [write metadata](#write-metadata) with a `MetadataMemoryStore` rather than a header in the note. Metadata records which writer produced the current version; it does not establish that a remembered claim is true, and neither does optimistic concurrency, which prevents lost updates.
 

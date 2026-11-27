@@ -41,6 +41,7 @@ from pydantic_ai.capabilities import (
     PrefixTools,
     RaiseContentFilterError,
     ReinjectSystemPrompt,
+    RetryOnModelErrors,
     SetToolMetadata,
     Thinking,
     ToolSearch,
@@ -119,6 +120,7 @@ def test_capability_types() -> None:
             'ModelFallback': ModelFallback,
             'PrefixTools': PrefixTools,
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
+            'RetryOnModelErrors': RetryOnModelErrors,
             'SetToolMetadata': SetToolMetadata,
             'Thinking': Thinking,
             'ToolSearch': ToolSearch,
@@ -867,6 +869,22 @@ def test_model_json_schema_with_capabilities():
                     'title': 'CodeExecutionTool',
                     'type': 'object',
                 },
+                'ComputerTool': {
+                    'properties': {
+                        'kind': {'default': 'computer', 'title': 'Kind', 'type': 'string'},
+                        'optional': {'default': False, 'title': 'Optional', 'type': 'boolean'},
+                        'display_size': {
+                            'maxItems': 2,
+                            'minItems': 2,
+                            'prefixItems': [{'type': 'integer'}, {'type': 'integer'}],
+                            'title': 'Display Size',
+                            'type': 'array',
+                        },
+                    },
+                    'required': ['display_size'],
+                    'title': 'ComputerTool',
+                    'type': 'object',
+                },
                 'FileSearchProviderSettings': {
                     'additionalProperties': True,
                     'properties': {'xai': {'$ref': '#/$defs/XaiFileSearchToolSettings'}},
@@ -1152,6 +1170,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google-cloud:gemini-4-argon',
                         'gateway/google-cloud:gemini-4-carbon',
                         'gateway/google-cloud:gemini-4-hydrogen',
+                        'gateway/google-cloud:gemini-4-neon',
                         'gateway/google:gemini-3-pro-image',
                         'gateway/google:gemini-3.1-flash-image',
                         'gateway/google:gemini-3.1-flash-lite',
@@ -1162,6 +1181,7 @@ def test_model_json_schema_with_capabilities():
                         'gateway/google:gemini-4-argon',
                         'gateway/google:gemini-4-carbon',
                         'gateway/google:gemini-4-hydrogen',
+                        'gateway/google:gemini-4-neon',
                         'gateway/groq:openai/gpt-oss-120b',
                         'gateway/groq:openai/gpt-oss-20b',
                         'gateway/groq:qwen/qwen3.8-27b',
@@ -1172,6 +1192,8 @@ def test_model_json_schema_with_capabilities():
                         'gateway/openai:gpt-6-luna',
                         'gateway/openai:gpt-6.1-sol',
                         'gateway/openai:gpt-6.1-terra',
+                        'gateway/openai:gpt-6.2-astra',
+                        'gateway/openai:gpt-6.2-sol',
                         'google-cloud:gemini-3-pro-image',
                         'google-cloud:gemini-3.1-flash-image',
                         'google-cloud:gemini-3.1-flash-lite',
@@ -1182,7 +1204,19 @@ def test_model_json_schema_with_capabilities():
                         'google-cloud:gemini-4-argon',
                         'google-cloud:gemini-4-carbon',
                         'google-cloud:gemini-4-hydrogen',
+                        'google-cloud:gemini-4-neon',
                         'google-decisions:gemini-decision-1',
+                        'google-interactions:gemini-3-pro-image',
+                        'google-interactions:gemini-3.1-flash-image',
+                        'google-interactions:gemini-3.1-flash-lite',
+                        'google-interactions:gemini-3.1-flash-lite-image',
+                        'google-interactions:gemini-3.1-pro-preview',
+                        'google-interactions:gemini-3.5-flash-lite',
+                        'google-interactions:gemini-3.8-flash',
+                        'google-interactions:gemini-4-argon',
+                        'google-interactions:gemini-4-carbon',
+                        'google-interactions:gemini-4-hydrogen',
+                        'google-interactions:gemini-4-neon',
                         'google:gemini-3-pro-image',
                         'google:gemini-3.1-flash-image',
                         'google:gemini-3.1-flash-lite',
@@ -1193,6 +1227,7 @@ def test_model_json_schema_with_capabilities():
                         'google:gemini-4-argon',
                         'google:gemini-4-carbon',
                         'google:gemini-4-hydrogen',
+                        'google:gemini-4-neon',
                         'groq:openai/gpt-oss-120b',
                         'groq:openai/gpt-oss-20b',
                         'groq:qwen/qwen3.8-27b',
@@ -1240,6 +1275,8 @@ def test_model_json_schema_with_capabilities():
                         'openai-chat:gpt-6-luna',
                         'openai-chat:gpt-6.1-sol',
                         'openai-chat:gpt-6.1-terra',
+                        'openai-chat:gpt-6.2-astra',
+                        'openai-chat:gpt-6.2-sol',
                         'openai-decisions:gpt-6-luna',
                         'openai:gpt-5.6-luna',
                         'openai:gpt-5.6-sol',
@@ -1248,6 +1285,8 @@ def test_model_json_schema_with_capabilities():
                         'openai:gpt-6-luna',
                         'openai:gpt-6.1-sol',
                         'openai:gpt-6.1-terra',
+                        'openai:gpt-6.2-astra',
+                        'openai:gpt-6.2-sol',
                         'snowflake:claude-haiku-4-5',
                         'snowflake:claude-opus-4-8',
                         'snowflake:claude-opus-5-5',
@@ -1776,6 +1815,12 @@ def test_model_json_schema_with_capabilities():
                                         },
                                         {
                                             'allOf': [
+                                                {'$ref': '#/$defs/ComputerTool'},
+                                                {'properties': {'kind': {'const': 'computer'}}, 'required': ['kind']},
+                                            ]
+                                        },
+                                        {
+                                            'allOf': [
                                                 {'$ref': '#/$defs/MCPServerTool'},
                                                 {'properties': {'kind': {'const': 'mcp_server'}}, 'required': ['kind']},
                                             ]
@@ -1960,6 +2005,13 @@ def test_model_json_schema_with_capabilities():
                     'properties': {'MCP': {'$ref': '#/$defs/spec_params_MCP'}},
                     'required': ['MCP'],
                     'title': 'spec_MCP',
+                    'type': 'object',
+                },
+                'spec_RetryOnModelErrors': {
+                    'additionalProperties': False,
+                    'properties': {'RetryOnModelErrors': {'$ref': '#/$defs/spec_params_RetryOnModelErrors'}},
+                    'required': ['RetryOnModelErrors'],
+                    'title': 'spec_RetryOnModelErrors',
                     'type': 'object',
                 },
                 'spec_PrefixTools': {
@@ -2192,7 +2244,10 @@ def test_model_json_schema_with_capabilities():
                                         'ModelContextWindowExceededError',
                                         'ModelAuthenticationError',
                                         'ModelNotFoundError',
+                                        'ModelSchemaTooComplexError',
                                         'ModelRequestTimeout',
+                                        'ModelEmptyResponseError',
+                                        'ModelInvalidResponseError',
                                         'ContentFilterError',
                                         'OutputTokenLimitExceeded',
                                     ],
@@ -2214,7 +2269,10 @@ def test_model_json_schema_with_capabilities():
                                             'ModelContextWindowExceededError',
                                             'ModelAuthenticationError',
                                             'ModelNotFoundError',
+                                            'ModelSchemaTooComplexError',
                                             'ModelRequestTimeout',
+                                            'ModelEmptyResponseError',
+                                            'ModelInvalidResponseError',
                                             'ContentFilterError',
                                             'OutputTokenLimitExceeded',
                                         ],
@@ -2409,6 +2467,72 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_params_MCP',
                     'type': 'object',
                 },
+                'spec_params_RetryOnModelErrors': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'retry_on': {
+                            'anyOf': [
+                                {
+                                    'enum': [
+                                        'ModelAPIError',
+                                        'ModelHTTPError',
+                                        'ModelRateLimitError',
+                                        'ModelQuotaExceededError',
+                                        'ModelUnavailableError',
+                                        'ModelOverloadedError',
+                                        'ModelServerError',
+                                        'ModelConnectionError',
+                                        'ModelTimeoutError',
+                                        'ModelRequestRejectedError',
+                                        'ModelContextWindowExceededError',
+                                        'ModelAuthenticationError',
+                                        'ModelNotFoundError',
+                                        'ModelSchemaTooComplexError',
+                                        'ModelRequestTimeout',
+                                        'ModelEmptyResponseError',
+                                        'ModelInvalidResponseError',
+                                        'ContentFilterError',
+                                        'OutputTokenLimitExceeded',
+                                    ],
+                                    'type': 'string',
+                                },
+                                {
+                                    'items': {
+                                        'enum': [
+                                            'ModelAPIError',
+                                            'ModelHTTPError',
+                                            'ModelRateLimitError',
+                                            'ModelQuotaExceededError',
+                                            'ModelUnavailableError',
+                                            'ModelOverloadedError',
+                                            'ModelServerError',
+                                            'ModelConnectionError',
+                                            'ModelTimeoutError',
+                                            'ModelRequestRejectedError',
+                                            'ModelContextWindowExceededError',
+                                            'ModelAuthenticationError',
+                                            'ModelNotFoundError',
+                                            'ModelSchemaTooComplexError',
+                                            'ModelRequestTimeout',
+                                            'ModelEmptyResponseError',
+                                            'ModelInvalidResponseError',
+                                            'ContentFilterError',
+                                            'OutputTokenLimitExceeded',
+                                        ],
+                                        'type': 'string',
+                                    },
+                                    'type': 'array',
+                                },
+                            ],
+                            'title': 'Retry On',
+                        },
+                        'max_attempts': {'title': 'Max Attempts', 'type': 'integer'},
+                        'initial_delay': {'title': 'Initial Delay', 'type': 'number'},
+                        'max_delay': {'title': 'Max Delay', 'type': 'number'},
+                    },
+                    'title': 'spec_params_RetryOnModelErrors',
+                    'type': 'object',
+                },
                 'spec_params_PrefixTools': {
                     'additionalProperties': False,
                     'properties': {
@@ -2442,6 +2566,8 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/spec_PrefixTools'},
                                 {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
+                                {'const': 'RetryOnModelErrors', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_RetryOnModelErrors'},
                                 {'const': 'SetToolMetadata', 'type': 'string'},
                                 {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                                 {'const': 'Thinking', 'type': 'string'},
@@ -2477,6 +2603,15 @@ def test_model_json_schema_with_capabilities():
                             'title': 'Strategy',
                         },
                         'max_results': {'title': 'Max Results', 'type': 'integer'},
+                        'tools': {
+                            'anyOf': [
+                                {'const': 'all', 'type': 'string'},
+                                {'items': {'type': 'string'}, 'type': 'array'},
+                                {'additionalProperties': True, 'type': 'object'},
+                                {'type': 'null'},
+                            ],
+                            'title': 'Tools',
+                        },
                         'tool_description': {
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                             'title': 'Tool Description',
@@ -2712,6 +2847,8 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/spec_PrefixTools'},
                             {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
+                            {'const': 'RetryOnModelErrors', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_RetryOnModelErrors'},
                             {'const': 'SetToolMetadata', 'type': 'string'},
                             {'$ref': '#/$defs/short_spec_SetToolMetadata'},
                             {'const': 'Thinking', 'type': 'string'},
@@ -2865,6 +3002,47 @@ def test_native_tool_flat_form_schema_requires_kind():
         Agent.from_spec(spec)
 
 
+@pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+@pytest.mark.usefixtures('restore_native_tool_types')
+def test_native_tool_flat_form_schema_custom_kind():
+    """A native tool type defined after import is in the schema, and its flat form loads as that type."""
+
+    @dataclass(kw_only=True)
+    class WidgetTool(AbstractNativeTool):
+        kind: str = 'widget'
+        size: int = 0
+
+    spec = {'model': 'test', 'capabilities': [{'NativeTool': {'kind': 'widget', 'size': 3}}]}
+    schema = AgentSpec.model_json_schema_with_capabilities()
+    assert list(validator_for(schema)(schema).iter_errors(spec)) == []
+    capabilities = Agent.from_spec(spec).root_capability.capabilities
+    assert [c.tool for c in capabilities if isinstance(c, NativeToolCap)] == [WidgetTool(size=3)]
+
+
+@pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+@pytest.mark.usefixtures('restore_native_tool_types')
+def test_native_tool_flat_form_schema_subclass_keeping_a_built_in_kind():
+    """A subclass that keeps a built-in `kind` replaces that tool in the schema and the loader, so its fields load."""
+
+    @dataclass(kw_only=True)
+    class RegionalWebSearchTool(WebSearchTool):
+        region: str = 'eu'
+
+    spec = {'model': 'test', 'capabilities': [{'NativeTool': {'kind': 'web_search', 'region': 'us'}}]}
+    schema = AgentSpec.model_json_schema_with_capabilities()
+    assert list(validator_for(schema)(schema).iter_errors(spec)) == []
+    capabilities = Agent.from_spec(spec).root_capability.capabilities
+    assert [c.tool for c in capabilities if isinstance(c, NativeToolCap)] == [RegionalWebSearchTool(region='us')]
+
+
+@pytest.mark.usefixtures('native_tool_type_without_schema')
+def test_native_tool_flat_form_loads_built_in_tools_beside_a_type_without_a_schema():
+    """A registered native tool type pydantic can't build a schema for leaves the built-in flat forms loading."""
+    spec = {'model': 'test', 'capabilities': [{'NativeTool': {'kind': 'web_search'}}]}
+    capabilities = Agent.from_spec(spec).root_capability.capabilities
+    assert [c.tool for c in capabilities if isinstance(c, NativeToolCap)] == [WebSearchTool()]
+
+
 def test_slotted_native_tool_class(tmp_path: Path):
     """`@dataclass(slots=True)` recreates the class; the recreated class registers and loads under its kind."""
     with patch.dict(NATIVE_TOOL_TYPES):
@@ -2920,6 +3098,22 @@ def test_from_file_json(tmp_path: str):
     spec = AgentSpec.from_file(spec_path)
     assert spec.model == 'test'
     assert spec.name == 'my-agent'
+
+
+def test_from_file_json_with_utf8_bom(tmp_path: Path):
+    spec_path = tmp_path / 'agent.json'
+    spec_path.write_text('{"model": "test", "name": "café"}', encoding='utf-8-sig')
+    spec = AgentSpec.from_file(spec_path)
+    assert spec.name == 'café'
+
+
+@pytest.mark.parametrize('content', [b'\xef', b'\xef\xbb'])
+def test_from_file_truncated_utf8_bom_raises(tmp_path: Path, content: bytes):
+    """A file holding only part of a byte order mark is not valid UTF-8."""
+    spec_path = tmp_path / 'agent.json'
+    spec_path.write_bytes(content)
+    with pytest.raises(UnicodeDecodeError):
+        AgentSpec.from_file(spec_path)
 
 
 def test_from_file_with_schema_field(tmp_path: str):

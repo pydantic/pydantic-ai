@@ -6,7 +6,7 @@ name: PR Review Gates
 
 on:
   workflow_run: # zizmor: ignore[dangerous-triggers] -- no artifacts or upstream code are consumed; reevaluates live metadata
-    workflows: [PR Bots, PR Review Gates Events]
+    workflows: [PR Bots, PR Review Gates Events, PR Review Checks]
     types: [completed]
   # Review requirements are admission-only; report success on the merge-group SHA.
   merge_group:
@@ -14,9 +14,33 @@ on:
 
 permissions: {}
 
+# Each evaluation reads the live PR, so the newest wake-up for a head is enough: it replaces the
+# pending run and cancels the running one. The group names the head's branch and SHA because a
+# review wake-up reports the base repository as its head repository, even for a fork PR.
+# A wake-up that `review-target` skips takes a group of its own, so it cannot cancel an evaluation.
+# Concurrency cancels a wake-up only for a newer run, which wakes this workflow too. A wake-up
+# cancelled by hand has no newer run, so its head waits for the next event. Merge groups are never cancelled.
+concurrency:
+  group: >-
+    pr-review-gates-${{ github.event_name == 'workflow_run' && github.event.workflow_run.conclusion != 'cancelled' &&
+    github.event.workflow_run.event != 'merge_group' &&
+    (github.event.workflow_run.path != '.github/workflows/pr-review-checks.yml' ||
+    github.event.workflow_run.conclusion != 'skipped') &&
+    format('{0}-{1}', github.event.workflow_run.head_branch, github.event.workflow_run.head_sha) ||
+    format('run-{0}', github.run_id) }}
+  cancel-in-progress: ${{ github.event_name == 'workflow_run' }}
+
 jobs:
   review-target:
     name: Resolve review gate target
+    # PR Review Checks also runs on merge groups, which have no PR to evaluate, and skips its job for unrelated
+    # label and edit events, which change nothing the gates read. A cancelled wake-up skips too; see `concurrency`.
+    # Keep this condition equal to the one that picks the head's concurrency group.
+    if: >-
+      github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion != 'cancelled' &&
+      github.event.workflow_run.event != 'merge_group' &&
+      (github.event.workflow_run.path != '.github/workflows/pr-review-checks.yml' ||
+      github.event.workflow_run.conclusion != 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -43,8 +67,10 @@ jobs:
               });
               // REST name includes custom run-name titles; identify the workflow by path.
               const events = {
-                '.github/workflows/bots.yml': ['pull_request_target'],
-                '.github/workflows/pr-review-gates-events.yml': ['pull_request', 'pull_request_review', 'pull_request_review_comment', 'pull_request_review_thread']
+                '.github/workflows/bots.yml': ['pull_request'],
+                // Its review and findings are written with `GITHUB_TOKEN`, which wakes no observer.
+                '.github/workflows/pr-review-checks.yml': ['pull_request'],
+                '.github/workflows/pr-review-gates-events.yml': ['pull_request', 'pull_request_review', 'pull_request_review_comment']
               };
               if (!events[run.path]?.includes(run.event) ||
                   run.repository.full_name !== `${context.repo.owner}/${context.repo.repo}`) {
@@ -57,15 +83,35 @@ jobs:
                   typeof owner !== 'string' || !owner || typeof run.head_branch !== 'string' || !run.head_branch) {
                 throw new Error('Invalid workflow head identity');
               }
-              // Fork runs may omit pull_requests. Ask the base repository for the
-              // server's PR associations, then require the exact head identity.
-              const pulls = await github.paginate(github.rest.pulls.list, {
-                ...context.repo, state: 'open', head: `${owner}:${run.head_branch}`, per_page: 100
-              });
-              const matches = pulls.filter(pull => pull.state === 'open' &&
-                pull.head.sha === head && pull.head.repo?.id === repository);
+              let matches;
+              if (['pull_request_review', 'pull_request_review_comment'].includes(run.event)) {
+                // A review run reports the base repository as its head repository, even for a
+                // fork PR. Match the open PRs from the observed branch of any repository by SHA,
+                // and take the head repository from the PR.
+                const {repository: {pullRequests: pulls}} = await github.graphql(`
+                  query($owner: String!, $name: String!, $branch: String!) {
+                    repository(owner: $owner, name: $name) {
+                      pullRequests(states: OPEN, headRefName: $branch, first: 100) {
+                        pageInfo { hasNextPage }
+                        nodes { number state headRefOid headRepository { databaseId } }
+                      }
+                    }
+                  }`, {owner: context.repo.owner, name: context.repo.repo, branch: run.head_branch});
+                if (pulls.pageInfo.hasNextPage) throw new Error('Too many open PRs share the observed head branch');
+                matches = pulls.nodes.filter(pull => pull.state === 'OPEN' && pull.headRefOid === head)
+                  .map(pull => ({number: pull.number, repository: pull.headRepository?.databaseId}));
+              } else {
+                // Fork runs may omit pull_requests. Ask the base repository for the
+                // server's PR associations, then require the exact head identity.
+                const pulls = await github.paginate(github.rest.pulls.list, {
+                  ...context.repo, state: 'open', head: `${owner}:${run.head_branch}`, per_page: 100
+                });
+                matches = pulls.filter(pull => pull.state === 'open' &&
+                  pull.head.sha === head && pull.head.repo?.id === repository)
+                  .map(pull => ({number: pull.number, repository}));
+              }
               if (matches.length !== 1) throw new Error('Requires one open PR at the observed workflow head');
-              number = matches[0].number;
+              ({number, repository} = matches[0]);
             } else {
               throw new Error('Unrecognized review gate event');
             }
@@ -76,7 +122,7 @@ jobs:
             core.setOutput('repository', repository);
 
   review-statuses:
-    name: Publish size-dependent review gates
+    name: Publish review gates
     needs: review-target
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -87,11 +133,13 @@ jobs:
     permissions:
       contents: read
       actions: read
+      # `Tracked in #N` reads the issue it names.
+      issues: read
       pull-requests: read
       statuses: write
     steps:
       # Fail closed even if checkout or dependency installation fails after an earlier success.
-      - name: Mark douwebot review requirement pending
+      - name: Mark the review gates pending
         id: pending
         uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3 # v9.0.0
         env:
@@ -113,11 +161,14 @@ jobs:
               }
               head = pull.head.sha;
             }
-            await github.rest.repos.createCommitStatus({
-              ...context.repo, sha: head, context: 'Gate: clean douwebot approval',
-              state: 'pending', description: 'Reading current size and reviews.',
-              target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
-            });
+            for (const gate of ['Gate: clean douwebot approval', 'Gate: .github changes by a maintainer',
+                                'Gate: review findings dispositioned']) {
+              await github.rest.repos.createCommitStatus({
+                ...context.repo, sha: head, context: gate,
+                state: 'pending', description: 'Reading current files, size and reviews.',
+                target_url: `${context.serverUrl}/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`
+              });
+            }
             core.setOutput('active', 'true');
       - name: Checkout trusted default-branch gate
         if: steps.pending.outputs.active == 'true'

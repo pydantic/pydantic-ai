@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import time
+from collections.abc import Callable
 
 import pytest
 from pydantic import BaseModel
@@ -241,10 +242,32 @@ class TestSecretRedaction:
         assert replacement.startswith('k=[redacted:')
         assert replacement.endswith('_key]')
 
-    def test_scanning_a_large_paste_is_linear(self):
-        """An unbounded local part lets a failed match restart at every offset, blocking the event loop."""
+    @pytest.mark.parametrize('prefix', ['', 'Bearer ', 'token=', '.', '"', "'", ':', '/', '-', 'x-'])
+    def test_a_jwt_after_a_separator_is_removed(self, prefix: str):
+        """A JWT starts a token after whitespace or punctuation."""
+        jwt = 'eyJhbGciOiJIUzI1.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2QT4'
+
+        assert redact_secrets(f'{prefix}{jwt}').replacement == f'{prefix}[redacted:jwt]'
+
+    def test_a_jwt_whose_header_segment_holds_a_hyphen_is_removed(self):
+        """`{"alg":"HS256","kid":"a>"}` encodes with a `-`, which the header segment takes."""
+        jwt = 'eyJhbGciOiJIUzI1NiIsImtpZCI6ImE-In0.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2QT4'
+
+        assert redact_secrets(f'k={jwt}').replacement == 'k=[redacted:jwt]'
+
+    def test_a_header_segment_holding_dash_eyj_is_not_matched(self):
+        """A header segment holding `-eyJ` is not matched: the header segment ends at that `-`."""
+        jwt = 'eyJhbGciOi-eyJIUzI1NiJ9.eyJzdWIiOiIxMjM0.SflKxwRJSMeKKF2QT4'
+
+        assert redact_secrets(jwt).action == 'allow'
+
+    @pytest.mark.parametrize(
+        ('detector', 'text'), [(redact_personal_data, '9' * 100_000), (redact_secrets, 'eyJ-' * 50_000)]
+    )
+    def test_scanning_a_large_paste_is_linear(self, detector: Callable[[str], GuardrailResult], text: str):
+        """A failed match that restarts at every offset of a long run blocks the event loop."""
         start = time.perf_counter()
-        redact_personal_data('9' * 100_000)
+        detector(text)
 
         assert time.perf_counter() - start < 1.0
 

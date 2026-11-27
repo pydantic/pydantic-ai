@@ -76,6 +76,7 @@ from pydantic_ai import (
     _utils,
     usage,
 )
+from pydantic_ai._file_input import KNOWN_IMAGE_MEDIA_TYPES, KNOWN_VIDEO_MEDIA_TYPES
 from pydantic_ai._gateway_cost import fill_gateway_header_cost, gateway_reported_cost
 from pydantic_ai._output import DEFAULT_OUTPUT_TOOL_NAME
 from pydantic_ai._run_context import RunContext
@@ -84,6 +85,8 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
     ModelNotFoundError,
+    ModelSchemaTooComplexError,
+    ModelServerError,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -107,6 +110,7 @@ from pydantic_ai.models import (
     download_item,
 )
 from pydantic_ai.models._anthropic_max_tokens import cap_max_tokens
+from pydantic_ai.models._anthropic_sampling import drop_conflicting_sampling_settings
 from pydantic_ai.models._anthropic_schema_limits import (
     SCHEMA_TOO_COMPLEX_HINT,
     default_output_mode_within_limits,
@@ -236,6 +240,17 @@ def _map_api_errors(
         raise ModelAPIError(model_name=model_name, message=f'Failed to decode response as an event stream: {e}') from e
 
 
+def _model_error_category(e: ClientError, message: str | None) -> _model_errors.HTTPErrorCategory:
+    """A 424 `ModelErrorException` is the model failing; the model's own status, when present, says more than the 424."""
+    original_status_code = e.response.get('originalStatusCode')
+    category = (
+        _model_errors.http_status_category(original_status_code, message)
+        if isinstance(original_status_code, int)
+        else None
+    )
+    return category or ModelServerError
+
+
 def _map_client_error(
     e: ClientError, model_name: str, model_id_namespace: str, *, strict_schema_limits: bool
 ) -> ModelAPIError:
@@ -245,6 +260,8 @@ def _map_client_error(
     code, message = error.get('Code'), error.get('Message')
     provider_error_code = code if isinstance(code, str) else None
     category = _model_errors.bedrock_code_category(provider_error_code, message)
+    if provider_error_code == 'ModelErrorException':
+        category = _model_error_category(e, message)
     # An exception event inside a `ConverseStream` response carries no status code; it gets the status the same
     # exception has before the stream opens.
     in_stream = not isinstance(status_code, int)
@@ -258,7 +275,7 @@ def _map_client_error(
             suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
         hint = _DATA_RETENTION_HINT if isinstance(message, str) and 'data retention mode' in message.lower() else None
         if strict_schema_limits and status_code == 400 and is_schema_too_complex_error(message):
-            hint = SCHEMA_TOO_COMPLEX_HINT
+            category, hint = ModelSchemaTooComplexError, SCHEMA_TOO_COMPLEX_HINT
         return ModelHTTPError.for_category(
             category or _model_errors.http_status_category(status_code, message),
             status_code=status_code,
@@ -862,8 +879,10 @@ _CACHE_SETTINGS_KEYS = (
 class BedrockConverseModel(Model[BaseClient]):
     """A model that uses the Bedrock Converse API."""
 
-    # The Converse API has no audio content block.
+    # The Converse API has no audio content block, and names each image's and video's format, which only the media
+    # types core knows have.
     _unsupported_file_inputs = frozenset({'audio'})
+    _supported_media_types = {'image': KNOWN_IMAGE_MEDIA_TYPES, 'video': KNOWN_VIDEO_MEDIA_TYPES}
     # A tool's files that a tool result can't carry here go on the user channel, framed.
     _relocates_tool_files = True
 
@@ -974,6 +993,11 @@ class BedrockConverseModel(Model[BaseClient]):
         if self.profile.get('bedrock_thinking_variant') == 'anthropic':
             return 'anthropic'
         return super().canonical_system
+
+    def _classifies_schema_too_complex(self) -> bool:
+        # Only a model that compiles strict schemas with Anthropic's limits, i.e. Claude, gets its 400 for a schema
+        # that's too complex classified as `ModelSchemaTooComplexError`.
+        return self.profile.get('anthropic_enforces_strict_schema_limits', False)
 
     @property
     def _canonical_system_stamp(self) -> str | None:
@@ -1110,17 +1134,31 @@ class BedrockConverseModel(Model[BaseClient]):
         if exceeded := self._strict_schema_limit_exceeded(prepared_settings, model_request_parameters):
             raise limit_exceeded_error(exceeded, self.model_name)
         prepared_settings = cap_max_tokens(prepared_settings, self.profile.get('anthropic_max_output_tokens'))
-        if prepared_settings and (
-            self.profile.get('anthropic_disallows_sampling_settings', False)
-            or self.profile.get('bedrock_disallows_sampling_settings', False)
-        ):
-            filtered: ModelSettings = {**prepared_settings}
-            self._drop_unsupported_sampling_settings(filtered)
-            prepared_settings = filtered or None
+        if prepared_settings:
+            prepared_settings = self._drop_rejected_sampling_settings(prepared_settings, model_request_parameters)
+        if prepared_settings and 'stop_sequences' in self._unsupported_settings():
+            # `super().prepare_request()` has already warned that it's ignored.
+            without_stop_sequences: ModelSettings = {**prepared_settings}
+            without_stop_sequences.pop('stop_sequences', None)
+            prepared_settings = without_stop_sequences or None
         # Explicit `bedrock_cache_*` settings take precedence over the unified `cache` setting.
         if (cache := model_request_parameters.cache) and not self._has_provider_cache_settings(prepared_settings or {}):
             prepared_settings = self._translate_cache(cast(BedrockModelSettings, prepared_settings or {}), cache)
         return prepared_settings, model_request_parameters
+
+    def _drop_rejected_sampling_settings(
+        self, model_settings: ModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> ModelSettings | None:
+        """Drop the sampling settings the model rejects alone or with the rest of the request, like `AnthropicModel`."""
+        profile = cast(BedrockModelProfile, self.profile)
+        if profile.get('anthropic_disallows_sampling_settings', False) or profile.get(
+            'bedrock_disallows_sampling_settings', False
+        ):
+            filtered: ModelSettings = {**model_settings}
+            self._drop_unsupported_sampling_settings(filtered)
+            return filtered or None
+        thinking = _effective_thinking_type(model_settings, model_request_parameters, profile) is not None
+        return drop_conflicting_sampling_settings(model_settings, profile, thinking=thinking) or None
 
     def _check_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
@@ -1152,6 +1190,11 @@ class BedrockConverseModel(Model[BaseClient]):
                 'Bedrock does not support thinking and output tools at the same time. '
                 f'Use `output_type={suggested_output_type}(...)` instead.'
             )
+
+    def _unsupported_settings(self) -> frozenset[str]:
+        if self.profile.get('bedrock_supports_stop_sequences', True):
+            return self.unsupported_settings
+        return self.unsupported_settings | {'stop_sequences'}
 
     def _drop_unsupported_sampling_settings(self, model_settings: ModelSettings) -> None:
         """Drop the sampling settings a flagged model rejects, warning like `AnthropicModel` does.
@@ -1578,7 +1621,7 @@ class BedrockConverseModel(Model[BaseClient]):
         with _map_api_errors(
             self.model_name,
             self._provider.model_id_namespace,
-            strict_schema_limits=self.profile.get('anthropic_enforces_strict_schema_limits', False),
+            strict_schema_limits=self._classifies_schema_too_complex(),
         ):
             if stream:
                 model_response = await _call_bedrock(
@@ -1986,7 +2029,7 @@ class BedrockConverseModel(Model[BaseClient]):
             content.append({'reasoningContent': reasoning_content})
         else:
             thinking_text, carry_in_user_turn = render_replayed_thinking(part.content, profile)
-            if not carry_in_user_turn:
+            if not carry_in_user_turn and part.content:
                 content.append({'text': thinking_text})
             elif part.content:
                 # A redacted block arrives with its reasoning stripped (`content=''`), and

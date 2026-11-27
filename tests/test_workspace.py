@@ -68,6 +68,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
     WrapperWorkspace,
     _host as host_module,
+    lowest_authority_under,
 )
 from pydantic_ai.workspaces.workspace import workspace_layers
 
@@ -80,6 +81,8 @@ from .workspace_fakes import (
     RunOnlyWorkspaceBackend,
     WorkspaceCapability,
 )
+
+posix_only = pytest.mark.skipif(os.name != 'posix', reason='needs a POSIX host')
 
 
 @pytest.mark.parametrize('timeout', [-1, 0, math.nan, math.inf, '5'])
@@ -166,6 +169,7 @@ async def test_resolve_rejects_a_relative_base() -> None:
         await Workspace(FakeWorkspace('resolve')).resolve('file.txt', base='relative')
 
 
+@posix_only
 @pytest.mark.parametrize(
     'path',
     [
@@ -202,6 +206,7 @@ async def test_realpath_resolves_symlinks_the_way_the_environment_does(tmp_path:
     assert await workspace.realpath(path) == os.path.realpath(root.resolve() / path)
 
 
+@posix_only
 @pytest.mark.parametrize('native', [True, False], ids=['native', 'shell'])
 async def test_realpath_of_resolve_names_the_file_a_file_method_opens(tmp_path: Path, native: bool) -> None:
     """File methods collapse `..` as text, so `realpath(resolve(p))`, not `realpath(p)`, names the file they open."""
@@ -220,11 +225,13 @@ async def test_realpath_of_resolve_names_the_file_a_file_method_opens(tmp_path: 
     assert await workspace.realpath(path) == str((root / 'x').resolve())
 
 
+@posix_only
 async def test_run_rejects_an_empty_argv(tmp_path: Path) -> None:
     with pytest.raises(ValueError, match='command must not be empty'):
         await Workspace(LocalWorkspaceBackend(tmp_path)).run([])
 
 
+@posix_only
 @pytest.mark.parametrize('native', [True, False], ids=['native', 'shell'])
 async def test_run_starts_in_cwd(tmp_path: Path, native: bool) -> None:
     odd = "-d $x 'q'"
@@ -252,6 +259,7 @@ async def test_run_starts_in_cwd(tmp_path: Path, native: bool) -> None:
         await workspace.run(['pwd'], shell=True, cwd='missing')
 
 
+@posix_only
 async def test_shell_read_output_limit_names_file_operation(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     (tmp_path / 'large').write_bytes(b'x' * (80 * 1024))
     monkeypatch.setattr(host_module, '_MAX_CAPTURE_BYTES', 50 * 1024)
@@ -260,6 +268,7 @@ async def test_shell_read_output_limit_names_file_operation(tmp_path: Path, monk
         await workspace.read_bytes('large')
 
 
+@posix_only
 async def test_shell_listing_output_limit_names_listing(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for index in range(400):
         (tmp_path / (f'file-{index:04d}-' + 'x' * 100)).write_bytes(b'')
@@ -269,6 +278,7 @@ async def test_shell_listing_output_limit_names_listing(tmp_path: Path, monkeypa
         await workspace.list_dir('.')
 
 
+@posix_only
 async def test_shell_listing_larger_than_command_output_cap(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
     for index in range(600):
         (tmp_path / (f'file-{index:04d}-' + 'x' * 100)).write_bytes(b'')
@@ -277,6 +287,7 @@ async def test_shell_listing_larger_than_command_output_cap(tmp_path: Path, monk
     assert len(await workspace.list_dir('.')) == 600
 
 
+@posix_only
 async def test_shell_listing_uses_configured_temporary_directory(tmp_path: Path) -> None:
     temporary = tmp_path / 'temp'
     temporary.mkdir()
@@ -298,6 +309,7 @@ async def test_shell_listing_uses_configured_temporary_directory(tmp_path: Path)
     assert list(temporary.iterdir()) == []
 
 
+@posix_only
 async def test_shell_listing_removes_scratch_file_on_cancel(tmp_path: Path) -> None:
     started = asyncio.Event()
     temporary = tmp_path / 'temp'
@@ -332,6 +344,7 @@ async def test_shell_listing_removes_scratch_file_on_cancel(tmp_path: Path) -> N
     assert list(temporary.iterdir()) == []
 
 
+@posix_only
 async def test_shell_listing_preserves_non_utf8_filename(tmp_path: Path) -> None:
     class ByteListingBackend(RunOnlyWorkspaceBackend):
         async def run(
@@ -349,12 +362,14 @@ async def test_shell_listing_preserves_non_utf8_filename(tmp_path: Path) -> None
     assert [entry.name for entry in await workspace.list_dir('.')] == ['file-\udcff']
 
 
+@posix_only
 async def test_shell_realpath_keeps_a_non_utf8_filename(tmp_path: Path) -> None:
     # `list_dir` returns such a name with surrogate escapes; `write_bytes` resolves it through `realpath`.
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
     assert await workspace.realpath('file-\udcff') == f'{os.path.realpath(tmp_path)}/file-\udcff'
 
 
+@posix_only
 async def test_shell_filesystem_reports_permission_denied(tmp_path: Path) -> None:
     if os.geteuid() == 0:
         pytest.skip('root bypasses filesystem permissions')  # pragma: no cover
@@ -371,6 +386,7 @@ async def test_shell_filesystem_reports_permission_denied(tmp_path: Path) -> Non
         await workspace.make_dir('unwritable/child')
 
 
+@posix_only
 async def test_shell_write_never_replaces_a_file_it_cannot_copy_the_mode_of(tmp_path: Path) -> None:
     if os.geteuid() == 0:
         pytest.skip('root bypasses filesystem permissions')  # pragma: no cover
@@ -386,6 +402,7 @@ async def test_shell_write_never_replaces_a_file_it_cannot_copy_the_mode_of(tmp_
     assert not list(tmp_path.glob('.pydantic-ai-*'))
 
 
+@posix_only
 async def test_shell_filesystem_refuses_to_remove_workspace_root(tmp_path: Path) -> None:
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
     (tmp_path / 'safe').write_bytes(b'safe')
@@ -395,6 +412,7 @@ async def test_shell_filesystem_refuses_to_remove_workspace_root(tmp_path: Path)
     assert (tmp_path / 'safe').read_bytes() == b'safe'
 
 
+@posix_only
 async def test_shell_filesystem_refuses_fifo_without_opening_it(tmp_path: Path) -> None:
     fifo = tmp_path / 'fifo'
     os.mkfifo(fifo)
@@ -408,6 +426,7 @@ async def test_shell_filesystem_refuses_fifo_without_opening_it(tmp_path: Path) 
     assert stat.S_ISFIFO(fifo.lstat().st_mode)
 
 
+@posix_only
 async def test_local_write_refuses_fifo_without_opening_it(tmp_path: Path) -> None:
     os.mkfifo(tmp_path / 'fifo')
     workspace = Workspace(LocalWorkspaceBackend(tmp_path))
@@ -416,6 +435,7 @@ async def test_local_write_refuses_fifo_without_opening_it(tmp_path: Path) -> No
             await workspace.write_bytes('fifo', b'data')
 
 
+@posix_only
 async def test_shell_realpath_leaves_a_symlink_loop_unresolved(tmp_path: Path) -> None:
     (tmp_path / 'loop').symlink_to(tmp_path / 'loop')
     workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
@@ -428,6 +448,7 @@ async def test_shell_realpath_leaves_a_symlink_loop_unresolved(tmp_path: Path) -
         assert await workspace.realpath('loop1/q') == str(tmp_path / 'loop1' / 'q')
 
 
+@posix_only
 async def test_shell_realpath_raises_on_a_link_readlink_cannot_read(tmp_path: Path) -> None:
     bin_dir = tmp_path / 'bin'
     bin_dir.mkdir()
@@ -570,6 +591,7 @@ async def test_shell_exists_raises_when_the_command_itself_fails(exit_code: int,
         await workspace.stat('data.txt')
 
 
+@posix_only
 async def test_run_only_backend_writes_binary_and_odd_names_through_the_shell(tmp_path: Path) -> None:
     backend = RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path))
     workspace = Workspace(backend)
@@ -586,6 +608,7 @@ async def test_run_only_backend_writes_binary_and_odd_names_through_the_shell(tm
     assert max(len(command.encode()) for command in backend.commands if isinstance(command, str)) < 128 * 1024
 
 
+@posix_only
 @pytest.mark.parametrize('native', [True, False], ids=['native', 'shell'])
 async def test_entries_follow_symlinks_for_is_dir(tmp_path: Path, native: bool) -> None:
     target = tmp_path / 'target'
@@ -613,6 +636,7 @@ async def test_entries_follow_symlinks_for_is_dir(tmp_path: Path, native: bool) 
     assert (await workspace.stat('root-link/child-link')).is_dir is True
 
 
+@posix_only
 async def test_run_only_filesystem_raises_builtin_path_errors_in_one_command(tmp_path: Path) -> None:
     """Classifying the path inside the read or listing command keeps the error to one round trip.
 
@@ -638,6 +662,7 @@ async def test_run_only_filesystem_raises_builtin_path_errors_in_one_command(tmp
         assert len(backend.commands) == 1
 
 
+@posix_only
 async def test_shell_symlink_write_is_atomic_and_preserves_target_mode(tmp_path: Path) -> None:
     target = tmp_path / 'target'
     target.write_bytes(b'original')
@@ -682,6 +707,7 @@ async def test_shell_symlink_write_is_atomic_and_preserves_target_mode(tmp_path:
     assert (tmp_path / 'new-target').read_bytes() == b'created'
 
 
+@posix_only
 @pytest.mark.parametrize('cleanup_fails', [False, True])
 async def test_shell_write_preserves_the_original_error_when_cleanup_fails(tmp_path: Path, cleanup_fails: bool) -> None:
     cleanup_attempted = False
@@ -720,6 +746,7 @@ def _garble(stdout: str) -> str:
     return '4\nAAA'
 
 
+@posix_only
 @pytest.mark.parametrize(
     ('operation', 'corrupt'),
     [
@@ -756,6 +783,7 @@ async def test_shell_filesystem_refuses_damaged_output(
         await getattr(workspace, operation)('directory/data.bin' if operation != 'list_dir' else 'directory')
 
 
+@posix_only
 async def test_shell_filesystem_rereads_a_file_replaced_mid_read(tmp_path: Path) -> None:
     """A file swapped for a different size between the size check and the read is read again, not refused."""
     status = anyio.Path(tmp_path / 'status.json')
@@ -787,6 +815,7 @@ async def test_shell_filesystem_rereads_a_file_replaced_mid_read(tmp_path: Path)
         await Workspace(backend).read_text('status.json')
 
 
+@posix_only
 async def test_shell_list_dir_does_not_hide_find_failure(tmp_path: Path) -> None:
     class FailedFindBackend(RunOnlyWorkspaceBackend):
         async def run(
@@ -876,6 +905,7 @@ def _authority_workspace(
     )
 
 
+@posix_only
 async def test_without_path_authority_files_in_the_working_directory_have_the_workspace_authority(
     authority_root: Path,
 ) -> None:
@@ -890,6 +920,7 @@ async def test_without_path_authority_files_in_the_working_directory_have_the_wo
     assert await users.authority_of('vendor/ours/AGENTS.md') == 'user'
 
 
+@posix_only
 async def test_a_path_outside_the_working_directory_is_outside_the_workspace(authority_root: Path) -> None:
     root = authority_root
     plain = Workspace(LocalWorkspaceBackend(root))
@@ -899,6 +930,7 @@ async def test_a_path_outside_the_working_directory_is_outside_the_workspace(aut
     assert await plain.authority_of(f'{root}-other/AGENTS.md') == 'none'
 
 
+@posix_only
 async def test_the_longest_matching_path_wins(authority_root: Path) -> None:
     root = authority_root
     ws = _authority_workspace(root, path_authority={'vendor': 'none', 'vendor/ours': 'user'})
@@ -912,6 +944,7 @@ async def test_the_longest_matching_path_wins(authority_root: Path) -> None:
     assert await ws.authority_of('vendor-other/AGENTS.md') == 'operator'
 
 
+@posix_only
 async def test_a_lower_path_inside_a_higher_one(authority_root: Path) -> None:
     root = authority_root
     ws = _authority_workspace(root, path_authority={'vendor': 'none'})
@@ -920,6 +953,7 @@ async def test_a_lower_path_inside_a_higher_one(authority_root: Path) -> None:
     assert await ws.authority_of('vendor/AGENTS.md') == 'none'
 
 
+@posix_only
 async def test_a_higher_path_inside_a_lower_one(authority_root: Path) -> None:
     root = authority_root
     ws = _authority_workspace(root, 'none', {'trusted': 'operator', 'vendor/ours': 'user'})
@@ -931,6 +965,7 @@ async def test_a_higher_path_inside_a_lower_one(authority_root: Path) -> None:
     assert ws.authority == 'none'
 
 
+@posix_only
 async def test_path_authority_outside_the_working_directory_brings_that_path_in(authority_root: Path) -> None:
     root = authority_root
     config = root.parent / 'config'
@@ -941,6 +976,7 @@ async def test_path_authority_outside_the_working_directory_brings_that_path_in(
     assert await ws.authority_of(str(root.parent / 'other' / 'AGENTS.md')) == 'none'
 
 
+@posix_only
 async def test_a_link_from_a_lower_path_into_a_higher_one_keeps_the_lower_level(authority_root: Path) -> None:
     root = authority_root
     (root / 'trusted' / 'AGENTS.md').write_text('trusted')
@@ -954,6 +990,7 @@ async def test_a_link_from_a_lower_path_into_a_higher_one_keeps_the_lower_level(
     assert await ws.authority_of('vendor/dir/AGENTS.md') == 'none'
 
 
+@posix_only
 async def test_a_link_from_a_higher_path_into_a_lower_one_takes_the_lower_level(authority_root: Path) -> None:
     root = authority_root
     (root / 'vendor' / 'AGENTS.md').write_text('vendored')
@@ -966,6 +1003,7 @@ async def test_a_link_from_a_higher_path_into_a_lower_one_takes_the_lower_level(
     assert await ws.authority_of('trusted/outside.md') == 'none'
 
 
+@posix_only
 async def test_a_link_above_the_workspace_is_not_the_workspace_s(authority_root: Path) -> None:
     root = authority_root
     # Like `/tmp` linking to `/private/tmp` on macOS: the link is the machine's, not the workspace's.
@@ -977,6 +1015,7 @@ async def test_a_link_above_the_workspace_is_not_the_workspace_s(authority_root:
     assert await ws.authority_of(str(alias / 'vendor' / 'AGENTS.md')) == 'none'
 
 
+@posix_only
 async def test_path_authority_keys_resolve_through_links(authority_root: Path) -> None:
     root = authority_root
     (root / 'third_party').symlink_to(root / 'vendor')
@@ -988,6 +1027,67 @@ async def test_path_authority_keys_resolve_through_links(authority_root: Path) -
     assert await reversed_ws.authority_of('vendor/AGENTS.md') == 'none'
 
 
+@pytest.mark.parametrize(
+    'authority,path_authority,directory,expected',
+    [
+        # Without entries, the directory's own level.
+        ('operator', {}, 'vendor', 'operator'),
+        ('user', {}, 'vendor', 'user'),
+        # A lower entry under the directory lowers it; one elsewhere doesn't.
+        ('operator', {'vendor/ours': 'none'}, 'vendor', 'none'),
+        ('operator', {'trusted': 'none'}, 'vendor', 'operator'),
+        # An entry containing the directory sets its own level, as `authority_of` does.
+        ('operator', {'vendor': 'user'}, 'vendor/ours', 'user'),
+        # A raising entry under the directory doesn't raise the rest of it.
+        ('none', {'vendor/ours': 'operator'}, 'vendor', 'none'),
+        # Entries match ignoring case.
+        ('operator', {'Vendor/Ours': 'none'}, 'vendor', 'none'),
+        # Outside the working directory, `'none'` unless an entry contains it.
+        ('operator', {}, '..', 'none'),
+    ],
+)
+async def test_lowest_authority_under_a_directory(
+    authority_root: Path,
+    authority: Authority,
+    path_authority: dict[str, Authority],
+    directory: str,
+    expected: Authority,
+) -> None:
+    ws = _authority_workspace(authority_root, authority, path_authority)
+    assert await lowest_authority_under(ws, directory) == expected
+
+
+@posix_only
+async def test_lowest_authority_under_counts_where_an_entry_leads(authority_root: Path) -> None:
+    # `third_party` is a lower entry outside `trusted`, but it's a link into it, so files under `trusted` are lower too.
+    root = authority_root
+    (root / 'trusted' / 'lib').mkdir()
+    (root / 'third_party').symlink_to(root / 'trusted' / 'lib')
+    ws = _authority_workspace(root, path_authority={'third_party': 'none'})
+
+    assert await lowest_authority_under(ws, 'trusted') == 'none'
+    assert await lowest_authority_under(ws, 'vendor') == 'operator'
+
+
+@posix_only
+@pytest.mark.parametrize('path_authority', [{}, {'trusted': 'operator'}])
+async def test_lowest_authority_under_a_directory_that_links_out(
+    tmp_path: Path, authority_root: Path, path_authority: dict[str, Authority]
+) -> None:
+    # The directory itself leads outside the working directory, so it's outside the workspace, as `authority_of` says.
+    (tmp_path / 'elsewhere').mkdir()
+    (authority_root / 'linked').symlink_to(tmp_path / 'elsewhere')
+    ws = _authority_workspace(authority_root, path_authority=path_authority)
+
+    assert await ws.authority_of('linked/AGENTS.md') == 'none'
+    assert await lowest_authority_under(ws, 'linked') == 'none'
+
+
+async def test_lowest_authority_under_a_plain_workspace(authority_root: Path) -> None:
+    assert await lowest_authority_under(Workspace(LocalWorkspaceBackend(authority_root)), 'vendor') == 'operator'
+
+
+@posix_only
 async def test_a_key_that_is_a_link_keeps_its_level_at_the_link(authority_root: Path) -> None:
     root = authority_root
     (root / 'trusted' / 'AGENTS.md').write_text('trusted')
@@ -998,6 +1098,7 @@ async def test_a_key_that_is_a_link_keeps_its_level_at_the_link(authority_root: 
     assert await ws.authority_of('trusted/AGENTS.md') == 'operator'
 
 
+@posix_only
 async def test_a_raising_key_planted_as_a_link_does_not_raise_its_target(authority_root: Path) -> None:
     # A cloned repository controls whether a path it contains is a link, so it could aim a raising key at its own files.
     root = authority_root
@@ -1010,6 +1111,7 @@ async def test_a_raising_key_planted_as_a_link_does_not_raise_its_target(authori
     assert await ws.authority_of('rules/AGENTS.md') == 'none'
 
 
+@posix_only
 async def test_a_raising_key_that_is_a_link_outside_the_workspace_covers_its_target(authority_root: Path) -> None:
     # The user's `~/.claude` linking into their dotfiles: nothing in the workspace controls that link.
     root = authority_root
@@ -1024,6 +1126,7 @@ async def test_a_raising_key_that_is_a_link_outside_the_workspace_covers_its_tar
     assert await ws.authority_of('AGENTS.md') == 'none'
 
 
+@posix_only
 async def test_another_spelling_of_a_lower_path_is_lowered_too(authority_root: Path) -> None:
     root = authority_root
     # On a case-insensitive filesystem `Vendor/` is `vendor/`; on this one it's a sibling, which only gets lowered.
@@ -1044,12 +1147,14 @@ async def test_another_spelling_of_a_lower_path_is_lowered_too(authority_root: P
     )
 
 
+@posix_only
 def test_a_home_relative_path_is_refused(authority_root: Path) -> None:
     root = authority_root
     with pytest.raises(UserError, match=r"`~` is not expanded: got '~/.config/app'"):
         _authority_workspace(root, 'none', {'~/.config/app': 'operator'})
 
 
+@posix_only
 async def test_wrappers_only_lower_the_level(authority_root: Path) -> None:
     root = authority_root
     inner = _authority_workspace(root, path_authority={'vendor': 'none', 'trusted': 'user'})
@@ -1071,6 +1176,7 @@ async def test_wrappers_only_lower_the_level(authority_root: Path) -> None:
     assert await Workspace(ReadOnlyWorkspace(capped)).authority_of('AGENTS.md') == 'user'
 
 
+@posix_only
 def test_path_authority_is_part_of_the_durable_policy(authority_root: Path) -> None:
     root = authority_root
     assert _authority_workspace(root, 'user').durable_policy() == ('user', {})
@@ -1081,6 +1187,7 @@ def test_path_authority_is_part_of_the_durable_policy(authority_root: Path) -> N
     )
 
 
+@posix_only
 async def test_bare_run_context_workspace_explains_how_to_attach_one() -> None:
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
@@ -1107,6 +1214,7 @@ async def test_explicit_backend_wins_over_a_capability_backend() -> None:
     assert capability.refs == []
 
 
+@posix_only
 async def test_for_run_sees_the_workspace_the_run_uses(tmp_path: Path) -> None:
     (tmp_path / 'catalog.txt').write_text('from the workspace')
     seen: list[str] = []
@@ -1122,6 +1230,7 @@ async def test_for_run_sees_the_workspace_the_run_uses(tmp_path: Path) -> None:
     assert result.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
 
 
+@posix_only
 async def test_a_run_workspace_capability_overrides_the_agents(tmp_path: Path) -> None:
     agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path / 'agent')])
 
@@ -1130,6 +1239,7 @@ async def test_a_run_workspace_capability_overrides_the_agents(tmp_path: Path) -
     assert result.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
 
 
+@posix_only
 async def test_a_capability_function_supplies_the_workspace_after_for_run(tmp_path: Path) -> None:
     agent = Agent(TestModel(), deps_type=Path, capabilities=[lambda ctx: LocalWorkspace(ctx.deps)])
 
@@ -1138,6 +1248,7 @@ async def test_a_capability_function_supplies_the_workspace_after_for_run(tmp_pa
     assert result.workspace.ref == WorkspaceRef(provider='local', id=str(tmp_path))
 
 
+@posix_only
 async def test_for_run_cannot_change_the_workspace_selected_before_it(tmp_path: Path) -> None:
     class ReadOnlyPerRun(LocalWorkspace[Any]):
         async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
@@ -1376,6 +1487,7 @@ async def test_a_run_workspace_capability_joins_the_agents() -> None:
     assert [result.workspace.backend] == second.supplied
 
 
+@posix_only
 async def test_a_run_workspace_capability_is_asked_before_the_agents(tmp_path: Path) -> None:
     agent = Agent(TestModel(), capabilities=[LocalWorkspace(tmp_path)])
     run_level = ProviderWorkspaceCapability('run')
@@ -1385,6 +1497,7 @@ async def test_a_run_workspace_capability_is_asked_before_the_agents(tmp_path: P
     assert [result.workspace.backend] == run_level.supplied
 
 
+@posix_only
 async def test_a_run_workspace_capability_function_is_asked_before_the_agents_after_for_run(tmp_path: Path) -> None:
     agent = Agent(TestModel(), capabilities=[lambda ctx: LocalWorkspace(tmp_path)])
     run_level = ProviderWorkspaceCapability('run')
@@ -1455,6 +1568,7 @@ async def test_a_gone_workspace_fails_on_first_use_and_new_recovers() -> None:
     assert provider.log == ['create:env-1', 'create:env-1']
 
 
+@posix_only
 async def test_a_history_ref_is_offered_to_a_workspace_capability_that_exists_only_after_for_run(
     tmp_path: Path,
 ) -> None:
@@ -1521,6 +1635,7 @@ async def test_new_workspace_without_a_supplier_raises() -> None:
         await agent.run('go', workspace='new')
 
 
+@posix_only
 async def test_a_workspace_capability_cannot_be_deferred(tmp_path: Path) -> None:
     message = "supplies the run's workspace, which is chosen when the run starts, so it can't be deferred"
     with pytest.raises(UserError, match=f'`WrapperCapability` {message}'):
@@ -1701,6 +1816,7 @@ async def test_streamed_result_keeps_the_workspace_identity() -> None:
         assert result.workspace is workspace
 
 
+@posix_only
 @pytest.mark.parametrize('consume', ['get_output', 'stream_text', 'stream_output', 'stream_response'])
 async def test_settled_streamed_result_keeps_the_workspace(tmp_path: Path, consume: str) -> None:
     """Settling a TestModel stream preserves its usable, wrapped workspace without serializing it."""
@@ -2013,6 +2129,7 @@ async def test_capability_can_supply_a_backend_for_an_explicit_ref() -> None:
     assert capability.ids == ['existing']
 
 
+@posix_only
 async def test_shell_remove_refuses_canonical_root_via_alias(tmp_path: Path) -> None:
     root = tmp_path / 'root'
     root.mkdir()
@@ -2025,6 +2142,7 @@ async def test_shell_remove_refuses_canonical_root_via_alias(tmp_path: Path) -> 
     assert (root / 'safe').read_bytes() == b'safe'
 
 
+@posix_only
 async def test_shell_remove_symlink_to_root_only_removes_link(tmp_path: Path) -> None:
     root = tmp_path / 'root'
     root.mkdir()
@@ -2036,6 +2154,7 @@ async def test_shell_remove_symlink_to_root_only_removes_link(tmp_path: Path) ->
     assert not alias.is_symlink()
 
 
+@posix_only
 async def test_shell_read_names_a_missing_utility(tmp_path: Path) -> None:
     """Without `dd`, reads fail naming it rather than as damaged output."""
     bin_dir = tmp_path / 'bin'
@@ -2115,6 +2234,7 @@ class FakeWindowsBackend:
 
 
 class TestWindowsPaths:
+    @posix_only
     async def test_a_backend_is_posix_unless_it_says_otherwise(self, tmp_path: Path) -> None:
         workspace = Workspace(LocalWorkspaceBackend(tmp_path))
         assert (workspace.platform, workspace.paths) == ('posix', posixpath)
@@ -2162,6 +2282,7 @@ class TestWindowsPaths:
             await workspace.run(['rg'], cwd='src')
 
 
+@posix_only
 def test_windows_workspace_needs_windows(tmp_path: Path) -> None:
     with pytest.raises(NotImplementedError, match='only runs on Windows'):
         WindowsWorkspaceBackend(tmp_path)

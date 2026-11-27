@@ -18,6 +18,8 @@ import yaml
 from dirty_equals import HasRepr, IsNumber, IsOneOf
 from pydantic import BaseModel, TypeAdapter
 
+from tests._timeouts import READINESS_WAIT_TIMEOUT
+
 from .._inline_snapshot import snapshot
 from ..clock_utils import LONG_TIMEOUT, Clock
 from ..conftest import IsStr, try_import
@@ -1157,6 +1159,27 @@ def test_from_file_schema_mismatch(tmp_path: Path):
 
     with pytest.raises(ValueError, match=r'test_cases\.yaml contains data that does not match the schema for Dataset'):
         Dataset[TaskInput, TaskOutput, TaskMetadata].from_file(path)
+
+
+@pytest.mark.parametrize('fmt', ['json', 'yaml'])
+def test_from_file_roundtrip_with_utf8_bom(tmp_path: Path, fmt: Literal['json', 'yaml']):
+    """A dataset file re-saved with a UTF-8 byte order mark still loads."""
+    dataset = Dataset[int, int, None](name='bom', cases=[Case(name='café ✓ 日本', inputs=1, expected_output=1)])
+    path = tmp_path / f'bom.{fmt}'
+    dataset.to_file(path)
+    path.write_bytes(b'\xef\xbb\xbf' + path.read_bytes())
+
+    assert Dataset[int, int, None].from_file(path) == dataset
+
+
+@pytest.mark.parametrize('content', [b'\xef', b'\xef\xbb'])
+def test_from_file_truncated_utf8_bom_raises(tmp_path: Path, content: bytes):
+    """A file holding only part of a byte order mark is not valid UTF-8."""
+    path = tmp_path / 'truncated.json'
+    path.write_bytes(content)
+
+    with pytest.raises(UnicodeDecodeError):
+        Dataset[int, int, None].from_file(path)
 
 
 async def test_from_text():
@@ -2649,10 +2672,6 @@ async def test_lifecycle_via_partial(example_dataset: Dataset[TaskInput, TaskOut
 
     lifecycle = partial(ConfigurableLifecycle, my_config=123)
     await example_dataset.evaluate(task, lifecycle=lifecycle)
-
-
-# How long a test waits for a background thread it controls; never reached unless the code under test hangs.
-READINESS_WAIT_TIMEOUT = 10
 
 
 async def test_task_timeout_fails_only_the_slow_case():

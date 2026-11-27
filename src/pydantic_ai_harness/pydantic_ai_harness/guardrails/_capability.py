@@ -118,8 +118,10 @@ def _find_prompt_part(
 
     The prompt is the most recent `UserPromptPart` in the run's history, `ctx.messages`. `messages`
     is this request's copy of the history, where an outer capability can add a `UserPromptPart` for
-    this request only (`SystemReminders`, `Planning` and `Memory` append one to the last request).
-    That part is not the user's prompt, so the prompt is found by identity: the guard neither
+    this request only, and capabilities enqueue records around the prompt (`Memory` and `Planning` put
+    their run-start records before it, `SystemReminders` appends its reminders after it), so the prompt
+    is not necessarily the request's last part. An added part is not the user's prompt, so the prompt
+    is found by identity: the guard neither
     screens nor overwrites the added part. A prompt an outer capability rewrote in place is still
     the same object, so the guard reads the rewritten text, and there is no separate original.
 
@@ -207,7 +209,10 @@ def _latest_prompt_parts(messages: Sequence[ModelMessage], *, skip_harness_data:
 
 
 def _prompt_text(content: str | Sequence[UserContent]) -> str:
-    """The text a guard sees for a prompt: a background completion's text, or the prompt rendered as text."""
+    """The text a guard sees for a prompt: the prompt rendered as text.
+
+    A background result an earlier version delivered as user text is its own text.
+    """
     completion = get_background_completion(content)
     if completion is not None:
         return completion.content
@@ -221,8 +226,8 @@ def _replace_prompt(part: UserPromptPart, new_content: str) -> None:
     sequence of parts, and a `str` written over it would send the model the
     replacement text alone -- the images, documents and audio the user attached
     would be gone, with nothing in the run to say so.
-    Singleton native background completions are rewritten in place, preserving
-    their metadata.
+    A background result an earlier version delivered as user text is rewritten in
+    place, preserving its metadata.
     """
     if isinstance(part.content, str):
         part.content = new_content

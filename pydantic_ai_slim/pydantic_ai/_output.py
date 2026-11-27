@@ -3,21 +3,31 @@ from __future__ import annotations as _annotations
 import inspect
 import json
 from abc import ABC, abstractmethod
-from collections.abc import Awaitable, Callable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Container, Generator, Mapping, Sequence
+from contextlib import contextmanager
+from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import partial
-from types import NoneType
-from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_origin, overload
+from types import FunctionType, MethodType, NoneType
+from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_args, get_origin, overload
 
+import pydantic_core
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
-from pydantic_core import InitErrorDetails, PydanticCustomError, SchemaValidator
+from pydantic_core import (
+    ErrorDetails,
+    InitErrorDetails,
+    PydanticCustomError,
+    PydanticSerializationError,
+    SchemaValidator,
+    to_json,
+)
 from typing_extensions import TypedDict, TypeForm, TypeVar
 
 from pydantic_ai._utils import get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
 from ._run_context import AgentDepsT, RunContext
-from .exceptions import ModelRetry, ToolRetryError, UserError
+from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from .output import (
     NativeOutput,
     OutputContext,
@@ -109,13 +119,16 @@ def _build_output_handlers(
 
 
 def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
-    """`isinstance(value, type_)` that also works for generics like `list[Bar]` and for `Annotated[Bar, ...]`.
+    """`isinstance(value, type_)` that also works for generics like `list[Bar]`, `Literal[...]` and `Annotated[Bar, ...]`.
 
     `isinstance(x, list[Bar])` raises `TypeError`; we fall back to the generic origin
     (here `list`), so union output resolution still matches the collection type when the
     element type can't be checked at runtime.
     """
     type_ = _utils.unwrap_annotated(type_)
+    if get_origin(type_) is Literal:
+        # `isinstance` can't check a `Literal`, nor its origin; a value matches it if it's one of its values.
+        return value in get_args(type_)
     try:
         return isinstance(value, type_)
     except TypeError:
@@ -131,11 +144,37 @@ def is_incomplete_json(error: BaseException | None) -> bool:
     return isinstance(error, ValidationError) and any(detail['type'] == 'json_invalid' for detail in error.errors())
 
 
+def are_tool_call_args_cut_off(call: _messages.ToolCallPart) -> bool:
+    """Whether the arguments of a tool call the token limit ended on were cut off before they were complete.
+
+    That's JSON that doesn't parse, or no arguments at all: Anthropic sends `{}` for a tool call it cut off,
+    and no input when streamed. JSON that parsed keeps its retry when the schema or an output validator rejects it.
+    """
+    args = call.args
+    if not args:
+        return True
+    if isinstance(args, str):
+        try:
+            pydantic_core.from_json(args)
+        except ValueError:
+            return True
+    return False
+
+
 def truncated_output_message(max_tokens: int | None) -> str:
     """The error message for structured text output that the token limit cut off into incomplete JSON."""
     return (
         f'Model token limit ({max_tokens or "provider default"}) exceeded while generating structured output, '
         'resulting in incomplete JSON. Increase the `max_tokens` model setting, or simplify the prompt '
+        'to result in a shorter response that will fit within the limit.'
+    )
+
+
+def incomplete_tool_call_message(max_tokens: int | None) -> str:
+    """The `IncompleteToolCall` message for a tool call whose arguments the token limit cut off."""
+    return (
+        f'Model token limit ({max_tokens or "provider default"}) exceeded while generating a tool call, '
+        'resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt '
         'to result in a shorter response that will fit within the limit.'
     )
 
@@ -146,6 +185,7 @@ def build_retried_tool_return(
     tool_name: str,
     tool_call_id: str | None = None,
     tool_kind: _messages.ToolPartKind | None = None,
+    ui_visibility: _messages.ToolUIVisibility | None = None,
     cause: _messages.ToolRetryCause | None = None,
 ) -> _messages.ToolReturnPart:
     """Build the result a tool call that has to be retried is answered with.
@@ -177,6 +217,7 @@ def build_retried_tool_return(
         tool_name=tool_name,
         content=content,
         tool_kind=tool_kind,
+        ui_visibility=ui_visibility,
         outcome='retried',
         retry=_messages.RetryInfo(cause=cause),
     )
@@ -192,6 +233,7 @@ def retried_return_from_legacy(
     tool_name: str,
     tool_call_id: str,
     tool_kind: _messages.ToolPartKind | None = None,
+    ui_visibility: _messages.ToolUIVisibility | None = None,
 ) -> _messages.ToolReturnPart:
     """The result a deferred call is answered with when its handler hands back the deprecated part.
 
@@ -205,12 +247,13 @@ def retried_return_from_legacy(
         content=content if isinstance(content, str) else _messages._dump_error_details(content),  # pyright: ignore[reportPrivateUsage]
         tool_call_id=tool_call_id,
         tool_kind=tool_kind,
+        ui_visibility=ui_visibility,
         outcome='retried',
         retry=_messages.RetryInfo(cause='model_retry' if isinstance(content, str) else 'validation_error'),
     )
 
 
-def _make_retry_signal(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
+def make_retry_signal(e: ValidationError | ModelRetry, run_context: RunContext[Any]) -> ToolRetryError:
     """Build the retry signal for output that failed validation or asked to be retried.
 
     An output *tool* call answers its own call, so its retry is a tool result. Text, native and
@@ -232,6 +275,23 @@ def _make_retry_signal(e: ValidationError | ModelRetry, run_context: RunContext[
     return ToolRetryError(
         build_retried_tool_return(e, tool_name=run_context.tool_name, tool_call_id=run_context.tool_call_id)
     )
+
+
+_IN_OUTPUT_PIPELINE: ContextVar[bool] = ContextVar('pydantic_ai.output.in_output_pipeline', default=False)
+
+
+def in_output_pipeline() -> bool:
+    """Whether the current task is validating or processing output, in output hooks, functions or validators."""
+    return _IN_OUTPUT_PIPELINE.get()
+
+
+@contextmanager
+def output_pipeline_scope() -> Generator[None]:
+    token = _IN_OUTPUT_PIPELINE.set(True)
+    try:
+        yield
+    finally:
+        _IN_OUTPUT_PIPELINE.reset(token)
 
 
 async def run_output_validate_hooks(
@@ -268,12 +328,13 @@ async def run_output_validate_hooks(
         return await capability.after_output_validate(run_context, output_context=output_context, output=validated)
 
     try:
-        return await capability.wrap_output_validate(
-            run_context, output_context=output_context, output=output, handler=lifecycle
-        )
+        with output_pipeline_scope():
+            return await capability.wrap_output_validate(
+                run_context, output_context=output_context, output=output, handler=lifecycle
+            )
     except (ValidationError, ModelRetry) as e:
         if wrap_validation_errors:
-            raise _make_retry_signal(e, run_context) from e
+            raise make_retry_signal(e, run_context) from e
         raise
 
 
@@ -315,14 +376,15 @@ async def run_output_process_hooks(
         return await capability.after_output_process(run_context, output_context=output_context, output=result)
 
     try:
-        return await capability.wrap_output_process(
-            run_context, output_context=output_context, output=output, handler=lifecycle
-        )
+        with output_pipeline_scope():
+            return await capability.wrap_output_process(
+                run_context, output_context=output_context, output=output, handler=lifecycle
+            )
     except ToolRetryError:
         raise  # Already wrapped, propagate
     except (ValidationError, ModelRetry) as e:
         if wrap_validation_errors:
-            raise _make_retry_signal(e, run_context) from e
+            raise make_retry_signal(e, run_context) from e
         raise
 
 
@@ -495,7 +557,7 @@ async def execute_output_function(
         if wrap_validation_errors:
             # Only text, native and prompted output wrap here: an output *tool* call reaches this
             # with `wrap_validation_errors=False` and rebuilds the retry from its own call in
-            # `_make_retry_signal`, so there is never a call for this one to answer.
+            # `make_retry_signal`, so there is never a call for this one to answer.
             raise ToolRetryError(
                 _messages.RetryFeedbackPart(content=r.message, retry=_messages.RetryInfo(cause='model_retry'))
             ) from r
@@ -589,7 +651,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         return schema
 
     @classmethod
-    def _build(  # noqa: C901
+    def _build(
         cls,
         outputs: Sequence[_OutputSpecItem[OutputDataT]],
         *,
@@ -597,14 +659,8 @@ class OutputSchema(ABC, Generic[OutputDataT]):
         description: str | None,
         strict: bool | None,
     ) -> OutputSchema[OutputDataT]:
-        # `str | None` produces NoneType (the class) via get_union_args; bare `None` value produces None itself.
-        # `Annotated[None, Field(description=...)]` is still `None`, and its description goes to the `None` output tool.
-        none_outputs = [output for output in outputs if _utils.unwrap_annotated(output) in (NoneType, None)]
+        none_outputs, outputs = _split_none_outputs(outputs)
         allows_none = bool(none_outputs)
-        if allows_none:
-            outputs = [output for output in outputs if output not in none_outputs]
-            if len(outputs) == 0:
-                raise UserError('At least one output type must be provided other than `None`.')
 
         allows_deferred_tools = DeferredToolRequests in outputs
         if allows_deferred_tools:
@@ -617,28 +673,10 @@ class OutputSchema(ABC, Generic[OutputDataT]):
             outputs = [output for output in outputs if output is not _messages.BinaryImage]
 
         if output := next((output for output in outputs if isinstance(output, NativeOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
-            if len(outputs) > 1:
-                raise UserError('`NativeOutput` must be the only output type.')
-
-            flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-
-            if DeferredToolRequests in flattened_outputs:
-                raise UserError(
-                    '`NativeOutput` cannot contain `DeferredToolRequests`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), DeferredToolRequests]`'
-                )
-            if PendingModelResponse in flattened_outputs:
-                raise UserError(
-                    '`NativeOutput` cannot contain `PendingModelResponse`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), PendingModelResponse]`'
-                )
-            if _messages.BinaryImage in flattened_outputs:
-                raise UserError(
-                    '`NativeOutput` cannot contain `BinaryImage`. Include it alongside the native output marker instead: `output_type=[NativeOutput(...), BinaryImage]`'
-                )
-
             return NativeOutputSchema(
                 template=output.template,
                 processor=cls._build_processor(
-                    flattened_outputs,
+                    _structured_text_outputs(output.outputs, outputs, marker='NativeOutput', kind='native'),  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
                     name=output.name,
                     description=output.description,
                     strict=output.strict,
@@ -648,28 +686,10 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 allows_none=allows_none,
             )
         elif output := next((output for output in outputs if isinstance(output, PromptedOutput)), None):  # pyright: ignore[reportUnknownVariableType,reportUnknownArgumentType]
-            if len(outputs) > 1:
-                raise UserError('`PromptedOutput` must be the only output type.')
-
-            flattened_outputs = _flatten_output_spec(output.outputs)  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
-
-            if DeferredToolRequests in flattened_outputs:
-                raise UserError(
-                    '`PromptedOutput` cannot contain `DeferredToolRequests`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), DeferredToolRequests]`'
-                )
-            if PendingModelResponse in flattened_outputs:
-                raise UserError(
-                    '`PromptedOutput` cannot contain `PendingModelResponse`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), PendingModelResponse]`'
-                )
-            if _messages.BinaryImage in flattened_outputs:
-                raise UserError(
-                    '`PromptedOutput` cannot contain `BinaryImage`. Include it alongside the prompted output marker instead: `output_type=[PromptedOutput(...), BinaryImage]`'
-                )
-
             return PromptedOutputSchema(
                 template=output.template,
                 processor=cls._build_processor(
-                    flattened_outputs,
+                    _structured_text_outputs(output.outputs, outputs, marker='PromptedOutput', kind='prompted'),  # pyright: ignore[reportUnknownMemberType,reportUnknownArgumentType]
                     name=output.name,
                     description=output.description,
                 ),
@@ -678,24 +698,32 @@ class OutputSchema(ABC, Generic[OutputDataT]):
                 allows_none=allows_none,
             )
 
-        text_outputs: Sequence[type[str] | TextOutput[OutputDataT]] = []
-        tool_outputs: Sequence[ToolOutput[OutputDataT]] = []
-        other_outputs: Sequence[OutputTypeOrFunction[OutputDataT]] = []
-        for output in outputs:
-            if output is str:
-                text_outputs.append(cast(type[str], output))
-            elif isinstance(output, TextOutput):
-                text_outputs.append(output)  # pyright: ignore[reportUnknownArgumentType]
-            elif isinstance(output, ToolOutput):
-                tool_outputs.append(output)  # pyright: ignore[reportUnknownArgumentType]
-            elif isinstance(output, NativeOutput):
-                # We can never get here because this is checked for above.
-                raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
-            elif isinstance(output, PromptedOutput):
-                # We can never get here because this is checked for above.
-                raise UserError('`PromptedOutput` must be the only output type.')  # pragma: no cover
-            else:
-                other_outputs.append(output)
+        return cls._build_unmarked(
+            outputs,
+            none_outputs,
+            name=name,
+            description=description,
+            strict=strict,
+            allows_deferred_tools=allows_deferred_tools,
+            allows_image=allows_image,
+            allows_none=allows_none,
+        )
+
+    @classmethod
+    def _build_unmarked(
+        cls,
+        outputs: Sequence[_OutputSpecItem[OutputDataT]],
+        none_outputs: Sequence[_OutputSpecItem[OutputDataT]],
+        *,
+        name: str | None,
+        description: str | None,
+        strict: bool | None,
+        allows_deferred_tools: bool,
+        allows_image: bool,
+        allows_none: bool,
+    ) -> OutputSchema[OutputDataT]:
+        """Build the schema for outputs that no `NativeOutput` or `PromptedOutput` marker wraps."""
+        text_outputs, tool_outputs, other_outputs = _partition_outputs(outputs)
 
         # If `None` is allowed and we're building output tools, expose `NoneType` as its own
         # output tool so the model can commit to `None` through the structured schema alongside
@@ -706,18 +734,7 @@ class OutputSchema(ABC, Generic[OutputDataT]):
 
         toolset = OutputToolset.build(tool_outputs + other_outputs, name=name, description=description, strict=strict)
 
-        text_processor: BaseOutputProcessor[OutputDataT] | None = None
-
-        if len(text_outputs) > 0:
-            if len(text_outputs) > 1:
-                raise UserError('Only one `str` or `TextOutput` is allowed.')
-            text_output = text_outputs[0]
-
-            if isinstance(text_output, TextOutput):
-                text_processor = TextFunctionOutputProcessor(text_output.output_function)
-            else:
-                text_processor = TextOutputProcessor()
-
+        if (text_processor := _text_processor(text_outputs)) is not None:
             if toolset:
                 return ToolOutputSchema(
                     toolset=toolset,
@@ -1033,61 +1050,9 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             output = choices.keys_type
 
         if inspect.isfunction(output) or inspect.ismethod(output):
-            self._function_schema = _function_schema.function_schema(output, GenerateToolJsonSchema)
-            self.validator = self._function_schema.validator
-            json_schema = self._function_schema.json_schema
-            json_schema['description'] = self._function_schema.description
-
-            # Extract the function's input type (what the model produces) for output_type
-            type_hints = _utils.get_function_type_hints(output)
-            for hint_name, hint_type in type_hints.items():  # pragma: no branch
-                if hint_name != 'return' and not _function_schema.is_call_ctx(hint_type):
-                    self.output_type = hint_type
-                    break
+            json_schema = self._function_json_schema(output)
         else:
-            self.output_type = cast(type[Any], output)
-            json_schema_type_adapter: TypeAdapter[Any]
-            validation_type_adapter: TypeAdapter[Any]
-            unwrapped_output = _utils.unwrap_annotated(output)
-            if _utils.is_model_like(unwrapped_output):
-                # Model detection unwraps `Annotated`; Pydantic needs the original metadata-bearing annotation.
-                json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)  # pyright: ignore[reportArgumentType]
-            else:
-                self.outer_typed_dict_key = 'response'
-                output_type: type[OutputDataT] = cast(type[OutputDataT], output)
-
-                response_data_typed_dict = TypedDict(  # noqa: UP013
-                    'response_data_typed_dict',
-                    {'response': output_type},  # pyright: ignore[reportInvalidTypeForm]
-                )
-                json_schema_type_adapter = TypeAdapter(response_data_typed_dict)
-
-                # More lenient validator: allow either the native type or a JSON string containing it
-                # i.e. `response: OutputDataT | Json[OutputDataT]`, as some models don't follow the schema correctly,
-                # e.g. `BedrockConverseModel('us.meta.llama3-2-11b-instruct-v1:0')`
-                response_validation_typed_dict = TypedDict(  # noqa: UP013
-                    'response_validation_typed_dict',
-                    {'response': output_type | Json[output_type]},  # pyright: ignore[reportInvalidTypeForm]
-                )
-                validation_type_adapter = TypeAdapter(response_validation_typed_dict)
-
-            # Really a PluggableSchemaValidator, but it's API-compatible
-            self.validator = cast(SchemaValidator, validation_type_adapter.validator)
-            raw_json_schema = json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
-            # `Annotated[Model, Field(...)]` renders as a `$ref` to the model with the annotation's own keywords (`title`,
-            # `description`, `examples`, ...) beside it, so keep them when `check_object_json_schema` swaps the `$ref`
-            # for the model's own schema.
-            annotation_keywords = (
-                {k: v for k, v in raw_json_schema.items() if k not in ('$ref', '$defs')}
-                if '$ref' in raw_json_schema
-                else {}
-            )
-            json_schema = _utils.check_object_json_schema(raw_json_schema)
-            json_schema.update(annotation_keywords)
-
-            if self.outer_typed_dict_key:
-                # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
-                json_schema.pop('title')
+            json_schema = self._type_json_schema(output)
 
         if name is None and (json_schema_title := json_schema.get('title', None)):
             name = json_schema_title
@@ -1106,6 +1071,68 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
                 strict=strict,
             )
         )
+
+    def _function_json_schema(self, output: FunctionType | MethodType) -> ObjectJsonSchema:
+        """Validate the arguments the output function `output` takes, and return their JSON schema."""
+        self._function_schema = _function_schema.function_schema(output, GenerateToolJsonSchema)
+        self.validator = self._function_schema.validator
+        json_schema = self._function_schema.json_schema
+        json_schema['description'] = self._function_schema.description
+
+        # Extract the function's input type (what the model produces) for output_type
+        type_hints = _utils.get_function_type_hints(output)
+        for hint_name, hint_type in type_hints.items():  # pragma: no branch
+            if hint_name != 'return' and not _function_schema.is_call_ctx(hint_type):
+                self.output_type = hint_type
+                break
+        return json_schema
+
+    def _type_json_schema(self, output: OutputTypeOrFunction[OutputDataT]) -> ObjectJsonSchema:
+        """Validate a value of the type `output`, and return its JSON schema."""
+        self.output_type = cast(type[Any], output)
+        json_schema_type_adapter: TypeAdapter[Any]
+        validation_type_adapter: TypeAdapter[Any]
+        unwrapped_output = _utils.unwrap_annotated(output)
+        if _utils.is_model_like(unwrapped_output):
+            # Model detection unwraps `Annotated`; Pydantic needs the original metadata-bearing annotation.
+            json_schema_type_adapter = validation_type_adapter = TypeAdapter(output)  # pyright: ignore[reportArgumentType]
+        else:
+            self.outer_typed_dict_key = 'response'
+            output_type: type[OutputDataT] = cast(type[OutputDataT], output)
+
+            response_data_typed_dict = TypedDict(  # noqa: UP013
+                'response_data_typed_dict',
+                {'response': output_type},  # pyright: ignore[reportInvalidTypeForm]
+            )
+            json_schema_type_adapter = TypeAdapter(response_data_typed_dict)
+
+            # More lenient validator: allow either the native type or a JSON string containing it
+            # i.e. `response: OutputDataT | Json[OutputDataT]`, as some models don't follow the schema correctly,
+            # e.g. `BedrockConverseModel('us.meta.llama3-2-11b-instruct-v1:0')`
+            response_validation_typed_dict = TypedDict(  # noqa: UP013
+                'response_validation_typed_dict',
+                {'response': output_type | Json[output_type]},  # pyright: ignore[reportInvalidTypeForm]
+            )
+            validation_type_adapter = TypeAdapter(response_validation_typed_dict)
+
+        # Really a PluggableSchemaValidator, but it's API-compatible
+        self.validator = cast(SchemaValidator, validation_type_adapter.validator)
+        raw_json_schema = json_schema_type_adapter.json_schema(schema_generator=GenerateToolJsonSchema)
+        # `Annotated[Model, Field(...)]` renders as a `$ref` to the model with the annotation's own keywords (`title`,
+        # `description`, `examples`, ...) beside it, so keep them when `check_object_json_schema` swaps the `$ref`
+        # for the model's own schema.
+        annotation_keywords = (
+            {k: v for k, v in raw_json_schema.items() if k not in ('$ref', '$defs')}
+            if '$ref' in raw_json_schema
+            else {}
+        )
+        json_schema = _utils.check_object_json_schema(raw_json_schema)
+        json_schema.update(annotation_keywords)
+
+        if self.outer_typed_dict_key:
+            # including `response_data_typed_dict` as a title here doesn't add anything and could confuse the LLM
+            json_schema.pop('title')
+        return json_schema
 
     def validate(
         self,
@@ -1257,6 +1284,11 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     _union_processor: ObjectOutputProcessor[UnionOutputModel]
     _processors: dict[str, ObjectOutputProcessor[OutputDataT]]
 
+    @property
+    def processors(self) -> Mapping[str, ObjectOutputProcessor[OutputDataT]]:
+        """The member processors, keyed by the `kind` the model names in the union envelope."""
+        return self._processors
+
     def __init__(
         self,
         outputs: Sequence[OutputTypeOrFunction[OutputDataT]],
@@ -1380,44 +1412,9 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         except ValidationError as e:
             # Re-root member errors under the envelope path so retry feedback matches what the
             # model sent; shallow locs would have their input stripped when the retry prompt is rendered.
-            errors: list[InitErrorDetails] = []
-            for error in e.errors():
-                loc = ('result', 'data', *error['loc'])
-                error_context = error.get('ctx')
-                if 'url' in error:
-                    error_type: str | PydanticCustomError = error['type']
-                else:
-                    custom_error = PydanticCustomError(
-                        error['type'],  # pyright: ignore[reportArgumentType]
-                        error['msg'],  # pyright: ignore[reportArgumentType]
-                        error_context,
-                    )
-                    if custom_error.message() != error['msg']:
-                        # Keep the rendered message exact when it contains placeholders also present in its context.
-                        error_context = dict(error_context) if error_context is not None else {}
-                        message_key = '_pydantic_ai_message'
-                        while message_key in error_context:
-                            message_key += '_'
-                        error_context[message_key] = error['msg']
-                        custom_error = PydanticCustomError(
-                            error['type'],  # pyright: ignore[reportArgumentType]
-                            f'{{{message_key}}}',
-                            error_context,
-                        )
-                    error_type = custom_error
-
-                error_details: InitErrorDetails = {
-                    'type': error_type,
-                    'loc': loc,
-                    'input': error['input'],
-                }
-                if error_context is not None:
-                    error_details['ctx'] = error_context
-                errors.append(error_details)
-
             raise ValidationError.from_exception_data(
                 e.title,
-                errors,
+                [_rerooted_member_error(error) for error in e.errors()],
             ) from e
         # Unwrap to semantic here so the wrapper's `data` is always what hooks / callers
         # expect — e.g. a `MyModel` instance or an `int`, not `{'response': 42}`.
@@ -1548,6 +1545,42 @@ class UnionOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             allows_image=schema.allows_image,
             allows_deferred_tools=schema.allows_deferred_tools,
         )
+
+
+def _rerooted_member_error(error: ErrorDetails) -> InitErrorDetails:
+    """A union member's validation error, under the envelope path `('result', 'data', ...)`."""
+    loc = ('result', 'data', *error['loc'])
+    error_context = error.get('ctx')
+    if 'url' in error:
+        error_type: str | PydanticCustomError = error['type']
+    else:
+        custom_error = PydanticCustomError(
+            error['type'],  # pyright: ignore[reportArgumentType]
+            error['msg'],  # pyright: ignore[reportArgumentType]
+            error_context,
+        )
+        if custom_error.message() != error['msg']:
+            # Keep the rendered message exact when it contains placeholders also present in its context.
+            error_context = dict(error_context) if error_context is not None else {}
+            message_key = '_pydantic_ai_message'
+            while message_key in error_context:
+                message_key += '_'
+            error_context[message_key] = error['msg']
+            custom_error = PydanticCustomError(
+                error['type'],  # pyright: ignore[reportArgumentType]
+                f'{{{message_key}}}',
+                error_context,
+            )
+        error_type = custom_error
+
+    error_details: InitErrorDetails = {
+        'type': error_type,
+        'loc': loc,
+        'input': error['input'],
+    }
+    if error_context is not None:
+        error_details['ctx'] = error_context
+    return error_details
 
 
 class TextOutputProcessor(BaseOutputProcessor[OutputDataT]):
@@ -1690,34 +1723,10 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
             processor = ObjectOutputProcessor(output=output, description=description, strict=strict)  # pyright: ignore[reportUnknownArgumentType]
             object_def = processor.object_def
 
-            if name is None:
-                name = default_name
-                if multiple:
-                    # strip unsupported characters like "[" and "]" from generic class names
-                    safe_name = _utils.TOOL_NAME_SANITIZER.sub('', object_def.name or '')
-                    name += f'_{safe_name}'
-
-            i = 1
-            original_name = name
-            while name in processors:
-                i += 1
-                name = f'{original_name}_{i}'
-
-            description = object_def.description
-            if not description:
-                description = DEFAULT_OUTPUT_TOOL_DESCRIPTION
-                if multiple:
-                    description = f'{object_def.name}: {description}'
-
-            tool_def = ToolDefinition(
-                name=name,
-                description=description,
-                parameters_json_schema=object_def.json_schema,
-                strict=object_def.strict,
-                outer_typed_dict_key=processor.outer_typed_dict_key,
-                kind='output',
-                sequential=sequential,
+            name = output_tool_name(
+                default_name if name is None else name, object_def, suffix=name is None and multiple, taken=processors
             )
+            tool_def = output_tool_def(name, processor, multiple=multiple, sequential=sequential)
             processors[name] = processor
             tool_defs.append(tool_def)
             if tool_max_retries is not None:
@@ -1748,6 +1757,11 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
     def label(self) -> str:
         return "the agent's output tools"
 
+    @property
+    def tool_defs(self) -> list[ToolDefinition]:
+        """The output tool definitions, before any `prepare_output_tools` hook has seen them."""
+        return self._tool_defs
+
     async def for_run_step(self, ctx: RunContext[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
         return self
 
@@ -1770,6 +1784,216 @@ class OutputToolset(AbstractToolset[AgentDepsT]):
         # Output tools are handled by ToolManager.validate_output_tool_call/execute_output_tool_call,
         # not through the normal toolset.call_tool path.
         raise NotImplementedError('Output tools use validate_output_tool_call/execute_output_tool_call')
+
+
+@dataclass
+class OutputSubmission:
+    """What became of a tool call's [`RunContext.submit_output`][pydantic_ai.tools.RunContext.submit_output], for the step's tool call processor."""
+
+    status: Literal['pending', 'accepted', 'rejected'] = 'pending'
+    output: Any = None
+    """The processed output, once `'accepted'`."""
+    exhausted: UnexpectedModelBehavior | None = None
+    """Set on a `'rejected'` submission that used up the output retries. Like a model's output tool call that
+    does, it ends the run unless another output in the same response becomes the final result."""
+
+
+_TEXT_SUBMISSION_KEY = 'response'
+
+
+class _TextSubmission(TypedDict):
+    response: str
+
+
+_TEXT_SUBMISSION_TA = TypeAdapter(_TextSubmission)
+
+
+@dataclass(frozen=True)
+class OutputSubmissionTarget:
+    """One output a tool can submit with [`RunContext.submit_output`][pydantic_ai.tools.RunContext.submit_output], and how it's processed."""
+
+    tool_def: ToolDefinition
+    route: Literal['tool', 'object', 'text']
+    """`'tool'`: the run's output tool of this name. `'object'`: the schema's structured text processor, as if
+    the model had written the arguments as native or prompted output. `'text'`: the plain text processor."""
+    union_kind: str | None = None
+    """The `kind` the arguments are wrapped in when the structured text processor is a union."""
+
+    def raw_text(self, args: dict[str, Any]) -> str:
+        """The text the model would have written to produce `args` through this target's text processor.
+
+        Raises:
+            ValidationError: If a `'text'` target's arguments aren't a single string `response`.
+            ModelRetry: If the arguments hold a value that can't be encoded as JSON, which output tool
+                validation would reject too.
+        """
+        if self.route == 'text':
+            return _TEXT_SUBMISSION_TA.validate_python(args)[_TEXT_SUBMISSION_KEY]
+        data: dict[str, Any] = args if self.union_kind is None else {'result': {'kind': self.union_kind, 'data': args}}
+        try:
+            return to_json(data).decode()
+        except PydanticSerializationError as e:
+            raise ModelRetry(f'The output could not be encoded as JSON: {e}') from e
+
+
+def output_tool_name(name: str, object_def: OutputObjectDefinition, *, suffix: bool, taken: Container[str]) -> str:
+    """The name of an output type's output tool: `name`, suffixed with the type's name if `suffix`, made unique in `taken`.
+
+    Shared by tool output and `output_submission_targets`, so submission targets are named as tool output would name them.
+    """
+    if suffix:
+        # strip unsupported characters like "[" and "]" from generic class names
+        name += f'_{_utils.TOOL_NAME_SANITIZER.sub("", object_def.name or "")}'
+    return _unique_name(name, taken)
+
+
+def output_tool_def(
+    name: str, processor: ObjectOutputProcessor[Any], *, multiple: bool, sequential: bool = False
+) -> ToolDefinition:
+    """The definition of an output type's output tool, as tool output and `output_submission_targets` both build it."""
+    object_def = processor.object_def
+    description = object_def.description
+    if not description:
+        description = DEFAULT_OUTPUT_TOOL_DESCRIPTION
+        if multiple:
+            description = f'{object_def.name}: {description}'
+    return ToolDefinition(
+        name=name,
+        description=description,
+        parameters_json_schema=object_def.json_schema,
+        strict=object_def.strict,
+        outer_typed_dict_key=processor.outer_typed_dict_key,
+        kind='output',
+        sequential=sequential,
+    )
+
+
+def _unique_name(name: str, taken: Container[str]) -> str:
+    i = 1
+    original_name = name
+    while name in taken:
+        i += 1
+        name = f'{original_name}_{i}'
+    return name
+
+
+def output_submission_targets(schema: OutputSchema[Any]) -> dict[str, OutputSubmissionTarget]:
+    """The outputs a tool can submit for `schema`, keyed by name: one per output type, whatever the output mode.
+
+    With an output toolset (tool output, or a structured `output_type` in auto mode) they're its output tools.
+    Native and prompted output get the definitions tool output would have used, and plain text output gets
+    one that takes the text as `response`. Images and `DeferredToolRequests` can't be submitted.
+    """
+    targets: dict[str, OutputSubmissionTarget] = {}
+    text_processor = schema.text_processor
+    if schema.toolset is not None:
+        for tool_def in schema.toolset.tool_defs:
+            targets[tool_def.name] = OutputSubmissionTarget(tool_def, 'tool')
+    elif isinstance(text_processor, UnionOutputProcessor):
+        for kind, processor in text_processor.processors.items():
+            name = output_tool_name(DEFAULT_OUTPUT_TOOL_NAME, processor.object_def, suffix=True, taken=targets)
+            targets[name] = OutputSubmissionTarget(
+                output_tool_def(name, processor, multiple=True), 'object', union_kind=kind
+            )
+    elif isinstance(text_processor, ObjectOutputProcessor):
+        targets[DEFAULT_OUTPUT_TOOL_NAME] = OutputSubmissionTarget(
+            output_tool_def(DEFAULT_OUTPUT_TOOL_NAME, text_processor, multiple=False), 'object'
+        )
+
+    if text_processor is not None and not isinstance(text_processor, BaseObjectOutputProcessor):
+        name = _unique_name(f'{DEFAULT_OUTPUT_TOOL_NAME}_text' if targets else DEFAULT_OUTPUT_TOOL_NAME, targets)
+        targets[name] = OutputSubmissionTarget(
+            ToolDefinition(
+                name=name,
+                description=DEFAULT_OUTPUT_TOOL_DESCRIPTION,
+                parameters_json_schema={
+                    'type': 'object',
+                    'properties': {_TEXT_SUBMISSION_KEY: {'type': 'string'}},
+                    'required': [_TEXT_SUBMISSION_KEY],
+                    'additionalProperties': False,
+                },
+                kind='output',
+            ),
+            'text',
+        )
+    return targets
+
+
+def _split_none_outputs(
+    outputs: Sequence[_OutputSpecItem[OutputDataT]],
+) -> tuple[list[_OutputSpecItem[OutputDataT]], Sequence[_OutputSpecItem[OutputDataT]]]:
+    """The `None` outputs among `outputs`, and the rest, which must not be empty."""
+    # `str | None` produces NoneType (the class) via get_union_args; bare `None` value produces None itself.
+    # `Annotated[None, Field(description=...)]` is still `None`, and its description goes to the `None` output tool.
+    none_outputs = [output for output in outputs if _utils.unwrap_annotated(output) in (NoneType, None)]
+    if none_outputs:
+        outputs = [output for output in outputs if output not in none_outputs]
+        if len(outputs) == 0:
+            raise UserError('At least one output type must be provided other than `None`.')
+    return none_outputs, outputs
+
+
+def _structured_text_outputs(
+    marked: OutputTypeOrFunction[OutputDataT] | Sequence[OutputTypeOrFunction[OutputDataT]],
+    outputs: Sequence[_OutputSpecItem[OutputDataT]],
+    *,
+    marker: str,
+    kind: str,
+) -> Sequence[OutputTypeOrFunction[OutputDataT]]:
+    """The outputs a `NativeOutput` or `PromptedOutput` marker wraps, which must be all the agent outputs."""
+    if len(outputs) > 1:
+        raise UserError(f'`{marker}` must be the only output type.')
+
+    flattened_outputs = _flatten_output_spec(marked)
+    for excluded in (DeferredToolRequests, PendingModelResponse, _messages.BinaryImage):
+        if excluded in flattened_outputs:
+            raise UserError(
+                f'`{marker}` cannot contain `{excluded.__name__}`. Include it alongside the {kind} output marker '
+                f'instead: `output_type=[{marker}(...), {excluded.__name__}]`'
+            )
+    return flattened_outputs
+
+
+def _partition_outputs(
+    outputs: Sequence[_OutputSpecItem[OutputDataT]],
+) -> tuple[
+    list[type[str] | TextOutput[OutputDataT]], list[ToolOutput[OutputDataT]], list[OutputTypeOrFunction[OutputDataT]]
+]:
+    """Sort `outputs` into text outputs, `ToolOutput`s and the rest."""
+    text_outputs: list[type[str] | TextOutput[OutputDataT]] = []
+    tool_outputs: list[ToolOutput[OutputDataT]] = []
+    other_outputs: list[OutputTypeOrFunction[OutputDataT]] = []
+    for output in outputs:
+        if output is str:
+            text_outputs.append(cast(type[str], output))
+        elif isinstance(output, TextOutput):
+            text_outputs.append(output)  # pyright: ignore[reportUnknownArgumentType]
+        elif isinstance(output, ToolOutput):
+            tool_outputs.append(output)  # pyright: ignore[reportUnknownArgumentType]
+        elif isinstance(output, NativeOutput):
+            # We can never get here because this is checked for above.
+            raise UserError('`NativeOutput` must be the only output type.')  # pragma: no cover
+        elif isinstance(output, PromptedOutput):
+            # We can never get here because this is checked for above.
+            raise UserError('`PromptedOutput` must be the only output type.')  # pragma: no cover
+        else:
+            other_outputs.append(output)
+    return text_outputs, tool_outputs, other_outputs
+
+
+def _text_processor(
+    text_outputs: Sequence[type[str] | TextOutput[OutputDataT]],
+) -> TextOutputProcessor[OutputDataT] | None:
+    """The processor for the agent's text output, or `None` when the agent takes no text output."""
+    if len(text_outputs) == 0:
+        return None
+    if len(text_outputs) > 1:
+        raise UserError('Only one `str` or `TextOutput` is allowed.')
+    text_output = text_outputs[0]
+
+    if isinstance(text_output, TextOutput):
+        return TextFunctionOutputProcessor(text_output.output_function)
+    return TextOutputProcessor()
 
 
 @overload

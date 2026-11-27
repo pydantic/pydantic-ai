@@ -14,14 +14,22 @@ import time
 import urllib.request
 from collections import Counter
 from collections.abc import Mapping
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
 from types import FrameType
 from typing import Literal, TextIO
 from urllib.parse import quote
 
 from douwebot_opencode_result import final_text, rejection_reason, unfenced
-from douwebot_opencode_run import Attempt, check_symlinks, export_spans, otlp_span, run_with_fallback, step_tokens
+from douwebot_opencode_run import (
+    AnswerRejected,
+    Attempt,
+    check_symlinks,
+    export_spans,
+    otlp_span,
+    run_with_fallback,
+    step_tokens,
+)
 from publish_pr_review_checks import CheckResult, ReviewFinding, Severity
 from pydantic import BaseModel, Field, ValidationError
 from pr_review_checks import HUNK, INSTRUCTION_DIRECTORIES, ReviewCheck, changed_files, check_named, select
@@ -52,6 +60,8 @@ class Usage:
 
     steps: int = 0
     tokens: int = 0
+    tokens_by_kind: Counter[str] = field(default_factory=Counter[str])
+    """The tokens by kind, as `step_tokens` names them."""
     stopped: bool = False
     seconds: int = 0
 
@@ -181,7 +191,8 @@ def run_opencode(
                 if tokens is None:
                     continue
                 usage.steps += 1
-                usage.tokens += tokens
+                usage.tokens += tokens.total()
+                usage.tokens_by_kind += tokens
             process.wait()
         finally:
             timer.cancel()
@@ -213,7 +224,7 @@ def check_result(
         except (ValueError, ValidationError) as error:
             if not at_step_budget:
                 # The error would repeat the answer, private report included, into the public job log.
-                raise ValueError(f'The review answer was rejected: {rejection_reason(error)}') from None
+                raise AnswerRejected(f'The review answer was rejected: {rejection_reason(error)}') from None
             coverage = f'Review stopped at its step budget of {check.max_steps}.'
         else:
             # The result artifact is public, and a finding on a line the pull request did not change can describe a
@@ -302,6 +313,7 @@ def main() -> None:
         context = write_context(check.name, files, workspace, base=env['BASE_SHA'], head=env['HEAD_SHA'])
         prompt = build_prompt(check, context, workspace, pr_number=pr_number, repository=repository)
         stream = runner_temp / f'pr-review-checks-{check.name}.ndjson'
+        changed = {change.path: change.positions for change in changes}
         # A run on the fallback provider gets only what is left of the time budget.
         deadline = time.monotonic() + check.max_minutes * 60
         usage, _ = run_with_fallback(
@@ -317,15 +329,30 @@ def main() -> None:
             attempts=attempts,
             trace_id=trace_id,
             parent_id=span_id,
+            configured_chain=env.get('PR_REVIEW_MODEL_CHAIN', ''),
+            # OpenCode 2.2.5 retries a failed step up to 10 times when `isRetryable` accepts its error, so such an error
+            # in the stream either outlasted those retries or was one OpenCode does not retry, and the next link's
+            # provider can still serve. See `isRetryable` in
+            # https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts, and its callers in
+            # packages/core/src/session/runner/step.ts and packages/core/src/model-retry.ts.
+            go_restart_errors=frozenset({'provider.transport', 'provider.internal', 'provider.invalid-output'}),
+            # A rejected answer hands the review to the next link; the last link's answer fails it below.
+            validate=lambda served: check_result(check, files, stream, served, changed=changed),
         )
         values = {
             'pr_review_checks.steps': usage.steps,
             'pr_review_checks.tokens': usage.tokens,
+            'pr_review_checks.input_tokens': usage.tokens_by_kind['input'],
+            'pr_review_checks.output_tokens': usage.tokens_by_kind['output'],
+            'pr_review_checks.cache_read_tokens': usage.tokens_by_kind['cache.read'],
             'pr_review_checks.seconds': usage.seconds,
         }
-        changed = {change.path: change.positions for change in changes}
         result, private_report = check_result(check, files, stream, usage, changed=changed)
-        values |= {'pr_review_checks.outcome': result.outcome, 'pr_review_checks.findings': len(result.findings)}
+        values |= {
+            'pr_review_checks.outcome': result.outcome,
+            'pr_review_checks.findings': len(result.findings),
+            'pr_review_checks.dropped_findings': sum(result.dropped.values()),
+        }
     # A failed, rejected or interrupted review is exported too, under the exception's class name: its message can
     # repeat model or provider text.
     except BaseException as error:
@@ -333,17 +360,22 @@ def main() -> None:
         raise
     finally:
         if attempts:
-            # The plan of the last OpenCode run, which served the review or failed it.
+            # The provider, model and plan of the last OpenCode run, which served the review or failed it.
             last = attempts[-1]
             failure = {'error_type': last.error_type, 'error_status': last.status, 'error_code': last.code}
             values |= {
                 'pr_review_checks.provider': last.provider.name,
+                'pr_review_checks.model': last.provider.model,
                 'pr_review_checks.plan': last.provider.plan,
                 'pr_review_checks.attempts': len(attempts),
                 **{f'pr_review_checks.{key}': value for key, value in failure.items() if value is not None},
                 **({} if last.finished is None else {'pr_review_checks.step_finish': last.finished}),
-                # Only a restart moves the chain past a run that finished a step.
-                **({'pr_review_checks.restarted': True} if any(run.finished for run in attempts[:-1]) else {}),
+                # Only a restart moves the chain past a run that finished a step or served a rejected answer.
+                **(
+                    {'pr_review_checks.restarted': True}
+                    if any(run.finished or run.rejected for run in attempts[:-1])
+                    else {}
+                ),
             }
         if token := env.get('LOGFIRE_TOKEN', ''):
             # OpenCode's own spans carry no model, token or step counts.
@@ -368,7 +400,7 @@ def main() -> None:
     (output / f'{check.name}.json').write_text(result.model_dump_json(), encoding='utf-8')
     print(
         f'{check.name}: {result.outcome}, {len(result.findings)} findings, '
-        f'{sum(result.dropped.values())} dropped outside the changed lines, {usage.steps} steps, '
+        f'{sum(result.dropped.values())} dropped outside its files or the changed lines, {usage.steps} steps, '
         f'{usage.tokens:,} tokens, {usage.seconds} s'
     )
 

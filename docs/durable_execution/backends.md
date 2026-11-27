@@ -5,7 +5,7 @@ description: "Integrate a new durable execution engine with Pydantic AI using th
 # Building a durable execution backend
 
 Pydantic AI's durable execution builder lets an integration route model requests, tool discovery,
-tool validation, tool calls, event handling, message compaction, and
+tool validation, tool calls, event handling, message compaction, token counting, and
 [decorated capability operations](../capabilities/custom.md#durable-capability-operations) through one engine
 backend. Use it when you are integrating a durable execution system that is not already supported.
 
@@ -32,7 +32,7 @@ Use [`RegisteredOperationBackend`][pydantic_ai.durable_exec.RegisteredOperationB
 engine requires handlers to be registered before the worker starts. Implement `register` to
 create a bound caller and return its registration handles. Its `registrations()` method returns
 the collected SDK registration handles in binding order. During agent assembly, the base binds the
-four model operations before a worker can start, so these registrations are present without first
+five model operations before a worker can start, so these registrations are present without first
 running a model request. Pass the complete `registrations()` result to the engine SDK when creating
 the worker.
 
@@ -155,7 +155,7 @@ Per-tool config can return
 MCP tools perform I/O and always run in their durable unit, so returning `False` for one raises a
 [`UserError`][pydantic_ai.exceptions.UserError].
 
-The built-in IDs are `ModelRequestId`, `ModelCompactMessagesId`,
+The built-in IDs are `ModelRequestId`, `ModelCompactMessagesId`, `ModelCountTokensId`,
 `ModelCancelSuspendedResponseId`, `EventStreamHandlerId`, `ToolsetGetToolsId`,
 `ToolsetGetInstructionsId`, `ToolsetValidateToolArgumentsId`, `ToolsetCallToolId`, and
 `CapabilityOperationId`. Their Python class names do not determine persisted operation names.
@@ -187,10 +187,19 @@ parameter types to the engine's wire format at dispatch and loads it back worker
 [`DynamicToolsetCallToolParams`][pydantic_ai.durable_exec.DynamicToolsetCallToolParams],
 [`CapabilityOperationParams`][pydantic_ai.durable_exec.CapabilityOperationParams], and
 [`WorkspaceCallParams`][pydantic_ai.durable_exec.WorkspaceCallParams].
+The token count ahead of a request takes the request's `ModelRequestParams` and the transport
+`model_request(result_type)` returns, so an engine that carries model requests carries counts too.
 The backend's `register` receives each [`DurableOperation`][pydantic_ai.durable_exec.DurableOperation]
 and returns a [`BoundDurableOperation`][pydantic_ai.durable_exec.BoundDurableOperation]. Run its
 worker-side handler inside [`durable_unit_scope`][pydantic_ai.durable_exec.durable_unit_scope], so
 a durable operation called from inside the unit runs directly instead of scheduling another unit.
+
+With the default dynamic toolset transports, a unit gets the run's own `RunContext`, so a
+[`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] built with `per_run_step=False` is resolved
+once per run and held for the units, as a non-durable run holds it. An engine whose
+[`dynamic_get_tools`][pydantic_ai.durable_exec.ParameterTransports.dynamic_get_tools] or
+[`dynamic_call`][pydantic_ai.durable_exec.ParameterTransports.dynamic_call] returns a transport of its
+own resolves the toolset again in each unit.
 
 Every parameter type carries the run's `RunContext` (as `run_context`, or `ctx` on the toolset
 parameters; it is `None` when a suspended response is cancelled outside a run), and that context
@@ -333,15 +342,32 @@ _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())
 Engines that hand out tokens map onto this directly: AWS Lambda callbacks, Restate awakeables,
 Trigger.dev waitpoint tokens, Vercel Workflow hooks. Engines that address external events by name
 instead (Temporal signals, Azure Durable Task external events, DBOS messages) can encode the
-execution's ID and an event key in the token, and have whoever resolves it send the named event. The
-AWS Lambda implementation in Pydantic AI Harness's
+execution's ID and an event key in the token, and have whoever resolves it send the named event. Two
+implementations are references: the AWS Lambda one in Pydantic AI Harness's
 [`aws_lambda` package](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/aws_lambda)
-is a reference.
+hands out Lambda callback IDs, and the
+[Temporal one](https://github.com/pydantic/pydantic-ai/blob/main/pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_external_events.py)
+encodes the workflow ID and an event key, calls `ask` in a local activity, and waits for a signal that
+[`resolve_external_event`][pydantic_ai.durable_exec.temporal.resolve_external_event] sends.
 
 Code inside a durable unit, such as a tool, can't wait: the wait has to be recorded in the run
 itself. `wait_for_external_event` rejects a call made inside
 [`durable_unit_scope`][pydantic_ai.durable_exec.durable_unit_scope] before it reaches your waiter, so
 run each unit's body in that scope.
+
+## Waiting a provider's `Retry-After`
+
+A model error can say how long to wait before the request is attempted again, in its
+[`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after]. When your engine retries a model
+operation that failed, wait that long instead of its configured backoff, as a durable wait the engine
+schedules rather than a sleep inside the durable unit.
+[`model_error_retry_after(error, maximum=...)`][pydantic_ai.durable_exec.model_error_retry_after] finds
+the model error in the chain of the exception the unit failed with and caps the wait at `maximum`,
+typically the engine's maximum retry interval. It returns `None` when no model error asked for a wait,
+so the configured backoff applies. Temporal sets the result as the failed activity's
+`next_retry_delay`. An engine with no way to set the delay of one retry, or no durable timer to wait
+it with, should say in its documentation that it doesn't wait `retry_after`, rather than sleep in the
+process that runs the unit.
 
 ## Replays and telemetry
 

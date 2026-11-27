@@ -1,10 +1,11 @@
 from __future__ import annotations
 
 import json
-from collections.abc import Iterator
+from collections.abc import Callable, Coroutine, Iterator
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Protocol, cast
 
+import httpx2
 import pytest
 from pydantic import BaseModel, ConfigDict, JsonValue
 from pytest_mock import MockerFixture
@@ -12,6 +13,7 @@ from pytest_mock import MockerFixture
 from ..conftest import RequestCapture, try_import
 
 if TYPE_CHECKING:
+    from anthropic import AsyncAnthropic
     from cassetter import Cassette
 
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -26,6 +28,26 @@ with try_import() as google_imports:
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
 
+def anthropic_2023_06_01_client(api_key: str, http_client: httpx2.AsyncClient | None = None) -> AsyncAnthropic:
+    """An `AsyncAnthropic` client that sends `anthropic-version: 2023-06-01` on any SDK version.
+
+    `anthropic<2` sends `2023-06-01`, which the Anthropic cassettes were recorded with and which takes
+    `temperature`, `top_p` and `top_k`. `anthropic>=2` sends `2026-10-21` by default, which rejects them,
+    so `AnthropicModel` drops them there with a warning. The pin keeps a test's request the same on either
+    SDK. Without `http_client`, the client gets the one an `AnthropicProvider` would create.
+    """
+    # Imported here for the reason `anthropic_model` gives.
+    from anthropic import AsyncAnthropic
+
+    from pydantic_ai.models import create_async_httpx2_client
+
+    return AsyncAnthropic(
+        api_key=api_key,
+        http_client=http_client or create_async_httpx2_client(),
+        default_headers={'anthropic-version': '2023-06-01'},
+    )
+
+
 class AnthropicModelFactory(Protocol):
     def __call__(self, model_name: str, *, api_key: str | None = None, capture: bool = False) -> AnthropicModel: ...
 
@@ -36,7 +58,8 @@ def anthropic_model(anthropic_api_key: str, request_capture: RequestCapture) -> 
 
     `capture=True` routes the model through the `request_capture` fixture's client, so the test can
     assert on the request as sent rather than as recorded. Both fixtures are function-scoped, so a
-    test reading `request_capture` sees the same instance this wired in.
+    test reading `request_capture` sees the same instance this wired in. The client is an
+    `anthropic_2023_06_01_client`, so the request matches its recording on either SDK version.
     """
 
     def _create_model(model_name: str, *, api_key: str | None = None, capture: bool = False) -> AnthropicModel:
@@ -45,10 +68,8 @@ def anthropic_model(anthropic_api_key: str, request_capture: RequestCapture) -> 
         from pydantic_ai.models.anthropic import AnthropicModel
         from pydantic_ai.providers.anthropic import AnthropicProvider
 
-        provider = AnthropicProvider(
-            api_key=api_key or anthropic_api_key, http_client=request_capture.client if capture else None
-        )
-        return AnthropicModel(model_name, provider=provider)
+        client = anthropic_2023_06_01_client(api_key or anthropic_api_key, request_capture.client if capture else None)
+        return AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=client))
 
     return _create_model
 
@@ -145,6 +166,25 @@ def cache_breakpoints(body: dict[str, JsonValue]) -> tuple[dict[str, JsonValue] 
             if block.get('cache_control') or block.get('prompt_cache_breakpoint'):
                 blocks.append(f'messages[{message_index}].content[{block_index}]')
     return cache_control, blocks
+
+
+def mock_downloads(
+    monkeypatch: pytest.MonkeyPatch,
+    handle_request: Callable[[httpx2.Request], httpx2.Response]
+    | Callable[[httpx2.Request], Coroutine[None, None, httpx2.Response]],
+) -> None:
+    """Route file URL downloads through an `httpx2.MockTransport`, so the real download path runs.
+
+    A test in a module that records cassettes also needs `@pytest.mark.vcr(ignore_hosts=[...])` for the mocked
+    host, so the request reaches the mock transport instead of a recording. Use a public IP literal as the host:
+    SSRF validation accepts it without a DNS lookup, which would need the network and is a blocking call.
+    """
+
+    def create_http_client(*, timeout: float | httpx2.Timeout) -> httpx2.AsyncClient:
+        # A fresh client per download: each download closes the client it was given.
+        return httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
+
+    monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_http_client)
 
 
 class InfAsString(BaseModel):

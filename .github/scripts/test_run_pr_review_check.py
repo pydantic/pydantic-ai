@@ -14,6 +14,7 @@ import subprocess
 import sys
 import traceback
 import urllib.request
+from collections import Counter
 from collections.abc import Callable, Iterator, Mapping
 from pathlib import Path
 from urllib.parse import quote
@@ -26,7 +27,15 @@ sys.path.insert(0, str(Path(__file__).parent))
 
 import douwebot_opencode_run
 import run_pr_review_check
-from douwebot_opencode_run import OPENCODE_GO, ZAI, ZAI_BACKUP, Provider, run_with_fallback
+from douwebot_opencode_run import (
+    CHAIN_LINKS,
+    OPENCODE_GO,
+    ZAI,
+    ZAI_BACKUP,
+    AnswerRejected,
+    Provider,
+    run_with_fallback,
+)
 from pr_review_checks import CHECKS, GENERAL, ReviewCheck
 from run_pr_review_check import (
     Usage,
@@ -235,6 +244,7 @@ def test_tokens_are_counted_and_never_stop_a_review(tmp_path: Path) -> None:
     with (tmp_path / 'out').open('w') as log:
         usage = run_opencode(['sh', '-c', f"printf '%s\\n' {lines}"], '', cwd=tmp_path, env={}, log=log, seconds=300)
     assert (usage.steps, usage.tokens, usage.stopped) == (2, 2 * (2 * 10**9 + 1), False)
+    assert usage.tokens_by_kind == Counter({'input': 2 * 10**9, 'output': 2, 'cache.read': 2 * 10**9})
 
 
 def test_time_budget_stops_the_review(tmp_path: Path, expire_budget: list[float]) -> None:
@@ -295,7 +305,7 @@ def test_go_refusal_reruns_the_review_on_the_coding_plan(tmp_path: Path, monkeyp
     assert (provider, usage.steps, usage.tokens, usage.stopped) == (ZAI, 1, 21, False)
     assert launches.read_text().splitlines() == [
         'opencode-go/deepseek-v4.1-flash go-key ',
-        'zai-coding-plan/glm-5.3-flash  zai-key',
+        'zai-coding-plan/glm-5.4  zai-key',
     ]
 
 
@@ -315,7 +325,7 @@ def test_coding_plan_failure_names_its_error_type(
         _review(tmp_path)
     assert len(launches.read_text().splitlines()) == 2
     assert capsys.readouterr().out.splitlines()[-1] == (
-        'OpenCode run on zai-coding-plan/glm-5.3-flash on the primary Coding Plan failed with error type unknown.'
+        'OpenCode run on zai-coding-plan/glm-5.4 on the primary Coding Plan failed with error type unknown.'
     )
 
 
@@ -443,6 +453,7 @@ def _run(
         'opencode_fallback.plan': provider.plan,
         'opencode_fallback.attempt': str(attempt),
         'opencode_fallback.provider': provider.name,
+        'opencode_fallback.model': provider.model,
         'opencode_fallback.steps': str(steps),
         'opencode_fallback.tokens': str(tokens),
         **{f'opencode_fallback.{key}': value for key, value in failure.items()},
@@ -462,8 +473,9 @@ RATE_LIMITED = json.dumps(
         },
     }
 )
+# Its one finding is on a line the stubbed diff did not change, so the review drops it.
 ANSWER = [
-    json.dumps({'type': 'text', 'part': {'messageID': 'msg_final', 'text': _result()}}),
+    json.dumps({'type': 'text', 'part': {'messageID': 'msg_final', 'text': _result('a.py')}}),
     json.dumps({'type': 'step_finish', 'part': {'messageID': 'msg_final', 'reason': 'stop', 'tokens': {'input': 5}}}),
 ]
 
@@ -477,8 +489,12 @@ ANSWER = [
             {
                 'pr_review_checks.outcome': 'COMPLETE',
                 'pr_review_checks.findings': '0',
+                'pr_review_checks.dropped_findings': '1',
                 'pr_review_checks.steps': '1',
                 'pr_review_checks.tokens': '5',
+                'pr_review_checks.input_tokens': '5',
+                'pr_review_checks.output_tokens': '0',
+                'pr_review_checks.cache_read_tokens': '0',
             },
             {},
             (1, 5),
@@ -486,12 +502,15 @@ ANSWER = [
         ),
         pytest.param(
             f'printf "%s\\n" {shlex.quote(_step(10))}',
-            ValueError,
+            AnswerRejected,
             {
                 'pr_review_checks.outcome': 'FAILED',
-                'pr_review_checks.exception': 'ValueError',
+                'pr_review_checks.exception': 'AnswerRejected',
                 'pr_review_checks.steps': '1',
                 'pr_review_checks.tokens': '21',
+                'pr_review_checks.input_tokens': '10',
+                'pr_review_checks.output_tokens': '1',
+                'pr_review_checks.cache_read_tokens': '10',
             },
             {},
             (1, 21),
@@ -522,7 +541,8 @@ def test_review_span_reports_every_outcome_and_the_plan_of_its_last_run(
 ) -> None:
     """A complete, rejected or failed review exports its span, with its plan, its runs and how its last run failed.
 
-    Each run also exports a child span with its steps and tokens and how it failed.
+    Each run also exports a child span with its steps and tokens and how it failed. The last link's rejected answer
+    fails the review after its run served, so the review span still counts that run's steps and tokens.
     """
     _fake_opencode(tmp_path, monkeypatch, f'printf "%s\\n" {shlex.quote(GO_REFUSAL)}; exit 1', zai)
     monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
@@ -536,6 +556,7 @@ def test_review_span_reports_every_outcome_and_the_plan_of_its_last_run(
         **outcome,
         **{f'pr_review_checks.{key}': value for key, value in failure.items()},
         'pr_review_checks.provider': 'zai-coding-plan',
+        'pr_review_checks.model': 'zai-coding-plan/glm-5.4',
         'pr_review_checks.plan': 'the primary Coding Plan',
         'pr_review_checks.attempts': '2',
     }
@@ -579,9 +600,14 @@ def test_review_span_marks_a_review_the_chain_restarted(
         **REVIEW_ATTRIBUTES,
         'pr_review_checks.outcome': 'COMPLETE',
         'pr_review_checks.findings': '0',
+        'pr_review_checks.dropped_findings': '1',
         'pr_review_checks.steps': '1',
         'pr_review_checks.tokens': '5',
+        'pr_review_checks.input_tokens': '5',
+        'pr_review_checks.output_tokens': '0',
+        'pr_review_checks.cache_read_tokens': '0',
         'pr_review_checks.provider': 'zai-coding-plan',
+        'pr_review_checks.model': 'zai-coding-plan/glm-5.4',
         'pr_review_checks.plan': 'the backup Coding Plan',
         'pr_review_checks.attempts': '3',
         **restart,
@@ -593,6 +619,125 @@ def test_review_span_marks_a_review_the_chain_restarted(
         _run(ZAI, 2, {**RATE_LIMIT, 'step_finish': bool(restart)}, steps=run_steps, tokens=run_tokens),
         _run(ZAI_BACKUP, 3, {}, steps=1, tokens=5),
     ]
+
+
+def _provider_error(kind: str) -> str:
+    """The `error` event OpenCode 2.2.5 writes when a provider fails a run with `kind` after a 200 response."""
+    return json.dumps({'type': 'error', 'error': {'type': kind, 'message': 'Rate limit reached', 'status': 200}})
+
+
+@pytest.mark.parametrize('kind', ['provider.transport', 'provider.internal', 'provider.invalid-output'])
+@pytest.mark.parametrize(
+    ('steps', 'restart'),
+    [
+        pytest.param(shlex.quote(_step(10)), {'pr_review_checks.restarted': True}, id='after-a-step'),
+        pytest.param('', {}, id='before-a-step'),
+    ],
+)
+def test_go_provider_failure_restarts_the_review_on_the_next_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exported: list[dict[str, object]],
+    capsys: pytest.CaptureFixture[str],
+    kind: str,
+    steps: str,
+    restart: dict[str, object],
+) -> None:
+    """A transport, internal or invalid-output failure on Go reruns the review.
+
+    The next link reviews from scratch, whether or not Go's run took a step.
+    """
+    answer = f'printf "%s\\n" {" ".join(shlex.quote(line) for line in ANSWER)}'
+    launches = _fake_opencode(
+        tmp_path, monkeypatch, f'printf "%s\\n" {steps} {shlex.quote(_provider_error(kind))}; exit 1', answer
+    )
+    monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
+    run_pr_review_check.main()
+    assert [line.split()[0] for line in launches.read_text().splitlines()] == [OPENCODE_GO.model, ZAI.model]
+    assert (
+        f'opencode-go/deepseek-v4.1-flash failed the run with {kind}; '
+        'restarting the run on zai-coding-plan/glm-5.4 on the primary Coding Plan.'
+    ) in capsys.readouterr().out.splitlines()
+    *runs, span = exported
+    attributes = _span_attributes(span)
+    assert (attributes['pr_review_checks.outcome'], attributes['pr_review_checks.attempts']) == ('COMPLETE', '2')
+    assert {key: value for key, value in attributes.items() if key == 'pr_review_checks.restarted'} == restart
+    failure = {'error_type': kind, 'error_status': '200', 'step_finish': bool(restart)}
+    assert _runs_of(span, runs) == [
+        _run(OPENCODE_GO, 1, failure, steps=1 if restart else 0, tokens=21 if restart else 0),
+        _run(ZAI, 2, {}, steps=1, tokens=5),
+    ]
+
+
+@pytest.mark.parametrize(
+    ('go', 'zai', 'models'),
+    [
+        pytest.param(
+            f'printf "%s\\n" {shlex.quote(_step(10))} {shlex.quote(_provider_error("provider.content-filter"))}; exit 1',
+            'exit 1',
+            [OPENCODE_GO.model],
+            id='go-content-filter',
+        ),
+        pytest.param(
+            f'printf "%s\\n" {shlex.quote(GO_REFUSAL)}; exit 1',
+            f'if [ "$ZHIPU_API_KEY" = zai-key ]; then printf "%s\\n" {shlex.quote(_step(10))} '
+            f'{shlex.quote(_provider_error("provider.transport"))}; exit 1; else exit 1; fi',
+            [OPENCODE_GO.model, ZAI.model],
+            id='coding-plan-transport',
+        ),
+    ],
+)
+@pytest.mark.usefixtures('exported')
+def test_other_provider_failures_still_fail_the_review(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, go: str, zai: str, models: list[str]
+) -> None:
+    """Only Go's transport, internal and invalid-output failures restart a review; a Coding Plan account's do not."""
+    launches = _fake_opencode(tmp_path, monkeypatch, go, zai)
+    monkeypatch.setenv('ZAI_BACKUP_API_KEY', 'zai-backup-key')
+    with pytest.raises(subprocess.CalledProcessError):
+        run_pr_review_check.main()
+    assert [line.split()[0] for line in launches.read_text().splitlines()] == models
+
+
+def test_rejected_answer_restarts_the_review_on_the_next_link(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    exported: list[dict[str, object]],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """A link whose answer the review rejects hands the review to the next link, which reviews from scratch.
+
+    The rejected run's span marks it rejected and failed, and the review span marks the review restarted.
+    """
+    answer = f'printf "%s\\n" {" ".join(shlex.quote(line) for line in ANSWER)}'
+    launches = _fake_opencode(tmp_path, monkeypatch, f'printf "%s\\n" {shlex.quote(_step(10))}', answer)
+    monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
+    run_pr_review_check.main()
+    assert [line.split()[0] for line in launches.read_text().splitlines()] == [OPENCODE_GO.model, ZAI.model]
+    assert (
+        'The review answer was rejected: OpenCode review did not stop normally, from opencode-go/deepseek-v4.1-flash; '
+        'restarting the run on zai-coding-plan/glm-5.4 on the primary Coding Plan.'
+    ) in capsys.readouterr().out.splitlines()
+    *runs, span = exported
+    attributes = _span_attributes(span)
+    assert (attributes['pr_review_checks.outcome'], attributes['pr_review_checks.attempts']) == ('COMPLETE', '2')
+    assert attributes['pr_review_checks.restarted'] is True
+    assert _runs_of(span, runs) == [
+        _run(OPENCODE_GO, 1, {'rejected': True}, steps=1, tokens=21),
+        _run(ZAI, 2, {}, steps=1, tokens=5),
+    ]
+    assert [run.get('status') for run in runs] == [{'code': 2}, None]
+
+
+def test_review_stopped_at_its_time_budget_is_not_restarted(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exported: list[dict[str, object]], expire_budget: list[float]
+) -> None:
+    """A review its time budget stopped is incomplete; the next link never reviews it again."""
+    _fake_opencode(tmp_path, monkeypatch, 'exec sleep 30')
+    monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
+    run_pr_review_check.main()
+    *runs, span = exported
+    assert (len(runs), _span_attributes(span)['pr_review_checks.outcome']) == (1, 'INCOMPLETE')
 
 
 @pytest.mark.parametrize('signum', [signal.SIGINT, signal.SIGTERM], ids=['sigint', 'sigterm'])
@@ -634,6 +779,7 @@ def test_cancelled_review_exports_its_span(
         'pr_review_checks.outcome': 'FAILED',
         'pr_review_checks.exception': 'KeyboardInterrupt',
         'pr_review_checks.provider': 'opencode-go',
+        'pr_review_checks.model': 'opencode-go/deepseek-v4.1-flash',
         'pr_review_checks.plan': 'OpenCode Go',
         'pr_review_checks.attempts': '1',
     }
@@ -696,6 +842,44 @@ def test_review_that_fails_before_opencode_runs_exports_its_span(
         'pr_review_checks.outcome': 'FAILED',
         'pr_review_checks.exception': 'ValueError',
     }
+
+
+def test_review_runs_on_the_chain_its_repository_variable_names(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, exported: list[dict[str, object]]
+) -> None:
+    """`PR_REVIEW_MODEL_CHAIN` replaces the review's chain, and Zen's free tier reviews without any key."""
+    launches = _fake_opencode(
+        tmp_path,
+        monkeypatch,
+        f'printf "%s\\n" {shlex.quote(GO_REFUSAL)}; exit 1',
+        f'printf "%s\\n" {" ".join(shlex.quote(line) for line in ANSWER)}',
+    )
+    chain = [
+        {'model': 'opencode-go/hy4-flash-free', 'secret': 'OPENCODE_API_KEY'},
+        {'model': 'opencode/hy4-flash-free', 'secret': None},
+    ]
+    monkeypatch.setenv('PR_REVIEW_MODEL_CHAIN', json.dumps(chain))
+    monkeypatch.setenv('LOGFIRE_TOKEN', 'logfire-token')
+    run_pr_review_check.main()
+    assert launches.read_text().splitlines() == ['opencode-go/hy4-flash-free go-key ', 'opencode/hy4-flash-free  ']
+    # The review span names the model that served it, so reviews compare by model without a join to their runs.
+    *_, span = exported
+    assert _span_attributes(span)['pr_review_checks.model'] == 'opencode/hy4-flash-free'
+
+
+def test_only_a_repository_variable_picks_the_reviews_secrets() -> None:
+    """The review step passes each provider secret by a fixed name, and the chain only by a repository variable.
+
+    A chain entry can name only the secrets `CHAIN_LINKS` lists, so nothing a pull request controls picks a secret.
+    """
+    workflow = (WORKSPACE / '.github' / 'workflows' / 'pr-review-checks.yml').read_text(encoding='utf-8')
+    assert 'secrets[' not in workflow
+    steps = yaml.load(workflow, Loader=yaml.BaseLoader)['jobs']['review']['steps']
+    [env] = [step['env'] for step in steps if step.get('name') == 'Review with OpenCode']
+    assert env['PR_REVIEW_MODEL_CHAIN'] == '${{ vars.PR_REVIEW_MODEL_CHAIN }}'
+    linked = {secret for _, secret in CHAIN_LINKS if secret}
+    assert linked == {'OPENCODE_API_KEY', 'ZAI_API_KEY', 'ZAI_BACKUP_API_KEY'}
+    assert {name: env[name] for name in linked} == {name: f'${{{{ secrets.{name} }}}}' for name in linked}
 
 
 def test_complete_review_keeps_the_models_outcome(tmp_path: Path) -> None:

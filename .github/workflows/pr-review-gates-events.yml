@@ -10,11 +10,14 @@ on:
     types: [submitted, edited, dismissed]
   pull_request_review_comment:
     types: [created, edited, deleted]
-  # Resolving an optional douwebot finding can make the head pass the gate.
-  pull_request_review_thread:
-    types: [resolved, unresolved]
 
 permissions: {}
+
+# The wake-up carries no data, so a newer event on the PR replaces its pending run and cancels its
+# running one. A cancelled run still completes and wakes PR Review Gates, which skips it.
+concurrency:
+  group: pr-review-gates-events-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
 
 jobs:
   wake:
