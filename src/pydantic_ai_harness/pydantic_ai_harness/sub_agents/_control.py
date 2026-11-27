@@ -89,10 +89,13 @@ def in_run_trace_context() -> Generator[None]:
     """Make the delegating run's span current, for a decision made after the tool call that led to it ended.
 
     A task in the background settles after its `execute_tool` span ended, while the run that started it, which
-    waits for its tasks, still has its span open.
+    waits for its tasks, still has its span open. A `SubAgentToolset` registered without `SubAgents` stores no
+    run context, so the decision goes under whatever span is current.
     """
     run_context = RUN_TRACE_CONTEXT.get()
-    assert run_context is not None, 'A task starts from a tool call inside `SubAgents.wrap_run`.'
+    if run_context is None:
+        yield
+        return
     token = otel_context.attach(run_context)
     try:
         yield

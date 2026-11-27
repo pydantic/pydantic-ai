@@ -2223,6 +2223,40 @@ class TestTaskControlTelemetry:
         assert attributes['gen_ai.tool.call.id'] == (delegate.attributes or {})['gen_ai.tool.call.id']
         assert isinstance(attributes['sub_agents.task_id'], str)
 
+    async def test_a_directly_registered_toolsets_background_task_settles_and_is_recorded(self) -> None:
+        """Without `SubAgents.wrap_run` no run trace context is stored, so the settled span goes under the current one."""
+        toolset = SubAgentToolset[Any](
+            agents={'researcher': researcher()},
+            forward_usage=True,
+            inherit_tools=False,
+            shared_capabilities=[],
+            event_stream_handler=None,
+            tool_name='delegate_task',
+            tool_retries=2,
+            contain_errors=False,
+            call_counts={},
+            task_control=TaskControl(),
+            dynamic_agents=DynamicAgents(),
+            created={},
+        )
+        settings, exporter = traced(False)
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='researcher', task='Find x.', background=True), text('Bye.')),
+            toolsets=[toolset],
+        )
+        parent.instrument = settings
+        owner = DelegationTasks()
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with owner.opened():
+                with owner.bind():
+                    await parent.run('Go.')
+                await owner.wait_children(None)
+        assert [
+            attributes['sub_agents.outcome']
+            for name, attributes in decisions(exporter)
+            if name == 'sub_agents task settled'
+        ] == ['ok']
+
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_a_listener_answer_is_a_span(self, include_content: bool) -> None:
         asker = Agent(
