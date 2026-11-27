@@ -1593,6 +1593,17 @@ class PlaywrightBrowserSession:
                     raise
 
 
+async def _moved_through_history(page: _Page, traversal: Awaitable[object]) -> bool:
+    """Whether a `go_back`/`go_forward` traversal moved the page.
+
+    Playwright returns `None` both when there is no history entry and after a same-document traversal, such as a
+    `history.pushState` route or a `#hash` entry, since only a new document has a response. So a `None` result counts
+    as no move only when the URL didn't change either.
+    """
+    before = page.url
+    return await traversal is not None or page.url != before
+
+
 class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
     """Async Playwright-backed browser tools: navigate, interact, extract, screenshot, run JS, inspect.
 
@@ -2262,7 +2273,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         """
 
         async def _go_back(page: _Page, deadlines: _Deadlines) -> str:
-            if await page.go_back(timeout=deadlines.navigation) is None:
+            if not await _moved_through_history(page, page.go_back(timeout=deadlines.navigation)):
                 return self._truncate_output('No previous page in browser history.')
             if (blocked := await self._settle(page, 'go_back', deadlines)) is not None:
                 return blocked
@@ -2284,7 +2295,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         """
 
         async def _go_forward(page: _Page, deadlines: _Deadlines) -> str:
-            if await page.go_forward(timeout=deadlines.navigation) is None:
+            if not await _moved_through_history(page, page.go_forward(timeout=deadlines.navigation)):
                 return self._truncate_output('No next page in browser history.')
             if (blocked := await self._settle(page, 'go_forward', deadlines)) is not None:
                 return blocked
