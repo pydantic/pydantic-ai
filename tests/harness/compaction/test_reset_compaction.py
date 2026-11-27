@@ -770,6 +770,15 @@ class TestResetCompaction:
         with pytest.raises(UserError, match='Pass the `WorkLog` registered on the agent'):
             await agent.run('Go on.')
 
+    async def test_a_work_log_without_an_id_is_rejected(self) -> None:
+        work_log = WorkLog[None](id=None)
+        agent = Agent(
+            Script().model(), deps_type=type(None), capabilities=[work_log, ResetCompaction(work_log, max_messages=50)]
+        )
+
+        with pytest.raises(UserError, match='needs a `WorkLog` with an `id`'):
+            await agent.run('Go on.')
+
     def test_a_work_log_is_required(self) -> None:
         with pytest.raises(UserError, match='`ResetCompaction` requires `WorkLog`'):
             Agent(

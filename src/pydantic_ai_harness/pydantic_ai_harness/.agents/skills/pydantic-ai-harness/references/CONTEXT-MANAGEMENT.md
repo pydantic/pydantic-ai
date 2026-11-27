@@ -275,6 +275,7 @@ ID, a typed result `ClearToolResults` also keeps, or a summary not shorter than 
 refused in the tool return. Token triggers and `ReportContextUsage` anchor on the latest response's
 usage, which still counts the result until the next response. The span gets
 `compaction.model_requested`.
+
 ### `ResetCompaction`
 
 `ResetCompaction(work_log, max_messages=None, max_tokens=None, *, max_fraction=None, context_window=None, fallback_context_window=DEFAULT_CONTEXT_WINDOW, keep_messages=2, keep_user_turns=True, notice=default_reset_notice, restate=None, preserve_loaded_capabilities=True, tokenizer=None, id='reset_compaction')`:
@@ -464,8 +465,7 @@ Stores:
 
 Gotchas: both `ToolReturn.return_value` and text `content` are reduced (a return value holding
 files keeps them; only the data beside them is reduced); `ModelRetry` and tool errors
-are never reduced, nor are core `load_capability` / `search_tools` returns or `WorkLog`'s
-`read_work_log` returns. Keep
+are never reduced, nor are core `load_capability` / `search_tools` returns or `WorkLog`'s `search_work_log` / `read_work_log` returns. Keep
 `Shell(max_output_chars=...)` above your thresholds. `Summarize` usage counts toward the run. Under
 durable execution spill writes and built-in summaries are journaled, so a replay reuses the recorded
 handle or summary; the payload is part of the operation input, and a custom `OverflowStore` should

@@ -51,7 +51,7 @@ flowchart TB
 | `DeduplicateFileReads` | zero-LLM | Blanks file reads superseded by a newer read of the same file | The agent re-reads files and only the latest version matters |
 | `SummarizingCompaction` | one LLM call | Summarizes older messages, keeping the recent tail | Old context matters but must shrink; use behind the cheap tiers |
 | `RelevanceCompaction` | one judge request per new step, plus an optional summary | Keeps, reduces, or drops each older step by a judge model's answers | Some old tool results are needed verbatim, others are dead weight |
-| `ResetCompaction` | zero-LLM | Clears the history down to the first request, the latest prompt and a short tail, with a notice pointing the model at a [`WorkLog`](../work_log/) | A long autonomous run can look up its earlier tool results instead of keeping them in context |
+| `ResetCompaction` | zero-LLM | Clears the history down to the first request, the user's later turns and a short tail, with a notice pointing the model at a [`WorkLog`](../work_log/) | A long autonomous run can look up its earlier tool results instead of keeping them in context |
 | `TieredCompaction` | escalates | Runs cheap passes first, summarizes only if still over `target_tokens` | The sensible default: pay for a summary only when needed |
 | `FallbackCompaction` | depends on chain | Tries the next strategy when one raises | Summarization can fail and truncation must keep the run alive |
 | `CompactOnRequest` | depends on strategy | Gives the model a tool to request compaction before its next request | The model knows when a phase of work ends better than a size trigger |
@@ -627,8 +627,7 @@ agent = Agent(
 
 Pass the `WorkLog` that is on the agent: the notice names its log. `Agent(...)` raises a `UserError`
 when no `WorkLog` is registered, and a run raises one at its start when the agent's `WorkLog` under
-that `id` is not the one `ResetCompaction` holds. A `WorkLog` passed only to
-`agent.run(capabilities=...)` does not satisfy the check for a `ResetCompaction` on the agent.
+that `id` is not the one `ResetCompaction` holds. A `WorkLog` passed only to `agent.run(capabilities=...)` does not satisfy the check for a `ResetCompaction` on the agent. The `WorkLog` needs an `id` (the default `'work_log'`): with `id=None` the run raises, since the check can't find it.
 
 The reset keeps, in order:
 
@@ -664,7 +663,7 @@ To write your own, pass `notice=`, a function from a `ResetNotice` to the text:
 | Field | Meaning |
 | --- | --- |
 | `number` | Resets in this conversation, this one included, counting from `1` |
-| `work_log` | The log's handle, or `None` for the in-memory store or when no conversation ID is known, such as `compact_now` without `conversation_id=` |
+| `work_log` | The log's handle, or `None` for the in-memory store or when no conversation ID is known: not from the run, `compact_now`'s `conversation_id=`, or any message in the history |
 | `search_tool`, `read_tool` | The names the model sees for `search_work_log` and `read_work_log` |
 | `replies_logged` | Whether the work log records the model's replies (`WorkLog.record_text`) |
 | `cleared_messages` | Messages this reset removed |
@@ -697,7 +696,7 @@ client sends back, which carries no capability parts.
 the reset kept. If the kept history alone is over the trigger, though, it resets after every new
 response. Set the trigger well above what `keep_messages` keeps, and add
 [`ToolOutputLimits`](../tool_output_limits/), which reduces a large result when the tool returns it,
-so one oversized tool result in the tail doesn't keep the history over the trigger. It leaves the work log's own results alone, and a `read_work_log` page can reach 50,000 characters, so keep the trigger above that too.
+so one oversized tool result in the tail doesn't keep the history over the trigger. `ToolOutputLimits` leaves the work log's own results alone, and a `read_work_log` page can reach 50,000 characters, so keep the trigger above that too.
 
 **With other capabilities.**
 
@@ -828,8 +827,7 @@ agent = Agent(
 
 `TieredCompaction` calls each tier's `compact` directly, re-measuring after each and stopping once
 under `target_tokens`, so a tier needs no `max_*` trigger of its own. Registered directly on an
-agent without a trigger, `ClearToolResults`, `SlidingWindowCompaction` and `SummarizingCompaction`
-raise `UserError`. Any object with `async def compact(messages, ctx) -> list[ModelMessage]` (the
+agent without a trigger, `ClearToolResults`, `SlidingWindowCompaction`, `SummarizingCompaction` and `ResetCompaction` raise `UserError`. Any object with `async def compact(messages, ctx) -> list[ModelMessage]` (the
 `CompactionStrategy` protocol) can be a tier.
 
 Each tier keeps some messages as they are: its `keep_tokens` or `keep_messages` tail, which holds

@@ -17,6 +17,10 @@ from pydantic_ai_harness.work_log import FileWorkLogStore
 agent = Agent('openai:gpt-5', capabilities=[WorkLog(FileWorkLogStore('work-logs'))])
 ```
 
+> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does,
+> deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade.
+> See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
+
 ```mermaid
 flowchart TB
     accTitle: Work Log: keep every tool result where the model can read it again
@@ -59,8 +63,7 @@ Each entry is one tool call, one model reply, or one piece of model thinking:
 - **Failures.** A `ModelRetry` is logged with the outcome `retried` and the retry message. Any
   other exception is logged as `failed`, with its type and message, and is still raised; a tool
   wrapped by [`ReportToolErrors`](../report_tool_errors/) is logged as `failed` with the message it
-  reports. A failure that an outer capability recovers from is logged once, as `success`, with the
-  recovered result.
+  reports. A failure that an outer capability recovers from is logged once, as `success`, with the recovered result. A result that an outer capability's `after_tool_execute` rejects is logged twice: as `success`, then as `retried` or `failed` with the rejection.
 - **Model replies.** Each text part of a response, with `record_text=True` (the default). Thinking
   is logged only with `record_thinking=True`.
 
@@ -95,7 +98,7 @@ the tool it names under its own id, so the two entries share a `tool_call_id`, a
 
 `search_work_log(query=None, tool_name=None, run_id=None, limit=10)` finds entries:
 
-- With a `query`, entries are ranked with BM25 over the tool name, arguments and content, the same
+- With a `query`, only entries containing a query word are returned, ranked with BM25 over the tool name, arguments and content, the same
   ranking as [Conversation Search](../conversation_search/): rare terms and exact words score
   higher.
 - Without one, it returns the most recent entries, newest first.
@@ -174,9 +177,7 @@ directory.
   key's digest. A search tool that ignores `.gitignore` also finds the copies of files the agent
   read that the entries hold, as they were when read. The store keeps only file names and keys in memory: each search reads every entry
   file, which in a remote sandbox is one round trip per entry. A symlinked log directory or entry
-  file raises `WorkspaceError`. A run with no workspace fails at its start; pass `workspace=` a
-  backend, such as `LocalWorkspaceBackend('/var/work-logs')`, to keep logs in a workspace of their
-  own instead.
+  file raises `WorkspaceError`. A run with no workspace fails at its start; pass `workspace=` a backend, such as `LocalWorkspaceBackend('/var/work-logs')`, to keep logs in a workspace of their own instead. The agent's file and shell tools can't reach a workspace passed as `workspace=`, so the notice's handle then names a directory the agent can open only through the work log's tools. `FileSystem`'s default read-only patterns cover `.pydantic-ai-harness/`, but the agent's shell can still write there, so an entry read back from this store can hold what the agent wrote rather than what the tool returned.
 
 Each store numbers entries in memory, one append at a time per log, so it supports one writer process per log. Nothing prunes the file and workspace logs; delete them when you no longer need them.
 

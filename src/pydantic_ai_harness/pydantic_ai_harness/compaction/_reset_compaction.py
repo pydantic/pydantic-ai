@@ -60,7 +60,8 @@ class ResetNoticePart(DataCapabilityPart[str], namespace='reset_compaction', nam
     """How many times the conversation has been cleared, this time included."""
 
     work_log: str | None
-    """The work log's handle the text names, or `None` when the conversation is not known."""
+    """The work log's handle the text names: `None` for a store the agent can't open, such as
+    `InMemoryWorkLogStore`, or when the conversation is not known."""
 
     kept_responses: int
     """Model responses the reset kept after the notice, so a later reset can tell whether anything is new."""
@@ -72,9 +73,9 @@ class CurrentStatePart(
 ):
     """The task's current state, as `ResetCompaction.restate` returns it, right after the notice.
 
-    Return one from `restate` to give the text its real source, such as `ToolResultSource` for a command's
-    output; a plain string from `restate` is recorded as the application's own words, with `OperatorSource`.
-    A later reset replaces it.
+    Return one from `restate` to give the text its real source, such as `OperatorSource()` for text the
+    application wrote; a plain string from `restate` is recorded as the callable's output, with a
+    `ToolResultSource` named after it. A later reset replaces it.
     """
 
 
@@ -86,7 +87,8 @@ class ResetNotice:
     """How many times the conversation has been reset, this reset included."""
 
     work_log: str | None
-    """Where the work log is, from its store's `locate`, or `None` when the conversation is not known."""
+    """Where the work log is, from its store's `locate`: `None` for a store the agent can't open, such as
+    `InMemoryWorkLogStore`, or when the conversation is not known."""
 
     search_tool: str
     """The name the model sees for `search_work_log`."""
@@ -190,10 +192,10 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
     max_fraction: float | None = None
     """Reset when estimated tokens exceed this fraction of the request's model's context window.
 
-    Resolved per request from the request's model. Mutually exclusive with `max_tokens`. Without any
-    trigger the capability never resets on its own, and works only as a strategy: a
-    `TieredCompaction` tier, a `FallbackCompaction` entry, or the strategy of `CompactOnRequest` or
-    `compact_now`."""
+    Resolved per request from the request's model. Mutually exclusive with `max_tokens`. Registered on an
+    agent, it needs one of `max_messages`, `max_tokens` or `max_fraction`, and a run raises `UserError` at its
+    start without one; as a strategy (a `TieredCompaction` tier, a `FallbackCompaction` entry, or the strategy
+    of `CompactOnRequest` or `compact_now`) it needs none."""
 
     context_window: int | None = None
     """Window override in tokens. `None` resolves it from the request's model.
@@ -222,9 +224,10 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
     restate: Callable[[RunContext[AgentDepsT]], Awaitable[str | CurrentStatePart | None]] | None = None
     """Return the task's current state to put after the notice, in a `<current_state>` frame.
 
-    A string is recorded as the application's own words. Return a `CurrentStatePart` instead to give text the
-    code didn't write, such as `git status` output, its real source. `None` or an empty string adds nothing.
-    Runs as a durable operation, and an error it raises fails the request."""
+    A string is recorded as the output of the `restate` callable (a `ToolResultSource` named after it), so text in
+    it that looks like a frame gets a note. Return a `CurrentStatePart` to give it another source, such as
+    `OperatorSource()` for text your application wrote. `None` or an empty string adds nothing. Runs as a durable
+    operation, and an error it raises fails the request."""
 
     preserve_loaded_capabilities: bool = True
     """When `True`, a deferred capability loaded in the cleared messages stays loaded.
@@ -262,7 +265,12 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
         """
         require_trigger('ResetCompaction', self.max_messages, self.max_tokens, self.max_fraction)
         work_log = self.work_log
-        registered = ctx.capabilities.get(work_log.id) if work_log.id is not None else None
+        if work_log.id is None:
+            raise UserError(
+                "`ResetCompaction` needs a `WorkLog` with an `id`, such as the default `'work_log'`, to find it on the "
+                'agent: with `id=None` it cannot check that the notice names the log the agent writes.'
+            )
+        registered = ctx.capabilities.get(work_log.id)
         if registered != work_log:
             raise UserError(
                 f'`ResetCompaction.work_log` is {work_log!r}, but the agent registers {registered!r} under id '

@@ -9,6 +9,7 @@ from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
 import anyio
+import anyio.lowlevel
 import pytest
 from pydantic import TypeAdapter
 
@@ -569,6 +570,49 @@ class TestWorkLogCodeMode:
             ('tool_call', 'tc', None, 'sunny in Paris'),
             (None, None, None, 'done'),
         ]
+
+    async def test_a_speculated_call_is_logged_under_its_provisional_id(self) -> None:
+        """A call `CodeMode(speculate=...)` launches while the script streams keeps its provisional ID once adopted.
+
+        The script also holds a literal call in a branch it never takes: speculation launches it and then cancels
+        it, and it stays in the log only if it finished first.
+        """
+        code = 'if False:\n    a = await search(query="never")\nb = await search(query="alpha")\nprint(b)'
+        # Filler statements leave stream to go after the calls close, so the launched calls can run meanwhile.
+        args = json.dumps({'code': code + ''.join(f'\npad_{index} = {index}' for index in range(20)) + '\n"ok"'})
+
+        def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            return ModelResponse(parts=[TextPart('done')])
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+            if len(messages) > 1:
+                yield 'done'
+                return
+            yield {1: DeltaToolCall(name='run_code', tool_call_id='rc')}
+            for offset in range(0, len(args), 16):
+                yield {1: DeltaToolCall(json_args=args[offset : offset + 16])}
+                await anyio.lowlevel.checkpoint()
+
+        async def search(query: str) -> str:
+            await anyio.lowlevel.checkpoint()
+            return f'result:{query}'
+
+        store = InMemoryWorkLogStore()
+        agent = Agent(
+            FunctionModel(answer, stream_function=stream),
+            deps_type=type(None),
+            tools=[search],
+            capabilities=[CodeMode[None](speculate=['search']), WorkLog(store)],
+        )
+
+        await agent.run('Go', conversation_id=_CONVERSATION)
+
+        searches = [entry for entry in await store.read(_CONVERSATION) if entry['tool_name'] == 'search']
+        [adopted] = [entry for entry in searches if '"alpha"' in (entry['args'] or '')]
+        assert adopted['tool_call_id'] == IsStr(regex=r'rc__spec_\d+')
+        assert adopted['parent_tool_call_id'] == 'rc'
+        assert all(entry['outcome'] == 'success' for entry in searches)
+        assert len(searches) <= 2
 
     async def test_eager_nested_calls_are_logged_before_run_code(self) -> None:
         searched = asyncio.Event()
