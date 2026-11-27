@@ -85,6 +85,16 @@ class _PersonOnlyMetadata(BaseModel):
     permissions: _PersonOnly
 
 
+class _Reviewed(BaseModel):
+    reviewer: bool
+
+
+class _ReviewedMetadata(BaseModel):
+    """What `ApprovalReviewer` attaches to a call it approves, so a hold for a person only doesn't take it as theirs."""
+
+    permissions: _Reviewed
+
+
 class _AskedMetadata(BaseModel):
     """What `Permissions` attaches to a call it holds, read back by `permission_requests`."""
 
@@ -315,6 +325,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
         if asked is None:
             return args
         if ctx.tool_call_approved:
+            if asked.person_only and _reviewer_approved(ctx.tool_call_metadata):
+                # The reviewer approved another hold on this call, such as an earlier `Permissions`' own.
+                raise ApprovalRequired(metadata=_AskedMetadata(permissions=asked).model_dump())
             if not in_durable_context(ctx) and not asked.person_only and _remember(ctx.tool_call_metadata):
                 self.remembered.add(RememberedApproval(ctx.conversation_id, call.tool_name, asked.subject))
             return args
@@ -480,7 +493,7 @@ def _rule_asks(
         raise SkipToolExecution(ToolDenied(f'{message} Reason: {rule.reason}' if rule.reason else message))
     if subject is None:
         # Not a command or file write, so it takes the plain approval flow, like `requires_approval=True`.
-        if ctx.tool_call_approved:
+        if ctx.tool_call_approved and not (managed and _reviewer_approved(ctx.tool_call_metadata)):
             return None
         metadata: dict[str, Any] = {'reason': rule.reason} if rule.reason else {}
         if managed:
@@ -511,6 +524,18 @@ def person_only_request(metadata: object) -> bool:
     """Whether a deferred call's metadata says `Permissions` holds it for a person only to approve."""
     try:
         return _PersonOnlyMetadata.model_validate(metadata).permissions.person_only
+    except ValidationError:
+        return False
+
+
+def reviewer_approval_metadata() -> dict[str, Any]:
+    """The metadata `ApprovalReviewer` gives a call it approves, which a hold for a person only refuses."""
+    return _ReviewedMetadata(permissions=_Reviewed(reviewer=True)).model_dump()
+
+
+def _reviewer_approved(metadata: object) -> bool:
+    try:
+        return _ReviewedMetadata.model_validate(metadata).permissions.reviewer
     except ValidationError:
         return False
 

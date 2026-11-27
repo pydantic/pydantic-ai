@@ -400,3 +400,47 @@ class TestManagedRules:
             'auto',
             [PermissionRule[None]('deny', command='git push')],
         )
+
+
+class TestReviewerApprovals:
+    async def test_a_reviewers_approval_of_an_earlier_hold_does_not_answer_a_person_only_one(
+        self, tmp_path: Path
+    ) -> None:
+        """The first `Permissions` holds the call for anyone and the reviewer approves it; the ceiling holds it again.
+
+        The run's handlers have answered this round, so the call ends the run held, for a person only.
+        """
+        agent = Agent[None, 'str | DeferredToolRequests'](
+            _calls(ECHO),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Shell(denied_commands=[]),
+                Permissions('read-only'),
+                Permissions('full', max_mode='read-only'),
+                _safe_reviewer(),
+            ],
+        )
+        held = await agent.run('go')
+        assert isinstance(held.output, DeferredToolRequests)
+        assert [(request.subject, request.person_only) for request in permission_requests(held.output)] == [
+            ('echo hi', True)
+        ]
+        assert _returns(held.all_messages()) == []
+
+    async def test_a_reviewers_approval_does_not_answer_a_managed_ask_on_a_plain_tool(self) -> None:
+        def deploy(env: str) -> str:
+            return f'deployed {env}'
+
+        agent = Agent[None, 'str | DeferredToolRequests'](
+            _calls(('deploy', {'env': 'prod'})),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            tools=[Tool(deploy, requires_approval=True)],
+            capabilities=[Permissions(managed_rules=[PermissionRule('ask', tools=['deploy'])]), _safe_reviewer()],
+        )
+        held = await agent.run('go')
+        assert isinstance(held.output, DeferredToolRequests)
+        [call] = held.output.approvals
+        assert held.output.metadata == {call.tool_call_id: {'permissions': {'person_only': True}}}
