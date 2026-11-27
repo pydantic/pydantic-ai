@@ -91,7 +91,11 @@ agent = Agent(
 )
 ```
 
-Give the capability an `id`, which names it in the note. Lowering it doesn't change the server's tool names and descriptions, which still reach the model as the server wrote them.
+Give the capability an `id`, which names it in the note.
+
+At `'none'`, the server's tool names, descriptions and input schemas stay out of the tool definitions too. The model gets one tool, `call_mcp_tool`, whose description is the framework's, and calls the server's tools through it by name, with their arguments as a JSON string. The server's tool catalog goes out with its instructions, as the same framed data. When the server's tool list changes, the new catalog is stated again after the latest message, and the tool definitions stay as they were, so the cached prompt prefix holds. Each call's result comes back as `call_mcp_tool`'s tool result.
+
+This is best-effort: models usually treat framed data as information, but some still follow instructions in it. At `'user'`, the server's tools keep their native definitions. To give two servers at `'none'` their own bridge tool, set a [`tool_prefix`](#tool-names), which is prepended to `call_mcp_tool`.
 
 ## Per-user credentials
 

@@ -616,8 +616,9 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         capability already has leaves it where it is. Like the class attribute, it covers what the capability sends
         mid-conversation and its instructions, its own and its toolsets', which then never enter the instruction
         prefix: they're stated in history as framed data at that authority, never in the application's voice. It
-        doesn't cover its tool definitions: an MCP server's tool names and descriptions still reach the model as the
-        server wrote them.
+        doesn't cover its tool definitions, except for an [`MCP`][pydantic_ai.capabilities.MCP] capability at
+        `'none'`, whose server's tools are called through one bridge tool, with their catalog sent as data
+        (see [lowering an untrusted server](../capabilities/mcp.md#lowering-an-untrusted-server)).
         """
         return _utils.replace_no_init(self, _authority_ceiling=_lower_authority(self._effective_authority, authority))
 

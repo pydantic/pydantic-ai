@@ -220,8 +220,10 @@ server has the authority Pax gives the folder's files, which
 offered like your own servers. In an untrusted one, Pax lowers its capability
 to `'none'` authority with `with_authority`, eager or on demand, so what the
 capability sends mid-conversation reaches the model as the repository's data,
-not as yours. Its tool names and descriptions still reach the model as the
-server wrote them. Your own servers and plugin-settings servers keep your
+not as yours. An on-demand one's line in the `load_capability` catalog is only
+`Tools from the NAME MCP server.`, not the file's `description` or the server's
+own text. Its tool names and descriptions still reach the model as the server
+wrote them. Your own servers and plugin-settings servers keep your
 authority in any folder.
 
 ### Plugin settings and gaps

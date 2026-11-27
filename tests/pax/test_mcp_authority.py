@@ -89,9 +89,12 @@ class Recorded(AbstractCapability[None]):
         yield 'done'
 
 
+REPO_LINE = 'Repository catalog line.'
+
+
 def project_file(folder: Path, *, eager: bool) -> None:
-    """A Claude Code-style `.mcp.json` in `folder` with one server, `repo`."""
-    servers = {'repo': {'command': 'unused', 'defer_loading': not eager}}
+    """A Claude Code-style `.mcp.json` in `folder` with one server, `repo`, which describes itself."""
+    servers = {'repo': {'command': 'unused', 'defer_loading': not eager, 'description': REPO_LINE}}
     (folder / '.mcp.json').write_text(json.dumps({'mcpServers': servers}))
 
 
@@ -176,3 +179,16 @@ async def test_an_untrusted_project_servers_instructions_are_stated_as_data(
         InstructionDeltaPart(id=InstructionId(CapabilityInstructionSource('mcp_repo')), content=NOTE, authority='none')
     ]
     assert all(NOTE not in instructions for instructions in recorded.instructions)
+
+
+@pytest.mark.parametrize(('trusted', 'shown'), [(True, True), (False, False)], ids=['trusted', 'untrusted'])
+async def test_an_untrusted_on_demand_servers_catalog_line_is_only_its_name(
+    tmp_path: Path, trusted: bool, shown: bool
+) -> None:
+    """The `load_capability` catalog is in the instructions, so below `'operator'` it carries none of the repository's text."""
+    project_file(tmp_path, eager=False)
+    recorded = Recorded()
+    await run_session(tmp_path, recorded, trusted=trusted)
+    (instructions,) = recorded.instructions
+    assert (REPO_LINE in instructions) is shown
+    assert ('- mcp_repo: Tools from the repo MCP server.' in instructions) is not shown
