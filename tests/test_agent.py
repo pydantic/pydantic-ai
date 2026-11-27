@@ -5216,8 +5216,8 @@ def test_tool_exceeds_token_limit_with_empty_args():
         match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments\.',
     ):
         agent.run_sync('Hello')
-    # A function tool call keeps its retry, as for arguments that don't parse.
-    assert requests == 2
+    # Re-prompting with the same token limit would only cut the call off again, as for arguments that don't parse.
+    assert requests == 1
 
 
 def test_tool_exceeds_token_limit_but_complete_args():
