@@ -7299,7 +7299,7 @@ async def test_anthropic_api_version_2026_10_21_drops_sampling_settings(
 
     assert [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)] == snapshot(
         [
-            "Sampling parameters ['temperature'] are rejected by Anthropic API version '2026-10-21', which `anthropic>=2` sends by default; set the client's `anthropic-version` header to '2023-06-01' to keep them. These settings will be ignored."
+            "Sampling parameters ['temperature'] are rejected by Anthropic API version '2026-10-21'; send `anthropic-version: 2023-06-01` via the client's `default_headers` or the `extra_headers` model setting to keep them. These settings will be ignored."
         ]
     )
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]

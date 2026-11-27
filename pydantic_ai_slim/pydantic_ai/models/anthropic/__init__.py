@@ -1537,8 +1537,8 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if api_version is None:
             return f'are not supported by {self.model_name!r}'
         return (
-            f'are rejected by Anthropic API version {api_version!r}, which `anthropic>=2` sends by default; '
-            "set the client's `anthropic-version` header to '2023-06-01' to keep them"
+            f'are rejected by Anthropic API version {api_version!r}; send `anthropic-version: 2023-06-01` '
+            "via the client's `default_headers` or the `extra_headers` model setting to keep them"
         )
 
     def _drop_unsupported_sampling_settings(
