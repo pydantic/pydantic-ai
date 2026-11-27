@@ -11,7 +11,7 @@ import pytest
 from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import PrefixTools, SetToolMetadata
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness import DenyUnanswered
 from pydantic_ai_harness.ask_user import AskUser
@@ -316,6 +316,65 @@ async def test_a_durable_delegate_with_its_own_sub_agents_is_refused_under_a_man
             await workflow()
     else:
         assert await workflow() == 'parent done'
+
+
+def _delegates_to_self_once(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    if returns:
+        return ModelResponse(parts=[TextPart(returns[-1].model_response_str())])
+    first = messages[0].parts[-1]
+    if isinstance(first, UserPromptPart) and first.content == 'Delegate it':
+        return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'Work on it'})])
+    return ModelResponse(parts=[TextPart('from the delegate')])
+
+
+async def test_a_durable_delegate_to_self_runs_under_its_own_managed_layer(dbos: DBOS) -> None:
+    """The delegate holds the managed `Permissions` itself, so its child workflows read the layer."""
+    agent = Agent(
+        FunctionModel(_delegates_to_self_once),
+        name='dbos_self_managed',
+        capabilities=[
+            Permissions[object](managed_rules=[PermissionRule('deny', command='rm')]),
+            SubAgents[object](include_self=True),
+            DBOSDurability[object](),
+        ],
+    )
+
+    @DBOS.workflow(name='dbos_self_managed_workflow')
+    async def workflow() -> str:
+        return (await agent.run('Delegate it')).output
+
+    assert await workflow() == 'from the delegate'
+
+
+async def test_a_durable_delegate_with_the_same_managed_layer_runs(dbos: DBOS) -> None:
+    """A delegate whose own `Permissions` has the run's `max_mode` and `managed_rules` reads them in its child workflows."""
+    rules = [PermissionRule[object]('deny', command='rm')]
+    grandchild = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('grandchild done')])))
+    child_agent = Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('child done')])),
+        name='holding_child',
+        capabilities=[
+            Permissions[object](managed_rules=rules),
+            SubAgents[object](agents=[SubAgent(grandchild, name='grandchild')]),
+            DBOSDurability[object](),
+        ],
+    )
+    parent = Agent(
+        call_then_echo('delegate_task', {'agent_name': 'child', 'task': 'go'}, 'd1', 'parent done'),
+        name='holding_parent',
+        capabilities=[
+            Permissions[object](managed_rules=rules),
+            SubAgents[object](agents=[SubAgent(child_agent, name='child')]),
+            DBOSDurability[object](),
+        ],
+    )
+
+    @DBOS.workflow(name='holding_parent_workflow')
+    async def workflow() -> str:
+        return (await parent.run('delegate')).output
+
+    assert await workflow() == 'parent done'
 
 
 async def test_a_managed_permissions_added_per_run_is_refused_in_the_workflow(dbos: DBOS) -> None:

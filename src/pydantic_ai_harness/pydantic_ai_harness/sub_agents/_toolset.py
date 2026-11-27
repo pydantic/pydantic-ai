@@ -60,6 +60,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai_harness._capabilities import wrapper_chain
 from pydantic_ai_harness._code_tools import reserve_nested_call
 from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._sub_agent_output import (
@@ -70,7 +71,7 @@ from pydantic_ai_harness._sub_agent_output import (
 )
 from pydantic_ai_harness._usage import run_with_count_tokens_fallback
 from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
-from pydantic_ai_harness.permissions._capability import inherited_managed_permissions, wrapper_chain
+from pydantic_ai_harness.permissions._capability import inherited_managed_permissions, managed_layer_not_held_by
 from pydantic_ai_harness.sub_agents._control import (
     DynamicAgents,
     DynamicAgentSpec,
@@ -1969,14 +1970,17 @@ def _runs_child_workflows(agent: AbstractAgent[Any, Any]) -> bool:
 def _check_durable_delegate(ctx: RunContext[Any], agent_name: str, agent: AbstractAgent[Any, Any]) -> None:
     """Refuse a delegate that could pass this run's managed layer on through a child workflow, which drops it.
 
-    The managed layer is read last, so a `max_mode` function is read here only for a durable delegate that delegates.
+    A layer the delegate agent holds itself, as an `include_self` delegate does, is read in its child workflows,
+    so only a layer it would inherit counts. The managed layer is read last, so a `max_mode` function is read here
+    only for a durable delegate that delegates and doesn't hold it.
     """
     if not _runs_child_workflows(agent) or not _delegates(agent):
         return
-    if inherited_managed_permissions(ctx):
+    if managed_layer_not_held_by(ctx, agent):
         # Inside the child workflow, only the delegate agent's own capabilities can be read, not the layer it got.
         raise UserError(
-            f'Sub-agent {agent_name!r} is bound to a durable execution engine and has its own `SubAgents` or `SubAgentToolset`: '
+            f'Sub-agent {agent_name!r} is bound to a durable execution engine and has its own `SubAgents` or `SubAgentToolset` '
+            'but no `Permissions` with the same `max_mode` and `managed_rules`: '
             'a delegation it makes through a child workflow would run without the `max_mode` and `managed_rules` '
             "of this run's `Permissions`, so it is refused (https://github.com/pydantic/pydantic-ai/issues/14944)."
         )

@@ -9,6 +9,7 @@ from typing import Any, ClassVar, Literal, NamedTuple, cast
 
 from pydantic import BaseModel, ValidationError
 
+from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs, WrapperCapability
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import ApprovalRequired, SkipToolExecution, UserError
@@ -24,6 +25,7 @@ from pydantic_ai.tools import (
     ToolDenied,
     matches_tool_selector,
 )
+from pydantic_ai_harness._capabilities import wrapper_chain
 from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness._shell_command import shell_command, shell_command_arg
 from pydantic_ai_harness.file_system._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
@@ -622,6 +624,17 @@ def marks_reviewer_approvals(ctx: RunContext[Any]) -> bool:
     return found
 
 
+def _holds_for_a_person(permissions: Permissions[Any]) -> bool:
+    """Whether `permissions` can hold a call that only a person may approve.
+
+    Protected paths and commands, managed rules, and a `max_mode` other than `'full'` can; a `max_mode` function
+    counts too, since what it returns isn't known until a call.
+    """
+    return bool(permissions.protected_paths or permissions.protected_commands or permissions.managed_rules) or (
+        permissions.max_mode != 'full'
+    )
+
+
 def reviewed_approval_metadata() -> dict[str, Any]:
     """The metadata an `ApprovalReviewer` attaches to a call it approves, so `Permissions` won't take it for a person's."""
     return _ReviewedMetadata(approval_reviewer=_Reviewed(approved=True)).model_dump()
@@ -728,17 +741,6 @@ class _InheritedPermissions(Permissions[AgentDepsT]):
         return None
 
 
-def _holds_for_a_person(permissions: Permissions[Any]) -> bool:
-    """Whether `permissions` can hold a call that only a person may approve.
-
-    Protected paths and commands, managed rules, and a `max_mode` other than `'full'` can; a `max_mode` function
-    counts too, since what it returns isn't known until a call.
-    """
-    return bool(permissions.protected_paths or permissions.protected_commands or permissions.managed_rules) or (
-        permissions.max_mode != 'full'
-    )
-
-
 def inherited_managed_permissions(ctx: RunContext[AgentDepsT]) -> list[Permissions[AgentDepsT]]:
     """The managed layer of each `Permissions` on `ctx`'s run, for a `SubAgents` delegate to inherit.
 
@@ -752,18 +754,35 @@ def inherited_managed_permissions(ctx: RunContext[AgentDepsT]) -> list[Permissio
     """
     return [
         layer
-        for capability in _run_capabilities(ctx)
-        for candidate in wrapper_chain(capability)
-        if isinstance(candidate, Permissions) and (layer := _managed_layer(candidate, ctx)) is not None
+        for permissions in _permissions(_run_capabilities(ctx))
+        if (layer := _managed_layer(permissions, ctx)) is not None
     ]
 
 
-def wrapper_chain(capability: AbstractCapability[AgentDepsT]) -> Iterator[AbstractCapability[AgentDepsT]]:
-    """`capability`, then each capability it wraps through a `WrapperCapability` chain."""
-    candidate: AbstractCapability[AgentDepsT] | None = capability
-    while candidate is not None:
-        yield candidate
-        candidate = candidate.wrapped if isinstance(candidate, WrapperCapability) else None
+def managed_layer_not_held_by(ctx: RunContext[AgentDepsT], agent: AbstractAgent[Any, Any]) -> bool:
+    """Whether a `Permissions` on `ctx`'s run has a managed layer that `agent`'s own capabilities don't also hold.
+
+    A `Permissions` of `agent` with the same `max_mode`, `managed_rules` and `ask_commands` holds it. A `max_mode`
+    function is read only for a `Permissions` that `agent` doesn't hold.
+    """
+    held = [_layer_key(permissions) for permissions in _permissions(leaf_capabilities(agent.root_capability))]
+    return any(
+        _layer_key(permissions) not in held and _managed_layer(permissions, ctx) is not None
+        for permissions in _permissions(_run_capabilities(ctx))
+    )
+
+
+def _permissions(capabilities: Iterable[AbstractCapability[AgentDepsT]]) -> Iterator[Permissions[AgentDepsT]]:
+    """Each `Permissions` among `capabilities`, wrapped or not."""
+    for capability in capabilities:
+        for candidate in wrapper_chain(capability):
+            if isinstance(candidate, Permissions):
+                yield candidate
+
+
+def _layer_key(permissions: Permissions[Any]) -> tuple[object, ...]:
+    """What makes up the managed layer of `permissions`, before its `max_mode` is read."""
+    return (permissions.max_mode, list(permissions.managed_rules), list(permissions.ask_commands))
 
 
 def _run_capabilities(ctx: RunContext[AgentDepsT]) -> Iterable[AbstractCapability[AgentDepsT]]:
