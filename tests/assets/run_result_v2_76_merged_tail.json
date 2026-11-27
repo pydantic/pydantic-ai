@@ -1,0 +1,363 @@
+{
+  "stored": {
+    "messages": [
+      {
+        "parts": [
+          {
+            "content": "p1",
+            "timestamp": "2026-11-27T15:20:13.991230Z",
+            "part_kind": "user-prompt"
+          }
+        ],
+        "timestamp": "2026-11-27T15:20:13.991442Z",
+        "instructions": null,
+        "kind": "request",
+        "run_id": "01a21d97-bf9f-72ae-b744-07c97e4a7883",
+        "conversation_id": "c",
+        "metadata": null,
+        "state": "complete"
+      },
+      {
+        "parts": [
+          {
+            "tool_name": "final_result",
+            "args": {
+              "answer": "a1"
+            },
+            "tool_call_id": "o1",
+            "tool_kind": null,
+            "ui_visibility": null,
+            "id": null,
+            "provider_name": null,
+            "provider_details": null,
+            "part_kind": "tool-call"
+          }
+        ],
+        "usage": {
+          "input_tokens": 51,
+          "cache_write_tokens": 0,
+          "cache_write_1h_tokens": 0,
+          "cache_read_tokens": 0,
+          "output_tokens": 5,
+          "output_reasoning_tokens": 0,
+          "input_audio_tokens": 0,
+          "cache_audio_read_tokens": 0,
+          "output_audio_tokens": 0,
+          "audio_seconds": 0.0,
+          "details": {},
+          "cost": null
+        },
+        "model_name": "function:respond:stream",
+        "model_id": "function:function:respond:stream",
+        "timestamp": "2026-11-27T15:20:13.992732Z",
+        "kind": "response",
+        "provider_name": null,
+        "provider_url": null,
+        "canonical_system": null,
+        "provider_details": null,
+        "provider_response_id": null,
+        "finish_reason": null,
+        "run_id": "01a21d97-bf9f-72ae-b744-07c97e4a7883",
+        "conversation_id": "c",
+        "metadata": null,
+        "workspace_ref": null,
+        "history_digest": null,
+        "failed_attempts": null,
+        "state": "complete"
+      },
+      {
+        "parts": [
+          {
+            "tool_name": "final_result",
+            "content": "Final result processed.",
+            "tool_call_id": "o1",
+            "tool_kind": null,
+            "ui_visibility": null,
+            "metadata": null,
+            "timestamp": "2026-11-27T15:20:13.994314Z",
+            "outcome": "success",
+            "retry": null,
+            "part_kind": "tool-return"
+          }
+        ],
+        "timestamp": "2026-11-27T15:20:13.994360Z",
+        "instructions": null,
+        "kind": "request",
+        "run_id": "01a21d97-bf9f-72ae-b744-07c97e4a7883",
+        "conversation_id": "c",
+        "metadata": null,
+        "state": "complete"
+      }
+    ],
+    "usage": {
+      "input_tokens": 51,
+      "cache_write_tokens": 0,
+      "cache_write_1h_tokens": 0,
+      "cache_read_tokens": 0,
+      "output_tokens": 5,
+      "output_reasoning_tokens": 0,
+      "input_audio_tokens": 0,
+      "cache_audio_read_tokens": 0,
+      "output_audio_tokens": 0,
+      "audio_seconds": 0.0,
+      "details": {},
+      "cost": null,
+      "requests": 1,
+      "tool_calls": 0
+    },
+    "conversation_id": "c",
+    "deferred_tool_requests": null,
+    "revision": "01a21d97-bfaa-74f8-b8c9-4cfa08c64903",
+    "new_message_index": 3
+  },
+  "result": {
+    "messages": [
+      {
+        "parts": [
+          {
+            "content": "p1",
+            "timestamp": "2026-11-27T15:20:13.991230Z",
+            "part_kind": "user-prompt"
+          }
+        ],
+        "timestamp": "2026-11-27T15:20:13.991442Z",
+        "instructions": null,
+        "kind": "request",
+        "run_id": "01a21d97-bf9f-72ae-b744-07c97e4a7883",
+        "conversation_id": "c",
+        "metadata": null,
+        "state": "complete"
+      },
+      {
+        "parts": [
+          {
+            "tool_name": "final_result",
+            "args": {
+              "answer": "a1"
+            },
+            "tool_call_id": "o1",
+            "tool_kind": null,
+            "ui_visibility": null,
+            "id": null,
+            "provider_name": null,
+            "provider_details": null,
+            "part_kind": "tool-call"
+          }
+        ],
+        "usage": {
+          "input_tokens": 51,
+          "cache_write_tokens": 0,
+          "cache_write_1h_tokens": 0,
+          "cache_read_tokens": 0,
+          "output_tokens": 5,
+          "output_reasoning_tokens": 0,
+          "input_audio_tokens": 0,
+          "cache_audio_read_tokens": 0,
+          "output_audio_tokens": 0,
+          "audio_seconds": 0.0,
+          "details": {},
+          "cost": null
+        },
+        "model_name": "function:respond:stream",
+        "model_id": "function:function:respond:stream",
+        "timestamp": "2026-11-27T15:20:13.992732Z",
+        "kind": "response",
+        "provider_name": null,
+        "provider_url": null,
+        "canonical_system": null,
+        "provider_details": null,
+        "provider_response_id": null,
+        "finish_reason": null,
+        "run_id": "01a21d97-bf9f-72ae-b744-07c97e4a7883",
+        "conversation_id": "c",
+        "metadata": null,
+        "workspace_ref": null,
+        "history_digest": null,
+        "failed_attempts": null,
+        "state": "complete"
+      },
+      {
+        "parts": [
+          {
+            "tool_name": "final_result",
+            "content": "Final result processed.",
+            "tool_call_id": "o1",
+            "tool_kind": null,
+            "ui_visibility": null,
+            "metadata": null,
+            "timestamp": "2026-11-27T15:20:13.994314Z",
+            "outcome": "success",
+            "retry": null,
+            "part_kind": "tool-return"
+          },
+          {
+            "content": "appended",
+            "timestamp": "2026-11-27T15:20:13.995091Z",
+            "part_kind": "user-prompt"
+          }
+        ],
+        "timestamp": "2026-11-27T15:20:13.994360Z",
+        "instructions": null,
+        "kind": "request",
+        "run_id": null,
+        "conversation_id": null,
+        "metadata": null,
+        "state": "complete"
+      },
+      {
+        "parts": [
+          {
+            "content": "p2",
+            "timestamp": "2026-11-27T15:20:13.996024Z",
+            "part_kind": "user-prompt"
+          }
+        ],
+        "timestamp": "2026-11-27T15:20:13.996171Z",
+        "instructions": null,
+        "kind": "request",
+        "run_id": "01a21d97-bfab-76a7-bfdd-417c58b10a9d",
+        "conversation_id": "c",
+        "metadata": null,
+        "state": "complete"
+      },
+      {
+        "parts": [
+          {
+            "tool_name": "final_result",
+            "args": {
+              "answer": "a2"
+            },
+            "tool_call_id": "o2",
+            "tool_kind": null,
+            "ui_visibility": null,
+            "id": null,
+            "provider_name": null,
+            "provider_details": null,
+            "part_kind": "tool-call"
+          }
+        ],
+        "usage": {
+          "input_tokens": 57,
+          "cache_write_tokens": 0,
+          "cache_write_1h_tokens": 0,
+          "cache_read_tokens": 0,
+          "output_tokens": 10,
+          "output_reasoning_tokens": 0,
+          "input_audio_tokens": 0,
+          "cache_audio_read_tokens": 0,
+          "output_audio_tokens": 0,
+          "audio_seconds": 0.0,
+          "details": {},
+          "cost": null
+        },
+        "model_name": "function:respond:stream",
+        "model_id": "function:function:respond:stream",
+        "timestamp": "2026-11-27T15:20:13.996997Z",
+        "kind": "response",
+        "provider_name": null,
+        "provider_url": null,
+        "canonical_system": null,
+        "provider_details": null,
+        "provider_response_id": null,
+        "finish_reason": null,
+        "run_id": "01a21d97-bfab-76a7-bfdd-417c58b10a9d",
+        "conversation_id": "c",
+        "metadata": null,
+        "workspace_ref": null,
+        "history_digest": null,
+        "failed_attempts": null,
+        "state": "complete"
+      },
+      {
+        "parts": [
+          {
+            "tool_name": "final_result",
+            "content": "Final result processed.",
+            "tool_call_id": "o2",
+            "tool_kind": null,
+            "ui_visibility": null,
+            "metadata": null,
+            "timestamp": "2026-11-27T15:20:13.997493Z",
+            "outcome": "success",
+            "retry": null,
+            "part_kind": "tool-return"
+          }
+        ],
+        "timestamp": "2026-11-27T15:20:13.997520Z",
+        "instructions": null,
+        "kind": "request",
+        "run_id": "01a21d97-bfab-76a7-bfdd-417c58b10a9d",
+        "conversation_id": "c",
+        "metadata": null,
+        "state": "complete"
+      }
+    ],
+    "new_message_index": 3,
+    "output_tool_name": "final_result",
+    "usage": {
+      "input_tokens": 108,
+      "cache_write_tokens": 0,
+      "cache_write_1h_tokens": 0,
+      "cache_read_tokens": 0,
+      "output_tokens": 15,
+      "output_reasoning_tokens": 0,
+      "input_audio_tokens": 0,
+      "cache_audio_read_tokens": 0,
+      "output_audio_tokens": 0,
+      "audio_seconds": 0.0,
+      "details": {},
+      "cost": null,
+      "requests": 2,
+      "tool_calls": 0
+    },
+    "run_id": "01a21d97-bfab-76a7-bfdd-417c58b10a9d",
+    "conversation_id": "c",
+    "metadata": null,
+    "traceparent": null,
+    "conversation_revision": "01a21d97-bfaa-74f8-b8c9-4cfa08c64903",
+    "conversation_unsaved": [
+      {
+        "parts": [
+          {
+            "content": "appended",
+            "timestamp": "2026-11-27T15:20:13.995091Z",
+            "part_kind": "user-prompt"
+          }
+        ],
+        "timestamp": null,
+        "instructions": null,
+        "kind": "request",
+        "run_id": null,
+        "conversation_id": null,
+        "metadata": null,
+        "state": "complete"
+      }
+    ],
+    "conversation_merged_tail": {
+      "parts": [
+        {
+          "tool_name": "final_result",
+          "content": "Final result processed.",
+          "tool_call_id": "o1",
+          "tool_kind": null,
+          "ui_visibility": null,
+          "metadata": null,
+          "timestamp": "2026-11-27T15:20:13.994314Z",
+          "outcome": "success",
+          "retry": null,
+          "part_kind": "tool-return"
+        }
+      ],
+      "timestamp": "2026-11-27T15:20:13.994360Z",
+      "instructions": null,
+      "kind": "request",
+      "run_id": "01a21d97-bf9f-72ae-b744-07c97e4a7883",
+      "conversation_id": "c",
+      "metadata": null,
+      "state": "complete"
+    },
+    "output": {
+      "answer": "a2"
+    }
+  }
+}

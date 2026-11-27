@@ -10,7 +10,9 @@ from __future__ import annotations
 import asyncio
 import copy
 import dataclasses
+import json
 from collections.abc import AsyncIterator, Awaitable, Callable, Sequence
+from pathlib import Path
 from typing import Any
 from unittest.mock import Mock
 
@@ -1836,6 +1838,39 @@ async def _stored_output_tool_turns(store: InMemoryConversationStore) -> Convers
     stored = await store.load('c')
     assert stored is not None
     return stored
+
+
+async def test_a_run_result_serialized_by_v2_76_with_a_merged_tail_is_saved_without_a_duplicate(
+    assets_path: Path,
+) -> None:
+    """A result v2.76.0 serialized, of a run that merged a prompt appended after an output tool's result into it."""
+    payload = json.loads((assets_path / 'run_result_v2_76_merged_tail.json').read_bytes())
+    assert 'conversation_merged_tail' in payload['result']
+    # Store the conversation the run was given in a new store, under the revision the result says it was loaded at.
+    store = InMemoryConversationStore()
+    await store.save(ConversationTypeAdapter.validate_python({**payload['stored'], 'revision': None}))
+    record = await store.read_record('c')
+    assert record is not None
+    payload['result']['conversation_revision'] = record.revision
+    result = TypeAdapter(AgentRunResult[Any]).validate_python(payload['result'])
+
+    await store.save(result)
+
+    loaded = await store.load('c')
+    record = await store.read_record('c')
+    assert loaded is not None and record is not None
+    assert conversation_view(loaded.messages) == snapshot(
+        [
+            'user-prompt: p1',
+            'call o1',
+            'return o1: Final result processed.',
+            'user-prompt: appended',
+            'user-prompt: p2',
+            'call o2',
+            'return o2: Final result processed.',
+        ]
+    )
+    assert record.branches == []
 
 
 async def test_a_serialized_window_of_output_tool_turns_appends_to_the_whole_conversation() -> None:
