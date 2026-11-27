@@ -18,13 +18,14 @@ import base64
 import io
 import math
 import pickle
+import re
 from collections.abc import Mapping
 from dataclasses import dataclass, field, replace
 from datetime import date, datetime, time, timedelta, timezone
 from decimal import Decimal
 from functools import cache
 from types import EllipsisType, NotImplementedType
-from typing import Literal, assert_never, get_args
+from typing import Final, Literal, assert_never, get_args
 
 from pydantic_core import PydanticSerializationError, to_json
 from pydantic_monty import (
@@ -361,6 +362,53 @@ def is_sandbox_panic(exc: BaseException) -> bool:
     tear down the whole agent run.
     """
     return type(exc).__name__ == 'PanicException'
+
+
+SandboxLimit = Literal['max_duration_seconds', 'max_memory', 'max_suspensions']
+"""A Monty resource limit that can stop code, named by its `resource_limits` key."""
+
+# The wording Monty reports when each limit trips. Monty offers no typed marker for a limit, so its
+# phrasing is read here and nowhere else: `exceeded_sandbox_limit` and code mode's started-call
+# summary both read this table. `test_every_resource_limit_reports_started_calls_when_exhausted`
+# exhausts each limit and checks the summary survives, so a limit added without an entry here, or a
+# Monty reword, fails there rather than silently disabling recognition.
+SANDBOX_LIMIT_MARKERS: Final[Mapping[SandboxLimit, str]] = {
+    'max_duration_seconds': 'time limit exceeded',
+    'max_memory': 'memory limit exceeded',
+    'max_suspensions': 'suspension limit ',
+}
+_SUSPENSION_LIMIT_MESSAGE = re.compile(rf'{re.escape(SANDBOX_LIMIT_MARKERS["max_suspensions"])}[0-9]+ exceeded')
+
+
+def exceeded_sandbox_limit(failure: MontyFailure) -> SandboxLimit | None:
+    """The Monty resource limit that stopped the code with `failure`, or `None` when the code failed on its own.
+
+    Monty has no typed marker for a runtime limit, so this reads its wording, backed by a structural
+    signal wherever one exists, because a nested tool can fail with the same words:
+
+    - Duration: the limit interrupts execution rather than failing at an operation, so Monty
+      attaches no frame to it, at top level and three calls deep alike. A tool's exception that
+      Monty re-raised at the call site keeps at least the module frame.
+    - Memory: a `MemoryError`, with no frame or with Monty's wording. Monty cannot tell every
+      heap-limit failure from a callback's own `MemoryError`, so this errs toward the limit.
+    - Suspensions: a `RuntimeError` whose whole message is Monty's.
+
+    A crashed or disconnected worker is never a limit: a pool's watchdog or a remote turn deadline is
+    the transport's own timer, which runs even when `max_duration_seconds` is off.
+    """
+    if failure.kind != 'runtime':
+        return None
+    message = failure.message
+    # Monty's time-limit wording is read first, so a message naming both limits is never `max_memory`.
+    mentions_time_limit = SANDBOX_LIMIT_MARKERS['max_duration_seconds'] in message
+    if not failure.has_traceback and mentions_time_limit:
+        return 'max_duration_seconds'
+    mentions_memory_limit = SANDBOX_LIMIT_MARKERS['max_memory'] in message and not mentions_time_limit
+    if 'MemoryError' in failure.exception_types and (not failure.has_traceback or mentions_memory_limit):
+        return 'max_memory'
+    if 'RuntimeError' in failure.exception_types and _SUSPENSION_LIMIT_MESSAGE.fullmatch(message):
+        return 'max_suspensions'
+    return None
 
 
 @dataclass

@@ -392,6 +392,9 @@ Gotchas:
   held calls in `flush`. Under `AWSLambdaDurability` a released call has to await `call.start()`
   without suspending first (no semaphore or other await before it), or it
   misses the `parallel` batch and the script hangs.
+- When the run is instrumented, each call records `dynamic_workflow.budget_exhausted` on its
+  `execute_tool run_workflow` span, and a failed script records `dynamic_workflow.error_kind`, plus
+  `dynamic_workflow.limit` when a sandbox limit stopped it; see https://pydantic.dev/docs/ai/harness/dynamic-workflow/#span-attributes.
 - Not agent-spec serializable.
 
 ## Advisor

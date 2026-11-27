@@ -351,6 +351,9 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
         if tool_args.get('restart', False):
             await self.execution.discard(call)
             if call.execution.run_ending_error is not None:
+                # No failure is stored alongside a run-ending error, so this records only the budget. Otherwise
+                # the restarted run records its own outcome, and a discarded statement's failure is moot.
+                call.execution.record_outcome(ctx)
                 raise call.execution.run_ending_error
             async with self.execution.feed_lock:
                 return await super().call_tool(name, tool_args, ctx, tool)
@@ -361,6 +364,9 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
             run_state = self._run_state
             assert run_state is not None, '`CodeModeToolset` must be entered before calling `run_code`'
             await run_state.reset()
+            # The streamed code was discarded, so a statement of it that failed early is not this call's outcome.
+            call.execution.failure = None
+            call.execution.record_outcome(ctx)
             if call.execution.run_ending_error is not None:
                 raise call.execution.run_ending_error
             raise ModelRetry(
@@ -369,12 +375,15 @@ class EagerCodeModeToolset(CodeModeToolset[AgentDepsT]):
             )
 
         await self.execution.drain(call)
-        if call.error is not None:
-            raise call.error
-
-        tail = '\n'.join(lines[call.fed_line_count :])
-        async with self.execution.feed_lock:
-            result = await self._execute_code(tail, ctx, run_code_tool, call.execution)
+        try:
+            if call.error is not None:
+                raise call.error
+            tail = '\n'.join(lines[call.fed_line_count :])
+            async with self.execution.feed_lock:
+                result = await self._execute_code(tail, ctx, run_code_tool, call.execution)
+        finally:
+            # A statement fed while the call streamed failed outside this span, so record it here.
+            call.execution.record_outcome(ctx)
         return await self._complete(ctx, call.execution, result)
 
     async def feed_fragment(

@@ -18,13 +18,14 @@ from dataclasses import dataclass, field
 from functools import partial
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Protocol, Self, cast
 
+from opentelemetry.trace import Span
 from pydantic import Field, TypeAdapter
 from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict
 
 from pydantic_ai import AbstractToolset, RunContext, ToolDefinition
 from pydantic_ai.agent.abstract import AbstractAgent
-from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability, tool_call_span
 from pydantic_ai.durable_exec import BaseDurabilityCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature, _is_python_identifier  # pyright: ignore[reportPrivateUsage]
@@ -64,7 +65,7 @@ from pydantic_ai_harness._monty_exec import (
     PrintCapture,
     in_temporal_workflow,
 )
-from pydantic_ai_harness._monty_turns import is_sandbox_panic
+from pydantic_ai_harness._monty_turns import MontyFailure, SandboxLimit, exceeded_sandbox_limit, is_sandbox_panic
 from pydantic_ai_harness._sub_agent_output import (
     ServingModelRecorder,
     cancel_pending_output,
@@ -603,6 +604,29 @@ def _completed_workflow_result(
     return _workflow_result(completed_output, printed)
 
 
+WorkflowErrorKind = Literal['type_check', 'syntax', 'runtime', 'resource_limit', 'crashed', 'panic']
+"""What ended a failed `run_workflow` script, as recorded in `dynamic_workflow.error_kind`."""
+
+
+def _record_sandbox_failure(span: Span, error: MontyRuntimeError | MontyCrashedError) -> None:
+    """Record a script the sandbox stopped: at a resource limit, or on an uncaught error or a dead worker."""
+    if not span.is_recording():
+        return
+    failure = MontyFailure.from_error(error)
+    assert failure is not None, 'a Monty error always describes a failure'
+    if (limit := exceeded_sandbox_limit(failure)) is not None:
+        _record_failure(span, 'resource_limit', limit)
+    else:
+        _record_failure(span, 'crashed' if failure.kind == 'crashed' else 'runtime')
+
+
+def _record_failure(span: Span, kind: WorkflowErrorKind, limit: SandboxLimit | None = None) -> None:
+    """Record what ended the script, and the sandbox limit that stopped it when `kind` is `'resource_limit'`."""
+    span.set_attribute('dynamic_workflow.error_kind', kind)
+    if limit is not None:
+        span.set_attribute('dynamic_workflow.limit', limit)
+
+
 def _dispatched_task(agent_name: str, kwargs: Mapping[str, object]) -> str:
     """The `task` a sandbox call to sub-agent `agent_name` passed, its only keyword argument."""
     # The sandbox signature is `(*, task: str)`, but Monty does not validate kwargs against
@@ -1031,6 +1055,8 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
         code = tool_args['code']
+        # Taken before the script runs, so this is the `execute_tool run_workflow` span, not a sub-agent's.
+        span = tool_call_span(ctx)
         budget_exhausted = False
         completed_dispatches: list[_CompletedDispatch] = []
 
@@ -1071,12 +1097,15 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 max_sleep_seconds=limits.get('max_feed_duration_secs'),
             ).run(partial(session.feed_start, code, print_callback=capture.callback))
         except MontyTypingError as exc:
+            _record_failure(span, 'type_check')
             raise ModelRetry(f'Type error in workflow:\n{capture.prepend_to(exc.display())}') from exc
         # Backstop: the type checker parses the code first. `lax` because the errors handled below
         # are still matched against this clause.
         except MontySyntaxError as exc:  # pragma: lax no cover
+            _record_failure(span, 'syntax')
             raise ModelRetry(f'Syntax error in workflow:\n{capture.prepend_to(exc.display())}') from exc
         except MontyRuntimeError as exc:
+            _record_sandbox_failure(span, exc)
             if budget_exhausted:
                 # The script may catch the budget error and fail later on something else, so
                 # the flag -- not the displayed error -- proves this script hit the budget;
@@ -1095,6 +1124,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             # The worker died mid-script (e.g. resource exhaustion or request timeout);
             # the pool replaces it transparently. Completed sub-agent results are listed
             # so the retry can reuse them as plain values.
+            _record_sandbox_failure(span, exc)
             return _worker_crash_result(
                 crash=exc,
                 budget_exhausted=budget_exhausted,
@@ -1106,6 +1136,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             # anything else (CancelledError, ...) re-raises unchanged.
             if not is_sandbox_panic(exc):
                 raise
+            _record_failure(span, 'panic')
             if budget_exhausted:
                 return _budget_terminal_result(
                     max_agent_calls=self.max_agent_calls,
@@ -1117,6 +1148,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 f'{_completed_retry_section(completed_dispatches)}'
             ) from exc
         finally:
+            span.set_attribute('dynamic_workflow.budget_exhausted', budget_exhausted)
             _in_workflow.reset(in_workflow_token)
             await monty.aclose()
 
