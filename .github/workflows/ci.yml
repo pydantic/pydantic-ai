@@ -2174,8 +2174,7 @@ jobs:
     services:
       redis:
         # Public Docker Hub pulls from GitHub-hosted runners are exempt from its pull rate limit.
-        # Pinned by digest here and in the cluster step below: the cluster container exits on start
-        # on 8.12.0 (#14283).
+        # Pinned by digest here and in the cluster step below; #14283 tracks moving to a current image.
         image: redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53
         ports:
           - 6379:6379
@@ -2203,11 +2202,12 @@ jobs:
       # whose keys span slots with `CROSSSLOT`, which the standalone service above never does. A
       # step rather than a service because a service cannot pass `redis-server` its arguments or
       # assign the slots once it is up.
+      # Redis 8.12 exits on an unauthenticated cluster bus unless its protected mode is off; the bus port, 16380, is not published.
       - name: Start a single-node Redis Cluster
         timeout-minutes: 2
         run: |
           docker run -d --name redis-cluster -p 6380:6380 redis:8.10.3@sha256:1f88291b4c57bdf249f02eb085a8669889b2d2954e91d4de5118a5da6b78dd53 \
-            redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1
+            redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1 --cluster-bus-port-protected-mode no
           until docker exec redis-cluster redis-cli -p 6380 ping; do sleep 1; done
           docker exec redis-cluster redis-cli -p 6380 cluster addslotsrange 0 16383
           until docker exec redis-cluster redis-cli -p 6380 cluster info | grep -q cluster_state:ok; do sleep 1; done
