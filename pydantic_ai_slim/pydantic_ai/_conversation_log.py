@@ -44,6 +44,10 @@ class ConversationLog:
     resent: ModelRequest | None = None
     """The request the run sent again because it had no new prompt: tidying merged it from the unsaved requests the
     run was given, and the conversation records it in their place."""
+    resent_from: list[ModelRequest] = dataclasses.field(default_factory=list[ModelRequest])
+    """The given requests at the end of the history that the request sent again was made from, oldest first.
+
+    Recorded when the run sends it, so a message logged among them later, like a summary, isn't taken for one."""
 
     continued: ModelResponse | None = None
     """The suspended response the run is continuing, which the response it completes it with replaces."""
@@ -77,6 +81,11 @@ class ConversationLog:
 
     def resend(self, history: list[ModelMessage], request: ModelRequest) -> None:
         """Append `request` to `history` as the request a run without a new prompt sends again, and log it as that."""
+        logged = self._start(history)
+        first = self.run_start
+        while first > 0 and isinstance(logged[first - 1], ModelRequest):
+            first -= 1
+        self.resent_from = [message for message in logged[first : self.run_start] if isinstance(message, ModelRequest)]
         self.append(history, request)
         self.resent = request
 
@@ -230,14 +239,25 @@ class ConversationLog:
                 continue
             if not summaries:
                 continue
-            index = _index(logged, message)
-            assert index is not None
-            position = max(index, floor)
+            position = max(self._logged_at(message), floor)
             logged[position:position] = summaries
             if position < self.run_start:
                 self.run_start += len(summaries)
             summaries = []
         return summaries
+
+    def _logged_at(self, message: ModelMessage) -> int:
+        """Where `message`, a logged one, ends up in the conversation.
+
+        The request the run sent again goes on the given requests it was made from, so it's at the first of them.
+        """
+        logged = self.messages
+        assert logged is not None
+        if message is self.resent and self.resent_from:
+            message = self.resent_from[0]
+        index = _index(logged, message)
+        assert index is not None
+        return index
 
     def _start(self, history: list[ModelMessage]) -> list[ModelMessage]:
         """The log, started from `history` if nothing logged it yet, like a run context made outside a run."""
@@ -291,17 +311,16 @@ class ConversationLog:
         if resent is None or (position := _index(messages, resent)) is None:
             return messages
         del messages[position]
-        given = self.run_start
-        first = given
-        while first > 0 and isinstance(messages[first - 1], ModelRequest):
-            first -= 1
+        # Tidying took these requests out of the history, so nothing the run or a capability does replaces them.
+        indexes = [index for request in self.resent_from if (index := _index(messages, request)) is not None]
+        assert indexes and len(indexes) == len(self.resent_from), 'A run sends again only given requests it logged.'
         # A request the store has keeps its parts, so what the run sent with it goes on the unsaved ones.
-        unsaved_from = max(first, self.stored or 0)
-        owners = {id(part): index for index in range(first, given) for part in messages[index].parts}
-        own: dict[int, list[Any]] = {index: [] for index in range(unsaved_from, given)}
+        stored = self.stored or 0
+        owners = {id(part): index for index in indexes for part in messages[index].parts}
+        own: dict[int, list[Any]] = {index: [] for index in indexes if index >= stored}
         for part in resent.parts:
-            index = owners.get(id(part), given - 1)
-            if index >= unsaved_from:
+            index = owners.get(id(part), indexes[-1])
+            if index >= stored:
                 own[index].append(part)
         for index, parts in own.items():
             request = messages[index]

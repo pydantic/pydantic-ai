@@ -1131,6 +1131,38 @@ async def test_a_summary_in_place_of_loaded_messages_is_saved_after_the_ones_the
 
 
 @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_summary_before_a_prompt_appended_to_a_loaded_conversation_is_saved_as_the_model_saw_it() -> None:
+    """A run with no new prompt sends the appended one again, and a summary before it is saved before it, unchanged."""
+    summary = ModelRequest(parts=[CompactionPart('summary of turn 0')])
+
+    def summarize(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages if summary in messages else [summary, *messages[-1:]]
+
+    store = InMemoryConversationStore()
+    await store.save(
+        (await Agent(TestModel()).run('turn 0', conversation=Conversation(conversation_id='c'))).conversation
+    )
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(ModelRequest(parts=[UserPromptPart('unsaved prompt')]))
+
+    await store.save(await Agent(TestModel(), capabilities=[ProcessHistory(summarize)]).run(conversation=loaded))
+
+    stored = await store.load('c')
+    assert stored is not None
+    assert conversation_view(stored.messages) == snapshot(
+        [
+            'user-prompt: turn 0',
+            'text: success (no tool calls)',
+            'summary: summary of turn 0',
+            'user-prompt: unsaved prompt',
+            'text: success (no tool calls)',
+        ]
+    )
+    assert stored.messages[2] == summary
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
 async def test_a_summary_before_a_kept_loaded_message_is_saved_before_the_runs_own_messages() -> None:
     """A summary of loaded messages goes right after them, even when the history also drops the run's own prompt."""
     summary = ModelRequest(parts=[CompactionPart('summary of one')])
