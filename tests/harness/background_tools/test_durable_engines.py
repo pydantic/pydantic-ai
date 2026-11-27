@@ -27,7 +27,14 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, RunContext
 from pydantic_ai_harness import BackgroundTools
-from tests.capability_cases import BROKEN_SIGNATURES, SCENARIO_SUPPORT, SCENARIOS, Engine, Scenario, Support
+from tests.capability_cases import (
+    BROKEN_SIGNATURES,
+    SCENARIO_SUPPORT,
+    SCENARIOS as ALL_SCENARIOS,
+    Engine,
+    Scenario,
+    Support,
+)
 from tests.harness._temporal import ignore_source_reads_left_open
 
 from ...conftest import try_import
@@ -299,6 +306,11 @@ def _check_sync(
         trial.observed = run(trial.agent)
 
 
+SCENARIOS: tuple[Scenario, ...] = tuple(
+    scenario for scenario in ALL_SCENARIOS if scenario.startswith('BackgroundTools.')
+)
+"""This module's scenarios; the D1 suites run the others."""
+
 parametrize_scenarios = pytest.mark.parametrize('scenario', SCENARIOS, ids=lambda scenario: scenario.split('.')[1])
 
 
@@ -317,7 +329,10 @@ class _NoDurability(AbstractCapability[None]):
 
 
 async def test_an_unexpected_error_propagates() -> None:
-    """An error that isn't the engine's refusal fails the test instead of becoming the observed outcome; its runs raise before any request, so none to record."""
+    """An error that isn't the engine's refusal fails the test instead of becoming the observed outcome.
+
+    Its runs raise before any request, so there's none to record.
+    """
 
     async def run(agent: Agent[None, str], gate: _Gate) -> str:
         raise RuntimeError('unrelated')

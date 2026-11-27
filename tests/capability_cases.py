@@ -28,6 +28,7 @@ from dataclasses import dataclass, field
 from typing import Any, Literal, TypeGuard, get_args
 from unittest.mock import patch
 
+from pydantic_ai import CapabilityEvent, CustomEvent, RunContext
 from pydantic_ai.capabilities import (
     MCP,
     Caching,
@@ -61,10 +62,11 @@ from pydantic_ai.capabilities import (
     WindowsWorkspace,
     WrapperCapability,
     XSearch,
+    durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.messages import ModelMessage
-from pydantic_ai.models import Model, ModelSelectionContext
+from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
+from pydantic_ai.models import Model, ModelRequestContext, ModelSelectionContext
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import CodeExecutionTool, WebFetchTool, WebSearchTool, XSearchTool
@@ -972,8 +974,16 @@ def engine_support(name: str, engine: Engine) -> Support:
     return Support('untested', f'no suite runs the cases under {engine} yet', issue=UNTESTED_ENGINES_ISSUE)
 
 
-Scenario = Literal['BackgroundTools.runs_in_background', 'BackgroundTools.survives_approval_wait']
-"""A scenario a capability must handle under every engine, named `<capability>.<scenario>`.
+Scenario = Literal[
+    'BackgroundTools.runs_in_background',
+    'BackgroundTools.survives_approval_wait',
+    'RunContext.emit_from_tool',
+    'RunContext.enqueue_from_tool',
+    'RunContext.emit_in_unit',
+    'RunContext.enqueue_in_unit',
+    'RunContext.emit_enqueue_from_hook',
+]
+"""A scenario a capability, or `RunContext`, must handle under every engine, named `<owner>.<scenario>`.
 
 A cell of `ENGINE_SUPPORT` is D1's bar on a case's `calls`, run one per response; a scenario is a run of its own,
 such as a background call kept running across a mid-run approval, which its capability's tests script.
@@ -990,6 +1000,37 @@ _NO_WAIT = (
 )
 _NO_DURABLE_WAIT = 'the engine has no durable wait for an outside answer, so a mid-run approval wait raises `UserError`'
 _WAIT_REFUSED = 'does not support waiting for external events yet'
+
+_IN_UNIT = 'is not supported inside a durable'
+_ENQUEUE_IN_UNIT = Support(
+    'refused',
+    'a durable unit replays from its record without running the code again, so an enqueued message would be lost',
+    raises=_IN_UNIT,
+    issue=7971,
+)
+_TOOL_IN_ACTIVITY_EMIT = Support(
+    'refused',
+    'Temporal runs a function tool in an activity, which refuses an emitted event',
+    raises='Emitting events from a tool or event stream handler is not supported',
+    issue=7971,
+)
+_TOOL_IN_ACTIVITY_ENQUEUE = Support(
+    'refused',
+    'Temporal runs a function tool in an activity, which refuses an enqueued message',
+    raises=_IN_UNIT,
+    issue=7971,
+)
+
+
+def _d1_scenario(*, dbos: Support, temporal: Support, expected: str) -> dict[Engine, Support]:
+    """The cells of a scenario the D1 suites run: DBOS and Temporal, and `untested` with `expected` elsewhere."""
+    untested = Support(
+        'untested',
+        f'no suite runs the scenario under this engine yet; expected: {expected}',
+        issue=UNTESTED_ENGINES_ISSUE,
+    )
+    return {engine: {'dbos': dbos, 'temporal': temporal}.get(engine, untested) for engine in ENGINES}
+
 
 SCENARIO_SUPPORT: Mapping[Scenario, Mapping[Engine, Support]] = {
     'BackgroundTools.runs_in_background': {
@@ -1012,6 +1053,38 @@ SCENARIO_SUPPORT: Mapping[Scenario, Mapping[Engine, Support]] = {
         'azure_durable_task': Support('refused', _NO_DURABLE_WAIT, raises=_WAIT_REFUSED),
         'render': Support('refused', _NO_DURABLE_WAIT, raises=_WAIT_REFUSED),
     },
+    'RunContext.emit_from_tool': _d1_scenario(
+        dbos=Support('supported'),
+        temporal=_TOOL_IN_ACTIVITY_EMIT,
+        expected='refused in a unit (Temporal, Prefect, Azure) or supported in workflow code; Render supported',
+    ),
+    'RunContext.enqueue_from_tool': _d1_scenario(
+        dbos=Support('supported'),
+        temporal=_TOOL_IN_ACTIVITY_ENQUEUE,
+        expected='refused in a unit (Temporal, Prefect, Azure) or supported in workflow code',
+    ),
+    'RunContext.emit_in_unit': _d1_scenario(
+        dbos=Support(
+            'broken', 'an event emitted in a step is not emitted again when recovery replays the step', issue=7971
+        ),
+        temporal=Support(
+            'refused',
+            'Temporal refuses an event emitted in an activity',
+            raises='Emitting events from a tool or event stream handler is not supported',
+            issue=7971,
+        ),
+        expected='refused, or lost on recovery where the engine replays the unit from its record',
+    ),
+    'RunContext.enqueue_in_unit': _d1_scenario(
+        dbos=_ENQUEUE_IN_UNIT,
+        temporal=_ENQUEUE_IN_UNIT,
+        expected='refused: an engine replays a unit from its record, so the message would be lost',
+    ),
+    'RunContext.emit_enqueue_from_hook': _d1_scenario(
+        dbos=Support('supported'),
+        temporal=Support('supported'),
+        expected='supported: a hook runs in workflow code, which every engine re-executes',
+    ),
 }
 """What each engine does in each scenario: a cell for every engine, which the scenario's tests check.
 
@@ -1020,16 +1093,124 @@ SCENARIO_SUPPORT: Mapping[Scenario, Mapping[Engine, Support]] = {
 - `BackgroundTools.survives_approval_wait`: while that call is still running, the model calls a tool that needs
   approval, which a `HandleDeferredToolCalls` handler that takes a resume token answers mid-run. The call keeps
   running across the wait, without the run suspending, and its result arrives.
+- `RunContext.*`: `ctx.emit` and `ctx.enqueue` from a function tool, from inside a durable unit (a
+  `@durable_operation`), and from a hook. What the run observes, its custom and capability events and enqueued
+  messages, must be the same after recovery or replay, each once. `SCENARIO_RUNS` scripts them, and the D1 suites
+  run them.
 
 These never feed D1's exemptions, which come from `ENGINE_SUPPORT` alone.
 """
 
-BROKEN_SIGNATURES: Mapping[int, str] = {14443: _WAIT_REFUSED}
+BROKEN_SIGNATURES: Mapping[int, str] = {14443: _WAIT_REFUSED, 7971: r"recovery lost \['event:unit'\]"}
 """How the bug behind each `broken` scenario cell's issue shows today, as a regex the observed outcome must match.
 
 `Support` only lets a `refused` cell name what the engine raises, so a broken cell's signature lives here: once the
 issue is fixed the outcome changes, and the cell fails.
 """
+
+
+@dataclass(kw_only=True)
+class ScenarioNote(CustomEvent):
+    """What a scenario's function tool emits: an application event."""
+
+    text: str
+
+
+@dataclass(kw_only=True)
+class ScenarioCapabilityNote(CapabilityEvent, namespace='scenario'):
+    """What a scenario's capability emits, from a hook or a durable unit."""
+
+    text: str
+
+
+SCENARIO_TOOLSET_ID = 'scenario'
+
+
+def _scenario_tool(*, emit: bool = False, enqueue: bool = False) -> FunctionToolset[None]:
+    """A toolset with one `work` tool, which emits or enqueues from where a function tool runs."""
+    toolset = FunctionToolset[None](id=SCENARIO_TOOLSET_ID)
+
+    @toolset.tool
+    async def work(ctx: RunContext[None]) -> str:
+        if emit:
+            await ctx.emit(ScenarioNote(text='tool'))
+        if enqueue:
+            ctx.enqueue('note from the tool')
+        return 'worked'
+
+    return toolset
+
+
+def _after_the_tool(ctx: RunContext[None]) -> bool:
+    """Whether the request about to be made is the one after `work` returned: true once per run, deterministically."""
+    last = ctx.messages[-1] if ctx.messages else None
+    return isinstance(last, ModelRequest) and any(
+        isinstance(part, ToolReturnPart) and part.tool_name == 'work' for part in last.parts
+    )
+
+
+@dataclass
+class _InUnit(AbstractCapability[None]):
+    """Emits or enqueues inside a `@durable_operation`, before the request after `work`."""
+
+    emit: bool = False
+    enqueue: bool = False
+    id: str | None = 'in_unit'
+
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if _after_the_tool(ctx):
+            await self.act(ctx)
+        return request_context
+
+    @durable_operation('act')
+    async def act(self, ctx: RunContext[None]) -> None:
+        if self.emit:
+            await ctx.emit(ScenarioCapabilityNote(text='unit'))
+        if self.enqueue:
+            ctx.enqueue('note from the unit')
+
+
+@dataclass
+class _FromHook(AbstractCapability[None]):
+    """Emits and enqueues from a hook, in workflow code, before the request after `work`."""
+
+    async def before_model_request(
+        self, ctx: RunContext[None], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if _after_the_tool(ctx):
+            await ctx.emit(ScenarioCapabilityNote(text='hook'))
+            ctx.enqueue('note from the hook')
+        return request_context
+
+
+@dataclass(frozen=True)
+class ScenarioRun:
+    """A scenario the D1 suites run under each engine they cover: one `work` call, then an answer."""
+
+    build: Callable[[], Sequence[AbstractCapability[None] | FunctionToolset[None]]]
+    """The toolset and capabilities the scenario's agent has, besides the engine's durability capability."""
+    observed: tuple[str, ...]
+    """What a correct run observes, each once: `event:<text>` per custom or capability event, `enqueued:<text>`
+    per enqueued message's event, and `message:<text>` per enqueued message in the history."""
+
+
+SCENARIO_RUNS: Mapping[Scenario, ScenarioRun] = {
+    'RunContext.emit_from_tool': ScenarioRun(lambda: [_scenario_tool(emit=True)], ('event:tool',)),
+    'RunContext.enqueue_from_tool': ScenarioRun(
+        lambda: [_scenario_tool(enqueue=True)], ('enqueued:note from the tool', 'message:note from the tool')
+    ),
+    'RunContext.emit_in_unit': ScenarioRun(lambda: [_scenario_tool(), _InUnit(emit=True)], ('event:unit',)),
+    'RunContext.enqueue_in_unit': ScenarioRun(
+        lambda: [_scenario_tool(), _InUnit(enqueue=True)], ('enqueued:note from the unit', 'message:note from the unit')
+    ),
+    'RunContext.emit_enqueue_from_hook': ScenarioRun(
+        lambda: [_scenario_tool(), _FromHook()],
+        ('event:hook', 'enqueued:note from the hook', 'message:note from the hook'),
+    ),
+}
+"""The scenarios the D1 suites run, and what each must observe; the others are run by their capability's tests."""
 
 
 def _not_run_right(engine: Engine) -> dict[str, Exempt]:

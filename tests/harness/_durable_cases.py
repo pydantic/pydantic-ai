@@ -8,24 +8,45 @@ case's `durable_steps`.
 from __future__ import annotations
 
 import importlib.util
+import json
 import os
+import re
 from collections import Counter
-from collections.abc import Callable, Sequence
+from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import dataclass
 from pathlib import Path
 from typing import ParamSpec, TypeVar
 from unittest.mock import patch
 
 import pytest
 
+from pydantic_ai import Agent, CapabilityEvent, CustomEvent, FunctionToolset, RunContext
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, UserPromptPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    EnqueuedMessagesEvent,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    UserPromptPart,
+)
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai_harness.capability_creation import CapabilityStore
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
 from pydantic_ai_harness.memory import InMemoryMemoryStore
 from pydantic_ai_harness.planning import SqlitePlanStore
 
 from ..append_only import ToolCall
+from ..capability_cases import (
+    BROKEN_SIGNATURES,
+    SCENARIO_RUNS,
+    SCENARIO_SUPPORT,
+    Engine,
+    Scenario,
+    ScenarioCapabilityNote,
+    ScenarioNote,
+)
 from ._contracts import CASES
 from ._counting_clients import AWS_CLI_COUNT_VARIABLE, REQUESTS
 
@@ -142,3 +163,113 @@ def counting_requests(monkeypatch: pytest.MonkeyPatch, directory: Path) -> Calla
         return counts
 
     return snapshot
+
+
+def streaming_one_call_per_response(made: tuple[ToolCall, ...]) -> FunctionModel:
+    """`one_call_per_response` that also streams, which a run with an event listener needs."""
+    respond = one_call_per_response(made).function
+    assert respond is not None
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        response = respond(messages, info)
+        assert isinstance(response, ModelResponse)
+        for part in response.parts:
+            if isinstance(part, TextPart):
+                yield part.content
+            else:
+                assert isinstance(part, ToolCallPart)
+                yield {0: DeltaToolCall(part.tool_name, json.dumps(part.args), tool_call_id=part.tool_call_id)}
+
+    return FunctionModel(respond, stream_function=stream)
+
+
+_EVENTS: dict[str, list[str]] = {}
+"""What each scenario agent's `ScenarioRecorder` has seen in its current run, by agent name."""
+
+
+@dataclass
+class ScenarioRecorder(AbstractCapability[None]):
+    """Records the custom and capability events and enqueued messages a scenario's run observes, in workflow code.
+
+    It keeps them by agent name rather than on itself, as an engine may run a copy of it.
+    """
+
+    agent_name: str
+
+    async def on_event(self, ctx: RunContext[None], *, event: AgentStreamEvent) -> None:
+        seen = _EVENTS.setdefault(self.agent_name, [])
+        if isinstance(event, ScenarioNote | ScenarioCapabilityNote):
+            seen.append(f'event:{event.text}')
+        elif isinstance(event, CustomEvent | CapabilityEvent):
+            seen.append(f'unexpected event: {event!r}')
+        elif isinstance(event, EnqueuedMessagesEvent):
+            seen.extend(f'enqueued:{content}' for content in _prompts(event.messages))
+
+
+def _prompts(messages: Sequence[ModelMessage]) -> list[str]:
+    """The user prompts in `messages` other than the run's own `PROMPT`: the enqueued ones."""
+    return [
+        str(part.content)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, UserPromptPart) and part.content != PROMPT
+    ]
+
+
+def scenario_agent(scenario: Scenario, durability: AbstractCapability[None]) -> Agent[None, str]:
+    """The agent that runs `scenario` under `durability`, with a `ScenarioRecorder` as its first capability."""
+    built = list(SCENARIO_RUNS[scenario].build())
+    name = f'scenario_{scenario.partition(".")[2]}'
+    return Agent(
+        streaming_one_call_per_response((('work', {}),)),
+        name=name,
+        deps_type=type(None),
+        toolsets=[part for part in built if isinstance(part, FunctionToolset)],
+        capabilities=[
+            ScenarioRecorder(name),
+            *(part for part in built if isinstance(part, AbstractCapability)),
+            durability,
+        ],
+    )
+
+
+OBSERVED: dict[str, list[str]] = {}
+"""What the last run of each scenario agent observed, by agent name: a replay's run leaves its own here."""
+
+
+async def observe_run(agent: Agent[None, str]) -> list[str]:
+    """Run a `scenario_agent` from workflow code, and return what it observed: events, then enqueued messages."""
+    assert agent.name is not None
+    _EVENTS[agent.name] = []
+    result = await agent.run(PROMPT)
+    observed = [*_EVENTS[agent.name], *(f'message:{prompt}' for prompt in _prompts(result.all_messages()))]
+    OBSERVED[agent.name] = observed
+    return observed
+
+
+def scenario_breaks(scenario: Scenario, first: Sequence[str], recovered: Sequence[str]) -> list[str]:
+    """How the first run and its recovery or replay break `scenario`: each item once, and none lost or added."""
+    expected = list(SCENARIO_RUNS[scenario].observed)
+    breaks = [] if list(first) == expected else [f'the run observed {list(first)}, not {expected}']
+    lost = sorted((Counter(first) - Counter(recovered)).elements())
+    added = sorted((Counter(recovered) - Counter(first)).elements())
+    breaks += [f'recovery lost {lost}'] if lost else []
+    breaks += [f'recovery added {added}'] if added else []
+    return breaks
+
+
+def assert_scenario_cell(engine: Engine, scenario: Scenario, breaks: Sequence[str]) -> None:
+    """`breaks` must be what the scenario's `SCENARIO_SUPPORT` cell for `engine` says: none, a refusal or the bug."""
+    cell = SCENARIO_SUPPORT[scenario][engine]
+    if cell.level in ('supported', 'limited'):
+        assert not breaks, '; '.join(breaks)
+    elif cell.level == 'refused':
+        assert cell.raises is not None
+        assert any(re.search(cell.raises, line) for line in breaks), (
+            f'{scenario} no longer raises {cell.raises!r} under {engine}: update its cell ({breaks})'
+        )
+    else:
+        assert cell.level == 'broken' and cell.issue is not None, f'{scenario} is {cell.level} under {engine}'
+        assert any(re.search(BROKEN_SIGNATURES[cell.issue], line) for line in breaks), (
+            f'{scenario} no longer shows #{cell.issue} under {engine}: update its cell ({breaks})'
+        )

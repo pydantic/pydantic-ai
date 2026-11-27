@@ -22,6 +22,7 @@ from ..capability_cases import (
     ENGINE_CAPABILITIES,
     ENGINE_SUPPORT,
     ENGINES,
+    SCENARIO_RUNS,
     SCENARIO_SUPPORT,
     SCENARIOS,
     Support,
@@ -52,7 +53,10 @@ def _is_durability(name: str, module: str) -> bool:
 
 
 def test_every_durability_capability_is_an_engine() -> None:
-    """A new engine can't land without a column: its durability capability must be in `ENGINE_CAPABILITIES`. It reads test tables or source, with no provider exchange to record, so it isn't a VCR test."""
+    """A new engine can't land without a column: its durability capability must be in `ENGINE_CAPABILITIES`.
+
+    It reads test tables or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     found = {
         ref.name for ref in discover_capabilities(DURABILITY_PACKAGES).values() if _is_durability(ref.name, ref.module)
     }
@@ -60,14 +64,20 @@ def test_every_durability_capability_is_an_engine() -> None:
 
 
 def test_every_cell_is_a_case_with_calls() -> None:
-    """A cell only means something for a case whose calls a suite runs. It reads test tables or source, with no provider exchange to record, so it isn't a VCR test."""
+    """A cell only means something for a case whose calls a suite runs.
+
+    It reads test tables or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     for name in ENGINE_SUPPORT:
         assert name in PUBLIC, f'`ENGINE_SUPPORT` names {name}, which is not a public capability'
         assert CASES[name].calls is not None, f'`ENGINE_SUPPORT` names {name}, which has no `calls` to run'
 
 
 def test_untested_cells_only_go_down() -> None:
-    """How many cases each engine runs no suite for: test a cell to lower its engine's count, never raise it. It reads test tables or source, with no provider exchange to record, so it isn't a VCR test."""
+    """How many cases each engine runs no suite for: test a cell to lower its engine's count, never raise it.
+
+    It reads test tables or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     untested = Counter(
         engine
         for name, case in CASES.items()
@@ -127,22 +137,38 @@ def test_every_scenario_has_a_cell_for_every_engine() -> None:
         assert set(cells) == set(ENGINES), scenario
 
 
-def test_every_scenario_names_a_public_capability() -> None:
-    """A scenario is `<capability>.<scenario>`, and it is no case: D1's exemptions and `calls` never see it.
+SCENARIO_OWNERS_BESIDES_CAPABILITIES = ('RunContext',)
+"""What owns a scenario that no capability does: `RunContext`'s `emit` and `enqueue`."""
+
+
+def test_every_scenario_names_its_owner() -> None:
+    """A scenario is `<owner>.<scenario>`, and it is no case: D1's exemptions and `calls` never see it.
 
     It reads test tables, with no provider exchange to record, so it isn't a VCR test.
     """
     for scenario in SCENARIOS:
-        capability, _, name = scenario.partition('.')
-        assert capability in PUBLIC and name, scenario
+        owner, _, name = scenario.partition('.')
+        assert (owner in PUBLIC or owner in SCENARIO_OWNERS_BESIDES_CAPABILITIES) and name, scenario
         assert scenario not in CASES and scenario not in ENGINE_SUPPORT, scenario
+
+
+def test_the_d1_suites_run_every_run_context_scenario() -> None:
+    """No capability's tests run a `RunContext` scenario, so the D1 suites must, through `SCENARIO_RUNS`.
+
+    It reads test tables, with no provider exchange to record, so it isn't a VCR test.
+    """
+    run_context = {scenario for scenario in SCENARIOS if scenario.startswith('RunContext.')}
+    assert run_context == set(SCENARIO_RUNS)
 
 
 def test_every_broken_scenario_cell_has_a_signature() -> None:
     """Every `broken` cell's issue has a signature, and a signature no cell uses is stale: the keys stay in sync.
 
-    The scenario's own tests match the signature against the observed outcome
-    (`tests/harness/background_tools/test_durable_engines.py`). It reads test tables, with no provider exchange to record, so it isn't a VCR test.
+    The scenario's own tests match the signature against the observed outcome: the D1 suites
+    (`tests/harness/test_durable_tool_io.py` and `tests/harness/test_durable_temporal_replay.py`) for the `RunContext`
+    scenarios, and `tests/harness/background_tools/test_durable_engines.py` for the `BackgroundTools` ones.
+
+    It reads test tables, with no provider exchange to record, so it isn't a VCR test.
     """
     broken = {cell.issue for cells in SCENARIO_SUPPORT.values() for cell in cells.values() if cell.level == 'broken'}
     assert broken == set(BROKEN_SIGNATURES)
