@@ -421,17 +421,19 @@ def _json_argument_serializers(
 ) -> tuple[dict[str, SchemaSerializer], SchemaSerializer | None]:
     """Build `FunctionSchema.json_parameter_serializers` and `json_kwargs_serializer` from the arguments `schema`."""
     definitions: list[core_schema.CoreSchema] = []
+    arguments_schema = schema
     if schema['type'] == 'definitions':
         definitions = schema['definitions']
-        schema = schema['schema']
+        arguments_schema = schema['schema']
     kwargs_schema: core_schema.CoreSchema | None = None
+    parameter_schemas: dict[str, core_schema.CoreSchema]
     if single_arg_name is not None:
-        assert schema['type'] == 'function-wrap'
-        parameter_schemas = {single_arg_name: schema['schema']}
+        assert arguments_schema['type'] == 'function-wrap'
+        parameter_schemas = {single_arg_name: arguments_schema['schema']}
     else:
-        assert schema['type'] == 'typed-dict'
-        parameter_schemas = {name: td_field['schema'] for name, td_field in schema['fields'].items()}
-        kwargs_schema = schema.get('extras_schema')
+        assert arguments_schema['type'] == 'typed-dict'
+        parameter_schemas = {name: td_field['schema'] for name, td_field in arguments_schema['fields'].items()}
+        kwargs_schema = arguments_schema.get('extras_schema')
     definitions_by_ref = {definition['ref']: definition for definition in definitions if 'ref' in definition}
     parameter_serializers = {
         name: _serializer(parameter_schema, definitions, core_config)
