@@ -54,9 +54,8 @@ def _receipts(messages: list[ModelMessage]) -> list[CompactionReceiptPart]:
 
 
 def _text(part: UserPromptPart) -> str:
-    if isinstance(part.content, str):
-        return part.content
-    return ''.join(item if isinstance(item, str) else getattr(item, 'content', '') for item in part.content)
+    assert isinstance(part.content, str)
+    return part.content
 
 
 def _user_texts(messages: list[ModelMessage]) -> list[str]:
