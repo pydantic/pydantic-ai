@@ -12,6 +12,7 @@ from weakref import WeakKeyDictionary
 
 import anyio
 from dbos import DBOS, SetWorkflowID, SetWorkflowTimeout
+from dbos._context import DBOSContext, get_local_dbos_context
 from dbos._error import DBOSWorkflowCancelledError, DBOSWorkflowConflictIDError
 from pydantic import TypeAdapter, ValidationError
 
@@ -55,7 +56,6 @@ from ._utils import ChildWorkflowConfig, StepConfig, guard_enqueue_in_workflow, 
 
 if TYPE_CHECKING:
     from dbos import StepReservation
-    from dbos._context import DBOSContext
 
 _child_workflow_executions: WeakKeyDictionary[DBOSContext, dict[tuple[str | None, int, str | None], int]] = (
     WeakKeyDictionary()
@@ -284,8 +284,6 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
     def get_default_run_id(self) -> str | None:
         if not self.in_durable_context:
             return None
-        from dbos._context import get_local_dbos_context
-
         context = get_local_dbos_context()
         assert context is not None and context.workflow_id is not None
         step = context.function_id + 1
@@ -575,8 +573,6 @@ async def _call_child_workflow(
     DBOS takes the position of the child's `DBOS.getResult` step together with its start, when `workflow` is called,
     so only start positions need ordering.
     """
-    from dbos._context import get_local_dbos_context
-
     parent_id = DBOS.workflow_id
     context = get_local_dbos_context()
     assert parent_id is not None and context is not None

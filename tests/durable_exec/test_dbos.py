@@ -129,7 +129,7 @@ from .span_utils import drop_fastmcp_client_spans
 # Skips only when `dbos` itself is missing, so an import below that a supported `dbos` version lacks fails loudly.
 pytest.importorskip('dbos')
 
-from dbos import DBOS, DBOSConfig, SetWorkflowID
+from dbos import DBOS, DBOSConfig, SetWorkflowID, StepInfo
 from dbos._core import DEFAULT_STEP_OPTIONS
 from dbos._error import DBOSAwaitedWorkflowCancelledError, DBOSMaxStepRetriesExceeded, DBOSPatchNondeterminismError
 
@@ -7306,7 +7306,7 @@ async def test_dbos_child_workflows_keep_their_tool_calls_when_starts_reorder(
     await _assert_children_at_own_positions(workflow_id, steps)
 
 
-async def _assert_children_at_own_positions(workflow_id: str, steps: list[Any]) -> None:
+async def _assert_children_at_own_positions(workflow_id: str, steps: list[StepInfo]) -> None:
     """Each call's child is a child of the parent at a start and `getResult` position pair of its own.
 
     DBOS takes a child's `getResult` position together with its start, even when both children start together.
