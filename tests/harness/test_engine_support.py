@@ -53,7 +53,10 @@ def _is_durability(name: str, module: str) -> bool:
 
 
 def test_every_durability_capability_is_an_engine() -> None:
-    """A new engine can't land without a column: its durability capability must be in `ENGINE_CAPABILITIES`. It reads test tables or source, with no provider exchange to record, so it isn't a VCR test."""
+    """A new engine can't land without a column: its durability capability must be in `ENGINE_CAPABILITIES`.
+
+    It reads test tables or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     found = {
         ref.name for ref in discover_capabilities(DURABILITY_PACKAGES).values() if _is_durability(ref.name, ref.module)
     }
@@ -61,18 +64,21 @@ def test_every_durability_capability_is_an_engine() -> None:
 
 
 def test_every_cell_is_a_case_with_calls() -> None:
-    """A cell only means something for a case whose calls a suite runs. It reads test tables or source, with no provider exchange to record, so it isn't a VCR test."""
+    """A cell only means something for a case whose calls a suite runs.
+
+    It reads test tables or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     for name in ENGINE_SUPPORT:
         assert name in PUBLIC, f'`ENGINE_SUPPORT` names {name}, which is not a public capability'
         assert CASES[name].calls is not None, f'`ENGINE_SUPPORT` names {name}, which has no `calls` to run'
 
 
 def test_measured_cells_only_go_up() -> None:
-    """How many cases each engine's suites measure, i.e. the cells that aren't `untested`: a PR may raise an
-    engine's count by testing a cell, never lower it. It reads test tables or source, with no provider exchange to
-    record, so it isn't a VCR test.
+    """How many cases each engine's suites measure, i.e. the cells that aren't `untested`: raise a count, never lower it.
 
-    The number of cases with calls is pinned too, so a new case that a suite doesn't measure changes a snapshot."""
+    The number of cases with calls is pinned too, so a new case that a suite doesn't measure changes a snapshot. It
+    reads test tables or source, with no provider exchange to record, so it isn't a VCR test.
+    """
     with_calls = [name for name, case in CASES.items() if name in PUBLIC and case.calls is not None]
     assert len(with_calls) == snapshot(45)
     measured = Counter(
@@ -153,7 +159,7 @@ def test_the_d1_suites_run_every_run_context_scenario() -> None:
     It reads test tables, with no provider exchange to record, so it isn't a VCR test.
     """
     run_context = {scenario for scenario in SCENARIOS if scenario.startswith('RunContext.')}
-    assert run_context <= set(SCENARIO_RUNS)
+    assert run_context == set(SCENARIO_RUNS)
 
 
 def test_every_broken_scenario_cell_has_a_signature() -> None:
@@ -161,8 +167,9 @@ def test_every_broken_scenario_cell_has_a_signature() -> None:
 
     The scenario's own tests match the signature against the observed outcome: the D1 suites
     (`tests/harness/test_durable_tool_io.py` and `tests/harness/test_durable_temporal_replay.py`) for the `RunContext`
-    scenarios, and `tests/harness/background_tools/test_durable_engines.py` for the `BackgroundTools` ones. It reads test tables, with no provider exchange to
-    record, so it isn't a VCR test.
+    scenarios, and `tests/harness/background_tools/test_durable_engines.py` for the `BackgroundTools` ones.
+
+    It reads test tables, with no provider exchange to record, so it isn't a VCR test.
     """
     broken = {cell.issue for cells in SCENARIO_SUPPORT.values() for cell in cells.values() if cell.level == 'broken'}
     assert broken == set(BROKEN_SIGNATURES)

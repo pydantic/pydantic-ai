@@ -38,7 +38,15 @@ from pydantic_ai_harness.memory import InMemoryMemoryStore
 from pydantic_ai_harness.planning import SqlitePlanStore
 
 from ..append_only import ToolCall
-from ..capability_cases import BROKEN_SIGNATURES, SCENARIO_RUNS, SCENARIO_SUPPORT, Engine, Scenario
+from ..capability_cases import (
+    BROKEN_SIGNATURES,
+    SCENARIO_RUNS,
+    SCENARIO_SUPPORT,
+    Engine,
+    Scenario,
+    ScenarioCapabilityNote,
+    ScenarioNote,
+)
 from ._contracts import CASES
 from ._counting_clients import AWS_CLI_COUNT_VARIABLE, REQUESTS
 
@@ -201,8 +209,10 @@ class ScenarioRecorder(AbstractCapability[None]):
 
     async def on_event(self, ctx: RunContext[None], *, event: AgentStreamEvent) -> None:
         seen = _EVENTS.setdefault(self.agent_name, [])
-        if isinstance(event, CustomEvent | CapabilityEvent):
-            seen.append(f'event:{getattr(event, "text", type(event).__name__)}')
+        if isinstance(event, ScenarioNote | ScenarioCapabilityNote):
+            seen.append(f'event:{event.text}')
+        elif isinstance(event, CustomEvent | CapabilityEvent):
+            seen.append(f'unexpected event: {event!r}')
         elif isinstance(event, EnqueuedMessagesEvent):
             seen.extend(f'enqueued:{content}' for content in _prompts(event.messages))
 
