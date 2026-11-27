@@ -245,6 +245,9 @@ def test_bedrock_converse_accepts_gpt_5_6_and_gpt_6_models() -> None:
             'bedrock_thinking_variant': 'openai_responses',
             'supports_thinking': True,
             'thinking_always_enabled': base_name in ('gpt-6-astra', 'gpt-6.1-sol'),
+            # Converse rejects their `document` blocks and an `image` inside a `toolResult`.
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset(),
+            'supports_document_input': False,
             # Converse takes video only on Nova.
             'supports_video_input': False,
             'default_cache_retention': timedelta(minutes=30),
