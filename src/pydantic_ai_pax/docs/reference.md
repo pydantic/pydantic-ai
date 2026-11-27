@@ -69,7 +69,8 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | Option | What it does |
 |---|---|
 | `-m`, `--model MODEL` | Use this model for this run, without saving it |
-| `-p`, `--prompt TEXT` | Run one prompt without interaction and print only the answer; see [Headless mode](#headless-mode) |
+| `pax PROMPT`, `-p`, `--prompt [TEXT]` | Run one prompt without interaction and print only the answer; see [Headless mode](#headless-mode) |
+| `--output-format text\|json` | With a prompt, how the answer is printed; see [Headless mode](#headless-mode) |
 | `-a`, `--agent MODULE:ATTR` | Chat with your own Pydantic AI agent; see [Your own agent](#your-own-agent) |
 | `--resume [SESSION-ID]` | Restore a saved session; no ID opens the browser |
 | `-c`, `--continue` | Restore the most recent saved session in this directory; see [Saved sessions](#saved-sessions-and-resume) |
@@ -3831,15 +3832,31 @@ To pass deps or plugins, write a launcher that calls `chat` (see
 ### Headless mode
 
 ```bash
-pax -p "Explain this repository" -m anthropic:claude-sonnet-4-6
+pax "Explain this repository" -m anthropic:claude-sonnet-4-6
 pax -p "Continue the task" --resume SESSION-ID
+pax -w -- "-v flags in the test runner: what do they do?"
+git diff | pax -p -a my_agents:reviewer
+pax -a my_agents:extractor --output-format json "List the cities in README.md"
 ```
 
-`-p` / `--prompt` requires prompt text as an argument, never reads stdin,
-and runs one turn through tools to completion. Only the final answer is printed
+`pax PROMPT` and `-p TEXT` / `--prompt TEXT` run one turn through tools to completion.
+A first word that is not `config`, `plugins`, `sessions`, or `update` starts the prompt,
+and the words after it are joined with spaces; options may come before or between them.
+A lowercase near-miss of a subcommand, such as `pax plugin list`, fails with a suggestion
+instead; send it with `-p` or after `--` to run it as a prompt.
+A word that starts with `-` is read as an option even when quoted, so `pax "-m means model"`
+does not run that prompt: put the prompt after `--`, as in `pax [OPTIONS] -- PROMPT...`,
+and every word after `--` is prompt text, with or without `-p` before it. `-w`, `--resume`, `--resume-claude`, and
+`--resume-codex` take the next word as their value when one follows, so a prompt directly
+after one of them needs `--` or `-p`: `pax -w "fix the bug"` takes `fix the bug` as the
+worktree name and opens the interactive shell. `-p` with no text, or the prompt `-`
+before any `--`, reads the prompt from stdin instead, and fails if stdin is a terminal. Only the final answer is printed
 to stdout, without Markdown rendering, wrapping, banners, thinking, or tool output.
+A string output prints as it is; any other output, such as an agent's
+`output_type=City` model, prints as JSON. `--output-format json` prints a JSON object
+with an `output` key for any output, string or not.
 Errors go to stderr with a nonzero exit status; Ctrl+C exits with status 130.
-The turn is saved and can be resumed. With `-p`, `--resume` requires an explicit
+The turn is saved and can be resumed. With a prompt, `--resume` requires an explicit
 session ID; the browser cannot open. `--continue`, `--session-id`, and `--fork-session` work as
 interactively. Prompt text is literal, not a slash command.
 

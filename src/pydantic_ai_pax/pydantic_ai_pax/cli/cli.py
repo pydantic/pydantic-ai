@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import difflib
 import gc
 import os
 import re
@@ -9,7 +10,7 @@ import sys
 from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal, TypeAlias, get_args
 
 from pydantic_ai_pax.runtime.launch import launch_session_id
 from pydantic_ai_pax.ui.rendering.splash import Splash
@@ -24,6 +25,10 @@ if TYPE_CHECKING:
     from pydantic_ai_pax.config.settings_store import SettingsStore
     from pydantic_ai_pax.runtime.worktrees import Worktree
 
+OutputFormat: TypeAlias = Literal['text', 'json']
+"""How a headless run prints its answer; here rather than in the heavier `headless` module, which `--output-format` needs."""
+_SUBCOMMANDS = ('config', 'plugins', 'sessions', 'update')
+"""First positional arguments that name a subcommand; any other first positional starts a prompt."""
 _RELAUNCH_WORKTREE = 'CLAI_RELAUNCH_WORKTREE'
 """Carries a removable checkout's launch `HEAD` across `/update`; an environment variable, so older builds ignore it."""
 _RELAUNCH_WEB = 'CLAI_RELAUNCH_WEB'
@@ -101,7 +106,20 @@ def run(*, splash: Splash | None = None) -> None:
     )
     parser.add_argument('-m', '--model', help='Provider-qualified model name')
     parser.add_argument(
-        '-p', '--prompt', metavar='TEXT', help='Run one prompt without interaction and print only the answer'
+        '-p',
+        '--prompt',
+        nargs='?',
+        const='-',
+        metavar='TEXT',
+        help='Run one prompt without interaction and print only the answer; no TEXT, or -, reads it from stdin',
+    )
+    parser.add_argument(
+        '--output-format',
+        choices=get_args(OutputFormat),
+        help=(
+            'With a prompt, print the answer as text (the default; output that is not a string prints as JSON) '
+            'or as a JSON object with an "output" key'
+        ),
     )
     parser.add_argument(
         '--web',
@@ -131,8 +149,13 @@ def run(*, splash: Splash | None = None) -> None:
     parser.add_argument('--version', action='store_true', help='Print the installed Pax version and exit')
     parser.add_argument('--request-limit', type=int)
     parser.add_argument('--database', type=Path, help='Settings database location')
-    parser.add_argument('command', nargs='?', choices=('config', 'plugins', 'sessions', 'update'))
-    parser.add_argument('arguments', nargs=argparse.REMAINDER)
+    parser.add_argument(
+        'command',
+        nargs='?',
+        metavar='PROMPT',
+        help='Run PROMPT, and any words after it, as -p does; config, plugins, sessions, and update are subcommands',
+    )
+    parser.add_argument('arguments', nargs=argparse.REMAINDER, help=argparse.SUPPRESS)
     args = _parse_args(parser)
     if args.version:
         # Like argparse's own `version` action, this wins over every other argument.
@@ -198,6 +221,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                 asyncio.run(
                     run_headless(
                         text=args.prompt,
+                        output_format=args.output_format or 'text',
                         settings=settings,
                         store=store,
                         project=project,
@@ -340,13 +364,54 @@ def _version() -> str:
 
 
 def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
-    """Normalize the update command before validating modes and session options."""
-    args = parser.parse_args()
+    """Normalize the update command before validating modes and session options.
+
+    Everything after the first `--` is taken literally: prompt words for a prompt, or a subcommand's arguments as
+    before, never options, however often the words before it are parsed again.
+    """
+    argv = sys.argv[1:]
+    literal: list[str] | None = None
+    if '--' in argv:
+        end = argv.index('--')
+        argv, literal = argv[:end], argv[end + 1 :]
+    args = parser.parse_args(argv)
+    args.literal_prompt = False
+    updating = args.command == 'update'
     while args.command == 'update':
         # `pax update` is `pax --update`; options after it parse as they would before it.
         parser.parse_args(args.arguments, namespace=args)
         args.update = True
+    if updating and args.command is not None and args.command not in _SUBCOMMANDS:
+        # `pax update the docs` reads as a prompt, but `update` is the subcommand.
+        parser.error(f'`{parser.prog} update` takes no prompt; to send it as a prompt, use -p or put it after --')
+    if args.command in _SUBCOMMANDS:
+        if literal is not None:
+            args.arguments = [*args.arguments, '--', *literal]
+    elif args.command is not None or literal:
+        _positional_prompt(args, parser, literal or [])
     return args
+
+
+def _positional_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser, literal: list[str]) -> None:
+    """`pax WORDS...` runs the words, joined by spaces, as `-p` would; options may follow any of them before `--`.
+
+    `literal`, the words after `--`, are added as they are: a prompt made only of them is never read from stdin.
+    """
+    words: list[str] = []
+    while args.command is not None:
+        words.append(args.command)
+        # Like `update` above: options after a word parse as they would before it, and the next word is the next one.
+        parser.parse_args(args.arguments, namespace=args)
+    if args.prompt == '-' and not words and literal:
+        # `pax -p -- TEXT`: a bare `-p` takes the words after `--`, so a prompt can start with `-`.
+        args.prompt = None
+    if args.prompt is not None:
+        parser.error('Give the prompt once: either with -p or after the options')
+    # A lowercase near-miss of a subcommand, like `pax plugin list`, is a typo more likely than a prompt.
+    if words and words[0].islower() and (near := difflib.get_close_matches(words[0], _SUBCOMMANDS, n=1, cutoff=0.85)):
+        parser.error(f'did you mean `{parser.prog} {near[0]}`? To send it as a prompt, use -p or put it after --')
+    args.prompt = ' '.join([*words, *literal])
+    args.literal_prompt = not words
 
 
 async def _update(channel: 'UpdateChannel') -> int:
@@ -645,10 +710,16 @@ def _validate_web_args(args: argparse.Namespace, parser: argparse.ArgumentParser
 
 def _validate_prompt_args(args: argparse.Namespace, parser: argparse.ArgumentParser) -> None:
     if args.prompt is None:
+        if args.output_format is not None:
+            parser.error('--output-format needs a prompt, given with -p or after the options')
         return
     if args.command:
         parser.error('--prompt cannot be combined with config, plugins, or sessions')
-    if not args.prompt.strip():
-        parser.error('--prompt requires non-empty text')
     if args.resume == '':
         parser.error('--prompt requires an explicit --resume SESSION-ID')
+    if args.prompt == '-' and not args.literal_prompt:
+        if sys.stdin.isatty():
+            parser.error('-p without TEXT, or the prompt -, reads the prompt from stdin; pipe it in or give TEXT')
+        args.prompt = sys.stdin.read()
+    if not args.prompt.strip():
+        parser.error('the prompt is empty; give text with -p, after the options, or on stdin')

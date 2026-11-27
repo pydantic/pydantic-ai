@@ -4565,9 +4565,11 @@ accepted request when a turn fails or is cancelled.
 
 ## Headless CLI runs
 
-`pax -p "PROMPT" [-m PROVIDER:NAME]` runs one saved turn without an editor.
-Session and turn hooks still run; stream renderers do not. Host console output
-is suppressed, and stdout contains only the final answer. Plugin load failures
+`pax PROMPT` or `pax -p "PROMPT"` (`-p` alone reads the prompt from stdin) runs one
+saved turn without an editor. Session and turn hooks still run; stream renderers do
+not. Host console output is suppressed, and stdout contains only the final answer:
+the output as it is when it is a string, otherwise as JSON, or a JSON object with an
+`output` key under `--output-format json`. Plugin load failures
 abort the run. The `ask_user` plugin is skipped even if saved settings enable or
 replace it; this does not change those settings. `host.full_screen()` raises in
 headless mode. Plugins must not bypass the host by reading terminal input or

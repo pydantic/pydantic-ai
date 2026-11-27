@@ -1285,6 +1285,6 @@ def test_help_lists_update(monkeypatch: pytest.MonkeyPatch, capsys: pytest.Captu
     with pytest.raises(SystemExit) as exited:
         cli_module.run()
     assert exited.value.code == 0
-    text = capsys.readouterr().out
-    assert '{config,plugins,sessions,update}' in text
+    text = ' '.join(capsys.readouterr().out.split())
+    assert 'config, plugins, sessions, and update are subcommands' in text
     assert '--update' in text

@@ -6,11 +6,13 @@ from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 
 from anyio import CancelScope
+from pydantic_core import to_json
 from rich.console import Console
 
 from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai_pax.app import DEFAULT_PLUGINS, STOCK_PLUGINS, create_stock_agent as create_agent
+from pydantic_ai_pax.cli.cli import OutputFormat
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
@@ -47,6 +49,7 @@ async def run_headless(
     agent: AbstractAgent[None, object] | None = None,
     session_id: str | None = None,
     fork_session: bool = False,
+    output_format: OutputFormat = 'text',
 ) -> int:
     """Print only the final answer; preserve sessions and report failures on stderr.
 
@@ -54,6 +57,9 @@ async def run_headless(
 
     A supplied `agent` runs without any plugins, like `chat(..., load_plugins=False)`.
     `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
+
+    `output_format='text'` prints a `str` output as is and any other output as JSON;
+    `'json'` prints `{"output": ...}` for any output.
     """
     if resume == '':
         # The browser needs a terminal, which a headless run has none of.
@@ -106,7 +112,7 @@ async def run_headless(
                             raise ended.error
                         raise RuntimeError(start.cancel_reason or 'Turn cancelled by a plugin')
                     assert ended.result is not None
-                    answer = str(ended.result.output)
+                    answer = _answer(ended.result.output, output_format)
                     reason = 'exit'
                 except Exception as exc:  # noqa: BLE001 -- CLI boundary, stdout must remain answer-only.
                     Console(stderr=True).print(error_message(exc), markup=False, highlight=False)
@@ -116,6 +122,13 @@ async def run_headless(
                         await shell.close(reason)
     print(answer)
     return 0
+
+
+def _answer(output: object, output_format: OutputFormat) -> str:
+    """What stdout holds: scripts can parse a structured output, where `str()` would print its repr."""
+    if output_format == 'json':
+        return to_json({'output': output}, fallback=str).decode()
+    return output if isinstance(output, str) else to_json(output, fallback=str).decode()
 
 
 async def _load_plugins(loader: SessionPlugins[None]) -> None:

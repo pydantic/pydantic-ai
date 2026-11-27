@@ -415,7 +415,7 @@ closes; it stays saved, so click it to pick it up again. See
 
 ## Pax in your own code
 
-- `pax -p "Explain this repository"` runs one prompt and prints only the answer.
+- `pax "Explain this repository"` (or `pax -p ...`) runs one prompt and prints only the answer, as JSON when the output is not a string.
 - `pax --agent my_module:agent` chats with your own Pydantic AI agent.
 - `open_stock_agent(...)` gives your Python code Pax's coding agent, without the terminal.
 - `chat(agent, deps=...)` opens the Pax terminal on any agent.

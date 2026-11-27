@@ -1,18 +1,21 @@
 """Headless output, lifecycle, persistence, and CLI validation."""
 
+import io
+import json
 from collections.abc import AsyncIterator
 from pathlib import Path
 
 import anyio
 import pytest
+from pydantic import BaseModel
 
-from pydantic_ai import Agent
-from pydantic_ai.messages import ModelMessage
+from pydantic_ai import Agent, TextOutput
+from pydantic_ai.messages import ModelMessage, ModelRequest, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_ai_pax.app import create_stock_agent
-from pydantic_ai_pax.cli import cli, headless
+from pydantic_ai_pax.cli import agent_import, cli, headless
 from pydantic_ai_pax.config import PluginSettings, Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
@@ -147,8 +150,24 @@ async def test_missing_model(tmp_path: Path) -> None:
         )
 
 
-@pytest.mark.parametrize('args', [['-p'], ['-p', ''], ['-p', 'x', '--resume'], ['-p', 'x', 'config']])
+@pytest.mark.parametrize(
+    'args',
+    [
+        ['-p'],
+        ['-'],
+        ['-p', ''],
+        ['-p', 'x', '--resume'],
+        ['-p', 'x', 'config'],
+        ['-p', 'x', 'more'],
+        ['x', '-p', 'more'],
+        ['-p', 'x', '--', 'more'],
+        ['x', '-p', '--', 'more'],
+        ['--output-format', 'json'],
+        ['--output-format', 'yaml', '-p', 'x'],
+    ],
+)
 def test_cli_invalid_prompt(monkeypatch: pytest.MonkeyPatch, args: list[str]) -> None:
+    monkeypatch.setattr('sys.stdin', io.StringIO(' \n'))
     monkeypatch.setattr('sys.argv', ['pax', *args])
     with pytest.raises(SystemExit) as error:
         cli.run()
@@ -237,3 +256,213 @@ async def test_cancel_saves_history_and_closes_plugins(
     entries = await saved.listing()
     assert entries[0].outcome == 'cancelled'
     assert capsys.readouterr().out == ''
+
+
+class City(BaseModel):
+    name: str
+    population: int
+
+
+async def _echo(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    """Answer with the prompt the CLI sent, so a test sees how it was put together."""
+    [part] = [part for message in messages if isinstance(message, ModelRequest) for part in message.parts]
+    assert isinstance(part, UserPromptPart) and isinstance(part.content, str)
+    yield f'echo: {part.content}'
+
+
+async def _fail(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    raise RuntimeError('model is down')
+    # Makes this an async generator.
+    yield  # pragma: no cover
+
+
+class Opaque:
+    """An output that JSON can't serialize, so it prints as its `str()`."""
+
+    def __str__(self) -> str:
+        return 'opaque'
+
+
+def _opaque(text: str) -> object:
+    """Annotated `object`, since an output function's return type needs a schema and `Opaque` has none."""
+    return Opaque()
+
+
+_AGENTS: dict[str, Agent[None, object]] = {
+    'echo': Agent(FunctionModel(stream_function=_echo)),
+    'city': Agent(TestModel(), output_type=City),
+    'opaque': Agent(FunctionModel(stream_function=_echo), output_type=TextOutput(_opaque)),
+    'fail': Agent(FunctionModel(stream_function=_fail)),
+}
+
+
+def run_cli(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], *args: str
+) -> tuple[int | str | None, str, str]:
+    """Run `pax --database ... ARGS` in-process with `-a NAME` naming one of `_AGENTS`; the exit code, stdout, and stderr."""
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(agent_import, 'import_agent', _AGENTS.__getitem__)
+    monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'config.db'), *args])
+    with pytest.raises(SystemExit) as exited:
+        cli.run()
+    captured = capsys.readouterr()
+    return exited.value.code, captured.out, captured.err
+
+
+@pytest.mark.parametrize(
+    'args',
+    [
+        ['-a', 'echo', 'what is up'],
+        ['-a', 'echo', 'what', 'is', 'up'],
+        ['what', 'is', '-a', 'echo', 'up'],
+        ['-a', 'echo', '-p', 'what is up'],
+        ['-a', 'echo', '--', 'what', 'is', 'up'],
+        ['-a', 'echo', 'what', '--', 'is', 'up'],
+    ],
+)
+def test_cli_positional_prompt_runs_like_p(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: list[str]
+) -> None:
+    assert run_cli(tmp_path, monkeypatch, capsys, *args)[:2] == (0, 'echo: what is up\n')
+
+
+@pytest.mark.parametrize(
+    ('args', 'answer'),
+    [
+        (['-a', 'echo', '--', 'explain', '--version'], 'echo: explain --version\n'),
+        (['-a', 'echo', '--', 'review', '--agent=other:agent', '-p', 'x'], 'echo: review --agent=other:agent -p x\n'),
+        (['-a', 'echo', '--', '-'], 'echo: -\n'),
+        (['-a', 'echo', '-p', '--', '-v', 'flags'], 'echo: -v flags\n'),
+    ],
+)
+def test_cli_words_after_double_dash_are_prompt_text_not_options(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: list[str], answer: str
+) -> None:
+    """After `--`, words that look like options stay in the prompt, so prompt text can't pick another agent.
+
+    A lone `-` after `--` is prompt text too, not a request to read stdin.
+    """
+    monkeypatch.setattr('sys.stdin', _Terminal())
+    assert run_cli(tmp_path, monkeypatch, capsys, *args)[:2] == (0, answer)
+
+
+def test_cli_subcommand_is_not_a_prompt(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    # The assertion is that it never runs.
+    async def run_headless(**_: object) -> int:  # pragma: no cover
+        raise AssertionError('`pax config` ran a prompt')
+
+    monkeypatch.setattr(headless, 'run_headless', run_headless)
+    monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'config.db'), 'config', 'get', 'model'])
+    cli.run()
+    assert capsys.readouterr().out == f'"{Settings().model}"\n'
+
+
+@pytest.mark.parametrize('first', ['plugin', 'session', 'confg', 'updates'])
+def test_cli_near_miss_of_a_subcommand_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], first: str
+) -> None:
+    code, out, err = run_cli(tmp_path, monkeypatch, capsys, '-a', 'echo', first, 'list')
+    assert (code, out) == (2, '')
+    assert 'did you mean' in err and 'use -p or put it after --' in err
+
+
+def test_cli_update_followed_by_words_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, out, err = run_cli(tmp_path, monkeypatch, capsys, '-a', 'echo', 'update', 'the', 'docs')
+    assert (code, out) == (2, '')
+    assert ' update` takes no prompt; to send it as a prompt, use -p or put it after --' in err
+
+
+@pytest.mark.parametrize(
+    ('args', 'answer'),
+    [
+        (['Update', 'the', 'docs'], 'Update the docs'),
+        (['configure', 'ruff'], 'configure ruff'),
+        (['-p', 'plugin list'], 'plugin list'),
+        (['--', 'plugin', 'list'], 'plugin list'),
+        (['-p', 'update the docs'], 'update the docs'),
+        (['--', 'update', 'the', 'docs'], 'update the docs'),
+    ],
+)
+def test_cli_prompt_that_is_not_a_near_miss_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: list[str], answer: str
+) -> None:
+    monkeypatch.setattr('sys.stdin', _Terminal())
+    assert run_cli(tmp_path, monkeypatch, capsys, '-a', 'echo', *args)[:2] == (0, f'echo: {answer}\n')
+
+
+@pytest.mark.parametrize('args', [['-'], ['-p'], ['-p', '-']])
+def test_cli_prompt_from_stdin(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: list[str]
+) -> None:
+    monkeypatch.setattr('sys.stdin', io.StringIO('from stdin'))
+    assert run_cli(tmp_path, monkeypatch, capsys, '-a', 'echo', *args)[:2] == (0, 'echo: from stdin\n')
+
+
+class _Terminal(io.StringIO):
+    """Stdin attached to a terminal, which a test fails on if it is read."""
+
+    def isatty(self) -> bool:
+        return True
+
+    def read(self, size: int | None = -1) -> str:  # pragma: no cover
+        raise AssertionError('read the prompt from a terminal')
+
+
+@pytest.mark.parametrize('args', [['-'], ['-p']])
+def test_cli_prompt_from_terminal_stdin_fails_fast(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: list[str]
+) -> None:
+    """With nothing piped in, waiting on stdin would look like a hang."""
+    monkeypatch.setattr('sys.stdin', _Terminal())
+    code, out, err = run_cli(tmp_path, monkeypatch, capsys, '-a', 'echo', *args)
+    assert (code, out) == (2, '')
+    assert err.endswith('reads the prompt from stdin; pipe it in or give TEXT\n')
+
+
+@pytest.mark.parametrize(
+    ('args', 'stdin'),
+    [(['-p', ' '], ''), ([' '], ''), (['--', ' '], ''), (['-p'], ''), (['-'], ' \n')],
+)
+def test_cli_empty_prompt_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: list[str], stdin: str
+) -> None:
+    """A blank prompt from `-p`, the positional words, or stdin fails without naming an option the user didn't type."""
+    monkeypatch.setattr('sys.stdin', io.StringIO(stdin))
+    code, out, err = run_cli(tmp_path, monkeypatch, capsys, '-a', 'echo', *args)
+    assert (code, out) == (2, '')
+    assert err.endswith('the prompt is empty; give text with -p, after the options, or on stdin\n')
+
+
+@pytest.mark.parametrize(
+    ('args', 'expected'),
+    [
+        (['-a', 'city', '-p', 'go'], {'name': 'a', 'population': 0}),
+        (['-a', 'city', '--output-format', 'text', 'go'], {'name': 'a', 'population': 0}),
+        (['-a', 'city', '--output-format', 'json', 'go'], {'output': {'name': 'a', 'population': 0}}),
+        (['-a', 'echo', '--output-format', 'json', 'go'], {'output': 'echo: go'}),
+        (['-a', 'opaque', 'go'], 'opaque'),
+        (['-a', 'opaque', '--output-format', 'json', 'go'], {'output': 'opaque'}),
+    ],
+)
+def test_cli_prints_json(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+    args: list[str],
+    expected: object,
+) -> None:
+    code, out, err = run_cli(tmp_path, monkeypatch, capsys, *args)
+    assert code == 0, err
+    assert out.endswith('\n') and json.loads(out) == expected
+
+
+def test_cli_failure_goes_to_stderr(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    code, out, err = run_cli(tmp_path, monkeypatch, capsys, '-a', 'fail', '--output-format', 'json', 'go')
+    assert (code, out) == (1, '')
+    assert err.endswith('model is down\n')
