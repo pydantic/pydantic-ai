@@ -100,6 +100,7 @@ up](#cleaning-up) shows how to handle that.
 | [Render Sandbox](harness/render-sandbox.md) | A Render sandbox | Yes | A Render workspace with Sandboxes access |
 | [Sprites Sandbox](harness/sprites-sandbox.md) | A persistent Fly.io Sprite | Yes | A Sprites API token |
 | [boxd Sandbox](harness/boxd-sandbox.md) | A boxd cloud machine | Yes | A boxd account |
+| [AgentCore Sandbox](harness/agentcore-sandbox.md) | An Amazon Bedrock AgentCore Code Interpreter session | Yes | An AWS account with AgentCore access |
 | [SSH Workspace](harness/ssh-workspace.md) | Another machine, over your `ssh` client | Yes, on another host, but not sandboxed there: commands run as your SSH user | SSH access |
 | [Bubblewrapped Workspace](harness/bubblewrap-sandbox.md) | Wraps another workspace and runs its commands in Linux `bwrap` | Best effort, not a security boundary | Linux with `bwrap` on that host |
 

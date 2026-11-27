@@ -76,6 +76,8 @@ sprites = ["sprites-py>=0.7.0,<0.8"]
 # `replace_in` on `secrets.set`, which limits where boxd's proxy swaps a secret into a request
 # (https://github.com/pydantic/pydantic-ai/issues/14230).
 boxd = ["boxd>=0.3.3,<0.4"]
+# AgentCore Code Interpreter is plain boto3; this range matches `pydantic-ai-slim[bedrock]`.
+agentcore = ["boto3>=1.42.63,<2"]
 # 1.1.1 is the oldest SDK the backend is verified against; 2.x may change the API.
 opensandbox = ["opensandbox>=1.1.1,<2"]
 # Daytona's current SDK line is 0.x; the older 1.0.1 and the 2.0 pre-release are other APIs.

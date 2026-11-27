@@ -18,6 +18,7 @@ from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import AuthorityWorkspace
 
 CAPABILITIES: dict[str, dict[str, str]] = {
+    'AgentCoreSandbox': {},
     'BoxdSandbox': {},
     'BoxLiteSandbox': {},
     'DaytonaSandbox': {},

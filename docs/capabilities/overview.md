@@ -51,6 +51,7 @@ Where the agent runs commands and keeps files: this machine, a container, or a s
 | [Render Sandbox](https://pydantic.dev/docs/ai/harness/render-sandbox/) | Harness | Commands and files in an isolated [Render](https://render.com/docs/sandboxes) sandbox |
 | [Sprites Sandbox](https://pydantic.dev/docs/ai/harness/sprites-sandbox/) | Harness | Commands and files in a persistent [Fly.io Sprite](https://sprites.dev) |
 | [boxd Sandbox](https://pydantic.dev/docs/ai/harness/boxd-sandbox/) | Harness | Commands and files in an isolated [boxd](https://boxd.sh) cloud machine |
+| [AgentCore Sandbox](https://pydantic.dev/docs/ai/harness/agentcore-sandbox/) | Harness | Commands and files in an [Amazon Bedrock AgentCore](https://aws.amazon.com/bedrock/agentcore/) Code Interpreter session in your AWS account |
 | [SSH Workspace](https://pydantic.dev/docs/ai/harness/ssh-workspace/) | Harness | Commands and files on a remote host over your `ssh` client, as your SSH user; not sandboxed there |
 | [Bubblewrapped Workspace](https://pydantic.dev/docs/ai/harness/bubblewrap-sandbox/) | Harness | Wraps another workspace capability so its commands run in a Linux [bubblewrap](https://github.com/containers/bubblewrap) wrapper on that workspace's host (best-effort convenience, not a security boundary) |
 
