@@ -1,5 +1,5 @@
 ---
-description: "Find community capability packages for Pydantic AI, covering Agent Skills, SQL analytics and RAG."
+description: "Find community capability packages for Pydantic AI, covering Agent Skills, SQL analytics, human approval and RAG."
 ---
 
 # Third-Party Capabilities
@@ -19,6 +19,12 @@ Pydantic AI Harness's [`Skills`](../harness/skills.md) turns each `SKILL.md` pac
 Capabilities for querying and analyzing structured data help agents answer questions over files and databases:
 
 * [`pydantic-ai-chdb`](https://github.com/chdb-io/pydantic-ai-chdb) - `ChDBCapability` gives agents analytical SQL over local files (Parquet/CSV/JSON), object storage, and remote databases with [chDB](https://clickhouse.com/docs/en/chdb), the in-process ClickHouse engine — the engine itself needs no server or connection string to run (remote sources are reached via ClickHouse table functions, which take their own credentials). Registers `run_select_query` (read-only ClickHouse SQL with parameter binding), `list_databases`, `list_tables`, `describe_table`, `get_sample_data`, `list_functions`, and `attach_file` (opt-in writable sessions) tools plus schema-first instructions. Sessions default to the engine-level `readonly=2` setting with capped results, and typed engine errors are mapped to [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] so the model can correct its queries. Works with [agent specs](../agent-spec.md) out of the box, so it can be loaded via [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] / [`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec]. Also available as a lower-level [toolset](../toolsets.md) via [`ChDBCapability(...).get_toolset()`][pydantic_ai.capabilities.AbstractCapability.get_toolset].
+
+## Human-in-the-Loop Approval {#human-in-the-loop-approval}
+
+Pydantic AI supports [human-in-the-loop tool approval](../deferred-tools.md#human-in-the-loop-tool-approval) natively, and [`HandleDeferredToolCalls`](handle-deferred-tool-calls.md) resolves approvals inside the run with a handler you write. Pydantic AI Harness adds [`Permissions`](../harness/permissions.md) to choose which calls need approval, [`ApprovalReviewer`](../harness/approval-reviewer.md) to let a second model approve low-risk calls, and [`AskUser`](../harness/ask-user.md) to ask the user questions from a terminal or web UI. The following package resolves the same approvals by asking a person who is away from the app.
+
+* [`pushary-pydantic-ai`](https://github.com/Pushary/pushary-pydantic-ai) - `PusharyApprovals` resolves held approvals, from `requires_approval` tools or `Permissions`, by asking a specific end user on their phone, and the run continues: approve runs the tool, and deny or no answer returns a `ToolDenied` the model can read. Policy rules on the Pushary account can allow or deny a call first without asking anyone. The same capability answers the `ask_human` tool from `pushary_tool()`, which asks a yes/no question, a choice, or a free-text question. The person to ask comes from the capability's configuration or from a resolver over the run context, such as trusted deps, never from tool arguments. The approver sees the tool's full arguments, and a call whose arguments are too long to show in full is denied without asking. The phone wait is declared as a durable operation, so under [durable execution](../durable_execution/overview.md) it runs outside workflow code. For waits of up to a day, use `create_reviews` and `resolve_reviews` instead of `PusharyApprovals`: the run ends with [`DeferredToolRequests`][pydantic_ai.tools.DeferredToolRequests], and you resume it later with the answers. The package calls the hosted Pushary API, which requires a Pushary Partner plan.
 
 ## Retrieval & RAG {#retrieval-rag}
 
