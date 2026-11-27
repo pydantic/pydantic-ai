@@ -555,15 +555,8 @@ _SCHEMA_MAP_KEYWORDS = frozenset({'properties', 'patternProperties', '$defs', 'd
 """Keywords whose values map names to subschemas, so their keys are names, not keywords."""
 
 
-class _PatternMatchers(dict[str, Callable[[str], bool]]):
-    """Matchers for a schema's patterns, compiled with pydantic-core's linear-time regex engine.
-
-    A pattern the schema walk missed is compiled the first time it's needed.
-    """
-
-    def __missing__(self, pattern: str) -> Callable[[str], bool]:
-        matcher = self[pattern] = _compile_pattern(pattern)
-        return matcher
+_PatternMatchers = dict[str, Callable[[str], bool]]
+"""Matchers for every pattern in a schema, compiled with pydantic-core's linear-time regex engine."""
 
 
 def _compile_schema_patterns(json_schema: JsonSchemaValue) -> _PatternMatchers:
@@ -572,9 +565,7 @@ def _compile_schema_patterns(json_schema: JsonSchemaValue) -> _PatternMatchers:
     Raises a `UserError` naming the pattern when the engine can't compile it, such as a lookaround or a backreference,
     and when `unevaluatedProperties` is used with `patternProperties`, which `jsonschema` matches with Python's `re`.
     """
-    matchers = _PatternMatchers()
-    for pattern in _schema_patterns(json_schema):
-        matchers[pattern] = _compile_pattern(pattern)
+    matchers: _PatternMatchers = {pattern: _compile_pattern(pattern) for pattern in _schema_patterns(json_schema)}
     if matchers and _uses_keyword(json_schema, 'unevaluatedProperties'):
         raise exceptions.UserError(
             '`StructuredDict(validate=True)` does not support `unevaluatedProperties` together with `pattern` or '
