@@ -18,35 +18,54 @@ jobs:
 
   cancel-after-times-out:
     needs: times-out
-    if: failure()
-    runs-on: ubuntu-latest
-    steps:
-      - run: echo "result=${{ needs.times-out.result }} at $(date -u +%T)"
-
-  fails:
-    runs-on: ubuntu-latest
-    steps:
-      - run: exit 1
-
-  cancel-after-fails:
-    needs: fails
-    if: failure()
+    if: ${{ !cancelled() && github.event_name == 'push' && (needs.times-out.result == 'failure' || needs.times-out.result == 'cancelled') }}
     runs-on: ubuntu-latest
     permissions:
       actions: write
     steps:
       - env:
           GH_TOKEN: ${{ github.token }}
-        run: echo "result=${{ needs.fails.result }} at $(date -u +%T)"; sleep 75; gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
+        run: echo "times-out result=${{ needs.times-out.result }} at $(date -u +%T)"; gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
+
+  matrix:
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: ${{ github.event_name == 'push' }}
+      matrix:
+        leg: [fails-late, slow]
+    steps:
+      - run: if [ "${{ matrix.leg }}" = fails-late ]; then sleep 150; exit 1; else sleep 900; fi
+
+  cancel-after-matrix:
+    needs: matrix
+    if: ${{ !cancelled() && github.event_name == 'push' && (needs.matrix.result == 'failure' || needs.matrix.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "matrix result=${{ needs.matrix.result }} at $(date -u +%T)"; gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
 
   slow:
     runs-on: ubuntu-latest
     steps:
       - run: sleep 900
 
+  cancel-after-slow:
+    needs: slow
+    if: ${{ !cancelled() && github.event_name == 'push' && (needs.slow.result == 'failure' || needs.slow.result == 'cancelled') }}
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "slow result=${{ needs.slow.result }} at $(date -u +%T)"; gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
+
   check:
     if: always()
-    needs: [times-out, fails, slow]
+    needs: [times-out, matrix, slow]
     runs-on: ubuntu-latest
     steps:
       - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
