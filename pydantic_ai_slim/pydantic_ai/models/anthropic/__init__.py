@@ -1216,6 +1216,9 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             )
         return profile
 
+    def _classifies_schema_too_complex(self) -> bool:
+        return True
+
     @property
     def tool_addition_mode(self) -> Literal['by_reference'] | None:
         """The effective addition mode, narrowed for transports without inline system messages."""

@@ -2907,6 +2907,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return {}
         return provider._configured_model_profile(self.model_name) or {}  # pyright: ignore[reportPrivateUsage]
 
+    def _classifies_schema_too_complex(self) -> bool:
+        """Whether this model raises `ModelSchemaTooComplexError` when the provider can't compile a request's strict schemas.
+
+        Only for such a model does a run attempt a request again in Tool Output when the provider rejects the Native
+        Output schema the model inferred, and open a stream that sends one before handing it over, to see the rejection.
+        """
+        return False
+
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Adjust the provider's profile defaults for this model instance, before the user's `profile=` is applied.
 
