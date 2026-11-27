@@ -268,6 +268,7 @@ async def _rebuild_definitions(ctx: RunContext[None], tool_defs: list[ToolDefini
             with_native=tool_def.with_native,
             return_schema=tool_def.return_schema,
             include_return_schema=tool_def.include_return_schema,
+            ui_visibility=tool_def.ui_visibility,
         )
         for tool_def in tool_defs
     ]
