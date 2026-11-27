@@ -1105,13 +1105,14 @@ async def test_worker_crash_becomes_model_retry(monkeypatch: pytest.MonkeyPatch)
     # A worker death (`MontyCrashedError`) must surface as a retry carrying the completed
     # sub-agent results, not tear down the agent run. A tiny `request_timeout` plus an
     # infinite loop crashes the worker for real; `MontyCrashedError` cannot be constructed
-    # or subclassed from Python, so injection is not an option.
+    # or subclassed from Python, so injection is not an option. The watchdog killed it for
+    # running too long, so the retry gives the time-limit advice, as Code Mode's does.
 
     monkeypatch.setattr(
         'pydantic_ai_harness._monty_exec.AsyncMonty', functools.partial(AsyncMonty, request_timeout=0.5)
     )
     ts = DynamicWorkflowToolset[object](agents=[_wf_agent()])
-    with pytest.raises(ModelRetry, match='crashed the sandbox worker') as exc_info:
+    with pytest.raises(ModelRetry, match='ran longer than its time limit') as exc_info:
         await _run_script(ts, "await sub(task='x')\nwhile True:\n    pass")
     assert 'sub(task="x") -> "ok"' in str(exc_info.value)
 
@@ -1135,8 +1136,8 @@ async def test_worker_crash_after_budget_exhaustion_returns_terminal_result(
     out = await _run_script(ts, code)
     assert isinstance(out, dict)
     assert 'budget' in out['error']
-    assert out['last_error'] == (
-        'The workflow script crashed the sandbox worker after exhausting the sub-agent budget.'
+    assert out['last_error'] == snapshot(
+        'The workflow script ran longer than its time limit and was stopped after exhausting the sub-agent budget.'
     )
     assert out['completed'] == ['counted(task="first") -> "counted-result"']
 
@@ -1182,7 +1183,7 @@ async def test_sandbox_panic_after_budget_exhaustion_returns_terminal_result(
         'This run exhausted its sub-agent call budget (1). Conclude using the results already gathered; '
         'further sub-agent calls in this run will be refused.'
     )
-    assert out['last_error'] == (
+    assert out['last_error'] == snapshot(
         'The workflow script aborted inside the sandbox after exhausting the sub-agent budget.'
     )
     assert out['completed'] == ['counted(task="first") -> "counted-result"']
@@ -1432,14 +1433,22 @@ async def test_stale_max_duration_secs_key_is_rejected_at_run_time() -> None:
         await _run_script(toolset, '1 + 1')
 
 
-@pytest.mark.parametrize('unknown_key', ['max_durations_secs', 'max_allocations'])
-def test_unknown_resource_limit_key_raises_at_construction(unknown_key: str) -> None:
-    # Unknown keys must not be silently dropped, which would disable the intended cap.
-    with pytest.raises(UserError, match=r"Valid keys are \['max_duration_seconds', 'max_memory'"):
-        DynamicWorkflowToolset[object](
-            agents=[_wf_agent()],
-            resource_limits={unknown_key: 5},  # pyright: ignore[reportArgumentType]
-        )
+@pytest.mark.parametrize(
+    ('resource_limits', 'error'),
+    [
+        ({'max_durations_secs': 5}, r"Valid keys are \['max_duration_seconds', 'max_memory'\]"),
+        ({'max_allocations': 5}, r"Valid keys are \['max_duration_seconds', 'max_memory'\]"),
+        ({'max_memory': -1}, '`max_memory` must be a positive integer number of bytes'),
+        ({'max_memory': 256.0}, '`max_memory` must be a positive integer number of bytes'),
+        ({'max_duration_seconds': 0}, '`max_duration_seconds` must be a positive number of seconds'),
+        ({'max_duration_seconds': True}, '`max_duration_seconds` must be a positive number of seconds'),
+    ],
+)
+def test_invalid_resource_limits_raise_at_construction(resource_limits: dict[str, object], error: str) -> None:
+    # An unknown key would be dropped, disabling the intended cap, and a value Monty can't store would
+    # fail every script, so both raise when the toolset is built, as in Code Mode.
+    with pytest.raises(UserError, match=error):
+        DynamicWorkflowToolset[object](agents=[_wf_agent()], resource_limits=resource_limits)  # pyright: ignore[reportArgumentType]
 
 
 # --- Lifecycle -------------------------------------------------------------
@@ -1572,6 +1581,21 @@ async def test_call_scheduler_errors_reach_the_script_without_host_details() -> 
     assert await _run_script(passing.get_toolset(), code.format(name='bad')) == snapshot(
         "sub-agent 'bad' raised ValueError"
     )
+
+
+class _FlushFailingScheduler:
+    async def run(self, call: WorkflowCall) -> object:
+        return await call.start()
+
+    async def flush(self) -> None:
+        raise ValueError('db password=hunter2')
+
+
+async def test_a_failing_scheduler_flush_reaches_the_caller_not_the_model() -> None:
+    """A host error that never passed through the script raises to the caller, so its text stays off the model."""
+    workflow = DynamicWorkflow[object](agents=[_sub_agent()], call_scheduler=lambda ctx: _FlushFailingScheduler())
+    with pytest.raises(ValueError, match='hunter2'):
+        await _run_script(workflow.get_toolset(), "await sub(task='x')")
 
 
 # --- Runtime reveal --------------------------------------------------------

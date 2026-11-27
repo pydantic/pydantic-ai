@@ -11,6 +11,7 @@ from collections.abc import AsyncIterator
 from datetime import timedelta
 
 import pytest
+from anyio.from_thread import start_blocking_portal
 
 try:
     from temporalio import workflow
@@ -38,11 +39,13 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 from tests.harness._temporal import ignore_source_reads_left_open
+from tests.harness.code_mode.grpc_relay import serve_monty_relay
 from tests.temporal_utils import temporal_dev_server_cache_dir
 
 pytestmark = [pytest.mark.temporal, pytest.mark.xdist_group(name='harness-temporal'), ignore_source_reads_left_open]
 
 TEMPORAL_PORT = 7247  # avoid conflict with the code_mode and spend suites
+MONTY_RELAY_PORT = 7276  # not code_mode's 7275
 TASK_QUEUE = 'pydantic-ai-harness-dynamic-workflow-queue'
 ACTIVITY_CONFIG = ActivityConfig(
     start_to_close_timeout=timedelta(seconds=60),
@@ -104,11 +107,29 @@ orchestrator_agent = Agent(
 )
 
 
+remote_orchestrator_agent = Agent(
+    FunctionModel(_orchestrator_model),
+    name='dynamic_workflow_temporal_remote_agent',
+    capabilities=[
+        DynamicWorkflow(agents=[summarize_agent], monty_sandbox=f'http://127.0.0.1:{MONTY_RELAY_PORT}'),
+        TemporalDurability(activity_config=ACTIVITY_CONFIG),
+    ],
+)
+
+
 @workflow.defn
 class DynamicWorkflowWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         result = await orchestrator_agent.run(prompt)
+        return str(result.output)
+
+
+@workflow.defn
+class RemoteDynamicWorkflowWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        result = await remote_orchestrator_agent.run(prompt)
         return str(result.output)
 
 
@@ -144,3 +165,40 @@ async def test_dynamic_workflow_runs_in_temporal_workflow(client: Client) -> Non
         workflow_runner=_workflow_runner(),
     ).replay_workflow(history)
     assert replay_result.replay_failure is None
+
+
+async def test_dynamic_workflow_runs_remotely_in_temporal_workflow(client: Client) -> None:
+    """A script on a remote worker runs and replays in a workflow like a local one.
+
+    The relay runs on its own thread's event loop, since workflow code reaches Monty through a
+    blocking portal. Replay runs the script again, so the worker must still be reachable.
+    """
+    workflow_id = 'test_dynamic_workflow_temporal_remote_1'
+    with (
+        start_blocking_portal() as portal,
+        portal.wrap_async_context_manager(serve_monty_relay(MONTY_RELAY_PORT)) as relay,
+    ):
+        async with Worker(
+            client,
+            task_queue=TASK_QUEUE,
+            workflows=[RemoteDynamicWorkflowWorkflow],
+            plugins=[AgentPlugin(remote_orchestrator_agent), AgentPlugin(summarize_agent)],
+            workflow_runner=_workflow_runner(),
+        ):
+            output = await client.execute_workflow(
+                RemoteDynamicWorkflowWorkflow.run,
+                args=['Summarize alpha and beta'],
+                id=workflow_id,
+                task_queue=TASK_QUEUE,
+            )
+        assert output == "done: ['summary of alpha', 'summary of beta']"
+        assert len(relay.metadata) == 1
+
+        history = await client.get_workflow_handle(workflow_id).fetch_history()
+        replay_result = await Replayer(
+            workflows=[RemoteDynamicWorkflowWorkflow],
+            plugins=[PydanticAIPlugin()],
+            workflow_runner=_workflow_runner(),
+        ).replay_workflow(history)
+        assert replay_result.replay_failure is None
+        assert len(relay.metadata) == 2

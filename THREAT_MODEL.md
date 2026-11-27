@@ -228,7 +228,11 @@ Canonical guidance: [workflow rules](.github/workflows/AGENTS.md) and [securing 
 
 A workspace's authority (`AuthorityWorkspace`, or `authority` and `path_authority` on a workspace capability) decides the channel a file-reading capability sends a file's text on, not what the agent can do in the workspace. `Skills` keeps a skill whose `SKILL.md` is below `'operator'` out of its catalog, which the model reads as the application's instructions, and offers it through `list_skills` and `load_skill`, whose results are tool output. `RepoContext` loads an instruction file below `'operator'` as repository data or names it for the file tools rather than loading it into the instructions, and `Memory` attributes a snapshot read from a `MEMORY.md` below `'operator'` to that file's author rather than to the agent. `SubAgents` doesn't load a disk agent definition below `'operator'`, since its body would become a delegate's instructions, and a `working_directory` delegate's whole workspace gets the lowest authority the parent gives anything in or above that directory, which is `'none'` for a directory outside the parent's working directory that no `path_authority` entry contains. A stock workspace runs at `'operator'`, so there a repository's instruction files, skills and agent definitions still reach the model as instructions. See [workspace authority](docs/workspace.md#workspace-authority), [RepoContext](docs/harness/repo-context.md#trust), [Memory](docs/harness/memory.md#security-and-provenance), [Skills](docs/harness/skills.md#skills-from-files-you-didnt-write), and [SubAgents](docs/harness/subagents.md#per-delegation-working-directory).
 
-Code Mode pool creation, connection, and checkout errors go to the application caller, not the model.
+Code Mode and Dynamic Workflow pool creation, connection, and checkout errors go to the application caller,
+not the model. With `monty_sandbox`, a remote worker receives the code it runs: Code Mode snippets, or a
+Dynamic Workflow script with each sub-agent's arguments and results, so the application must trust that
+worker with them. Dynamic Workflow re-raises other host errors to the caller. Under Temporal its script
+dials the worker from workflow code, again on every replay.
 When a remote sandbox's turns run as durable activities, the activity worker reads and writes the
 configured mounts, and each turn's prints and result, cut to 1 MiB, are kept in workflow history before
 any model-facing output limit applies. Errors from building or reaching the pool are recorded there by type only.

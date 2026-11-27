@@ -1,5 +1,8 @@
 """Tests for CodeMode's remote transport and sandbox error routing.
 
+Dynamic Workflow dials remote workers through the same code, so the transport tests run against
+both capabilities, and its remote failure messages are tested here too.
+
 Refusal tests exercise native errors from a loopback gRPC server. Local-backed factory pool
 doubles cover factory plumbing and deterministic recovery branches, not remote execution.
 Bridge tests run the real subprocess relay end to end.
@@ -9,11 +12,11 @@ from __future__ import annotations
 
 import asyncio
 import warnings
-from collections.abc import AsyncGenerator, AsyncIterator
+from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from pathlib import Path
-from typing import Any, Never
+from typing import Any, Literal, Never
 from unittest.mock import AsyncMock, MagicMock
 
 import pytest
@@ -30,12 +33,14 @@ from pydantic_monty import (
 )
 
 from pydantic_ai import Agent, capture_run_messages
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai_harness import CodeMode, HarnessDeprecationWarning
-from pydantic_ai_harness.code_mode import CodeModeToolset
+from pydantic_ai_harness.code_mode import CodeModeResourceLimits, CodeModeToolset
+from pydantic_ai_harness.dynamic_workflow import DynamicWorkflow
 from tests.harness.code_mode.grpc_relay import MontyRelay, serve_monty_relay
 from tests.harness.code_mode.repl_store import MemoryReplStore
 
@@ -48,16 +53,59 @@ def _retries(messages: list[ModelMessage]) -> list[ToolReturnPart]:
     return [part for part in _parts(messages, ToolReturnPart) if part.outcome == 'retried']
 
 
-def _snippets_model(*snippets: str) -> FunctionModel:
-    """A model that calls `run_code` with each snippet in turn, then says 'done'."""
+def _snippets_model(*snippets: str, tool_name: str = 'run_code') -> FunctionModel:
+    """A model that calls `tool_name` with each snippet in turn, then says 'done'."""
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         done = len(_parts(messages, ToolReturnPart))
         if done < len(snippets):
-            return ModelResponse(parts=[ToolCallPart('run_code', {'code': snippets[done]})])
+            return ModelResponse(parts=[ToolCallPart(tool_name, {'code': snippets[done]})])
         return ModelResponse(parts=[TextPart('done')])
 
     return FunctionModel(model)
+
+
+def _sub_agent(name: str = 'sub') -> Agent[object, str]:
+    return Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('ok')])), name=name)
+
+
+# What `monty_sandbox` accepts, spelled out: the alias in `_monty_exec` is private.
+MontySandbox = str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]]
+# Code Mode's limits; Dynamic Workflow's accept the subset of keys it has.
+_Limits = CodeModeResourceLimits | Literal['unlimited'] | None
+
+
+@dataclass(frozen=True)
+class _MontyCapability:
+    """A capability that runs the model's code in Monty, and the tool the model sends the code to."""
+
+    tool_name: str
+    build: Callable[[MontySandbox | None, _Limits], AbstractCapability[object]]
+
+    def agent(
+        self, *snippets: str, monty_sandbox: MontySandbox | None = None, resource_limits: _Limits = None
+    ) -> Agent[object, str]:
+        """An agent whose model sends `snippets` in turn to this capability."""
+        capability = self.build(monty_sandbox, resource_limits)
+        return Agent(_snippets_model(*snippets, tool_name=self.tool_name), capabilities=[capability])
+
+
+def _code_mode(monty_sandbox: MontySandbox | None, resource_limits: _Limits) -> CodeMode[object]:
+    return CodeMode[object](monty_sandbox=monty_sandbox, resource_limits=resource_limits)
+
+
+def _dynamic_workflow(monty_sandbox: MontySandbox | None, resource_limits: _Limits) -> DynamicWorkflow[object]:
+    return DynamicWorkflow[object](agents=[_sub_agent()], monty_sandbox=monty_sandbox, resource_limits=resource_limits)
+
+
+@pytest.fixture(
+    params=[
+        pytest.param(_MontyCapability('run_code', _code_mode), id='code_mode'),
+        pytest.param(_MontyCapability('run_workflow', _dynamic_workflow), id='dynamic_workflow'),
+    ]
+)
+def capability(request: pytest.FixtureRequest) -> _MontyCapability:
+    return request.param
 
 
 async def test_code_mode_runs_remotely(monty_relay: MontyRelay, tmp_path: Path) -> None:
@@ -105,18 +153,17 @@ async def test_code_mode_runs_remotely(monty_relay: MontyRelay, tmp_path: Path) 
         'wss://sandbox.example.com/',
     ],
 )
-async def test_remote_sandbox_url_accepted(url: str) -> None:
+async def test_remote_sandbox_url_accepted(capability: _MontyCapability, url: str) -> None:
     """A server root URL passes validation; workers dial lazily, not at enter."""
-    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox=url)])
-    result = await agent.run('no run_code call, so nothing dials')
+    agent = capability.agent(monty_sandbox=url)
+    result = await agent.run('no code to run, so nothing dials')
     assert result.output == 'done'
 
 
-async def test_unsupported_scheme_rejected() -> None:
-    """A URL Monty's remote client cannot dial fails when the run starts, not at every `run_code`."""
-    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox='sk-live-abc123:x@sandbox.example.com')])
+async def test_unsupported_scheme_rejected(capability: _MontyCapability) -> None:
+    """A URL Monty's remote client cannot dial fails when the capability is built."""
     with pytest.raises(UserError, match='must be an `http://`') as exc_info:
-        await agent.run('never dials')
+        capability.agent(monty_sandbox='sk-live-abc123:x@sandbox.example.com')
     assert 'sk-live-abc123' not in str(exc_info.value)
 
 
@@ -130,21 +177,28 @@ async def test_unsupported_scheme_rejected() -> None:
         'https://sandbox.example.com#hunter2',
     ],
 )
-async def test_url_beyond_server_root_rejected(url: str) -> None:
+async def test_url_beyond_server_root_rejected(capability: _MontyCapability, url: str) -> None:
     """The client calls one fixed method at the server root, so a path, query, or fragment fails up front."""
-    agent = Agent(_snippets_model(), capabilities=[CodeMode(monty_sandbox=url)])
     with pytest.raises(UserError, match='must be the server root') as exc_info:
-        await agent.run('never dials')
+        capability.agent(monty_sandbox=url)
     assert url not in str(exc_info.value)
     assert 'hunter2' not in str(exc_info.value)
 
 
 @pytest.mark.parametrize(
-    ('resource_limits', 'request_timeout'),
-    [(None, 40.0), ({'max_duration_seconds': 90}, 100.0), ('unlimited', None)],
+    ('resource_limits', 'request_timeouts'),
+    [
+        # Code Mode's default limit is 30 seconds; Dynamic Workflow's scripts have none by default.
+        (None, {'run_code': 40.0, 'run_workflow': None}),
+        ({'max_duration_seconds': 90}, {'run_code': 100.0, 'run_workflow': 100.0}),
+        ('unlimited', {'run_code': None, 'run_workflow': None}),
+    ],
 )
 async def test_remote_turn_deadline_follows_max_duration(
-    monkeypatch: pytest.MonkeyPatch, resource_limits: Any, request_timeout: float | None
+    monkeypatch: pytest.MonkeyPatch,
+    capability: _MontyCapability,
+    resource_limits: _Limits,
+    request_timeouts: dict[str, float | None],
 ) -> None:
     """The transport's per-turn deadline leaves room for `max_duration_seconds` to fire first."""
     seen: list[float | None] = []
@@ -154,18 +208,15 @@ async def test_remote_turn_deadline_follows_max_duration(
         raise RuntimeError('not dialing')
 
     monkeypatch.setattr('pydantic_ai_harness._monty_exec.AsyncMontyRemote', recording_pool)
-    agent = Agent(
-        _snippets_model('1'),
-        capabilities=[CodeMode(monty_sandbox='https://sandbox.example.com', resource_limits=resource_limits)],
-    )
+    agent = capability.agent('1', monty_sandbox='https://sandbox.example.com', resource_limits=resource_limits)
     with pytest.raises(RuntimeError, match='not dialing'):
         await agent.run('record the deadline')
-    assert seen == [request_timeout]
+    assert seen == [request_timeouts[capability.tool_name]]
 
 
-async def test_dial_failure_reaches_caller() -> None:
+async def test_dial_failure_reaches_caller(capability: _MontyCapability) -> None:
     """Dial errors reach the caller unchanged, without adding a credential-bearing model retry."""
-    agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox='http://alice:hunter2@127.0.0.1:1')])
+    agent = capability.agent('1 + 1', monty_sandbox='http://alice:hunter2@127.0.0.1:1')
 
     with capture_run_messages() as messages, pytest.raises((RuntimeError, MontyError)):
         await agent.run('dial a dead worker')
@@ -174,15 +225,22 @@ async def test_dial_failure_reaches_caller() -> None:
 
 
 def test_repr_hides_sandbox_url() -> None:
-    """The URL may carry credentials, so neither the capability nor its toolset shows it in `repr`."""
-    capability = CodeMode[None](monty_sandbox='https://alice:s3cr3t@sandbox.example.com')
-    toolset = capability.get_wrapper_toolset(FunctionToolset[None]())
+    """The URL may carry credentials, so neither capability nor its toolset shows it in `repr`."""
+    url = 'https://alice:s3cr3t@sandbox.example.com'
+    code_mode = CodeMode[None](monty_sandbox=url)
+    dynamic_workflow = DynamicWorkflow[None](agents=[_sub_agent()], monty_sandbox=url)
+    objects = [
+        code_mode,
+        code_mode.get_wrapper_toolset(FunctionToolset[None]()),
+        dynamic_workflow,
+        dynamic_workflow.get_toolset(),
+    ]
 
-    assert 'sandbox.example.com' not in repr(capability)
-    assert 'sandbox.example.com' not in repr(toolset)
+    for obj in objects:
+        assert 'sandbox.example.com' not in repr(obj)
 
 
-async def test_monty_sandbox_builds_each_run_pool() -> None:
+async def test_monty_sandbox_builds_each_run_pool(capability: _MontyCapability) -> None:
     """`monty_sandbox` is called once per run for a fresh pool, which dials with its own metadata."""
     pools: list[AsyncMontyRemote] = []
     async with serve_monty_relay(refuse=True) as relay:
@@ -191,7 +249,7 @@ async def test_monty_sandbox_builds_each_run_pool() -> None:
             pools.append(AsyncMontyRemote(relay.url, metadata=lambda: {'authorization': 'Bearer k-pool'}))
             return pools[-1]
 
-        agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=build_pool)])
+        agent = capability.agent('1 + 1', monty_sandbox=build_pool)
         for _ in range(2):
             with capture_run_messages() as messages, pytest.raises(MontyRefusedError, match='UNAUTHENTICATED'):
                 await agent.run('dial')
@@ -201,14 +259,14 @@ async def test_monty_sandbox_builds_each_run_pool() -> None:
     assert [metadata['authorization'] for metadata in relay.metadata] == ['Bearer k-pool', 'Bearer k-pool']
 
 
-async def test_async_monty_sandbox_is_awaited() -> None:
+async def test_async_monty_sandbox_is_awaited(capability: _MontyCapability) -> None:
     """An `async def` `monty_sandbox` is awaited for its pool."""
     async with serve_monty_relay(refuse=True) as relay:
 
         async def build_pool() -> AsyncMontyRemote:
             return AsyncMontyRemote(relay.url, metadata=lambda: {'authorization': 'Bearer k-async'})
 
-        agent = Agent(_snippets_model('1 + 1'), capabilities=[CodeMode(monty_sandbox=build_pool)])
+        agent = capability.agent('1 + 1', monty_sandbox=build_pool)
         with pytest.raises(MontyRefusedError, match='UNAUTHENTICATED'):
             await agent.run('dial')
 
@@ -217,7 +275,9 @@ async def test_async_monty_sandbox_is_awaited() -> None:
 
 @pytest.mark.parametrize('error_type', [RuntimeError, UserError])
 @pytest.mark.parametrize('async_factory', [False, True])
-async def test_failing_monty_sandbox_reaches_caller(error_type: type[Exception], async_factory: bool) -> None:
+async def test_failing_monty_sandbox_reaches_caller(
+    capability: _MontyCapability, error_type: type[Exception], async_factory: bool
+) -> None:
     """Factory errors reach the caller on the first attempt, not the model, even with credentials in the message."""
     calls: list[None] = []
     error = error_type('cannot connect to https://alice:factory-secret@sandbox.example.com')
@@ -229,10 +289,7 @@ async def test_failing_monty_sandbox_reaches_caller(error_type: type[Exception],
     async def build_pool_async() -> AsyncMontyRemote:
         return build_pool()
 
-    agent = Agent(
-        _snippets_model('1 + 1', '2 + 2'),
-        capabilities=[CodeMode(monty_sandbox=build_pool_async if async_factory else build_pool)],
-    )
+    agent = capability.agent('1 + 1', '2 + 2', monty_sandbox=build_pool_async if async_factory else build_pool)
     with capture_run_messages() as messages, pytest.raises(error_type) as exc_info:
         await agent.run('dial')
 
@@ -242,14 +299,11 @@ async def test_failing_monty_sandbox_reaches_caller(error_type: type[Exception],
     assert len(calls) == 1
 
 
-async def test_pool_instead_of_function_rejected() -> None:
-    """The pool itself, instead of a function that returns it, fails as the run starts."""
-    agent = Agent(
-        _snippets_model('1 + 1'),
-        capabilities=[CodeMode(monty_sandbox=AsyncMontyRemote('https://sandbox.example.com'))],  # pyright: ignore[reportArgumentType]
-    )
+async def test_pool_instead_of_function_rejected(capability: _MontyCapability) -> None:
+    """The pool itself, instead of a function that returns it, fails when the capability is built."""
+    pool = AsyncMontyRemote('https://sandbox.example.com')
     with pytest.raises(UserError, match='not the pool itself'):
-        await agent.run('dial')
+        capability.agent('1 + 1', monty_sandbox=pool)  # pyright: ignore[reportArgumentType]
 
 
 def test_deprecated_sandbox_url_becomes_monty_sandbox() -> None:
@@ -290,6 +344,26 @@ async def test_disconnect_mid_snippet_reports_started_calls(monty_relay: MontyRe
     (retry,) = _retries(result.all_messages())
     assert 'sandbox connection was lost' in str(retry.content)
     assert 'drop_connection({}) did not finish' in str(retry.content)
+
+
+async def test_dynamic_workflow_disconnect_lists_completed_calls(monty_relay: MontyRelay) -> None:
+    """A dropped worker connection becomes a retry that lists the sub-agent calls that completed."""
+
+    async def drop_connection(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        await monty_relay.drop_streams()
+        return ModelResponse(parts=[TextPart('dropped')])
+
+    dropper = Agent(FunctionModel(drop_connection), name='dropper')
+    agent = Agent(
+        _snippets_model("first = await sub(task='a')\nawait dropper(task='b')", tool_name='run_workflow'),
+        capabilities=[DynamicWorkflow(agents=[_sub_agent(), dropper], monty_sandbox=monty_relay.url)],
+    )
+
+    result = await agent.run('lose the worker mid-script')
+
+    (retry,) = _retries(result.all_messages())
+    assert 'lost its sandbox connection' in str(retry.content)
+    assert 'sub(task="a") -> "ok"' in str(retry.content)
 
 
 _SECRET = 'https://alice:secret@sandbox.example.com/?token=private Bearer factory-key'
@@ -500,6 +574,47 @@ class TestCodeModeErrorRouting:
         assert 'factory-key' not in str(first.content)
         assert calls == [None]
         assert local_backed_factory_pool.checkout.call_count == 3
+
+    @pytest.mark.parametrize(
+        ('error', 'guidance'),
+        [
+            (_CrashedError(True, _SECRET), 'ran longer than its time limit'),
+            (_CrashedError(False, _SECRET), 'crashed the sandbox worker'),
+            (_DisconnectError('session_timeout', _SECRET), 'lost its sandbox session'),
+            (_DisconnectError(None, _SECRET), 'lost its sandbox connection'),
+        ],
+    )
+    async def test_dynamic_workflow_execution_failure_gives_its_advice(
+        self,
+        monkeypatch: pytest.MonkeyPatch,
+        local_backed_factory_pool: MagicMock,
+        error: Exception,
+        guidance: str,
+    ) -> None:
+        """Each worker failure kind maps to Dynamic Workflow's own message, without leaking pool details."""
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyCrashedError', _CrashedError)
+        monkeypatch.setattr('pydantic_ai_harness._monty_turns.MontyDisconnectError', _DisconnectError)
+        original_resume = AsyncFutureSnapshot.resume
+
+        async def fail_after_sub_agent(
+            snapshot: AsyncFutureSnapshot, results: dict[int, ExternalSettledResult]
+        ) -> AsyncSnapshot:
+            await original_resume(snapshot, results)
+            raise error
+
+        monkeypatch.setattr(AsyncFutureSnapshot, 'resume', fail_after_sub_agent)
+        agent = Agent(
+            _snippets_model("await sub(task='a')", tool_name='run_workflow'),
+            capabilities=[
+                DynamicWorkflow(agents=[_sub_agent()], monty_sandbox=MagicMock(return_value=local_backed_factory_pool))
+            ],
+        )
+
+        result = await agent.run('fail after a sub-agent call')
+        (retry,) = _retries(result.all_messages())
+        assert guidance in str(retry.content)
+        assert 'sub(task="a") -> "ok"' in str(retry.content)
+        assert _SECRET not in str(result.all_messages())
 
     @pytest.mark.parametrize(
         ('error_name', 'code'),

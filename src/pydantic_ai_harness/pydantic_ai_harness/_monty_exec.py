@@ -23,14 +23,16 @@ from collections.abc import Awaitable, Callable, Container, Coroutine, Iterator,
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, TypeVar, assert_never
+from typing import Any, Literal, TypeAlias, TypeVar, assert_never
+from urllib.parse import urlsplit
 
 import anyio
 from anyio.from_thread import BlockingPortal, start_blocking_portal
 from opentelemetry import context as otel_context
-from typing_extensions import TypeVarTuple, Unpack
+from typing_extensions import TypeIs, TypeVarTuple, Unpack
 
 from pydantic_ai._utils import is_async_callable, run_in_executor
+from pydantic_ai.exceptions import UserError
 from pydantic_ai_harness._typeguards import is_object_tuple, is_str_keyed_dict
 
 try:
@@ -74,6 +76,9 @@ except ImportError as _import_error:  # pragma: no cover
         'pydantic-monty is required for code-execution capabilities. Install it with: '
         'pip install "pydantic-ai-harness[code-mode]" or "pydantic-ai-harness[dynamic-workflow]"'
     ) from _import_error
+
+MontySandbox = str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]]
+"""Where sandboxed code runs: a Monty server URL, or a sync or async function that returns the remote pool."""
 
 DispatchFn = Callable[[str, dict[str, Any]], Coroutine[Any, Any, Any]]
 """Given a sandbox function name and its keyword arguments, do the host-side work (a tool call or sub-agent run)."""
@@ -151,6 +156,56 @@ def _remote_turn_timeout(limits: ResourceLimits) -> float | None:
     return None if max_feed_duration_seconds is None else max_feed_duration_seconds + _REMOTE_TURN_SLACK_SECONDS
 
 
+# Monty stores each limit as an unsigned 64-bit integer, or seconds for the duration; anything else fails
+# every snippet. `bool` is an `int` subclass, so the exact type is checked.
+def _is_positive_u64(value: object) -> TypeIs[int]:
+    return type(value) is int and 0 < value < 2**64
+
+
+def _is_positive_seconds(value: object) -> TypeIs[float]:
+    return (type(value) is int or isinstance(value, float)) and 0 < value < 2.0**64
+
+
+def resolve_limits(
+    limits: Mapping[str, object] | Literal['unlimited'] | None,
+    *,
+    keys: frozenset[str],
+    defaults: Mapping[str, object],
+) -> ResourceLimits:
+    """A capability's `resource_limits` merged onto its `defaults`, as the limits Monty takes.
+
+    `keys` are the public names the capability accepts. A `total=False` TypedDict checks no keys or
+    values at runtime, so an unknown key or a value Monty can't store raises `UserError` here rather
+    than disabling a limit or failing every snippet. `'unlimited'` sets no limits.
+    """
+    if limits == 'unlimited':
+        return {}
+    overrides: Mapping[str, object] = {} if limits is None else limits
+    unknown = set(overrides) - keys
+    if unknown:
+        raise UserError(f'Unknown `resource_limits` key(s): {sorted(unknown)}. Valid keys are {sorted(keys)}.')
+    merged = {**defaults, **overrides}
+    resolved: ResourceLimits = {}
+    # An explicit `None` for memory or duration keeps reaching Monty, which reads it as no limit.
+    if 'max_suspensions' in merged:
+        max_suspensions = merged['max_suspensions']
+        if not _is_positive_u64(max_suspensions):
+            raise UserError('`max_suspensions` must be an integer of at least 1 and below 2**64')
+        resolved['max_suspensions'] = max_suspensions
+    if 'max_duration_seconds' in merged:
+        max_duration_seconds = merged['max_duration_seconds']
+        if not (max_duration_seconds is None or _is_positive_seconds(max_duration_seconds)):
+            raise UserError('`max_duration_seconds` must be a positive number of seconds below 2**64')
+        resolved['max_feed_duration_secs'] = max_duration_seconds
+    # Both capabilities default `max_memory`, so only `'unlimited'`, returned above, leaves it unset.
+    if 'max_memory' in merged:  # pragma: no branch
+        max_memory = merged['max_memory']
+        if not (max_memory is None or _is_positive_u64(max_memory)):
+            raise UserError('`max_memory` must be a positive integer number of bytes below 2**64')
+        resolved['max_memory'] = max_memory
+    return resolved
+
+
 def session_os_policy(os_policy: OSPolicy | None) -> OSPolicy:
     """The policies a session is checked out with: `os_policy` merged over `_OS_POLICY`, key by key."""
     return _OS_POLICY | (os_policy or {})
@@ -186,9 +241,27 @@ def module_functions(modules: Mapping[str, ExternalModule]) -> dict[str, Callabl
     }
 
 
-async def build_remote_pool(
-    sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]], limits: ResourceLimits
-) -> AsyncMontyRemote:
+def check_monty_sandbox(sandbox: MontySandbox | None) -> None:
+    """Reject a `monty_sandbox` Monty's remote client cannot use, before the first script fails on it.
+
+    The errors leave the URL out, because it may carry credentials.
+    """
+    if isinstance(sandbox, str):
+        parts = urlsplit(sandbox)
+        # Monty reads `ws://` and `wss://`, its schemes before 1.5, as `http://` and `https://`.
+        if parts.scheme not in ('http', 'https', 'ws', 'wss'):
+            raise UserError('`monty_sandbox` must be an `http://`, `https://`, `ws://`, or `wss://` URL.')
+        # The client calls one fixed gRPC method at the server root, so it rejects anything after the host.
+        if parts.path not in ('', '/') or '?' in sandbox or '#' in sandbox:
+            raise UserError(
+                '`monty_sandbox` must be the server root, such as `https://sandbox.example.com`, '
+                'without a path, query, or fragment.'
+            )
+    elif sandbox is not None and not callable(sandbox):
+        raise UserError('`monty_sandbox` takes a URL or a function that returns the pool, not the pool itself.')
+
+
+async def build_remote_pool(sandbox: MontySandbox, limits: ResourceLimits) -> AsyncMontyRemote:
     """The remote pool `sandbox` names: dialed from a URL, or built by a sync or async factory."""
     if isinstance(sandbox, str):
         return AsyncMontyRemote(sandbox, request_timeout=_remote_turn_timeout(limits))
@@ -200,19 +273,17 @@ async def build_remote_pool(
 class MontyRunState:
     """A Monty worker pool and its checked-out REPL session, opened lazily and closed together.
 
-    Workers are local subprocesses from `AsyncMonty`, or remote ones dialed through
-    `AsyncMontyRemote` when `monty_sandbox_url` or `pool_factory` is set. Inside a Temporal workflow
-    every Monty call goes through `portal`, opened with the pool and closed after it.
+    Workers are local subprocesses from `AsyncMonty`, or remote ones from `sandbox` when it is set
+    (see `build_remote_pool`). Inside a Temporal workflow every Monty call goes through `portal`,
+    opened with the pool and closed after it.
     """
 
-    monty_sandbox_url: str | None = field(default=None, repr=False)
-    """May carry credentials, so it stays out of `repr`."""
+    sandbox: MontySandbox | None = field(default=None, repr=False)
+    """The remote pool's URL or factory, checked by `check_monty_sandbox`. A URL may carry credentials, so it stays out of `repr`."""
     os_policy: OSPolicy | None = None
     """Session policies merged over `_OS_POLICY` at checkout, key by key."""
     external_modules: Mapping[str, ExternalModule] | None = None
     """Host modules the session may import; `MontyExecutor.module_functions` answers calls into them."""
-    pool_factory: Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = None
-    """Builds the remote pool, sync or async, in place of `monty_sandbox_url`, with its own URL, metadata, and timeouts."""
     pool: AsyncMonty | AsyncMontyRemote | None = None
     session: AsyncMontySession | None = None
     portal: BlockingPortal | None = None
@@ -242,8 +313,7 @@ class MontyRunState:
             try:
                 if in_temporal_workflow:
                     self.portal = self._pool_stack.enter_context(start_blocking_portal())
-                remote = self.pool_factory if self.pool_factory is not None else self.monty_sandbox_url
-                pool = AsyncMonty() if remote is None else await build_remote_pool(remote, limits)
+                pool = AsyncMonty() if self.sandbox is None else await build_remote_pool(self.sandbox, limits)
                 self.pool = await _enter_monty(self._pool_stack, pool, self.portal)
             except BaseException:
                 await self._release_pool()  # a failed spawn or dial must not leave the portal thread behind
@@ -335,6 +405,25 @@ class PrintCapture:
         if not printed:
             return error_message
         return f'[stdout before error]\n{printed}\n[/stdout before error]\n{error_message}'
+
+
+WorkerFailure: TypeAlias = Literal['time_limit', 'crashed', 'session_ended', 'connection_lost', 'other', 'aborted']
+"""What failed when the sandbox worker, its connection, or the host failed rather than the code."""
+
+
+def worker_failure(failure: MontyFailure) -> WorkerFailure:
+    """Classify a `crashed`, `disconnected`, `other`, or `panic` failure; each capability words its own advice."""
+    match failure.kind:
+        case 'crashed':
+            return 'time_limit' if failure.timed_out else 'crashed'
+        case 'disconnected':
+            if failure.cause == 'turn_timeout':
+                return 'time_limit'
+            return 'session_ended' if failure.cause in ('session_timeout', 'idle_timeout') else 'connection_lost'
+        case 'other':
+            return 'other'
+        case _:
+            return 'aborted'
 
 
 class MontyTurnFailed(Exception):

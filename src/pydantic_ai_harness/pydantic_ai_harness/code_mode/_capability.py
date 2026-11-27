@@ -32,7 +32,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelect
 from pydantic_ai_harness._combine import one_per_id
 
 # From `_monty_exec`, whose guarded import names the `code-mode` extra when `pydantic-monty` is missing.
-from pydantic_ai_harness._monty_exec import ExternalModule, build_remote_pool, session_os_policy
+from pydantic_ai_harness._monty_exec import ExternalModule, build_remote_pool, check_monty_sandbox, session_os_policy
 from pydantic_ai_harness._monty_turns import MontyTurn, TurnRequest, redacted_error_type, run_monty_turn
 from pydantic_ai_harness._warn import renamed_duration_limit
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
@@ -339,6 +339,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         self.os_access = as_os_handler(self.os_access)
         self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeMode')
         self.monty_sandbox_url = None
+        check_monty_sandbox(self.monty_sandbox)
         self.resource_limits = renamed_duration_limit(self.resource_limits, 'CodeMode')
         check_external_modules(self.external_modules or {})
         if isinstance(self.speculate, str) and self.speculate != 'declared':

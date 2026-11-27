@@ -636,7 +636,7 @@ agent = Agent(
 ```
 
 Each worker is a gRPC stream calling a fixed method at the server root, so a URL with a path, query,
-or fragment raises a `UserError` when the run starts. Earlier releases' `ws://` and `wss://` URLs
+or fragment raises a `UserError` when `CodeMode` is built. Earlier releases' `ws://` and `wss://` URLs
 still work (Monty reads them as `http://` and `https://`) once any path, such as `/monty`, is
 removed.
 
