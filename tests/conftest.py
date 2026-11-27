@@ -45,6 +45,7 @@ from pydantic_ai._cache_health import ConversationCacheMarkStore
 from pydantic_ai.capabilities import instrumentation as instrumentation_capability
 from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
+    CompactionPart,
     DocumentUrl,
     FilePart,
     ImageUrl,
@@ -2126,6 +2127,8 @@ def conversation_view(messages: Sequence[ModelMessage]) -> list[str]:
                 view.append(f'call {part.tool_call_id}')
             elif isinstance(part, ToolReturnPart):
                 view.append(f'return {part.tool_call_id}: {part.content}')
+            elif isinstance(part, CompactionPart):
+                view.append(f'summary: {part.content}')
             elif isinstance(part, (UserPromptPart, SystemPromptPart, TextPart)):  # pragma: no branch
                 view.append(f'{part.part_kind}: {part.content}')
     return view
