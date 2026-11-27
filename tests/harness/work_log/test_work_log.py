@@ -1102,6 +1102,18 @@ class TestWorkLogStores:
         assert reopened.locate('log') == str(tmp_path / 'logs' / f'{_name("log")}.jsonl')
         assert await reopened.read('missing') == []
 
+    async def test_file_store_forget_drops_cached_keys_and_keeps_the_file(self, tmp_path: Path) -> None:
+        store = FileWorkLogStore(tmp_path)
+        await store.append('log', _record('k1'))
+        # Another process appends to the same file; this one sees it only after forgetting its cached keys.
+        await FileWorkLogStore(tmp_path).append('log', _record('k2'))
+
+        store.forget('log')
+
+        assert await store.append('log', _record('k3')) == 3
+        assert await store.append('log', _record('k2')) == 2
+        assert [entry['key'] for entry in await store.read('log')] == ['k1', 'k2', 'k3']
+
     async def test_file_store_drops_a_write_a_crash_cut_short(self, tmp_path: Path) -> None:
         store = FileWorkLogStore(tmp_path)
         await store.append('log', _record('k1'))
@@ -1229,6 +1241,17 @@ class TestWorkLogStores:
         cold = WorkspaceWorkLogStore()
         assert [entry['key'] for entry in await cold.read(workspace, 'log', 1, 2)] == ['k1']
         assert await cold.append(workspace, 'log', _record('k3')) == 3
+
+    async def test_workspace_store_forget_drops_cached_names_and_keeps_the_entries(self, tmp_path: Path) -> None:
+        workspace = Workspace(LocalWorkspaceBackend(tmp_path))
+        store = WorkspaceWorkLogStore()
+        await store.append(workspace, 'log', _record('k1'))
+        await WorkspaceWorkLogStore().append(workspace, 'log', _record('k2'))
+
+        store.forget('log')
+
+        assert await store.append(workspace, 'log', _record('k3')) == 3
+        assert [entry['key'] for entry in await store.read(workspace, 'log')] == ['k1', 'k2', 'k3']
 
     async def test_workspace_store_with_its_own_workspace_needs_none_on_the_run(self, tmp_path: Path) -> None:
         (tmp_path / 'logs').mkdir()

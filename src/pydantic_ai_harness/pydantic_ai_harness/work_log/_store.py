@@ -14,7 +14,6 @@ import hashlib
 import os
 import posixpath
 import re
-import stat
 import weakref
 from collections import defaultdict
 from dataclasses import dataclass, field
@@ -27,6 +26,7 @@ from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceError
+from pydantic_ai_harness._private_dir import check_private_dir
 from pydantic_ai_harness._workspace import METADATA_DIR, metadata_dir, secondary_workspace
 
 WORK_LOG_DIR = 'work-log'
@@ -198,6 +198,15 @@ class FileWorkLogStore:
     def locate(self, log_id: str) -> str:
         return str(self._path(log_id))
 
+    def forget(self, log_id: str) -> None:
+        """Drop the keys and lock this process holds for `log_id`'s log, such as when its conversation has ended.
+
+        The file stays, and the next append to the log reads its keys from the file again. Call it only while
+        no run appends to the log: an append that holds the dropped lock would not exclude a later one.
+        """
+        self._seqs.pop(log_id, None)
+        self._locks.pop(log_id, None)
+
     def _load(self, log_id: str) -> list[WorkLogEntry]:
         path = self._path(log_id)
         if not path.exists():
@@ -211,18 +220,7 @@ class FileWorkLogStore:
 
     def _check_root(self) -> None:
         """Refuse a symlinked or foreign store directory, and keep it owner-only: logs hold full tool results."""
-        st = self._root.lstat()
-        if stat.S_ISLNK(st.st_mode):
-            raise PermissionError(f'Work log directory {str(self._root)!r} is a symbolic link; refusing to use it.')
-        geteuid = getattr(os, 'geteuid', None)
-        if geteuid is None:
-            return
-        if st.st_uid != geteuid():
-            raise PermissionError(
-                f'Work log directory {str(self._root)!r} is not owned by the current user; refusing to use it.'
-            )
-        if stat.S_IMODE(st.st_mode) & 0o077:
-            self._root.chmod(0o700)
+        check_private_dir(self._root, 'Work log directory', 'use it')
 
     def _write_line(self, log_id: str, line: str) -> None:
         path = self._path(log_id)
@@ -285,6 +283,16 @@ class WorkspaceWorkLogStore:
 
     def __post_init__(self) -> None:
         self._workspace = secondary_workspace(self.workspace, 'WorkspaceWorkLogStore')
+
+    def forget(self, log_id: str) -> None:
+        """Drop the file names, keys and lock this process holds for `log_id`'s log, in every workspace.
+
+        The entries stay, and the next append to the log lists its directory again. Call it only while no run
+        appends to the log: an append that holds the dropped lock would not exclude a later one.
+        """
+        for directories in self._directories.values():
+            directories.pop(log_id, None)
+        self._locks.pop(log_id, None)
 
     def bind(self, workspace: Workspace) -> WorkLogStore:
         """Bind a run's workspace to the common store interface."""

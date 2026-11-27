@@ -645,8 +645,9 @@ The reset keeps, in order:
 4. the records of loaded [on-demand capabilities](#on-demand-capabilities-across-compaction) and
    [tool search discoveries](#tool-search-discoveries-across-compaction), as the other strategies
    that drop history keep them; `preserve_loaded_capabilities=False` unloads them instead;
-5. what the user wrote in each later turn older than the tail, without the tool results or
-   harness data that came in the same request, when `keep_user_turns=True` (the default);
+5. what the user wrote in each later turn older than the tail, all in one request and without the
+   tool results or harness data that came in the same requests, when `keep_user_turns=True` (the
+   default);
 6. the newest `keep_messages` messages (default `2`), with each tool call kept with its return.
    `keep_messages=0` still keeps the newest message, the request being answered. The tail also
    reaches back to the latest response that names a workspace (its `workspace_ref`) when only
@@ -700,7 +701,9 @@ client sends back, which carries no capability parts.
 
 **Repeats.** After a reset it doesn't reset again until the model has added a response beyond what
 the reset kept. If the kept history alone is over the trigger, though, it resets after every new
-response. Set the trigger well above what `keep_messages` keeps, and add
+response. The kept user turns share one request, so they don't add to a `max_messages` count, but
+their text adds to a token trigger with every turn
+([#14959](https://github.com/pydantic/pydantic-ai/issues/14959)). Set the trigger well above what `keep_messages` keeps, and add
 [`ToolOutputLimits`](../tool_output_limits/), which reduces a large result when the tool returns it,
 so one oversized tool result in the tail doesn't keep the history over the trigger. `ToolOutputLimits` leaves the work log's own results alone, and a `read_work_log` page can reach 50,000 characters, so keep the trigger above that too.
 

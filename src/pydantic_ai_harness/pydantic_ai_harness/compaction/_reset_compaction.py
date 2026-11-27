@@ -223,8 +223,9 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
     keep_user_turns: bool = True
     """Keep what the user wrote in each turn after the first, ahead of the kept messages, when they don't hold it.
 
-    Only the user's own parts: tool results and harness data in the same request are cleared. With `False`,
-    only the first request and the kept messages hold the user's words."""
+    Only the user's own parts, all in one request, so the kept history grows by no message per turn: tool
+    results and harness data in the same requests are cleared. With `False`, only the first request and the
+    kept messages hold the user's words."""
 
     notice: Callable[[ResetNotice], str] = default_reset_notice
     """Write the notice's text from what the reset did. Defaults to `default_reset_notice`."""
@@ -295,12 +296,18 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
             return messages
         first = find_first_user_message(messages)
         head = prepend_first_user_message(messages, cutoff, [])
-        turns: list[ModelMessage] = [
-            # The user's parts only: tool results merged into the request would have lost their calls.
-            replace(message, parts=[part for part in message.parts if is_user_part(part)])
+        kept_turns = [
+            message
             for index in (user_turn_starts(messages) if self.keep_user_turns else [])
             if index < cutoff and (message := messages[index]) is not first and isinstance(message, ModelRequest)
         ]
+        # One request for every kept turn, so a message-count trigger can't be crossed by the turns alone. The
+        # user's parts only: tool results merged into a turn's request would have lost their calls.
+        turns: list[ModelMessage] = (
+            [replace(kept_turns[-1], parts=[part for turn in kept_turns for part in turn.parts if is_user_part(part)])]
+            if kept_turns
+            else []
+        )
         tail = without_reset_parts(messages[cutoff:])
         log_id = ctx.conversation_id or next(
             (message.conversation_id for message in reversed(messages) if message.conversation_id), None
@@ -311,9 +318,9 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
             search_tool=ctx.tool_name_for_kind(WORK_LOG_SEARCH_KIND) or 'search_work_log',
             read_tool=ctx.tool_name_for_kind(WORK_LOG_READ_KIND) or 'read_work_log',
             replies_logged=self.work_log.record_text,
-            cleared_messages=cutoff - len(head) - len(turns),
+            cleared_messages=cutoff - len(head) - len(kept_turns),
             kept_first_request=first is not None,
-            kept_user_turns=len(turns),
+            kept_user_turns=len(kept_turns),
             kept_messages=len(tail),
             kept_tool_calls=len(iter_tool_pairs(tail)),
         )

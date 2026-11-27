@@ -286,7 +286,7 @@ agent = Agent('test', capabilities=[WorkLog(FileWorkLogStore('work-logs'))])
 
 Key parameters: `store` (required), `record_text=True`, `record_thinking=False`,
 `max_scanned_entries=2000` and `id='work_log'` (also the toolset's id), both keyword-only. Stores: `InMemoryWorkLogStore` (call `discard(log_id)` when a
-conversation ends), `FileWorkLogStore(directory)` (one JSONL file per conversation),
+conversation ends), `FileWorkLogStore(directory)` (one JSONL file per conversation; `forget(log_id)` drops its cached keys),
 `WorkspaceWorkLogStore(workspace=None)` (one file per entry under
 `.pydantic-ai-harness/work-log/<log>/` in the run's workspace), or your own `WorkLogStore`
 (`append`, `read`, `locate`).

@@ -623,6 +623,36 @@ class TestResetCompaction:
             ]
         )
 
+    async def test_kept_turns_stay_one_request_across_resets(self) -> None:
+        """Turns alone can't cross a `max_messages` trigger: every reset keeps all of them in one request."""
+        reset = ResetCompaction(WorkLog[None](InMemoryWorkLogStore()))
+        history: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Plan the trip.')]),
+            _call('Paris', 'c1'),
+            _returned('Paris', 'c1'),
+        ]
+        sizes: list[int] = []
+        for index, city in enumerate(['Rome', 'Oslo', 'Lima'], start=2):
+            history = [
+                *await compact_now(reset, history, model=Script().model()),
+                ModelResponse(parts=[TextPart(f'Done with the city before {city}.')]),
+                ModelRequest(parts=[UserPromptPart(f'Now {city}.')]),
+                _call(city, f'c{index}'),
+                _returned(city, f'c{index}'),
+            ]
+            sizes.append(len(await compact_now(reset, history, model=Script().model())))
+
+        assert sizes == [5, 5, 5]
+        assert _shape(await compact_now(reset, history, model=Script().model())) == snapshot(
+            [
+                "request: user 'Plan the trip.'",
+                'request: notice #4',
+                "request: user 'Now Rome.', user 'Now Oslo.', user 'Now Lima.'",
+                'response: call lookup c4',
+                'request: return lookup c4',
+            ]
+        )
+
     async def test_every_user_turn_is_kept_without_what_came_with_it(self) -> None:
         history: list[ModelMessage] = [
             ModelRequest(parts=[UserPromptPart('Plan the trip.')]),
@@ -654,8 +684,7 @@ class TestResetCompaction:
             [
                 "request: user 'Plan the trip.'",
                 'request: notice #1',
-                'request: user "Don\'t book flights."',
-                "request: user 'Now Rome.'",
+                "request: user \"Don't book flights.\", user 'Now Rome.'",
                 'response: call lookup c2',
                 'request: return lookup c2',
             ]
