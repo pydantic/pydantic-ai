@@ -38,6 +38,8 @@ Install Pydantic AI with the Hatchet extra:
 pip/uv-add 'pydantic-ai-slim[hatchet]'
 ```
 
+The extra installs `hatchet-sdk` 2.0, which is still a pre-release.
+
 Attach `HatchetDurability` to the agent, call the agent from a durable task, and pass the capability's [`workflows`][pydantic_ai.durable_exec.hatchet.HatchetDurability.workflows] to the worker alongside that task:
 
 ```python {title="hatchet_agent.py" test="skip"}
@@ -113,7 +115,7 @@ A run's `timeout=` counts from the time the durable task first started the run, 
 
 `event_stream_handler` sees the run's events: model events are handled live inside the model request task, and every other event in a task of its own that the durable task spawns.
 
-To observe a run from outside the durable task, as it happens or afterwards, pass `event_stream=True` (or a [`HatchetEventStream`][pydantic_ai.durable_exec.hatchet.HatchetEventStream]) to publish its events to a Hatchet [durable stream](https://docs.hatchet.run/home/durable-streams) topic, one per durable task and agent by default. [`stream_agent_events()`][pydantic_ai.durable_exec.hatchet.HatchetDurability.stream_agent_events] subscribes to it with the durable task's workflow run ID and yields the events typed and in order, ending with the [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] that carries the result:
+To observe a run from outside the durable task, as it happens or afterwards, pass `event_stream=True` (or a [`HatchetEventStream`][pydantic_ai.durable_exec.hatchet.HatchetEventStream]) to publish its events to a Hatchet [durable stream](https://docs.hatchet.run/home/durable-streams) topic, one per durable task and agent by default. Durable streams must be enabled for the Hatchet tenant: publishing to one without them raises a [`UserError`][pydantic_ai.exceptions.UserError]. [`stream_agent_events()`][pydantic_ai.durable_exec.hatchet.HatchetDurability.stream_agent_events] subscribes to it with the durable task's workflow run ID and yields the events typed and in order, ending with the [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] that carries the result:
 
 ```python {title="hatchet_event_stream.py" test="skip" lint="skip"}
 durability = HatchetDurability(hatchet, event_stream=True)
