@@ -1478,12 +1478,17 @@ class PlaywrightBrowserSession:
 
         Registering any handler takes Playwright out of its auto-dismiss mode and
         leaves the page blocked until the dialog is answered, so every path here
-        answers. The default is to dismiss, which is what Playwright does on its
-        own: the cancelling branch of a `confirm`, and an empty `prompt`.
+        answers. A `beforeunload` is accepted, as it is by Playwright on its own,
+        so the navigation that raised it goes through. Every other dialog is
+        dismissed unless `handle_next_dialog` armed an accepting decision:
+        `alert` and `confirm` take the cancelling branch, and a `prompt` is left
+        empty. A `beforeunload` does not consume that decision; it stays armed for
+        the next `alert`, `confirm` or `prompt`.
         """
         decision = self.dialog_decision
-        self.dialog_decision = None
-        accepted = decision is not None and decision.accept
+        if dialog.type != 'beforeunload':
+            self.dialog_decision = None
+        accepted = dialog.type == 'beforeunload' or (decision is not None and decision.accept)
         self.record(
             BrowserEvent(
                 kind='dialog',
@@ -1496,7 +1501,9 @@ class PlaywrightBrowserSession:
     async def _answer_dialog(self, dialog: _Dialog, decision: _DialogDecision | None) -> None:
         """Accept or dismiss a dialog. Errors are swallowed: the page may already be gone."""
         try:
-            if decision is not None and decision.accept:
+            if dialog.type == 'beforeunload':
+                await dialog.accept()
+            elif decision is not None and decision.accept:
                 await dialog.accept(decision.prompt_text)
             else:
                 await dialog.dismiss()
@@ -2559,8 +2566,10 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         branch of a `confirm`, and an empty `prompt` -- so this is how the
         accepting branch of a delete confirmation or a prompt is reached.
 
-        The decision covers one dialog. Anything the page opens after that is
-        dismissed again unless this is called once more.
+        The decision covers one `alert`, `confirm` or `prompt` dialog. Anything
+        the page opens after that is dismissed again unless this is called once
+        more. A `beforeunload` dialog is accepted automatically so navigation
+        proceeds, and does not consume the armed decision.
 
         Args:
             accept: Take the OK branch when `True`, the Cancel branch when `False`.
