@@ -577,6 +577,11 @@ class _Session:
         try:
             await self.client.disconnect()
         finally:
+            await self.remove_system_prompt()
+
+    async def remove_system_prompt(self) -> None:
+        # Shielded, so a cancelled scope, like Prefect's task timeout, doesn't leave the prompt on disk.
+        with anyio.CancelScope(shield=True):
             await anyio.Path(self.system_prompt_file).unlink(missing_ok=True)
 
 
@@ -710,9 +715,14 @@ class ClaudeCodeSessions:
     async def _start(self, request: _MessagesRequest) -> _Session:
         session = _Session(config=_SessionConfig.of(request), loop=asyncio.get_running_loop())
         disallowed_tools = await self._inherited_servers(session, request.inherited_servers)
-        options = self._client_options(session, request, disallowed_tools, await session.write_system_prompt())
-        transport = self.transport_factory(options) if self.transport_factory is not None else None
-        session.client = ClaudeSDKClient(options=options, transport=transport)
+        system_prompt = await session.write_system_prompt()
+        try:
+            options = self._client_options(session, request, disallowed_tools, system_prompt)
+            transport = self.transport_factory(options) if self.transport_factory is not None else None
+            session.client = ClaudeSDKClient(options=options, transport=transport)
+        except BaseException:
+            await session.remove_system_prompt()
+            raise
         try:
             await session.client.connect()
             if request.inherited_servers:

@@ -42,7 +42,7 @@ from ..conftest import IsDatetime, IsInstance, IsStr, try_import
 
 with try_import() as imports_successful:
     import anthropic
-    from claude_agent_sdk import ProcessError
+    from claude_agent_sdk import ClaudeAgentOptions, ProcessError
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.models.claude_agent import ClaudeAgentModel
@@ -305,6 +305,41 @@ async def test_the_system_prompt_goes_in_a_file_only_the_user_can_read():
     assert isinstance(system_prompt, dict) and system_prompt['type'] == 'file'
     assert session.closed
     assert not await anyio.Path(system_prompt['path']).exists()
+
+
+async def test_a_cancelled_close_still_removes_the_system_prompt_file():
+    """Like a Prefect task timeout, which cancels the anyio scope the session closes in."""
+    fake = FakeClaudeCode([FakeResponse([text('Ok.')])])
+    provider = ClaudeAgentProvider()
+    provider._sessions.transport_factory = fake  # pyright: ignore[reportPrivateUsage]
+    model = ClaudeAgentModel('claude-sonnet-5-5', provider=provider)
+
+    async with model:
+        await Agent(model).run('Hi')
+        [session] = provider._sessions.sessions.values()  # pyright: ignore[reportPrivateUsage]
+        with anyio.CancelScope() as scope:
+            scope.cancel()
+            await session.close()
+
+        assert not await anyio.Path(session.system_prompt_file).exists()
+
+
+async def test_a_client_that_fails_to_start_removes_the_system_prompt_file():
+    paths: list[str] = []
+
+    def failing_transport(options: ClaudeAgentOptions) -> FakeSession:
+        assert isinstance(options.system_prompt, dict) and options.system_prompt['type'] == 'file'
+        paths.append(options.system_prompt['path'])
+        raise RuntimeError('no transport')
+
+    provider = ClaudeAgentProvider()
+    provider._sessions.transport_factory = failing_transport  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.raises(ModelAPIError, match='Connection error'):
+        await Agent(ClaudeAgentModel('claude-sonnet-5-5', provider=provider, settings={'max_retries': 0})).run('Hi')
+
+    [path] = paths
+    assert not await anyio.Path(path).exists()
 
 
 async def test_changed_instructions_start_a_new_session():
