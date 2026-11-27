@@ -62,6 +62,7 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     span_include_content,
 )
+from pydantic_ai._telemetry import open_ambient_span
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
@@ -152,6 +153,8 @@ SECRETS = {
     'validation_context': 'SENTINEL-validation-context',
     'helper_content': 'SENTINEL-helper-content',
     'decision_content': 'SENTINEL-decision-content',
+    'workspace_path': 'SENTINEL-workspace-path',
+    'workspace_command': 'SENTINEL-workspace-command',
 }
 
 
@@ -196,6 +199,28 @@ async def test_workspace_identity_is_recorded_without_content(tmp_path: Path) ->
     assert attributes is not None
     assert attributes['pydantic_ai.workspace.provider'] == 'local'
     assert attributes['pydantic_ai.workspace.id'] == str(tmp_path)
+
+
+@pytest.mark.parametrize('include_content', [True, False])
+async def test_no_content_reaches_telemetry_from_workspace_calls(tmp_path: Path, include_content: bool) -> None:
+    """File paths and shell commands a tool sends through the run's workspace."""
+    settings, exporter = redacted_setup(include_content)
+    agent = Agent(
+        TestModel(call_tools=['use_workspace']),
+        capabilities=[LocalWorkspace(tmp_path), Instrumentation(settings=settings)],
+    )
+
+    @agent.tool
+    async def use_workspace(ctx: RunContext[object]) -> str:
+        path = f'{SECRETS["workspace_path"]}.txt'
+        await ctx.workspace.write_text(path, 'hello')
+        await ctx.workspace.read_text(path)
+        await ctx.workspace.run(['true', SECRETS['workspace_command']])
+        return 'done'
+
+    await agent.run('go')
+
+    check(exporter, include_content, {'workspace_path', 'workspace_command'})
 
 
 def check(exporter: InMemorySpanExporter, include_content: bool, drives: set[str]) -> None:
@@ -1384,6 +1409,12 @@ async def test_no_content_reaches_telemetry_from_a_lowered_capabilitys_instructi
     assert ('capability:sentinel_lowered_block' in exported) is include_content
 
 
+def _record_without_a_context() -> None:
+    """What core code with no `RunContext`, such as a workspace, records through the run's published telemetry."""
+    with open_ambient_span('example helper', content={'example.first': SECRETS['helper_content']}):
+        pass
+
+
 def _record_with_a_context(ctx: RunContext[None]) -> str:
     """What a tool records with the `ctx` helpers, including on its tool call's span."""
     with open_span(ctx, 'example span', content={'example.first': SECRETS['helper_content']}):
@@ -1396,13 +1427,14 @@ def _record_with_a_context(ctx: RunContext[None]) -> str:
 
 @pytest.mark.parametrize('include_content', [True, False])
 @pytest.mark.parametrize('mode', ['run', 'realtime'])
-async def test_no_content_reaches_telemetry_from_the_ctx_helpers(
+async def test_no_content_reaches_telemetry_from_a_helper_without_a_context(
     include_content: bool, mode: Literal['run', 'realtime']
 ) -> None:
-    """The run's content setting reaches the `ctx` helpers, in a run and in a realtime session."""
+    """The run's content setting reaches the `ctx` helpers and core code that has no `RunContext`."""
     settings, exporter = redacted_setup(include_content)
 
     def lookup(ctx: RunContext[None]) -> str:
+        _record_without_a_context()
         return _record_with_a_context(ctx)
 
     if mode == 'run':
@@ -1424,6 +1456,7 @@ async def test_no_content_reaches_telemetry_from_the_ctx_helpers(
     # Each channel on its own span, so one that stops recording can't hide behind another that still does.
     attributes = {span.name: dict(span.attributes or {}) for span in exporter.get_finished_spans()}
     helper_content = SECRETS['helper_content'] if include_content else None
+    assert attributes['example helper'].get('example.first') == helper_content
     assert attributes['example span'].get('example.first') == helper_content
     assert attributes['execute_tool lookup'].get('example.later') == helper_content
     decision_content = SECRETS['decision_content'] if include_content else None
@@ -1652,7 +1685,8 @@ ENTRY_POINT_PARAMETERS: dict[tuple[EntryPointGroup, str], Swept | NotExported | 
     ),
     ('run', 'workspace'): ExportedByDesign(
         "Its provider and id are the run span's `pydantic_ai.workspace.*`, per "
-        '`test_workspace_identity_is_recorded_without_content`.'
+        '`test_workspace_identity_is_recorded_without_content`. The paths and commands its calls carry '
+        'are swept in `test_no_content_reaches_telemetry_from_workspace_calls`.'
     ),
     ('run', 'spec'): Swept(
         channels=('spec',),

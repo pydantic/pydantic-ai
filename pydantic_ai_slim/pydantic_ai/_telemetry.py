@@ -5,6 +5,11 @@ Public through `pydantic_ai.capabilities`:
 - `open_span(ctx, name)`: a span around work that takes time and can fail.
 - `record_decision(ctx, name)`: a decision that changed the run's course, recorded as a span that ends at once.
 - `tool_call_span(ctx)`: the `execute_tool` span of the tool call `ctx` belongs to, to add attributes to.
+
+Core code that runs during a run but has no `RunContext`, such as a `Workspace` that runs share and that
+can outlive a run, uses `open_ambient_span`. It reads the tracer and content flag the run publishes while
+its run span (or a realtime session's span) is open, in the context its body, tools and their tasks
+inherit. A value stored on such an object would apply one run's settings to another's calls.
 """
 
 from __future__ import annotations as _annotations
@@ -25,9 +30,13 @@ if TYPE_CHECKING:
     from ._run_context import RunContext
 
 __all__ = (
+    'ambient_traced_run',
     'bind_tool_call_span',
+    'open_ambient_span',
     'open_span',
+    'publish_run_telemetry',
     'record_decision',
+    'run_telemetry_scope',
     'tool_call_span',
 )
 
@@ -43,6 +52,20 @@ class _TracedRun(NamedTuple):
     include_content: bool
 
 
+class _PublishedRun(NamedTuple):
+    """A traced run published for code without a `RunContext`, valid only while `owner_span` records.
+
+    `owner_span` is the run's span, or a realtime session's span. A task that copied the context keeps
+    the value after the span ends; checking the span keeps that task from tracing with a finished run.
+    """
+
+    traced_run: _TracedRun
+    owner_span: Span
+
+
+_published_run: ContextVar[_PublishedRun | None] = ContextVar('pydantic_ai.published_run', default=None)
+
+
 class _BoundToolCall(NamedTuple):
     """The `execute_tool` span `Instrumentation` opened for one tool call of one run."""
 
@@ -51,6 +74,32 @@ class _BoundToolCall(NamedTuple):
 
 
 _bound_tool_call: ContextVar[_BoundToolCall | None] = ContextVar('pydantic_ai.bound_tool_call', default=None)
+
+
+def publish_run_telemetry(tracer: Tracer | None, include_content: bool = False, owner_span: Span | None = None) -> None:
+    """Publish a run for code without a `RunContext`, while `owner_span` records; `None` publishes none.
+
+    A plain set, for a context the caller owns, such as a task it created.
+    """
+    published = (
+        None if tracer is None or owner_span is None else _PublishedRun(_TracedRun(tracer, include_content), owner_span)
+    )
+    _published_run.set(published)
+
+
+@contextmanager
+def run_telemetry_scope(ctx: RunContext[Any] | None, owner_span: Span | None = None) -> Generator[None]:
+    """Publish `ctx`'s run, while `owner_span` records, for a block that starts and ends in one `Context`.
+
+    `None` for either publishes none, which hides a parent run's value from a nested run's setup.
+    """
+    traced_run = _traced_run_of(ctx)
+    published = None if traced_run is None or owner_span is None else _PublishedRun(traced_run, owner_span)
+    token = _published_run.set(published)
+    try:
+        yield
+    finally:
+        _published_run.reset(token)
 
 
 @contextmanager
@@ -88,6 +137,30 @@ def open_span(
     """
     with _open_span(_traced_run_of(ctx), name, attributes=attributes, content=content) as span:
         yield span
+
+
+@contextmanager
+def open_ambient_span(
+    name: str,
+    *,
+    attributes: Mapping[str, AttributeValue] | None = None,
+    content: Mapping[str, AttributeValue] | None = None,
+) -> Generator[Span]:
+    """`open_span` for core code with no `RunContext`, on the run published for the calling context.
+
+    Yields `INVALID_SPAN` outside a traced run's span: in its setup, before the span opens, and after it ends.
+    """
+    with _open_span(ambient_traced_run(), name, attributes=attributes, content=content) as span:
+        yield span
+
+
+def ambient_traced_run() -> _TracedRun | None:
+    """The run published for the calling context, or `None` outside a traced run's span.
+
+    Each publish makes a new value, so comparing by identity tells one run from a run started inside it.
+    """
+    published = _published_run.get()
+    return published.traced_run if published is not None and published.owner_span.is_recording() else None
 
 
 @contextmanager
@@ -164,7 +237,9 @@ def tool_call_span(ctx: RunContext[Any], /) -> Span:
     return bound.span
 
 
-def _traced_run_of(ctx: RunContext[Any]) -> _TracedRun | None:
+def _traced_run_of(ctx: RunContext[Any] | None) -> _TracedRun | None:
+    if ctx is None:
+        return None
     # A context rebuilt inside a durable unit has only the fields its engine carried, and reading any
     # other raises. `trace_include_content` is defaulted to `False` there, so only the tracer can be
     # missing: work in a unit that didn't carry it goes untraced rather than failing.

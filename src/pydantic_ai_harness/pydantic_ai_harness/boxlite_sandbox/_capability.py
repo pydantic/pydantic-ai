@@ -11,6 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces._telemetry import destroy_span
 from pydantic_ai_harness._workspace import with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_integer,
@@ -103,7 +104,8 @@ class BoxLiteSandbox(AbstractCapability[AgentDepsT]):
         """
         _backend.check_ref(ref)
         require_asyncio(_backend.ASYNCIO_ONLY)
-        await _backend.delete(ref.id)
+        with destroy_span(ref):
+            await _backend.delete(ref.id)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """The backend for this run, in an `AuthorityWorkspace` when `authority` or `path_authority` asks for one."""

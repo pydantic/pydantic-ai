@@ -8,6 +8,7 @@ from pathlib import Path
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import LocalWorkspace
@@ -24,6 +25,7 @@ from pydantic_ai.workspaces import (
 from pydantic_ai_harness.docker_container import DockerContainer, DockerContainerBackend
 from pydantic_ai_harness.docker_container._backend import _WRAPPER  # pyright: ignore[reportPrivateUsage]
 from tests._timeouts import READINESS_WAIT_TIMEOUT
+from tests.harness.conftest import Instrumented
 
 from ._fake_docker import FakeDocker, install_fake_docker
 
@@ -329,6 +331,50 @@ async def test_capability_supplies_the_run_workspace(docker: FakeDocker, contain
 
     assert result.output == '{"probe":"contained"}'
     assert result.workspace.ref is not None and docker.containers() == [result.workspace.ref.id]
+
+
+async def test_the_containers_lifecycle_is_traced(
+    docker: FakeDocker,
+    container_dir: Path,
+    instrumented: Instrumented,
+) -> None:
+    """Creating, reattaching to and destroying the container each get a span, under the call or tool that needed it."""
+    tracing, exporter = instrumented(False)
+    sandbox = DockerContainer(image='image', working_dir=str(container_dir))
+    agent = Agent(TestModel(call_tools=['look']), capabilities=[sandbox, tracing])
+
+    @agent.tool
+    async def look(ctx: RunContext[object]) -> bool:
+        return await ctx.workspace.exists('notes.txt')
+
+    ref = (await agent.run('go')).workspace.ref
+    assert ref is not None
+    await agent.run('go', workspace=ref)
+    cleanup = Agent(TestModel(call_tools=['destroy']), capabilities=[tracing])
+
+    @cleanup.tool_plain
+    async def destroy() -> None:
+        await sandbox.destroy(ref)
+
+    await cleanup.run('go')
+
+    spans = sorted(exporter.get_finished_spans(), key=lambda span: span.start_time or 0)
+    names = {span.context.span_id: span.name for span in spans if span.context is not None}
+    assert [
+        (
+            span.name,
+            names.get(span.parent.span_id) if span.parent else None,
+            (span.attributes or {}).get('pydantic_ai.workspace.id') == ref.id,
+        )
+        for span in spans
+        if span.name in ('workspace create', 'workspace attach', 'workspace destroy')
+    ] == snapshot(
+        [
+            ('workspace create', 'workspace exists', True),
+            ('workspace attach', 'workspace exists', True),
+            ('workspace destroy', 'execute_tool destroy', True),
+        ]
+    )
 
 
 async def test_authority_reaches_the_runs_workspace(docker: FakeDocker, container_dir: Path) -> None:

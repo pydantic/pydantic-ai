@@ -167,7 +167,7 @@ Canonical guidance: [message history](docs/message-history.md), [persistence](do
 
 ### Telemetry and secrets
 
-Messages, tool arguments, results, files, and provider details can contain secrets. When instrumentation is enabled, its defaults include content. Text content, binary content, and model-request parameters have separate collection controls. Review redaction, access controls, and export destinations as part of the deployment.
+Messages, tool arguments, results, files, and provider details can contain secrets. When instrumentation is enabled, its defaults include content, including the file paths and shell command lines of workspace operations, even commands no tool argument carried, such as a capability's own setup. Text content, binary content, and model-request parameters have separate collection controls. Review redaction, access controls, and export destinations as part of the deployment.
 
 Stock Pax's default-on `observability` plugin differs: it exports whenever it finds a Logfire credential or OTLP exporter configuration, including in the environment, leaves prompts, results, and files out unless `include_content` is on, and traces every agent in the process while loaded.
 

@@ -48,6 +48,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces._telemetry import acquire_span
 from pydantic_ai_harness._workspace_provider import check_provider, check_timeout, command_argv, stop_shielded
 from pydantic_ai_harness.computer_use import Display, SupportsDisplay
 from pydantic_ai_harness.computer_use._display import checked_desktop_size
@@ -353,10 +354,11 @@ class DockerContainerBackend(WorkspaceBackend, SupportsCommands, SupportsDisplay
         """Create or start the container once, however many first operations race, and return the working directory."""
         async with self._lock:
             if self._resolved_working_dir is None:
-                if self._ref is None:
-                    await self._create()
-                else:
-                    await self._start()
+                with acquire_span('create' if self._ref is None else 'attach', self):
+                    if self._ref is None:
+                        await self._create()
+                    else:
+                        await self._start()
                 # Created here rather than by `docker run --workdir`, which Podman refuses for a missing directory.
                 if self._working_dir is None:
                     result = await self._exec(['sh', '-c', 'pwd -P'], env={}, timeout=None, workdir=None)

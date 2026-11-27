@@ -315,7 +315,7 @@ Outside a run, each command opens and closes its own connection, a new `kubectl 
 
 ## Telemetry
 
-`KubernetesSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
+`KubernetesSandbox` traces claiming a sandbox or reattaching to one as `workspace create` or `workspace attach`, under the call that needed it, and `destroy(ref)` called inside a run as `workspace destroy`; see [workspace spans](../logfire.md#workspace-spans). Core's [instrumentation](../capabilities/instrumentation.md) also records `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
 
 ## API reference
 

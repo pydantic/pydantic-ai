@@ -368,7 +368,7 @@ Add a durability capability next to `OpenSandbox(image=...)`. [Workspaces](https
 
 ## Telemetry
 
-`OpenSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records `pydantic_ai.workspace.provider` (`opensandbox`) and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
+`OpenSandbox` traces creating or reconnecting to the sandbox as `workspace create` or `workspace attach`, under the call that needed it, and `destroy(ref)` called inside a run as `workspace destroy`; see [workspace spans](https://pydantic.dev/docs/ai/integrations/logfire/#workspace-spans). Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) also records the sandbox on the agent run span as `pydantic_ai.workspace.provider` (`opensandbox`) and `pydantic_ai.workspace.id`. Each command or file operation a tool makes runs inside that tool call's span. Creating a sandbox logs its ID at `INFO` (`Created OpenSandbox sandbox <id>`) on the `pydantic_ai_harness.opensandbox_sandbox._backend` logger.
 
 The OpenSandbox SDK reports how long each create took to your server's `/metrics/events`. Set `OPENSANDBOX_DISABLE_METRICS=1`, or pass `ConnectionConfig(disable_metrics=True)`, to turn that off.
 

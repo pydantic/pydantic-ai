@@ -538,6 +538,26 @@ Question keys, route labels, and the option names a question key carries for one
 
 Usage is recorded under `pydantic_ai.decision.usage.*` rather than `gen_ai.usage.*`, and no metrics are recorded for `decide` spans: the model request span above them already reports the total of its `decide` spans' usage, and a backend that adds up usage across spans would count it twice.
 
+### Workspace spans
+
+An instrumented run traces each call on its [workspace](workspace.md) as a `workspace {operation}` span (`working_dir`, `run`, `read_bytes`, `write_bytes`, `stat`, `list_dir`, `make_dir`, `remove`, `exists` or `realpath`) under the tool or hook that made it, with any provider SDK spans nested under it. On a backend without native file access, such as [Docker](harness/docker-container.md) or [SSH](harness/ssh-workspace.md), each shell command behind a file operation gets a child `workspace run` span.
+
+A [sandbox](harness/index.md) backend starts its sandbox on the first call that needs it, so that call gets a child `workspace create` span, or `workspace attach` when the run reconnects to an existing one by its [`WorkspaceRef`][pydantic_ai.workspaces.WorkspaceRef]. Both can take seconds and can fail before the call itself starts. Deleting a sandbox with the capability's `destroy(ref)` gets a `workspace destroy` span when a tool or hook calls it during the run.
+
+The run's own instrumentation decides what is traced and whether content is recorded. Calls outside a run, such as on [`result.workspace`][pydantic_ai.run.AgentRunResult.workspace], are not traced.
+
+| Attribute | Value |
+|-----------|-------|
+| `pydantic_ai.workspace.provider` | The kind of workspace the call reached, such as `local` or `docker` |
+| `pydantic_ai.workspace.id` | Which workspace it reached. On `workspace {operation}`, only with `include_content=True`: for a local or SSH workspace it is a directory path or SSH destination, which can name the OS user. Always on `workspace create`, `workspace attach` and `workspace destroy`, where it is the sandbox's id; a failed `workspace create` still names the sandbox it tried to create, if the backend had named it |
+| `process.exit.code` | On `workspace run`. A non-zero exit leaves the status unset |
+| `process.command_args` or `process.command_line` | On `workspace run`, only with `include_content=True`. `env` is never recorded |
+| `pydantic_ai.workspace.command.step` | On a shell command behind a file operation: what it does, such as `stat` or `read_chunk`. Its text is never recorded, as it can carry file contents |
+| `file.path` | On file operations, only with `include_content=True` |
+| `file.size` | On `read_bytes` and `write_bytes` |
+
+An exception records an error status, except a missing file on `stat`, `read_bytes`, `list_dir`, `remove` or `realpath`, which is often an expected answer. Under [durable execution](durable_execution/overview.md), a workspace call that an engine runs in its own worker, such as a Temporal activity, a Render task or an Azure Durable Task activity, is not traced yet.
+
 ### Adding Custom Metadata
 
 Use the agent's `metadata` parameter to attach additional data to the agent's span.

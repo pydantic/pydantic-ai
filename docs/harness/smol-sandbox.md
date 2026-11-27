@@ -256,7 +256,7 @@ Whoever passes a ref runs commands in the VM it names. smolmachines can open any
 
 ## Telemetry
 
-`SmolSandbox` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records `pydantic_ai.workspace.provider` (`smol`) and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
+`SmolSandbox` traces starting or reconnecting to the VM as `workspace create` or `workspace attach`, under the call that needed it, and `destroy(ref)` called inside a run as `workspace destroy`; see [workspace spans](../logfire.md#workspace-spans). Core's [instrumentation](../capabilities/instrumentation.md) also records the VM on the agent run span as `pydantic_ai.workspace.provider` (`smol`) and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span.
 
 Treat the recorded id like a ref: any process of your OS user on this machine can attach to the VM with it.
 

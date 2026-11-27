@@ -212,7 +212,7 @@ Then terminate it: `await RenderSandbox().destroy(WorkspaceRef(provider='render'
 
 ## Telemetry
 
-`RenderSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
+`RenderSandbox` traces creating or reconnecting to the sandbox, until it is running, as `workspace create` or `workspace attach`, under the call that needed it, and `destroy(ref)` called inside a run as `workspace destroy`; see [workspace spans](https://pydantic.dev/docs/ai/integrations/logfire/#workspace-spans). With [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/), the agent run span identifies the sandbox with `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span.
 
 ## API reference
 

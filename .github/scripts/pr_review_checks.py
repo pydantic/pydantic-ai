@@ -103,7 +103,7 @@ SPECIALIST_CHECKS: tuple[SpecialistCheck, ...] = (
         title='Telemetry',
         scope='instrumentation, spans, logs and the content controls on them',
         paths=re.compile(
-            r'pydantic_ai_slim/pydantic_ai/(_instrumentation|_otel_messages|_telemetry|capabilities/instrumentation'
+            r'pydantic_ai_slim/pydantic_ai/(_instrumentation|_otel_messages|_telemetry|workspaces/_telemetry|capabilities/instrumentation'
             r'|models/instrumented|embeddings/instrumented|images/instrumented|realtime/_instrumentation)\.py'
             r'|src/pydantic_ai_harness/pydantic_ai_harness/logfire/.*'
             r'|src/pydantic_ai_pax/pydantic_ai_pax/runtime/agent_instrumentation\.py'

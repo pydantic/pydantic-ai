@@ -697,6 +697,8 @@ async def test_run_budget_marks_the_spans_it_cuts_off(
             (span.attributes or {}).get('error.type'),
         )
         for span in agent_spans.get_finished_spans()
+        # Workspace spans are the workspace's, not the run's or a request's.
+        if not span.name.startswith('workspace ')
     ]
     assert sorted(outcomes, key=repr) == [('chat', 'ERROR', 'timeout'), ('invoke_agent', 'ERROR', 'timeout')]
 

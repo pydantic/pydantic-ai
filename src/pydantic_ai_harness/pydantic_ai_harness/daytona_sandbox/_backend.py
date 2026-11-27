@@ -33,6 +33,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces._telemetry import acquire_span
 from pydantic_ai_harness._typeguards import is_mapping
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
@@ -552,13 +553,15 @@ class DaytonaSandboxBackend(
             self._client = await _new_client()
         client = self._client
         if self._ref is not None:
-            sandbox = await self._attach(client, self._ref.id)
-            self._record(sandbox)
+            with acquire_span('attach', self):
+                sandbox = await self._attach(client, self._ref.id)
+                self._record(sandbox)
             return sandbox
 
         async def create() -> AsyncSandbox:
-            created = await self._create(client)
-            self._record(created)
+            with acquire_span('create', self):
+                created = await self._create(client)
+                self._record(created)
             self._working_dir_pending = self._working_dir is not None
             # Logged at creation, so the id can be found whatever ends the run before it is stored.
             logger.info('Created Daytona sandbox %s', created.id)

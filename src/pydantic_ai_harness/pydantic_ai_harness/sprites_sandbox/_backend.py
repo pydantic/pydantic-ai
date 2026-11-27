@@ -87,6 +87,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces._telemetry import acquire_span
 from pydantic_ai.workspaces.workspace import _ShellFilesystem  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai_harness._workspace_provider import (
     absolute_path,
@@ -590,11 +591,12 @@ class SpritesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsFilesyst
         try:
             # Creation runs to completion even if the caller is cancelled, so a Sprite that
             # was created is never left unnamed; attaching creates nothing and stays cancellable.
-            return await (
-                run_to_completion(functools.partial(self._acquire, client, ref))
-                if pending is not None
-                else self._acquire(client, ref)
-            )
+            with acquire_span('create' if sprite_name is None else 'attach', self):
+                return await (
+                    run_to_completion(functools.partial(self._acquire, client, ref))
+                    if pending is not None
+                    else self._acquire(client, ref)
+                )
         except SpriteError as error:
             if (mapped := _map_error(error, sprite_name)) is None:
                 raise

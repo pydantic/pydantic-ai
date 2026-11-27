@@ -278,7 +278,7 @@ To load specs saved before the rename, pass the deprecated `DockerSandbox` class
 
 ## Telemetry
 
-`DockerContainer` emits no spans of its own. Core's [instrumentation](../capabilities/instrumentation.md) records `pydantic_ai.workspace.provider` (`docker`) and `pydantic_ai.workspace.id` (the container's name) on the agent run span, and each command or file operation runs inside its tool call's span.
+`DockerContainer` traces starting or reconnecting to the container as `workspace create` or `workspace attach`, under the call that needed it, and `destroy(ref)` called inside a run as `workspace destroy`; see [workspace spans](../logfire.md#workspace-spans). Core's [instrumentation](../capabilities/instrumentation.md) also records the container on the agent run span as `pydantic_ai.workspace.provider` (`docker`) and `pydantic_ai.workspace.id` (its name). Each command or file operation a tool makes runs inside that tool call's span.
 
 ## API reference
 

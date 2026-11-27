@@ -11,6 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces._telemetry import destroy_span
 from pydantic_ai_harness._workspace import innermost_backend, with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_env,
@@ -201,7 +202,8 @@ class OpenSandbox(AbstractCapability[AgentDepsT]):
     async def destroy(self, ref: WorkspaceRef) -> None:
         """Delete a sandbox by ID, files included; one that no longer exists returns quietly."""
         check_provider(ref, PROVIDER)
-        await destroy_sandbox(ref.id, self.connection)
+        with destroy_span(ref):
+            await destroy_sandbox(ref.id, self.connection)
 
     def get_workspace(self, ctx: RunContext[AgentDepsT], *, ref: WorkspaceRef | None) -> WorkspaceBackend | None:
         """The backend for this run, in an `AuthorityWorkspace` when `authority` or `path_authority` asks for one."""

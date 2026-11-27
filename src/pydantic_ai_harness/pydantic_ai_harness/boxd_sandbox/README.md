@@ -299,7 +299,7 @@ Pass one client, as in `BoxdSandbox(client=boxd.AsyncBoxd())`. Without it, every
 
 ## Telemetry
 
-`BoxdSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
+`BoxdSandbox` traces creating or reconnecting to the machine as `workspace create` or `workspace attach`, under the call that needed it, and `destroy(ref)` called inside a run as `workspace destroy`; see [workspace spans](https://pydantic.dev/docs/ai/integrations/logfire/#workspace-spans). Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) also records the machine on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Creating a machine logs its id and name at `INFO` (`Created boxd machine <id> (<name>)`) on the `pydantic_ai_harness.boxd_sandbox._backend` logger.
 
 ## API reference
 

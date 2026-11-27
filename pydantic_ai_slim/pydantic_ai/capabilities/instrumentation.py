@@ -39,7 +39,7 @@ from pydantic_ai._instrumentation import (
     track_top_level_conversation,
 )
 from pydantic_ai._output import build_retried_tool_return
-from pydantic_ai._telemetry import bind_tool_call_span
+from pydantic_ai._telemetry import bind_tool_call_span, run_telemetry_scope
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -332,6 +332,9 @@ class Instrumentation(AbstractCapability[Any]):
             # Entered with the span and exited with it, so `_run_usage` ends up holding exactly
             # the usage this run recorded — nested runs report their own on their own spans.
             _usage_attribution.accumulate(self._run_usage),
+            # Code without a `RunContext` traces to this run only while its span is open, and this run's
+            # value is gone for an outer `wrap_run` once this one returns.
+            run_telemetry_scope(ctx, span),
         ):
             token = _otel_attach(_agent_run_baggage(agent_name, ctx))
             result: AgentRunResult[Any] | None = None

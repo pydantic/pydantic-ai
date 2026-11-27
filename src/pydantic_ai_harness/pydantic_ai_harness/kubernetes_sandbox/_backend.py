@@ -53,6 +53,7 @@ from pydantic_ai.workspaces import (
     WorkspaceTimeoutError,
     WorkspaceUnavailableError,
 )
+from pydantic_ai.workspaces._telemetry import acquire_span
 from pydantic_ai_harness._workspace_provider import (
     EXEC_SCRIPT,
     absolute_path,
@@ -458,13 +459,14 @@ class KubernetesSandboxBackend(WorkspaceBackend, SupportsCommands, SupportsDispl
             # SDK's exit hook that stops `kubectl port-forward` processes, so `aclose()` is what stops them.
             self._client = AsyncSandboxClient(connection_config=self._connection_config, cleanup=False)
         acquired: tuple[WorkspaceRef, AsyncSandbox] | None = None
-        # A cancelled claim is still deleted: `_claim` rolls back under its own shield.
-        with anyio.move_on_after(_ACQUIRE_TIMEOUT):
-            acquired = await self._claim_or_attach(self._client)
-        if acquired is None:
-            raise TimeoutError(
-                f'Claiming or attaching to a Kubernetes sandbox did not complete within {_ACQUIRE_TIMEOUT} seconds.'
-            )
+        with acquire_span('create' if self._ref is None else 'attach', self):
+            # A cancelled claim is still deleted: `_claim` rolls back under its own shield.
+            with anyio.move_on_after(_ACQUIRE_TIMEOUT):
+                acquired = await self._claim_or_attach(self._client)
+            if acquired is None:
+                raise TimeoutError(
+                    f'Claiming or attaching to a Kubernetes sandbox did not complete within {_ACQUIRE_TIMEOUT} seconds.'
+                )
         ref, sandbox = acquired
         commands = sandbox.commands
         assert commands is not None  # The SDK clears a handle's executor only when the handle is closed.

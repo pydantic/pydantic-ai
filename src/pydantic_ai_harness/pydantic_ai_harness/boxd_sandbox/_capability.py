@@ -11,6 +11,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import Authority
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
+from pydantic_ai.workspaces._telemetry import destroy_span
 from pydantic_ai_harness._workspace import innermost_backend, with_authority
 from pydantic_ai_harness._workspace_provider import (
     check_env,
@@ -180,7 +181,8 @@ class BoxdSandbox(AbstractCapability[AgentDepsT]):
         that is not isolated raises `ValueError` and is left alone: `BoxdSandbox` never created it.
         """
         check_provider(ref, 'boxd')
-        await destroy_machine(self.client, ref.id)
+        with destroy_span(ref):
+            await destroy_machine(self.client, ref.id)
 
     async def fork(self, ref: WorkspaceRef) -> WorkspaceRef:
         """Copy a machine into a new isolated machine and return the copy's ref.

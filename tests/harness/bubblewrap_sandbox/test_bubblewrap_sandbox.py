@@ -18,6 +18,7 @@ from pathlib import Path
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 
 import pydantic_ai_harness
 import pydantic_ai_harness.bubblewrap_sandbox as bubblewrap_sandbox
@@ -44,6 +45,7 @@ from pydantic_ai_harness.bubblewrap_sandbox import (
 )
 from pydantic_ai_harness.bubblewrap_sandbox._seccomp import NETWORK_FILTER_BASE64
 from pydantic_ai_harness.ssh_workspace import SSHWorkspace, SSHWorkspaceBackend
+from tests.harness.conftest import Instrumented
 
 from .. import _fake_remote_tools
 from .._fake_remote_tools import FakeRemoteTools, install_fake_remote_tools, require_bwrap
@@ -699,6 +701,45 @@ async def test_capability_keeps_the_wrapped_policy_and_declines_foreign_refs(tmp
     assert workspace_layers(result.workspace) == [BubblewrapWorkspace, ReadOnlyWorkspace, LocalWorkspaceBackend]
     with pytest.raises(UserError, match="none of the agent's workspace capabilities recognized it"):
         await agent.run('go', workspace=WorkspaceRef(provider='local', id=str(tmp_path / 'elsewhere')))
+
+
+async def test_a_traced_command_shows_the_callers_command_not_the_launcher(
+    tools: FakeRemoteTools, tmp_path: Path, instrumented: Instrumented
+) -> None:
+    """The wrapped workspace only sees the `bwrap` launcher, whose arguments carry the call's `env` values."""
+    tracing, exporter = instrumented(True)
+    agent = Agent(
+        TestModel(call_tools=['greet']),
+        capabilities=[tracing],
+    )
+
+    @agent.tool
+    async def greet(ctx: RunContext[object]) -> str:
+        result = await ctx.workspace.run(['printf', '%s', 'hi'], env={'TOKEN': 'SENTINEL-env'})
+        await ctx.workspace.write_text('notes.txt', 'hello')
+        return result.stdout
+
+    await agent.run('go', workspace=BubblewrapWorkspace(Workspace(LocalWorkspaceBackend(tmp_path))))
+
+    spans = exporter.get_finished_spans()
+    runs = [
+        span for span in spans if span.name == 'workspace run' and 'process.command_args' in (span.attributes or {})
+    ]
+    assert [(span.attributes or {})['process.command_args'] for span in runs] == [('printf', '%s', 'hi')]
+    # A file operation runs as sandboxed shell commands: one span each, inside the operation's.
+    names = {span.context.span_id: span.name for span in spans if span.context is not None}
+    assert [
+        ((span.attributes or {})['pydantic_ai.workspace.command.step'], span.parent and names[span.parent.span_id])
+        for span in spans
+        if 'pydantic_ai.workspace.command.step' in (span.attributes or {})
+    ] == snapshot(
+        [
+            ('realpath', 'workspace write_bytes'),
+            ('write_chunk', 'workspace write_bytes'),
+            ('commit', 'workspace write_bytes'),
+        ]
+    )
+    assert not any('SENTINEL-env' in str(span.attributes) for span in spans)
 
 
 async def test_deprecated_bubblewrap_sandbox_alias_warns_and_wraps(tmp_path: Path) -> None:
