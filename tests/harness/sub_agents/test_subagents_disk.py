@@ -284,6 +284,17 @@ class TestDiskLoading:
             listing = await _listing(SubAgents(agent_folders=['.']), _LoopRefusingBackend(tmp_path))
         assert listing is not None and '- valid' in listing and 'loop' not in listing
 
+    async def test_workspace_error_reading_an_operator_file_fails_the_run(self, tmp_path: Path) -> None:
+        # Only an unresolvable authority is skipped: a `WorkspaceError` from reading an `'operator'` file still fails
+        # the run, as it did before authority checks.
+        class _ReadRefusingBackend(LocalWorkspaceBackend):
+            async def read_bytes(self, path: str) -> bytes:
+                raise WorkspaceError(f'cannot read {path!r}')
+
+        _write_agent(tmp_path, 'worker.md', '---\nname: worker\n---\nWork.')
+        with pytest.raises(WorkspaceError, match='cannot read'):
+            await _listing(SubAgents(agent_folders=['.']), _ReadRefusingBackend(tmp_path))
+
 
 class TestCodexDiskLoading:
     async def test_standalone_toml_instructions_and_tools(self, tmp_path: Path) -> None:

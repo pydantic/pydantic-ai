@@ -221,11 +221,16 @@ async def _read_operator_file(workspace: Workspace, path: str, lowered: list[str
     loop on a sandbox shell, or that can't be read, is skipped with a warning.
     """
     try:
-        if await workspace.authority_of(path) != 'operator':
-            lowered.append(path)
-            return None
+        authority = await workspace.authority_of(path)
+    except (WorkspaceError, OSError) as exc:
+        _warn_unreadable(path, exc)
+        return None
+    if authority != 'operator':
+        lowered.append(path)
+        return None
+    try:
         return await workspace.read_text(path)
-    except (WorkspaceError, OSError, UnicodeDecodeError) as exc:
+    except (OSError, UnicodeDecodeError) as exc:
         _warn_unreadable(path, exc)
         return None
 
