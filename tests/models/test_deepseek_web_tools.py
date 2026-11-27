@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import json
-
 import httpx2
 import pytest
 from inline_snapshot import snapshot
@@ -49,14 +47,12 @@ _FOUND_IT: dict[str, JsonValue] = {
 }
 
 
-def _mock_client(reply: dict[str, JsonValue], requests: list[dict[str, JsonValue]]) -> httpx2.AsyncClient:
-    """A client that answers every request with `reply` and records each request body in `requests`."""
-
-    def handle(request: httpx2.Request) -> httpx2.Response:
-        requests.append(json.loads(request.content))
-        return httpx2.Response(200, json=reply)
-
-    return httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
+def _mock_client(reply: dict[str, JsonValue], request_capture: RequestCapture) -> httpx2.AsyncClient:
+    """A client that answers every request with `reply`, and records each request in `request_capture`."""
+    return httpx2.AsyncClient(
+        transport=httpx2.MockTransport(lambda request: httpx2.Response(200, json=reply)),
+        event_hooks={'request': list(request_capture.client.event_hooks['request'])},
+    )
 
 
 @pytest.mark.vcr
@@ -72,11 +68,13 @@ async def test_web_fetch_signed_history(
     if stream:
         async with agent.run_stream(prompt) as streamed:
             output = await streamed.get_output()
+            messages = streamed.all_messages()
             history_json = streamed.all_messages_json()
             response = streamed.response
     else:
         result = await agent.run(prompt)
         output = result.output
+        messages = result.all_messages()
         history_json = result.all_messages_json()
         response = result.response
     assert 'wonderwidgets' not in output.lower()
@@ -90,8 +88,11 @@ async def test_web_fetch_signed_history(
     assert signature
 
     history = ModelMessagesTypeAdapter.validate_json(history_json)
-    # Client annotations on reloaded history must not become fields of the Responses input item.
+    # Every part survives serialization. The response's untyped `provider_details` don't: their timestamp reloads as a
+    # string.
     assert isinstance(history[-1], ModelResponse)
+    assert history[-1].parts == messages[-1].parts
+    # Client annotations on reloaded history must not become fields of the Responses input item.
     (reloaded,) = [p for p in history[-1].parts if isinstance(p, NativeToolReturnPart)]
     assert is_str_dict(reloaded.content) and reloaded.provider_details
     reloaded.content['client_note'] = 'local annotation'
@@ -160,6 +161,40 @@ async def test_web_search_citations(
     items = second['input']
     assert isinstance(items, list)
     assert any(isinstance(item, dict) and item.get('kind') == 'search' for item in items)
+
+
+async def test_web_search_citations_non_streamed(request_capture: RequestCapture, allow_model_requests: None) -> None:
+    """A non-streamed response maps DeepSeek's `url_citation` offsets to the cited text.
+
+    The streamed path has a recording; no recording holds a non-streamed citation, so a mock transport serves one.
+    """
+    answer: dict[str, JsonValue] = {
+        'type': 'message',
+        'role': 'assistant',
+        'content': [
+            {
+                'type': 'output_text',
+                'text': 'RFC 9110 is titled "HTTP Semantics".',
+                'annotations': [
+                    {
+                        'type': 'url_citation',
+                        'start_index': 0,
+                        'end_index': 36,
+                        'url': 'https://www.rfc-editor.org/rfc/rfc9110.html',
+                        'title': 'RFC 9110',
+                    }
+                ],
+            }
+        ],
+    }
+    async with _mock_client(_reply(answer), request_capture) as client:
+        model = DeepSeekResponsesModel('deepseek-flash', provider=DeepSeekProvider(api_key='test', http_client=client))
+        result = await Agent(model, capabilities=[WebSearch()]).run('What is the title of RFC 9110?')
+    (text,) = [part for part in result.response.parts if isinstance(part, TextPart)]
+    assert text.citations is not None
+    (citation,) = text.citations
+    assert isinstance(citation.anchor, ContentCitationAnchor)
+    assert text.content[citation.anchor.start : citation.anchor.end] == 'RFC 9110 is titled "HTTP Semantics".'
 
 
 @pytest.mark.parametrize('with_added', [True, False])
@@ -242,7 +277,7 @@ async def test_streamed_web_search_billing(model_name: str, billed: int, allow_m
     assert getattr(stream.get().usage, 'web_searches', 0) == billed
 
 
-async def test_web_tool_usage_counts(allow_model_requests: None) -> None:
+async def test_web_tool_usage_counts(request_capture: RequestCapture, allow_model_requests: None) -> None:
     """Each non-zero web tool count lands in the details, and none counts as a billed web search.
 
     No recording holds an image search, so a mock transport reports the counts.
@@ -258,8 +293,7 @@ async def test_web_tool_usage_counts(allow_model_requests: None) -> None:
             'server_tool_use': {'tool_search': 1, 'tool_fetch': 0, 'tool_image_search': 2},
         },
     }
-    requests: list[dict[str, JsonValue]] = []
-    async with _mock_client(reply, requests) as client:
+    async with _mock_client(reply, request_capture) as client:
         model = DeepSeekResponsesModel('deepseek-flash', provider=DeepSeekProvider(api_key='test', http_client=client))
         result = await Agent(model, capabilities=[WebSearch()]).run('Find a picture of a kiwi.')
     details = result.response.usage.details
@@ -277,7 +311,7 @@ async def test_web_tool_usage_counts(allow_model_requests: None) -> None:
     ids=['standard', 'invalid-metadata', 'missing-kind'],
 )
 async def test_deepseek_replays_standard_search_history(
-    provider_details: dict[str, object] | None, allow_model_requests: None
+    provider_details: dict[str, object] | None, request_capture: RequestCapture, allow_model_requests: None
 ) -> None:
     """A standard OpenAI `web_search_call` without `kind`, or one with edited metadata, isn't sent back as a DeepSeek item.
 
@@ -289,8 +323,7 @@ async def test_deepseek_replays_standard_search_history(
         'status': 'completed',
         'action': {'type': 'search', 'query': 'example'},
     }
-    requests: list[dict[str, JsonValue]] = []
-    async with _mock_client(_reply(standard_search, _FOUND_IT), requests) as client:
+    async with _mock_client(_reply(standard_search, _FOUND_IT), request_capture) as client:
         agent = Agent(
             DeepSeekResponsesModel('deepseek-flash', provider=DeepSeekProvider(api_key='test', http_client=client)),
             capabilities=[WebSearch()],
@@ -300,8 +333,13 @@ async def test_deepseek_replays_standard_search_history(
         assert returned.tool_call_id == 'search_1'
         returned.provider_details = provider_details
         await agent.run('What did you find?', message_history=result.all_messages())
-    assert 'Found it.' in json.dumps(requests[1])
-    assert 'search_1' not in json.dumps(requests[1])
+    assert request_capture.body('/responses', 1)['input'] == snapshot(
+        [
+            {'role': 'user', 'content': 'Search for an example.'},
+            {'role': 'assistant', 'content': 'Found it.'},
+            {'role': 'user', 'content': 'What did you find?'},
+        ]
+    )
 
 
 # The local fallbacks are only declared: the mocked model answers without calling a tool.
@@ -325,22 +363,24 @@ def _fetch_example(url: str) -> str:
         pytest.param(WebFetch(native=False, local=_fetch_example), id='fetch-native-off'),
     ],
 )
-async def test_web_tool_local_fallback(capability: AbstractCapability[object], allow_model_requests: None) -> None:
+async def test_web_tool_local_fallback(
+    capability: AbstractCapability[object], request_capture: RequestCapture, allow_model_requests: None
+) -> None:
     """A web tool DeepSeek's server can't run as asked is declared as the local function tool instead.
 
-    The choice is made before the request goes out, so the test reads the request a mock transport receives.
+    The choice is made before the request goes out, so the test reads the captured request a mock transport answers.
     """
-    requests: list[dict[str, JsonValue]] = []
-    async with _mock_client(_reply(_FOUND_IT), requests) as client:
+    async with _mock_client(_reply(_FOUND_IT), request_capture) as client:
         model = DeepSeekResponsesModel('deepseek-flash', provider=DeepSeekProvider(api_key='test', http_client=client))
         await Agent(model, capabilities=[capability]).run('Look it up.')
-    (request,) = requests
-    tools = request['tools']
+    tools = request_capture.body('/responses')['tools']
     assert isinstance(tools, list)
     assert [tool['type'] for tool in tools if isinstance(tool, dict)] == ['function']
 
 
-async def test_web_fetch_history_to_another_provider(allow_model_requests: None) -> None:
+async def test_web_fetch_history_to_another_provider(
+    request_capture: RequestCapture, allow_model_requests: None
+) -> None:
     """A signed DeepSeek read in history stays out of a request to another provider.
 
     The claim is about what the second request carries, so a mock transport stands in for both providers.
@@ -354,16 +394,13 @@ async def test_web_fetch_history_to_another_provider(allow_model_requests: None)
         'page': {'url': 'https://example.com', 'title': 'Example'},
         'signature': 'signed-page',
     }
-    deepseek_requests: list[dict[str, JsonValue]] = []
-    async with _mock_client(_reply(read_link, _FOUND_IT), deepseek_requests) as client:
+    async with _mock_client(_reply(read_link, _FOUND_IT), request_capture) as client:
         model = DeepSeekResponsesModel('deepseek-flash', provider=DeepSeekProvider(api_key='test', http_client=client))
         result = await Agent(model, capabilities=[WebFetch()]).run('Read https://example.com.')
-    openai_requests: list[dict[str, JsonValue]] = []
-    async with _mock_client(_reply(_FOUND_IT), openai_requests) as client:
+    async with _mock_client(_reply(_FOUND_IT), request_capture) as client:
         model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key='test', http_client=client))
         await Agent(model).run('What did the page say?', message_history=result.all_messages())
-    (request,) = openai_requests
-    assert request['input'] == snapshot(
+    assert request_capture.body('/v1/responses')['input'] == snapshot(
         [
             {'role': 'user', 'content': 'Read https://example.com.'},
             {'role': 'assistant', 'content': 'Found it.'},
@@ -381,19 +418,35 @@ async def test_web_fetch_history_to_another_provider(allow_model_requests: None)
     ],
 )
 async def test_web_search_declaration(
-    model: type[OpenAIResponsesModel], model_name: str, tool_type: str, allow_model_requests: None
+    model: type[OpenAIResponsesModel],
+    model_name: str,
+    tool_type: str,
+    request_capture: RequestCapture,
+    allow_model_requests: None,
 ) -> None:
     """Only `DeepSeekResponsesModel` with `deepseek-flash` declares DeepSeek's web search; the others keep the standard tool.
 
-    The declaration is what the request carries, so the test reads the request a mock transport receives.
+    A standard `web_search_call` maps the standard way on each, `deepseek-v4-pro` included. The declaration is what the
+    request carries, and no recording holds a standard search from DeepSeek, so a mock transport answers.
     """
-    requests: list[dict[str, JsonValue]] = []
-    async with _mock_client(_reply(_FOUND_IT), requests) as client:
-        await Agent(
+    standard_search: dict[str, JsonValue] = {
+        'type': 'web_search_call',
+        'id': 'search_1',
+        'status': 'completed',
+        'action': {'type': 'search', 'query': 'example'},
+    }
+    async with _mock_client(_reply(standard_search, _FOUND_IT), request_capture) as client:
+        result = await Agent(
             model(model_name, provider=DeepSeekProvider(api_key='test', http_client=client)), capabilities=[WebSearch()]
         ).run('Search.')
-    (request,) = requests
-    tools = request['tools']
+    assert [
+        (type(part).__name__, part.tool_name, part.tool_call_id)
+        for part in result.response.parts
+        if isinstance(part, NativeToolCallPart | NativeToolReturnPart)
+    ] == snapshot(
+        [('NativeToolCallPart', 'web_search', 'search_1'), ('NativeToolReturnPart', 'web_search', 'search_1')]
+    )
+    tools = request_capture.body('/responses')['tools']
     assert isinstance(tools, list)
     assert [tool['type'] for tool in tools if isinstance(tool, dict)] == [tool_type]
 

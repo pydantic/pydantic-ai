@@ -139,11 +139,23 @@ class DeepSeekResponsesModel(OpenAIResponsesModel):
     @classmethod
     @override
     def supported_native_tools(cls) -> frozenset[type[AbstractNativeTool]]:
+        """Return the set of native tool types this model class can handle.
+
+        That's the `OpenAIResponsesModel` set plus `WebFetchTool`, for DeepSeek's URL reading. The
+        [`profile`][pydantic_ai.models.deepseek.DeepSeekResponsesModel.profile] keeps `WebFetchTool` only for a model
+        DeepSeek runs its web tools on.
+        """
         return super().supported_native_tools() | {WebFetchTool}
 
     @cached_property
     @override
     def profile(self) -> DeepSeekModelProfile:
+        """The model profile.
+
+        With `deepseek_supports_web_tools`, which `DeepSeekProvider` sets for `deepseek-flash`, `url_citation`
+        offsets map to a [`ContentCitationAnchor`][pydantic_ai.messages.ContentCitationAnchor]. Without it,
+        `WebFetchTool` leaves the supported native tools, and the model sends and maps what `OpenAIResponsesModel` does.
+        """
         profile = DeepSeekModelProfile(**super().profile)
         if profile.get('deepseek_supports_web_tools', False):
             # DeepSeek's `url_citation` offsets span the cited text: its content holds no citation markers. The flag is
