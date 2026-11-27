@@ -821,8 +821,10 @@ def custom_include_print(path: Path, frame: FrameInfo, args: Sequence[Any]) -> b
     return path.samefile(frame.filename) or frame.filename.endswith('test_examples.py')
 
 
-# `MockPrintFunction.__call__` finds its caller with `inspect.stack()`, which scans `sys.modules` for each frame on
-# every print: https://github.com/pydantic/pytest-examples/issues/102
+# `MockPrintFunction.__call__` finds its caller with `inspect.stack()`, which scans `sys.modules` on every print for
+# each frame whose file belongs to no module: https://github.com/pydantic/pytest-examples/issues/102. This replacement
+# finds the caller by walking `f_back` and keeps upstream's private filter and line lookup, hence the
+# `reportPrivateUsage` ignores.
 def mock_print(self: MockPrintFunction, *args: Any, sep: str = ' ', **kwargs: Any) -> None:
     caller = currentframe()
     for _ in range(parent_frame_id):
