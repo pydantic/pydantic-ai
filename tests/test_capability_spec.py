@@ -2621,6 +2621,7 @@ def test_model_json_schema_with_capabilities():
                             'anyOf': [{'type': 'string'}, {'type': 'null'}],
                             'title': 'Parameter Description',
                         },
+                        'reveal_scope': {'enum': ['run', 'conversation'], 'title': 'Reveal Scope', 'type': 'string'},
                     },
                     'title': 'spec_params_ToolSearch',
                     'type': 'object',

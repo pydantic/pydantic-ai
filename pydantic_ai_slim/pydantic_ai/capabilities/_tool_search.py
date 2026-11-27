@@ -2,14 +2,15 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from .._run_context import AgentDepsT, RunContext
 from ..native_tools._tool_search import (
     ToolSearchFunc,
     ToolSearchNativeStrategy,
+    ToolSearchRevealScope,
     ToolSearchStrategy,
     ToolSearchTool,
 )
@@ -162,9 +163,20 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     Pass a distinct `id` to keep both, or `id=None` for derived ids.
     """
 
+    reveal_scope: ToolSearchRevealScope = 'conversation'
+    """How long tools discovered via tool search remain revealed.
+
+    * `'conversation'` (default): discovered tools stay revealed across later requests and runs
+      that reuse the conversation's `message_history`.
+    * `'run'`: discovered tools stay revealed only for the remainder of the run that discovered
+      them; a later run reusing `message_history` must search again.
+    """
+
     _search_fn: ToolSearchFunc[AgentDepsT] | None = field(init=False, repr=False, default=None)
 
     def __post_init__(self) -> None:
+        if self.reveal_scope not in ('run', 'conversation'):
+            raise ValueError(f"ToolSearch `reveal_scope` must be 'run' or 'conversation', got {self.reveal_scope!r}.")
         # `'keywords'` and a callable strategy both run their algorithm on our side and
         # both engage the provider's "client-executed" native mode where supported, so
         # they share a `_search_fn` that the toolset routes through `_run_search_fn`.
@@ -232,6 +244,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             tool_description=self.tool_description,
             parameter_description=self.parameter_description,
             enable_fallback=self.strategy not in ('bm25', 'regex'),
+            reveal_scope=self.reveal_scope,
         )
 
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
@@ -252,3 +265,12 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
 
     function_tool_name: ClassVar[str] = 'search_tools'
     """Reserved name of the local function tool used when tool search runs client-side."""
+
+
+def tool_search_reveal_scope(capabilities: Iterable[AbstractCapability[Any]]) -> ToolSearchRevealScope:
+    """Resolve the active tool-search `reveal_scope` from an agent or run's capabilities."""
+    return (
+        'run'
+        if any(isinstance(cap, ToolSearch) and cap.reveal_scope == 'run' for cap in capabilities)
+        else 'conversation'
+    )

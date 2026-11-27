@@ -67,6 +67,7 @@ from ..native_tools._tool_search import (
     ToolSearchFunc,
     ToolSearchMatch,
     ToolSearchReturnContent,
+    ToolSearchRevealScope,
     ToolSearchTool,
 )
 from ..tools import (
@@ -201,7 +202,22 @@ def _build_search_args_schema(parameter_description: str) -> tuple[dict[str, Any
     return schema, _SEARCH_TOOL_VALIDATOR
 
 
-def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
+def _is_in_reveal_scope(
+    message: ModelMessage,
+    *,
+    reveal_scope: ToolSearchRevealScope,
+    run_id: str | None,
+) -> bool:
+    """Whether tool-search discoveries on `message` are in scope for the active reveal window."""
+    return reveal_scope == 'conversation' or (run_id is not None and message.run_id == run_id)
+
+
+def parse_discovered_tools(
+    messages: Sequence[ModelMessage],
+    *,
+    reveal_scope: ToolSearchRevealScope = 'conversation',
+    run_id: str | None = None,
+) -> set[str]:
     """Scan visible message history for previously-discovered tool names.
 
     Every [`CompactionPart`][pydantic_ai.messages.CompactionPart] resets the derived
@@ -211,6 +227,11 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     availability gates execution, an under-count also *refuses* the call — see
     [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] for when that
     is wrong and what is tracked to fix it.
+
+    When `reveal_scope='run'`, tool-search discoveries (`ToolSearchReturnPart`,
+    `NativeToolSearchReturnPart`, and legacy `search_tools` metadata) are kept only on
+    messages whose `run_id` matches `run_id`, while non-search `ToolAvailabilityDeltaPart`
+    reveals remain visible across runs.
 
     Trusts that any `ToolSearchReturnPart` / `NativeToolSearchReturnPart` in the
     history has a validated `ToolSearchReturnContent`:
@@ -226,39 +247,50 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     the one definition of the boundary — so locating it costs a cheap reverse
     `isinstance` pass rather than parsing history the boundary would reset anyway.
     """
-    return set(discovered_tool_names_in_order(messages))
+    return set(discovered_tool_names_in_order(messages, reveal_scope=reveal_scope, run_id=run_id))
 
 
-def discovered_tool_names_in_order(messages: Sequence[ModelMessage]) -> tuple[str, ...]:
+def discovered_tool_names_in_order(
+    messages: Sequence[ModelMessage],
+    *,
+    reveal_scope: ToolSearchRevealScope = 'conversation',
+    run_id: str | None = None,
+) -> tuple[str, ...]:
     """Return discovered names in first-appearance order for byte-stable provider tool segments.
 
     Scans only the [`post_compaction_window`][pydantic_ai.messages.post_compaction_window], so both the
     reveal set and the wire ordering derive from what the model can actually see.
     """
-    return _discovered_tool_names_in_order(post_compaction_window(messages))
+    return _discovered_tool_names_in_order(post_compaction_window(messages), reveal_scope=reveal_scope, run_id=run_id)
 
 
-def _discovered_tool_names_in_order(messages: Sequence[ModelMessage]) -> tuple[str, ...]:
+def _discovered_tool_names_in_order(
+    messages: Sequence[ModelMessage],
+    *,
+    reveal_scope: ToolSearchRevealScope = 'conversation',
+    run_id: str | None = None,
+) -> tuple[str, ...]:
     """Parse discovery evidence from an already-selected message window."""
     discovered: dict[str, None] = {}
     for msg in messages:
+        include_tool_search = _is_in_reveal_scope(msg, reveal_scope=reveal_scope, run_id=run_id)
         if isinstance(msg, ModelRequest):
-            discovered.update(dict.fromkeys(_request_discoveries(msg)))
+            discovered.update(dict.fromkeys(_request_discoveries(msg, include_tool_search=include_tool_search)))
         elif isinstance(msg, ModelResponse):
-            discovered.update(dict.fromkeys(_response_discoveries(msg)))
+            discovered.update(dict.fromkeys(_response_discoveries(msg, include_tool_search=include_tool_search)))
         else:
             assert_never(msg)
     return tuple(discovered)
 
 
-def _request_discoveries(request: ModelRequest) -> Iterator[str]:
+def _request_discoveries(request: ModelRequest, *, include_tool_search: bool = True) -> Iterator[str]:
     """The tool names a request's parts record as discovered, in order."""
     for part in request.parts:
         if isinstance(part, ToolAvailabilityDeltaPart):
             yield from part.tools_added
-        elif isinstance(part, ToolSearchReturnPart):
+        elif include_tool_search and isinstance(part, ToolSearchReturnPart):
             yield from (match['name'] for match in part.discovered_tools)
-        elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
+        elif include_tool_search and isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
             # Legacy histories carry discoveries on `metadata['discovered_tools']`
             # rather than typed content. Narrowing tool_name + metadata shape avoids
             # surfacing a user-defined `search_tools` whose metadata has no legacy
@@ -270,8 +302,10 @@ def _request_discoveries(request: ModelRequest) -> Iterator[str]:
             yield from validated['discovered_tools']
 
 
-def _response_discoveries(response: ModelResponse) -> Iterator[str]:
+def _response_discoveries(response: ModelResponse, *, include_tool_search: bool = True) -> Iterator[str]:
     """The tool names a response's native tool search returned, in order."""
+    if not include_tool_search:
+        return
     for part in response.parts:
         if isinstance(part, NativeToolSearchReturnPart):
             yield from (match['name'] for match in part.discovered_tools)
@@ -353,12 +387,22 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     a retry.
     """
 
+    reveal_scope: ToolSearchRevealScope = field(default='conversation', kw_only=True)
+    """How long tools discovered via tool search remain revealed; see
+    [`ToolSearch.reveal_scope`][pydantic_ai.capabilities.ToolSearch.reveal_scope]."""
+
     _keyword_corpus: tuple[tuple[str, str | None], ...] | None = field(
         default=None, init=False, repr=False, compare=False
     )
     _keyword_postings: dict[str, list[int]] = field(
         default_factory=dict[str, list[int]], init=False, repr=False, compare=False
     )
+
+    def __post_init__(self) -> None:
+        if self.reveal_scope not in ('run', 'conversation'):
+            raise ValueError(
+                f"ToolSearchToolset `reveal_scope` must be 'run' or 'conversation', got {self.reveal_scope!r}."
+            )
 
     async def get_tools(self, ctx: RunContext[AgentDepsT]) -> dict[str, ToolsetTool[AgentDepsT]]:
         all_tools = await self.wrapped.get_tools(ctx)

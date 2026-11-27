@@ -37,10 +37,21 @@ __all__ = [
     'ToolSearchReturnContent',
     'ToolSearchNativeStrategy',
     'ToolSearchLocalStrategy',
+    'ToolSearchRevealScope',
     'ToolSearchFunc',
     'ToolSearchStrategy',
     'TOOL_SEARCH_FUNCTION_TOOL_NAME',
 ]
+
+
+ToolSearchRevealScope = Literal['run', 'conversation']
+"""How long tools discovered via tool search remain revealed.
+
+* `'conversation'`: discovered tools stay revealed across later requests and runs that
+  reuse the conversation's `message_history`.
+* `'run'`: discovered tools stay revealed only for the remainder of the run that
+  discovered them; subsequent runs must search again.
+"""
 
 
 ToolSearchNativeStrategy = Literal['bm25', 'regex']

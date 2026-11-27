@@ -9282,3 +9282,250 @@ async def test_tool_search_tools_selected_tool_is_discovered_and_called():
             ['load_capability', 'search_tools', 'weather_report'],
         ]
     )
+
+
+def test_parse_discovered_tools_respects_reveal_scope() -> None:
+    """`reveal_scope='run'` scopes tool-search discoveries to the matching `run_id`, while deltas persist."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            run_id='run-1',
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'old_search_tool'}]},
+                    tool_call_id='s1',
+                ),
+                ToolReturnPart(
+                    tool_name=_SEARCH_TOOLS_NAME,
+                    content='legacy',
+                    metadata={'discovered_tools': ['legacy_search_tool']},
+                    tool_call_id='s-legacy',
+                ),
+                ToolAvailabilityDeltaPart(tools_added=['capability_tool']),
+            ],
+        ),
+        ModelResponse(
+            run_id='run-1',
+            parts=[
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'old_native_tool'}]},
+                    tool_call_id='ns1',
+                )
+            ],
+        ),
+        ModelRequest(
+            run_id='run-2',
+            parts=[
+                ToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'current_search_tool'}]},
+                    tool_call_id='s2',
+                )
+            ],
+        ),
+        ModelResponse(
+            run_id='run-2',
+            parts=[
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'current_native_tool'}]},
+                    tool_call_id='ns2',
+                )
+            ],
+        ),
+    ]
+
+    assert parse_discovered_tools(messages) == {
+        'old_search_tool',
+        'legacy_search_tool',
+        'capability_tool',
+        'old_native_tool',
+        'current_search_tool',
+        'current_native_tool',
+    }
+    assert parse_discovered_tools(messages, reveal_scope='run', run_id='run-2') == {
+        'capability_tool',
+        'current_search_tool',
+        'current_native_tool',
+    }
+    assert parse_discovered_tools(messages, reveal_scope='run', run_id=None) == {'capability_tool'}
+
+
+def test_tool_search_reveal_scope_invalid_value_raises() -> None:
+    with pytest.raises(ValueError, match="reveal_scope` must be 'run' or 'conversation'"):
+        ToolSearch(reveal_scope=cast(Any, 'step'))
+    with pytest.raises(ValueError, match="reveal_scope` must be 'run' or 'conversation'"):
+        ToolSearchToolset(wrapped=FunctionToolset(), reveal_scope=cast(Any, 'step'))
+
+
+async def test_tool_search_reveal_scope_run_resets_between_runs() -> None:
+    """With `reveal_scope='run'`, tools discovered in run 1 are hidden again at the start of run 2."""
+    toolset = FunctionToolset()
+    executed: list[str] = []
+
+    @toolset.tool_plain(defer_loading=True)
+    def weather_lookup() -> str:
+        """Look up the weather forecast."""
+        executed.append('weather_lookup')
+        return 'sunny'
+
+    @toolset.tool_plain(defer_loading=True)
+    def stock_lookup() -> str:  # pragma: no cover
+        """Look up stock prices."""
+        return 'up'
+
+    seen_tools: list[list[str]] = []
+    seen_before_run: list[set[str]] = []
+
+    @dataclass
+    class RecordDiscovered(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            seen_before_run.append(set(ctx.discovered_tool_names))
+
+    phase = 'run1'
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tools.append(sorted(t.name for t in info.function_tools))
+        if phase == 'run1':
+            if 'weather_lookup' not in {t.name for t in info.function_tools}:
+                return ModelResponse(
+                    parts=[ToolCallPart(tool_name=_SEARCH_TOOLS_NAME, args={'queries': ['weather']}, tool_call_id='s1')]
+                )
+            if executed == []:
+                return ModelResponse(parts=[ToolCallPart(tool_name='weather_lookup', args={}, tool_call_id='c1')])
+            return ModelResponse(parts=[TextPart('run 1 done')])
+
+        # Run 2: on the first step `weather_lookup` is hidden again. Attempting to call it directly is refused;
+        # searching re-reveals it for the remainder of run 2.
+        retries = [p for p in iter_message_parts(messages, ModelRequest, ToolReturnPart) if p.outcome == 'retried']
+        if 'weather_lookup' not in {t.name for t in info.function_tools}:
+            if not retries:
+                return ModelResponse(parts=[ToolCallPart(tool_name='weather_lookup', args={}, tool_call_id='c2_early')])
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=_SEARCH_TOOLS_NAME, args={'queries': ['weather']}, tool_call_id='s2')]
+            )
+        if len(executed) < 2:
+            return ModelResponse(parts=[ToolCallPart(tool_name='weather_lookup', args={}, tool_call_id='c2')])
+        return ModelResponse(parts=[TextPart('run 2 done')])
+
+    agent: Agent[None, str] = Agent(
+        NoNativeToolSearchModel(model_fn),
+        toolsets=[toolset],
+        capabilities=[ToolSearch(reveal_scope='run'), RecordDiscovered()],
+        deps_type=type(None),
+    )
+
+    first = await agent.run('get weather')
+    assert first.output == 'run 1 done'
+
+    phase = 'run2'
+    second = await agent.run('check again', message_history=first.all_messages())
+    assert second.output == 'run 2 done'
+    assert executed == ['weather_lookup', 'weather_lookup']
+    assert seen_before_run == [set(), set()]
+    assert seen_tools == snapshot(
+        [
+            ['search_tools'],
+            ['search_tools', 'weather_lookup'],
+            ['search_tools', 'weather_lookup'],
+            ['search_tools'],
+            ['search_tools'],
+            ['search_tools', 'weather_lookup'],
+            ['search_tools', 'weather_lookup'],
+        ]
+    )
+
+    # Search ranking in run 2 must not demote `weather_lookup` as already-discovered.
+    run2_search_return = next(
+        part
+        for msg in second.new_messages()
+        if isinstance(msg, ModelRequest)
+        for part in msg.parts
+        if isinstance(part, ToolSearchReturnPart)
+    )
+    assert run2_search_return.discovered_tools == [{'name': 'weather_lookup'}]
+
+
+async def test_tool_search_reveal_scope_conversation_preserves_across_runs() -> None:
+    """Default `reveal_scope='conversation'` keeps prior-run discoveries revealed when reusing `message_history`."""
+    toolset = FunctionToolset()
+    executed: list[str] = []
+
+    @toolset.tool_plain(defer_loading=True)
+    def weather_lookup() -> str:
+        """Look up the weather forecast."""
+        executed.append('weather_lookup')
+        return 'sunny'
+
+    seen_tools: list[list[str]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen_tools.append(sorted(t.name for t in info.function_tools))
+        if 'weather_lookup' not in {t.name for t in info.function_tools}:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name=_SEARCH_TOOLS_NAME, args={'queries': ['weather']}, tool_call_id='s1')]
+            )
+        if len(seen_tools) in (2, 4):
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='weather_lookup', args={}, tool_call_id=f'c{len(seen_tools)}')]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent: Agent[None, str] = Agent(
+        NoNativeToolSearchModel(model_fn),
+        toolsets=[toolset],
+        capabilities=[ToolSearch()],
+        deps_type=type(None),
+    )
+
+    first = await agent.run('get weather')
+    second = await agent.run('get weather again', message_history=first.all_messages())
+    assert second.output == 'done'
+    assert executed == ['weather_lookup', 'weather_lookup']
+    assert seen_tools == snapshot(
+        [
+            ['search_tools'],
+            ['search_tools', 'weather_lookup'],
+            ['search_tools', 'weather_lookup'],
+            ['search_tools', 'weather_lookup'],
+            ['search_tools', 'weather_lookup'],
+        ]
+    )
+
+
+async def test_tool_search_reveal_scope_run_keeps_non_search_deltas() -> None:
+    """`reveal_scope='run'` resets prior-run `NativeToolSearchReturnPart` reveals without dropping `ToolAvailabilityDeltaPart`."""
+    toolset = FunctionToolset()
+
+    @toolset.tool_plain(defer_loading=True)
+    def searched_tool() -> str:  # pragma: no cover
+        return 'searched'
+
+    @toolset.tool_plain(defer_loading=True)
+    def delta_tool() -> str:  # pragma: no cover
+        return 'delta'
+
+    history: list[ModelMessage] = [
+        ModelRequest(run_id='prior-run', parts=[ToolAvailabilityDeltaPart(tools_added=['delta_tool'])]),
+        ModelResponse(
+            run_id='prior-run',
+            parts=[
+                NativeToolSearchReturnPart(
+                    content={'discovered_tools': [{'name': 'searched_tool'}]},
+                    tool_call_id='ns-prior',
+                )
+            ],
+        ),
+    ]
+    advertised: list[list[str]] = []
+
+    def model_fn(_messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        advertised.append(sorted(t.name for t in info.function_tools))
+        return ModelResponse(parts=[TextPart('ok')])
+
+    agent: Agent[None, str] = Agent(
+        NoNativeToolSearchModel(model_fn),
+        toolsets=[toolset],
+        capabilities=[ToolSearch(reveal_scope='run')],
+        deps_type=type(None),
+    )
+    result = await agent.run('next turn', message_history=history)
+    assert result.output == 'ok'
+    assert advertised == [['delta_tool', 'search_tools']]

@@ -101,6 +101,7 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import collect_leaves, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
+from ..capabilities._tool_search import tool_search_reveal_scope
 from ..capabilities.abstract import (
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
     _declares_default_id,  # pyright: ignore[reportPrivateUsage]
@@ -2201,12 +2202,17 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # refreshes this from history before each model request, so the seed only matters
         # for pre-first-step access. Non-deferred capabilities are folded in by the
         # `RunContext.active_capability_ids` property.
+        reveal_scope = tool_search_reveal_scope(capabilities_dict.values())
         loaded_capability_ids = (
             registered_loaded_capability_ids(message_history, capabilities_dict.keys())
             if message_history
             else set[str]()
         )
-        discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
+        discovered_tool_names = (
+            parse_discovered_tools(message_history, reveal_scope=reveal_scope, run_id=state.run_id)
+            if message_history
+            else set[str]()
+        )
 
         run_model_contribution = None if model_is_explicit else run_capability.get_model()
         self._check_dynamic_model_resume(run_model_contribution, message_history)
@@ -2319,6 +2325,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             capabilities=capabilities_dict,
             loaded_capability_ids=loaded_capability_ids,
             discovered_tool_names=discovered_tool_names,
+            tool_search_reveal_scope=reveal_scope,
             workspace=initial_ctx.workspace,
             # `'new'` asked to leave the conversation's workspace, so its ref isn't carried forward.
             carried_workspace_ref=None if workspace == 'new' else historical_workspace_ref,
@@ -4283,10 +4290,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # The session starts from where its history leaves off, as `iter` does: what the model loaded and had
         # revealed there is loaded and revealed here, so those tools go out when the session opens.
         # KEEP IN SYNC with `iter`.
+        reveal_scope = tool_search_reveal_scope(run_context.capabilities.values())
         run_context.loaded_capability_ids.update(
             registered_loaded_capability_ids(message_history or (), run_context.capabilities.keys())
         )
-        run_context.discovered_tool_names.update(parse_discovered_tools(message_history or ()))
+        run_context.discovered_tool_names.update(
+            parse_discovered_tools(message_history or (), reveal_scope=reveal_scope, run_id=run_id)
+        )
         model_profile = model.profile
         deferred_capability_ids = _realtime_deferred_capability_ids(run_context, model)
         _warn_realtime_uncalled_hooks(run_capability)

@@ -7,6 +7,7 @@ from pydantic_ai.native_tools._tool_search import (
     ToolSearchFunc as ToolSearchFunc,
     ToolSearchLocalStrategy as ToolSearchLocalStrategy,
     ToolSearchNativeStrategy as ToolSearchNativeStrategy,
+    ToolSearchRevealScope as ToolSearchRevealScope,
     ToolSearchStrategy as ToolSearchStrategy,
 )
 from pydantic_ai.output import OutputContext
@@ -177,6 +178,7 @@ __all__ = [
     'ToolSearchFunc',
     'ToolSearchLocalStrategy',
     'ToolSearchNativeStrategy',
+    'ToolSearchRevealScope',
     'ToolSearchStrategy',
     'keywords_search',
     'Toolset',

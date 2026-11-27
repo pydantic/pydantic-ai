@@ -944,6 +944,8 @@ Pydantic AI prefers native search whenever available because the discovery excha
 
 Every searchable deferred tool remains in the search corpus for the whole run, including tools the model has already discovered. Repeating a search is safe and lets the model recover a tool after its earlier discovery is no longer visible, such as after [compaction](capabilities/compaction.md). With the default keyword strategy, undiscovered matches always rank ahead of already-available ones, so when `max_results` trims the list, an already-available tool never displaces an undiscovered match — it only fills leftover slots.
 
+By default (`reveal_scope='conversation'`), tools revealed through tool search stay revealed across later requests and subsequent runs that reuse the same `message_history`. Pass `ToolSearch(reveal_scope='run')` to end tool-search reveals when the run ends so a new run reusing `message_history` starts with those tools hidden again and searches when it needs them.
+
 Toolsets that aggregate or wrap deferred definitions can check visibility with [`ctx.is_tool_available(tool_def)`][pydantic_ai.tools.RunContext.is_tool_available] inside `get_tools`. A definition is available when it is not deferred or its name has been revealed in history. Pass the definition the toolset is holding; the name form applies the same test to the current resolved [`ctx.tools`][pydantic_ai.tools.RunContext.tools] snapshot and is intended for model-request hooks and tool execution.
 
 Tools gated as a bundle are covered by [on-demand capabilities](capabilities/on-demand.md); they are not part of the searchable corpus.

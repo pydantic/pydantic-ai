@@ -74,7 +74,7 @@ from pydantic_ai.models import (
     _has_instruction_state,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai.native_tools import AbstractNativeTool
-from pydantic_ai.native_tools._tool_search import ToolSearchTool
+from pydantic_ai.native_tools._tool_search import ToolSearchRevealScope, ToolSearchTool
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.toolsets._tool_search import (
     _discovered_tool_names_in_order,  # pyright: ignore[reportPrivateUsage]
@@ -1117,6 +1117,7 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     # passing it to a `replace(ctx, ...=...)`) would silently break in-step tool reveals.
     loaded_capability_ids: set[str]
     discovered_tool_names: set[str]
+    tool_search_reveal_scope: ToolSearchRevealScope = 'conversation'
 
     established_tool_names: set[str] | None = dataclasses.field(default=None, repr=False)
     """Immediately-available function tools the run's `tools` section was established with.
@@ -4050,7 +4051,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         if not resuming:
             # Normalize consecutive trailing requests for model adapters without changing stored history.
             messages = _clean_message_history(list(messages), repair_last_response=True)
-            model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
+            model_request_parameters = _with_outgoing_reveal_state(
+                model_request_parameters,
+                messages,
+                reveal_scope=ctx.deps.tool_search_reveal_scope,
+                run_id=ctx.state.run_id,
+            )
             request_context.model_request_parameters = model_request_parameters
             prepared = model.prepare_messages(messages, model_request_parameters)
             # This pass folds a `ModelRequest` that `prepare_messages` inserted into the request ahead of
@@ -4118,7 +4124,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # The step-start check in `_prepare_request` ran before this request's tokens were counted.
                 ctx.deps.usage_limits.check_before_request(usage)
         else:
-            model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, list(messages))
+            model_request_parameters = _with_outgoing_reveal_state(
+                model_request_parameters,
+                list(messages),
+                reveal_scope=ctx.deps.tool_search_reveal_scope,
+                run_id=ctx.state.run_id,
+            )
             request_context.model_request_parameters = model_request_parameters
             if _continuation_needs_prepare(messages):
                 # Projection can split a foreign native tool-search exchange into a trailing
@@ -4895,7 +4906,13 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         )
         # Held in a local because it lands in two places below.
         anchored_evidence = AnchoredEvidence(
-            discovered_tool_names=frozenset(_discovered_tool_names_in_order(evidence_window))
+            discovered_tool_names=frozenset(
+                _discovered_tool_names_in_order(
+                    evidence_window,
+                    reveal_scope=ctx.deps.tool_search_reveal_scope,
+                    run_id=ctx.state.run_id,
+                )
+            )
             - ctx.deps.discovered_tool_names,
             loaded_capability_ids=frozenset(_parse_loaded_capabilities(evidence_window))
             - ctx.deps.loaded_capability_ids,
@@ -5379,7 +5396,11 @@ def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAg
 
 def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
     """Refresh the history-derived discovered tool names from the current graph state."""
-    discovered_tool_names = parse_discovered_tools(ctx.state.message_history)
+    discovered_tool_names = parse_discovered_tools(
+        ctx.state.message_history,
+        reveal_scope=ctx.deps.tool_search_reveal_scope,
+        run_id=ctx.state.run_id,
+    )
 
     # Mutate in place (not reassign), for the same shared-by-reference reason as the set above.
     ctx.deps.discovered_tool_names.clear()
@@ -5472,7 +5493,11 @@ def _record_tool_population_changes(
     without a delta.
     """
     immediate = [tool.name for tool in parameters.function_tools if not tool.defer_loading]
-    discovered = parse_discovered_tools(messages)
+    discovered = parse_discovered_tools(
+        messages,
+        reveal_scope=ctx.deps.tool_search_reveal_scope,
+        run_id=ctx.state.run_id,
+    )
     established = ctx.deps.established_tool_names
     if established is None:
         established = ctx.deps.established_tool_names = {name for name in immediate if name not in discovered}
@@ -5563,7 +5588,11 @@ def _continuation_needs_prepare(messages: list[_messages.ModelMessage]) -> bool:
 
 
 def _with_outgoing_reveal_state(
-    parameters: models.ModelRequestParameters, messages: list[_messages.ModelMessage]
+    parameters: models.ModelRequestParameters,
+    messages: list[_messages.ModelMessage],
+    *,
+    reveal_scope: ToolSearchRevealScope = 'conversation',
+    run_id: str | None = None,
 ) -> models.ModelRequestParameters:
     """Make per-request reveal state match the history that will be sent to the model.
 
@@ -5577,7 +5606,7 @@ def _with_outgoing_reveal_state(
     return replace(
         parameters,
         revealed_tool_names=_revealed_tool_names(
-            parse_discovered_tools(messages),
+            parse_discovered_tools(messages, reveal_scope=reveal_scope, run_id=run_id),
             parameters.function_tools,
             deferred_capability_ids=parameters.deferred_capability_ids,
             loaded_capability_ids=parse_loaded_capabilities(messages),
