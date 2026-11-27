@@ -6,6 +6,7 @@ from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from typing import Any
 
+import anyio.lowlevel
 import pytest
 
 from pydantic_graph import GraphBuilder, StepContext
@@ -20,7 +21,10 @@ class IterState:
 
 
 async def test_iter_basic():
-    """Test basic iteration over graph execution."""
+    """Test basic iteration over graph execution.
+
+    Reaching the end node with no other task still running does not cancel the caller's code inside `graph.iter()`.
+    """
     g = GraphBuilder(state_type=IterState, output_type=int)
 
     @g.step
@@ -42,10 +46,16 @@ async def test_iter_basic():
     state = IterState()
 
     events: list[Any] = []
+    resumed_after_end = False
     async with graph.iter(state=state) as run:
         async for event in run:
             events.append(event)
+        # A clean end must not cancel the caller's code inside the run, so this checkpoint returns. The flag is
+        # asserted after the exit, so the test fails whether a cancellation escapes the run or the exit absorbs it.
+        await anyio.lowlevel.checkpoint()
+        resumed_after_end = True
 
+    assert resumed_after_end
     assert len(events) > 0
     last_event = events[-1]
     assert isinstance(last_event, EndMarker)

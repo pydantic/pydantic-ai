@@ -15,15 +15,22 @@ Classification mirrors the engines' own wrapping: only the leaf types the wrappe
 are rejected. A custom `AbstractToolset` leaf that executes I/O isn't recognized and passes through —
 the same blind spot the constructor-time `dbosify`/`prefectify`/`temporalize` wrapping already has for
 unknown leaf types.
+
+The deprecated durable wrapper agents also check their agent's capabilities here at construction time, in
+`reject_durable_unsupported_capabilities`, since they add no durability capability for one to refuse.
 """
 
 from __future__ import annotations
 
 from collections.abc import Collection, Sequence
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
+from ..capabilities.abstract import leaf_capabilities
 from ..exceptions import UserError
 from ..toolsets import AbstractToolset
+
+if TYPE_CHECKING:
+    from ..agent.abstract import AbstractAgent
 
 RuntimeToolsetKind = Literal['function', 'mcp', 'dynamic']
 """A leaf toolset kind that a durable execution engine may need to reject when passed per-run."""
@@ -50,6 +57,22 @@ def reject_run_timeout(timeout: float | None, *, wrapper: str, capability: str) 
             f'`timeout` is not supported by the deprecated `{wrapper}`. Use the `{capability}` capability, '
             "which keeps the run's deadline when the durable execution is replayed or recovered."
         )
+
+
+def reject_durable_unsupported_capabilities(agent: AbstractAgent[Any, Any], *, wrapper: str) -> None:
+    """Reject a capability that cannot run durably when a deprecated durable wrapper agent wraps `agent`.
+
+    Such a capability refuses a durability capability in its own `for_agent`, but the wrapper adds none, and the
+    capabilities of the agent it wraps are already bound, so the wrapper refuses them itself.
+    """
+    for capability in leaf_capabilities(agent.root_capability):
+        reason = capability._durable_unsupported_reason  # pyright: ignore[reportPrivateUsage]
+        if reason is not None:
+            raise UserError(
+                f'`{type(capability).__name__}` does not support durable execution, so the deprecated `{wrapper}` '
+                f'cannot wrap an agent that uses it: {reason}. Use it on an agent that runs outside the durable '
+                'workflow or flow.'
+            )
 
 
 def _runtime_toolset_kind(toolset: AbstractToolset[Any]) -> RuntimeToolsetKind | None:

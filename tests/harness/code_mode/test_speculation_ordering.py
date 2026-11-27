@@ -4,6 +4,7 @@ import json
 from collections.abc import AsyncIterator
 
 import pytest
+from pydantic_monty import ExternalModule
 
 from pydantic_ai import Agent, Tool
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -102,6 +103,39 @@ async def test_read_launched_before_an_unspelled_write_is_not_adopted(snippets: 
         if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
     ]
     assert returns[-1] == 'after'
+    assert capability.speculation_stats.launched == 1
+    assert capability.speculation_stats.adopted == 0
+
+
+async def test_read_launched_before_a_module_write_is_not_adopted() -> None:
+    """A host module function may write what a speculative read saw, so that launch is not claimed after it."""
+    value = 'before'
+
+    def write() -> None:
+        nonlocal value
+        value = 'after'
+
+    def read() -> str:
+        return value
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) > 1:
+            yield 'done'
+            return
+        code = 'import store\nstore.write()\nawait read()'
+        yield {0: DeltaToolCall(name='run_code', json_args=json.dumps({'code': code}))}
+
+    store = ExternalModule({'write': write}, stubs='def write() -> None: ...')
+    capability = CodeMode(speculate=['read'], external_modules={'store': store})
+    result = await Agent(FunctionModel(stream_function=stream), tools=[read], capabilities=[capability]).run('go')
+
+    returns = [
+        part.content
+        for message in result.all_messages()
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+    ]
+    assert returns == ['after']
     assert capability.speculation_stats.launched == 1
     assert capability.speculation_stats.adopted == 0
 
