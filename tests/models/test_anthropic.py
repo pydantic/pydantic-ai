@@ -2373,7 +2373,7 @@ async def test_anthropic_thinking_drops_the_sampling_settings_it_rejects(
     assert result.output.strip() == snapshot('4')
     body = request_capture.body('/v1/messages')
     assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k', 'thinking')} == (
-        snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 10000}})
+        snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}})
     )
 
 
@@ -2452,7 +2452,7 @@ async def test_anthropic_thinking_keeps_sampling_settings_without_the_restrictio
     )
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 10000}
+    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}
     assert kwargs['extra_body'] == {'temperature': 0.5, 'top_p': 0.9, 'top_k': 40}
 
 
@@ -6988,11 +6988,13 @@ async def test_anthropic_refusal_content_filter_error_message_streaming(allow_mo
 @pytest.mark.parametrize(
     'thinking_value,expected_thinking,expected_effort',
     [
-        pytest.param(True, {'type': 'adaptive'}, None, id='true-adaptive'),
-        pytest.param('high', {'type': 'adaptive'}, 'high', id='high-adaptive-with-effort'),
-        pytest.param('low', {'type': 'adaptive'}, 'low', id='low-adaptive-with-effort'),
-        pytest.param('medium', {'type': 'adaptive'}, 'medium', id='medium-adaptive-with-effort'),
-        pytest.param('xhigh', {'type': 'adaptive'}, 'max', id='xhigh-maps-to-max'),
+        pytest.param(True, {'type': 'adaptive', 'display': 'summarized'}, None, id='true-adaptive'),
+        pytest.param('high', {'type': 'adaptive', 'display': 'summarized'}, 'high', id='high-adaptive-with-effort'),
+        pytest.param('low', {'type': 'adaptive', 'display': 'summarized'}, 'low', id='low-adaptive-with-effort'),
+        pytest.param(
+            'medium', {'type': 'adaptive', 'display': 'summarized'}, 'medium', id='medium-adaptive-with-effort'
+        ),
+        pytest.param('xhigh', {'type': 'adaptive', 'display': 'summarized'}, 'max', id='xhigh-maps-to-max'),
     ],
 )
 async def test_anthropic_unified_thinking_adaptive_model(
@@ -7042,7 +7044,7 @@ async def test_anthropic_unified_thinking_non_adaptive_model(allow_model_request
     await agent.run('What is 2+2?')
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 16384}
+    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 16384, 'display': 'summarized'}
     # Non-adaptive models don't support effort
     assert kwargs.get('output_config') is None or kwargs['output_config'] is OMIT
 
@@ -7136,7 +7138,7 @@ async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: No
     await agent.run('What is 2+2?')
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['thinking'] == {'type': 'adaptive'}
+    assert kwargs['thinking'] == {'type': 'adaptive', 'display': 'summarized'}
     assert kwargs['output_config'] == {'effort': 'xhigh'}
 
 
@@ -7431,7 +7433,14 @@ async def test_anthropic_adaptive_thinking_keeps_tool_output_unforced(
 
     assert result.output == snapshot(CityLocation(city='Paris', country='France'))
     assert [(body['thinking'], body['tool_choice']) for body in request_capture.bodies()] == snapshot(
-        [({'type': 'adaptive'}, {'type': 'auto'})]
+        [
+            (
+                {'type': 'adaptive', 'display': 'summarized'}
+                if not provider_specific_thinking
+                else {'type': 'adaptive'},
+                {'type': 'auto'},
+            )
+        ]
     )
 
 

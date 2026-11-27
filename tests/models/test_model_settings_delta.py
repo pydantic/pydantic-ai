@@ -888,7 +888,7 @@ def _fallback_model(kind: str, *, fails: bool) -> tuple[Any, Any]:
                 (
                     [
                         (
-                            {'type': 'adaptive'},
+                            {'type': 'adaptive', 'display': 'summarized'},
                             {'effort': 'low'},
                             True,
                             [{'role': 'system', 'content': [], 'output_config': {'effort': 'xhigh'}}],
@@ -917,7 +917,7 @@ def _fallback_model(kind: str, *, fails: bool) -> tuple[Any, Any]:
                     ],
                     [
                         (
-                            {'type': 'adaptive'},
+                            {'type': 'adaptive', 'display': 'summarized'},
                             {'effort': 'low'},
                             True,
                             [{'role': 'system', 'content': [], 'output_config': {'effort': 'xhigh'}}],
@@ -934,13 +934,13 @@ def _fallback_model(kind: str, *, fails: bool) -> tuple[Any, Any]:
                 (
                     [
                         (
-                            {'type': 'adaptive'},
+                            {'type': 'adaptive', 'display': 'summarized'},
                             {'effort': 'low'},
                             True,
                             [{'role': 'system', 'content': [], 'output_config': {'effort': 'xhigh'}}],
                         )
                     ],
-                    [({'type': 'enabled', 'budget_tokens': 32768}, None, False, [])],
+                    [({'type': 'enabled', 'budget_tokens': 32768, 'display': 'summarized'}, None, False, [])],
                 )
             ),
             id='anthropic-to-anthropic-without-channel',

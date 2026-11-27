@@ -2349,6 +2349,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         set_reasoning_context(reasoning, reasoning_context, self.profile)
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
+        elif model_settings.get('thinking_summary') and self._request_thinks(model_settings, model_request_parameters):
+            # Every reasoning model accepts `auto`, unlike `concise`. Summaries aren't requested by default because
+            # they may require organization verification.
+            reasoning['summary'] = 'auto'
         return reasoning or OMIT
 
     def _request_thinks(
@@ -2361,6 +2365,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         # `_translate_thinking` sends an explicit effort instead of the one unified `thinking` maps to.
         return ('openai_reasoning_effort',) if model_settings.get('openai_reasoning_effort') is not None else ()
+
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_translate_thinking` sends an explicit summary instead of the one `thinking_summary` asks for.
+        return ('openai_reasoning_summary',) if model_settings.get('openai_reasoning_summary') else ()
 
     def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
         return model_settings.get('openai_reasoning_effort') is not None

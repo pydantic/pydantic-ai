@@ -335,6 +335,14 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
     """
 
+    _durable_unsupported_reason: ClassVar[str | None] = None
+    """Why this capability cannot run under durable execution, or `None` when it can.
+
+    Internal, in-tree only. A capability that sets it refuses a durability capability in its own
+    `for_agent`. The deprecated wrapper agents (`TemporalAgent`, `DBOSAgent`, `PrefectAgent`) add no
+    durability capability for it to find, so they read this to refuse the capability when they wrap the agent.
+    """
+
     @property
     def _cancellation_error_types(self) -> tuple[type[BaseException], ...]:
         """Exceptions the environment this capability integrates with cancels a run with from outside.

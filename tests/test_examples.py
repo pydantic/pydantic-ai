@@ -163,6 +163,7 @@ RUNNABLE_HARNESS_PAGES = frozenset(
         'deny-unanswered.md',
         'detect-loops.md',
         'memory.md',
+        'pax.md',
         'permissions.md',
         'report-remaining-budget.md',
         'report-tool-errors.md',
@@ -1203,6 +1204,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
         tool_name='final_result',
         args={'name': 'John Doe', 'age': 30},
     ),
+    'Did the build pass?': ToolCallPart(tool_name='final_result', args={'verdict': 'pass'}),
     'The kettle leaks everywhere. I just want my money back.': ToolCallPart(
         tool_name='final_result', args={'intent': 'refund', 'summary': 'Leaking kettle, customer wants a refund.'}
     ),
