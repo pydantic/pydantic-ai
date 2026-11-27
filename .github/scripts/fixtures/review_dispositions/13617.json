@@ -1,0 +1,106 @@
+{
+  "pull": {
+    "base": {
+      "repo": {
+        "id": 818331198
+      },
+      "sha": "46de184b6a8ec095ffd4057c6d37e239ad839a72"
+    },
+    "changed_files": 5,
+    "head": {
+      "repo": {
+        "id": 818331198
+      },
+      "sha": "bb9501c6ef6b06e1075aacd61163cd1680fe7189"
+    },
+    "html_url": "https://github.com/pydantic/pydantic-ai/pull/13617",
+    "user": {
+      "id": 5629756,
+      "login": "mpfaffenberger",
+      "type": "User"
+    },
+    "labels": [
+      {
+        "name": "feature"
+      },
+      {
+        "name": "size: S"
+      },
+      {
+        "name": "pkg:harness"
+      }
+    ],
+    "number": 13617,
+    "state": "closed"
+  },
+  "reviews": [
+    {
+      "body": "<!-- Macroscope (Approvability) review body marker -->\n<!-- MURMUR_IGNORE -->\n<!-- macroscope-meta: {\"kind\":\"approvability\"} -->",
+      "commit_id": "bb9501c6ef6b06e1075aacd61163cd1680fe7189",
+      "id": 5926929611,
+      "state": "APPROVED",
+      "submitted_at": "2026-11-16T20:20:18Z",
+      "user": {
+        "id": 170038800,
+        "login": "macroscopeapp[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "## PR Review Checks\n\n- `tests-and-dependencies` (complete): Reviewed the only listed file, `tests/harness/advisor/test_advisor.py`, against `tests/AGENTS.md`, `tests/harness/AGENTS.md`, `src/pydantic_ai_harness/AGENTS.md` and the base/head Advisor implementation it exercises; no cassettes, dependency manifests or lockfiles are changed.\n\n<details><summary>Usage</summary>\n\n| check | outcome | findings | steps | tokens | seconds |\n|---|---|---|---|---|---|\n| `tests-and-dependencies` | COMPLETE | 1 | 11 | 459,149 | 200 |\n\n</details>\n\n<!-- pr-review-checks run=43948554771 head=bb9501c6ef6b06e1075aacd61163cd1680fe7189 -->",
+      "commit_id": "bb9501c6ef6b06e1075aacd61163cd1680fe7189",
+      "id": 5927552735,
+      "state": "COMMENTED",
+      "submitted_at": "2026-11-16T20:59:24Z",
+      "user": {
+        "id": 41898282,
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "",
+      "commit_id": "bb9501c6ef6b06e1075aacd61163cd1680fe7189",
+      "id": 5927618112,
+      "state": "COMMENTED",
+      "submitted_at": "2026-11-16T21:03:13Z",
+      "user": {
+        "id": 5629756,
+        "login": "mpfaffenberger",
+        "type": "User"
+      }
+    }
+  ],
+  "comments": [
+    {
+      "body": "**medium** · `tests-and-dependencies` check\n\n`test_callable_max_uses_bounds_local_consultations_across_runs` only changes the deps budget between the two `agent.run` calls (this line, after the first run has finished) and consults at most once per run. With `max_uses=lambda ctx: 3 - ctx.deps.used` and `used=2`, both the new `prepare`-based limit and a naive per-call `self._max_uses_for(ctx)` read produce exactly one consultation followed by the limit message, so the test (and the existing int `max_uses` tests, which use a constant limit) cannot tell them apart. That leaves the local half of this change unpinned: `_prepare_local`'s stated contract (\"Fix the local limit once per request, so parallel calls share it\") and the PR body's claim that a caller counter updated while calls run cannot make the last allowed call refuse itself. A change that drops `prepare` and resolves the callable inside `advisor()` would keep every existing and new test green. Fix: have `advisor_model` increment `budget.used` once per consultation so the parallel calls in one request observe a moving value, and assert all three calls allowed by the limit fixed at request start still consult (e.g. start at `used=0`, expect three consultations rather than the two a per-call read would permit).\n\n<!-- pr-review-checks finding=f9462a5ce689ffb51e519fec5403f8299c6ef30073475ba3b9c30d4622bc3e1e -->",
+      "created_at": "2026-11-16T20:59:24Z",
+      "id": 4591477958,
+      "in_reply_to_id": null,
+      "original_commit_id": "bb9501c6ef6b06e1075aacd61163cd1680fe7189",
+      "pull_request_review_id": 5927552735,
+      "user": {
+        "id": 41898282,
+        "login": "github-actions[bot]",
+        "type": "Bot"
+      }
+    },
+    {
+      "body": "Agreed. Fixed in stacked #13659: the advisor model now spends from the shared budget during the run and the calls run sequentially, so a per-call read would allow one consultation where the prepare-time limit allows two. Confirmed the test fails with the limit read inside the tool body.",
+      "created_at": "2026-11-16T21:03:13Z",
+      "id": 4591523087,
+      "in_reply_to_id": 4591477958,
+      "original_commit_id": "bb9501c6ef6b06e1075aacd61163cd1680fe7189",
+      "pull_request_review_id": 5927618112,
+      "user": {
+        "id": 5629756,
+        "login": "mpfaffenberger",
+        "type": "User"
+      }
+    }
+  ],
+  "commits": [
+    "bb9501c6ef6b06e1075aacd61163cd1680fe7189"
+  ],
+  "resolved": []
+}

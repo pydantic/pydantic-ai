@@ -13,7 +13,7 @@ from pydantic_ai.messages import ModelMessage, ModelResponse, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.step_persistence import InMemoryStepStore, StepPersistence
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteSessionStore
 from tests.harness._docs_examples import python_blocks
 
 
@@ -114,7 +114,7 @@ class TestStepPersistenceSessionMigration:
 
     async def test_move_heads_copies_every_head_under_the_scope(self, tmp_path: Path) -> None:
         agent = Agent(TestModel())
-        heads = SqliteConversationStore(database=tmp_path / 'sessions.db')
+        heads = SqliteSessionStore(database=tmp_path / 'sessions.db')
         runs = {name: await agent.run(name) for name in ('one', 'two')}
         for name, result in runs.items():
             await heads.save(summary=ConversationSummary(id=name, workspace='.'), messages=result.all_messages())

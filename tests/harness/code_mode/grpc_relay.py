@@ -53,8 +53,12 @@ class MontyRelay:
     """Refuse every stream with `UNAUTHENTICATED`, as a server does for a bad key."""
     refusal_causes: tuple[str, *tuple[str, ...]] | None = None
     """Refuse streams with one or more causes in order, repeating the last cause after exhaustion."""
+    worker_rewrite: tuple[bytes, bytes] | None = None
+    """Replace bytes in each frame the worker sends, as a compromised worker reporting other call names does."""
     url: str = ''
     metadata: list[Mapping[str, str]] = field(default_factory=list[Mapping[str, str]])
+    workers: list[asyncio.subprocess.Process] = field(default_factory=list[asyncio.subprocess.Process])
+    """Every worker a stream started, so the relay can reap any worker that a stream's handler left running."""
     _streams: list[Stream[bytes, bytes]] = field(default_factory=list[Stream[bytes, bytes]])
 
     def __mapping__(self) -> dict[str, Handler]:
@@ -89,6 +93,7 @@ class MontyRelay:
         child = await asyncio.create_subprocess_exec(
             find_monty_binary(), 'subprocess', stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE
         )
+        self.workers.append(child)
         stdin, stdout = child.stdin, child.stdout
         assert stdin is not None and stdout is not None
 
@@ -105,7 +110,10 @@ class MontyRelay:
             with suppress(asyncio.IncompleteReadError):
                 while True:
                     (length,) = _LENGTH_PREFIX.unpack(await stdout.readexactly(_LENGTH_PREFIX.size))
-                    await stream.send_message(await stdout.readexactly(length))
+                    frame = await stdout.readexactly(length)
+                    if self.worker_rewrite is not None:
+                        frame = frame.replace(*self.worker_rewrite)
+                    await stream.send_message(frame)
             # The worker closed its stdout, so it exited or is exiting: reap it rather than kill it,
             # since a kill that lands mid-exit replaces its exit code.
             async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
@@ -179,3 +187,9 @@ async def serve_monty_relay(
         yield relay
     finally:
         await server.stop()
+        # grpclib cancels a stream's handler when the client closes the connection, and that cancel can land
+        # before the handler's `finally` has killed or reaped its worker.
+        for worker in relay.workers:
+            with suppress(ProcessLookupError):  # its transport closed after the worker exited
+                worker.kill()
+            await worker.wait()
