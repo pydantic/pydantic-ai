@@ -23,6 +23,7 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    are_tool_call_args_cut_off,
     incomplete_tool_call_message,
     is_incomplete_json,
     output_pipeline_scope,
@@ -44,6 +45,7 @@ from .usage import RunUsage, UsageLimits
 from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
+    from ._appended_messages import AppendedMessages
     from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
 
@@ -321,7 +323,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                         f'Invalid response, unable to find tool call for {output_tool_name!r}'
                     )
                 return await self._validate_tool_output(
-                    tool_call, cut_off=message.finish_reason == 'length', allow_partial=allow_partial
+                    tool_call,
+                    # As in `CallToolsNode`, only the tool call the response ended on can have been cut off.
+                    cut_off=message.finish_reason == 'length' and message.parts[-1] is tool_call,
+                    allow_partial=allow_partial,
                 )
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
@@ -377,7 +382,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             )
         except ValidationError as e:
             # Say that the token limit cut the arguments off, as `CallToolsNode` does, rather than only that they're invalid.
-            if cut_off and not allow_partial and is_incomplete_json(e):
+            if cut_off and not allow_partial and are_tool_call_args_cut_off(tool_call):
                 raise exceptions.IncompleteToolCall(incomplete_tool_call_message(self._max_tokens_getter())) from e
             raise
 
@@ -637,6 +642,13 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     _run_result: AgentRunResult[OutputDataT] | None = None
 
+    _full_history_from: tuple[AppendedMessages, int] | None = None
+    """The run's record of its messages, and where the messages this result adds to its copy of the history start.
+
+    Set when the stream's own response ends the run, so the settled result's conversation can keep the full history
+    when a capability dropped or rewrote messages, as the run's would.
+    """
+
     is_complete: bool = field(default=False, init=False)
     """Whether the stream has all been received.
 
@@ -732,6 +744,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     run_id=self.run_id,
                     conversation_id=self.conversation_id,
                     metadata=self.metadata,
+                    appended_messages=self._settled_full_history(),
                 ),
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,
@@ -741,6 +754,21 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return result
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
+
+    def _settled_full_history(self) -> AppendedMessages:
+        """The full history for the settled result of a run whose history a capability rewrote, or an empty record."""
+        from ._appended_messages import AppendedMessages
+
+        record, start = self._full_history_from or (AppendedMessages(), 0)
+        if not record.full or record.messages is None:
+            return AppendedMessages()
+        # The run kept its full history when it ended, with the streamed response, which the run commits itself, but
+        # not the request with the tool returns the stream added to its copy after it. Content queued at a deferred
+        # pause is in both, recorded before the run committed the response, so the copy's order is kept for it.
+        added = [message for message in self._all_messages[start:] if isinstance(message, _messages.ModelRequest)]
+        in_copy = {id(message) for message in added}
+        kept = [message for message in record.messages if id(message) not in in_copy]
+        return AppendedMessages([*kept, *added], record.new_message_index, full=True)
 
     def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of _messages.

@@ -80,8 +80,8 @@ def test_measured_cells_only_go_up() -> None:
     )
     assert {engine: measured[engine] for engine in ENGINES} == snapshot(
         {
-            'dbos': 44,
-            'temporal': 44,
+            'dbos': 45,
+            'temporal': 45,
             'prefect': 0,
             'aws_lambda': 0,
             'absurd': 0,
@@ -123,6 +123,10 @@ def test_an_exempt_cell_links_its_issue() -> None:
 
 
 def test_every_scenario_has_a_cell_for_every_engine() -> None:
+    """Every scenario says what every engine does with it.
+
+    It reads test tables, with no provider exchange to record, so it isn't a VCR test.
+    """
     assert set(SCENARIO_SUPPORT) == set(SCENARIOS)
     for scenario, cells in SCENARIO_SUPPORT.items():
         assert set(cells) == set(ENGINES), scenario
@@ -133,7 +137,10 @@ SCENARIO_OWNERS_BESIDES_CAPABILITIES = ('RunContext',)
 
 
 def test_every_scenario_names_its_owner() -> None:
-    """A scenario is `<owner>.<scenario>`, and it is no case: D1's exemptions and `calls` never see it."""
+    """A scenario is `<owner>.<scenario>`, and it is no case: D1's exemptions and `calls` never see it.
+
+    It reads test tables, with no provider exchange to record, so it isn't a VCR test.
+    """
     for scenario in SCENARIOS:
         owner, _, name = scenario.partition('.')
         assert (owner in PUBLIC or owner in SCENARIO_OWNERS_BESIDES_CAPABILITIES) and name, scenario
@@ -141,12 +148,21 @@ def test_every_scenario_names_its_owner() -> None:
 
 
 def test_the_d1_suites_run_every_run_context_scenario() -> None:
-    """No capability's tests run a `RunContext` scenario, so the D1 suites must, through `SCENARIO_RUNS`."""
+    """No capability's tests run a `RunContext` scenario, so the D1 suites must, through `SCENARIO_RUNS`.
+
+    It reads test tables, with no provider exchange to record, so it isn't a VCR test.
+    """
     run_context = {scenario for scenario in SCENARIOS if scenario.startswith('RunContext.')}
     assert run_context <= set(SCENARIO_RUNS)
 
 
 def test_every_broken_scenario_cell_has_a_signature() -> None:
-    """A `broken` cell's bug must show as its signature, and a signature no cell uses is stale."""
+    """Every `broken` cell's issue has a signature, and a signature no cell uses is stale: the keys stay in sync.
+
+    The scenario's own tests match the signature against the observed outcome: the D1 suites
+    (`tests/harness/test_durable_tool_io.py` and `tests/harness/test_durable_temporal_replay.py`) for the `RunContext`
+    scenarios, and `tests/harness/background_tools/test_durable_engines.py` for the `BackgroundTools` ones. It reads test tables, with no provider exchange to
+    record, so it isn't a VCR test.
+    """
     broken = {cell.issue for cells in SCENARIO_SUPPORT.values() for cell in cells.values() if cell.level == 'broken'}
     assert broken == set(BROKEN_SIGNATURES)

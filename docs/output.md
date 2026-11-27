@@ -374,7 +374,7 @@ _(This example is complete, it can be run "as is")_
 
 #### Native Output
 
-Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools. [Groq](models/groq.md#structured-output) also cannot combine Native Output with function tools. On [Anthropic](models/anthropic.md#schema-complexity-limits), the schema is compiled into a grammar with complexity limits that a large schema can exceed, and on a request that thinks, a structured `output_type` uses Native Output even without the marker class, unless its schema is over those limits. On [OpenAI](models/openai.md#structured-output-schemas), a schema over the strict-mode size limits is sent without strict mode.
+Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools. [Groq](models/groq.md#structured-output) also cannot combine Native Output with function tools. On [Anthropic](models/anthropic.md#schema-complexity-limits), the schema is compiled into a grammar with complexity limits that a large schema can exceed, and on a request that thinks, a structured `output_type` uses Native Output even without the marker class, unless its schema is over those limits or Anthropic rejects it as too complex, in which case the run uses Tool Output instead, except inside a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] (see [Schema complexity limits](models/anthropic.md#schema-complexity-limits)). On [OpenAI](models/openai.md#structured-output-schemas), a schema over the strict-mode size limits is sent without strict mode.
 
 To use this mode, you can wrap the output type(s) in the [`NativeOutput`][pydantic_ai.output.NativeOutput] marker class that also lets you specify a `name` and `description` if the name and docstring of the type or function are not sufficient.
 
@@ -872,6 +872,83 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
+#### Checking quoted evidence against the source {#grounding-validators}
+
+When an agent extracts facts from text you hold, such as a document, a web page, or a tool result, have each fact carry a verbatim quote of the text it rests on, and check in an output validator that every quote appears in the source. A quote that doesn't appear was paraphrased, misremembered, or made up. Raising [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] sends the model back to quote the source exactly or leave the fact out. The check is a substring test, so a grounded output costs no extra request.
+
+Collapse whitespace on both sides before comparing, so that a quote can span a line break in the source:
+
+```python {title="grounding_validator.py"}
+from pydantic import BaseModel, Field
+
+from pydantic_ai import Agent, ModelRetry, RunContext
+
+
+class Fact(BaseModel):
+    statement: str
+    quote: str = Field(description='The source text that supports the statement, copied verbatim.')
+
+
+class Extraction(BaseModel):
+    facts: list[Fact]
+
+
+def normalize(text: str) -> str:
+    return ' '.join(text.split())
+
+
+agent = Agent(
+    '{{ openai:medium }}',
+    output_type=Extraction,
+    deps_type=str,
+    instructions='Extract the payment terms from the contract. Quote the supporting text for each fact verbatim.',
+)
+
+
+@agent.output_validator
+def check_quotes(ctx: RunContext[str], output: Extraction) -> Extraction:
+    if ctx.partial_output:  # when streaming, check only the complete output
+        return output
+    source = normalize(ctx.deps)
+    unsupported = [fact.quote for fact in output.facts if normalize(fact.quote) not in source]
+    if unsupported:
+        raise ModelRetry(
+            f'These quotes do not appear in the contract: {unsupported}. '
+            'Copy the supporting text exactly, or leave the fact out.'
+        )
+    return output
+
+
+contract = """\
+Invoices are payable within 30 days of receipt. Late payments accrue
+interest at 1.5% per month."""
+
+result = agent.run_sync(f'<contract>\n{contract}\n</contract>', deps=contract)
+for fact in result.output.facts:
+    print(fact.quote)
+    #> Invoices are payable within 30 days of receipt.
+    #> Late payments accrue interest at 1.5% per month.
+print(result.usage.requests)  # here the first output paraphrased the second quote, and the validator asked for a retry
+#> 2
+```
+
+_(This example is complete, it can be run "as is")_
+
+Normalizing more, such as case or curly quotes, accepts more text the source doesn't contain verbatim, so add only the normalization your sources need. A quote that appears in the source proves the text exists, not that it supports the statement: to check that, use a second model as a judge, or measure it with [Pydantic Evals](evals.md).
+
+#### Don't gate actions on model-reported confidence {#model-reported-confidence}
+
+It's tempting to add a `confidence` field to an output type, or a `risk` argument to a tool, and act on the number: run the side effect above 0.8, ask a person below it. A score the model reports about its own output is not calibrated across models, prompts, or days, so a threshold on it doesn't mean what it says, and an output that is confidently wrong passes it.
+
+Gate on what your code can check instead:
+
+- **Verifiable outputs and arguments**: a quote that appears in the source, as [above](#grounding-validators), an id that exists in your database, an amount under a policy limit. Check outputs in an output validator and tool arguments in an [`args_validator`](tools-advanced.md#args-validator) or the tool itself.
+- **Policy on the action**: which tool is called, with which arguments, in which context. Mark a tool `requires_approval=True` or raise [`ApprovalRequired`][pydantic_ai.exceptions.ApprovalRequired] when the arguments cross your policy, as in the [tool approval example](deferred-tools.md#human-in-the-loop-tool-approval).
+
+If you keep a score, for instance to order work in a review queue, measure what it means before acting on it: build a dataset of cases with known answers using [Pydantic Evals](evals.md), check how often outputs at each score are right for the model and prompt you run, and measure again when either changes. The same goes for the confidence a [decision model](models/decision.md) reports in `provider_details`: [tune any threshold on your own labelled data](models/decision.md#tuning-a-threshold-on-your-own-data).
+
+The Pydantic AI Harness [`ApprovalReviewer`](harness/approval-reviewer.md#risk-tiers) follows the same rule: it asks the reviewing model one question about a tool call, answered `yes`, `no`, or `unsure`, instead of grading risk on a scale against a threshold.
+
 ## Image output
 
 Some models can generate images as part of their response, for example those that support the [Image Generation native tool](native-tools.md#image-generation-tool) and OpenAI models using the [Code Execution native tool](native-tools.md#code-execution-tool) when told to generate a chart.
@@ -978,7 +1055,7 @@ if result.response.finish_reason == 'length':
 Structured output is validated, so output that was cut off is usually caught:
 
 - With [`NativeOutput`](#native-output) or [`PromptedOutput`](#prompted-output), text that was cut off into JSON that doesn't parse raises [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] with a message naming the token limit, in [`run()`][pydantic_ai.agent.AbstractAgent.run] and [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream] alike. The model isn't asked to try again, as it would run into the same limit. Text that was cut off but still parses is validated as usual, so it's the output when it's valid, and is retried when the schema or an [output validator](#output-validator-functions) rejects it.
-- With [tool output](#tool-output), an output tool call whose arguments were cut off into JSON that doesn't parse raises [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] right away, in `run()` and `run_stream()` alike. Arguments that were cut off but still parse are validated as usual, and are retried when the schema or an output validator rejects them.
+- With [tool output](#tool-output), an output tool call whose arguments were cut off into JSON that doesn't parse, or that came back with no arguments at all (as Anthropic returns a cut-off tool call), raises [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] right away, in `run()` and `run_stream()` alike. Arguments that were cut off but still parse are validated as usual, and are retried when the schema or an output validator rejects them.
 - A response that was cut off before it produced any output, say while the model was [thinking](capabilities/thinking.md), raises `OutputTokenLimitExceeded`.
 
 To get the whole answer, raise `max_tokens`, ask for a shorter one, or have [another model take over](capabilities/model-fallback.md#token-limit).

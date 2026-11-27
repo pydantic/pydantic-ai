@@ -19,7 +19,7 @@ from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from tests.batch_vcr_utils import batch_poll_interval, wait_for_batch
 from tests.conftest import IsStr, RequestCapture, try_import
-from tests.models.conftest import AnthropicModelFactory
+from tests.models.conftest import AnthropicModelFactory, anthropic_2023_06_01_client
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
@@ -175,7 +175,7 @@ async def test_anthropic_batch_mixes_successes_and_errors(
     allow_model_requests: None, anthropic_api_key: str, vcr: Cassette
 ) -> None:
     """Requests of one batch fail on their own, each with the error it would have raised outside a batch."""
-    provider = AnthropicProvider(api_key=anthropic_api_key)
+    provider = AnthropicProvider(anthropic_client=anthropic_2023_06_01_client(anthropic_api_key))
     model = AnthropicModel('claude-haiku-4-5', provider=provider)
     unknown = AnthropicModel('not-a-real-anthropic-model', provider=provider)
     ok, invalid = _request('batch-ok'), _request('batch-invalid-temperature', {'temperature': 5})

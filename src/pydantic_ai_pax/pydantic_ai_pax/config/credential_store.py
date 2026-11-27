@@ -6,7 +6,6 @@ most once per process; each account's secret is an encrypted file next to its lo
 """
 
 import logging
-import os
 import re
 import sqlite3
 from collections.abc import Generator
@@ -20,6 +19,7 @@ from keyring.errors import InitError, KeyringError, KeyringLocked, NoKeyringErro
 
 from pydantic_ai.exceptions import UserError
 from pydantic_ai_pax.config.private_files import write_private as _write_private
+from pydantic_ai_pax.paths import config_dir
 
 _SERVICE = 'pydantic-clai2'
 _ACCOUNT = 'openai-codex'
@@ -78,10 +78,8 @@ def credentials_path(*, account: str = _ACCOUNT) -> Path:
     """The private fallback file for one account, in the user's Pax config directory.
 
     Credentials are per user, like keyring entries, so `--database` does not move them.
-    Mirrors `SettingsStore`'s default directory rule, which cannot be imported here
-    without constructing a database.
     """
-    root = Path(os.getenv('XDG_CONFIG_HOME', str(Path.home() / '.config'))) / 'pydantic-clai2'
+    root = config_dir()
     # A gateway profile such as `gateway/openai@work` stays one file in this folder, not a subfolder.
     return root / f'credentials-{account.replace("/", _SLASH)}.json'
 
