@@ -21,7 +21,8 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.usage import RequestUsage
-from pydantic_ai_harness.sub_agents import DelegationOutcome, DelegationTask, ParentMessagePart
+from pydantic_ai_harness.sub_agents import DelegationOutcome, DelegationTask
+from pydantic_ai_harness.sub_agents._parent_message import ParentMessagePart
 from pydantic_ai_pax.runtime.tasks import Tasks
 from pydantic_ai_pax.ui.menus.task_view import Action, TaskView, perform, task_rows, transcript_blocks
 from tests.pax.live_script import frame, press

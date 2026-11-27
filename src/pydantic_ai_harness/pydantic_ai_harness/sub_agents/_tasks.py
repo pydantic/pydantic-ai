@@ -907,7 +907,7 @@ class DelegationTasks:
         """Send a running child a message, which its run reads at its next model request.
 
         Text is a user message, such as the user's own words from a UI. A part goes as it is, such as the
-        `ParentMessagePart` that `message_task` sends for the delegating model.
+        delegating agent's message that `message_task` sends for the delegating model.
 
         Returns `False` when the child is not running, so a caller can offer to resume it instead.
         A message sent before the child's run starts waits for it, and is dropped if the child is stopped

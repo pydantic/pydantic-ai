@@ -34,7 +34,8 @@ from termflow.tui.keys import Key
 from termflow.tui.terminal import terminal_size
 
 from pydantic_ai.messages import ModelMessage, TextPart, ToolCallPart, UserPromptPart
-from pydantic_ai_harness.sub_agents import DelegationTask, ParentMessagePart
+from pydantic_ai_harness.sub_agents import DelegationTask
+from pydantic_ai_harness.sub_agents._parent_message import ParentMessagePart
 from pydantic_ai_pax.plugins import TaskInfo
 from pydantic_ai_pax.runtime.tasks import Tasks, task_tree
 from pydantic_ai_pax.ui.menus.menu_worker import run_worker, worker_stopping

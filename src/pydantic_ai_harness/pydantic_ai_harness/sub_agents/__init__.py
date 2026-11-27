@@ -53,7 +53,6 @@ from pydantic_ai_harness.sub_agents._events import (
     TaskSteeredEvent,
 )
 from pydantic_ai_harness.sub_agents._models import ModelOption
-from pydantic_ai_harness.sub_agents._parent_message import ParentMessagePart, TaskAuthority
 from pydantic_ai_harness.sub_agents._tasks import (
     DelegationReports,
     DelegationSnapshot,
@@ -105,7 +104,6 @@ __all__ = [
     'InMemoryTransport',
     'ModelOption',
     'ParentMessageEvent',
-    'ParentMessagePart',
     'Recipient',
     'RemoteSubAgent',
     'SavedTaskProblem',
@@ -118,7 +116,6 @@ __all__ = [
     'SubAgents',
     'TaskAnsweredEvent',
     'TaskAssignedEvent',
-    'TaskAuthority',
     'TaskBackgroundedEvent',
     'TaskCancelRequestedEvent',
     'TaskCancelledEvent',

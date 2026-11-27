@@ -49,7 +49,8 @@ from pydantic_ai_harness.file_system import (
 )
 from pydantic_ai_harness.permissions import PermissionAction
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent
-from pydantic_ai_harness.sub_agents import DelegationOutcome, ParentMessagePart
+from pydantic_ai_harness.sub_agents import DelegationOutcome
+from pydantic_ai_harness.sub_agents._parent_message import ParentMessagePart
 from pydantic_ai_pax.config import PermissionMode
 from pydantic_ai_pax.plugins import ForkEnd, ForkInfo, ForkStatus, PanelIcon, PluginOrigin, PluginStatus, QueuedInput
 from pydantic_ai_pax.runtime.eager_timing import NESTED_CALL

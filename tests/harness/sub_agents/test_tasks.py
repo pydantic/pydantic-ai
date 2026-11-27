@@ -46,7 +46,6 @@ from pydantic_ai_harness.sub_agents import (
     DelegationTask,
     DelegationTaskEvent,
     DelegationTasks,
-    ParentMessagePart,
     SavedTaskProblem,
     SavedTasks,
     SubAgent,
@@ -55,6 +54,7 @@ from pydantic_ai_harness.sub_agents import (
     TaskQuestionPart,
     is_task_report,
 )
+from pydantic_ai_harness.sub_agents._parent_message import ParentMessagePart
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness.conftest import CountingModel, IsDatetime, IsStr
 from tests.harness.sub_agents._sent import sent_texts

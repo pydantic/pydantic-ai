@@ -25,8 +25,8 @@ if TYPE_CHECKING:
 TaskAuthority: TypeAlias = Literal['none', 'user']
 """How much [authority][pydantic_ai.messages.Authority] the delegating model's task and messages carry with a sub-agent.
 
-- `'none'`: they reach the sub-agent as a [`ParentMessagePart`][pydantic_ai_harness.sub_agents.ParentMessagePart],
-  data in an `<agent_message>` frame with a note that the delegating agent wrote it, not the user or the application.
+- `'none'`: they reach the sub-agent as the delegating agent's message, data in an `<agent_message>` frame with a
+  note that the delegating agent wrote it, not the user or the application.
 - `'user'`: they reach the sub-agent as plain user prompts, which it reads as its user's own words.
 """
 

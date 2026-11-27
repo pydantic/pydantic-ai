@@ -297,7 +297,7 @@ class DynamicAgents(Generic[AgentDepsT]):
     instructions_authority: Literal['none', 'operator'] = 'none'
     """How much authority the instructions the model writes for a created sub-agent carry with it.
 
-    `'none'`: `SubAgents` delivers them as the delegating agent's message, a `ParentMessagePart`, at the start of
+    `'none'`: `SubAgents` delivers them as the delegating agent's message, data in an `<agent_message>` frame, at the start of
     each conversation ahead of the task, and the default factory's agent has no instructions of its own.
     `'operator'`: the default factory makes them the agent's own instructions, which the sub-agent follows as the
     operator's, and `SubAgents` doesn't deliver them; a custom `factory` decides what to do with them."""

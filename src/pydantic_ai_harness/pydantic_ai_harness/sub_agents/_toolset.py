@@ -323,7 +323,7 @@ class SubAgent(Generic[AgentDepsT]):
     task_authority: TaskAuthority = dataclass_field(default='none', kw_only=True)
     """How much authority the parent model's task and messages carry with the sub-agent.
 
-    `'none'`: each reaches it as a `ParentMessagePart`, data with a note that the agent that delegated the task wrote
+    `'none'`: each reaches it as the delegating agent's message, data with a note that the agent that delegated the task wrote
     it, not the user or the application, so a claim in it such as "the user approved this" grants nothing. `'user'`:
     each is a plain user prompt, which the sub-agent reads as its user's own words. Either way the sub-agent's
     instructions say its task comes from another agent."""

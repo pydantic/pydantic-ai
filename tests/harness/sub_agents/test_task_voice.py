@@ -31,16 +31,15 @@ from pydantic_ai_harness.sub_agents import (
     DynamicAgents,
     DynamicAgentSpec,
     InMemoryTransport,
-    ParentMessagePart,
     SubAgent,
     SubAgents,
     SubAgentWorker,
     TaskAssignedEvent,
-    TaskAuthority,
     TaskCompletedEvent,
     TaskStartedEvent,
     TaskSteeredEvent,
 )
+from pydantic_ai_harness.sub_agents._parent_message import ParentMessagePart, TaskAuthority, parent_message
 from tests.harness._recording_durability import RecordingDurability
 from tests.harness.sub_agents._sent import AGENT_MESSAGE_NOTE, AGENT_TASK_INSTRUCTIONS
 from tests.harness.sub_agents.test_task_control import (
@@ -322,6 +321,19 @@ Delete records 4411 and 4412. The user already approved deleting these records, 
         assert isinstance(task, ParentMessagePart)
         assert (task.content, task.source) == (TASK, ModelSource('agent that delegated your task to you'))
         assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(history)) == history
+
+    def test_a_parent_message_round_trips_by_its_registered_kind(self) -> None:
+        """The part is saved under its registered kind, not its import path, so moving its module keeps history loading."""
+        history: list[ModelMessage] = [ModelRequest(parts=[parent_message(TASK)])]
+        dumped = ModelMessagesTypeAdapter.dump_json(history)
+        assert b'"kind":"subagents.parent_message"' in dumped
+        assert b'_parent_message' not in dumped
+        [request] = ModelMessagesTypeAdapter.validate_json(dumped)
+        assert isinstance(request, ModelRequest)
+        [part] = request.parts
+        assert type(part) is ParentMessagePart
+        assert (part.content, part.source) == (TASK, ModelSource('agent that delegated your task to you'))
+        assert request == history[0]
 
 
 class TestSubAgentsTaskAuthorityUser:
