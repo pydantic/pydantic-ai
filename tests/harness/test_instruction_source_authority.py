@@ -281,7 +281,9 @@ async def _reached(name: str, directory: Path, authority: Authority) -> list[tup
     capabilities = source.build(directory, authority, seen)
     working_dir = directory / source.working_dir
     workspace = LocalWorkspaceBackend(working_dir) if authority == 'operator' else untrusted(working_dir)
-    await Agent(_scripted(seen, source.calls(authority)), capabilities=capabilities).run('go', workspace=workspace)
+    await Agent(_scripted(seen, source.calls(authority)), deps_type=type(None), capabilities=capabilities).run(
+        'go', workspace=workspace
+    )
     return seen.places
 
 
