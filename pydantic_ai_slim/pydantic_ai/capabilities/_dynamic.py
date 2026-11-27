@@ -195,7 +195,11 @@ class PerStepDynamicCapability(ResolvedDynamicCapability[AgentDepsT]):
         if resolved is not None:
             _check_per_step_capability(resolved)
         previous = registered_beneath(self)
-        self.wrapped = CombinedCapability[AgentDepsT]([resolved] if resolved is not None else [])
+        # Registered on their own, so they carry the source's authority themselves, as the factory's one capability
+        # does through the wrapper that stands in for it once per run.
+        self.wrapped = self.source._keep_authority(  # pyright: ignore[reportPrivateUsage]
+            CombinedCapability[AgentDepsT]([resolved] if resolved is not None else [])
+        )
         if not first_step:
             _register_beneath(ctx.capabilities, self, previous)
 

@@ -2472,7 +2472,7 @@ def test_cache_policy_keys_for_an_empty_unloaded_are_pinned():
     load = CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='load')
     history: list[ModelMessage] = [ModelResponse(parts=[TextPart('hi')]), ModelRequest(parts=[load])]
 
-    def key_for(value: Any) -> str | None:
+    def key_for(value: CapabilityLoadDeltaPart | list[ModelMessage]) -> str | None:
         return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
 
     assert key_for(load) == snapshot('9ae38b6fa104f2d29261acaeba06bfd4')

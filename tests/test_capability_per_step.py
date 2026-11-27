@@ -50,7 +50,6 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import AbstractToolset, ApprovalRequiredToolset
-from pydantic_ai.ui._adapter import capability_load_delta_from_payload, capability_load_delta_payload
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
@@ -1191,14 +1190,10 @@ async def test_hooks_and_event_listeners_apply_while_loaded_and_present() -> Non
     assert audit.events == snapshot(['3: ping', '4: ping'])
 
 
-def test_unload_record_names_the_capability_in_traces_and_rides_through_a_ui_client() -> None:
-    """An unload is named in traces like a load, and survives a UI round trip, so the capability stays unloaded."""
+def test_unload_record_names_the_capability_in_traces() -> None:
+    """An unload is named in traces like a load. Its UI round trip is tested with each adapter's load records."""
     unload = CapabilityLoadDeltaPart(unloaded=['refunds'])
 
     assert InstrumentationSettings().messages_to_otel_messages([ModelRequest(parts=[unload])]) == snapshot(
         [{'role': 'system', 'parts': [{'type': 'text', 'content': 'Loaded capabilities changed: -refunds'}]}]
     )
-    payload = capability_load_delta_payload(unload)
-    assert payload == snapshot({'loaded': [], 'tool_call_id': None, 'unloaded': ['refunds']})
-    assert capability_load_delta_from_payload(payload) == unload
-    assert capability_load_delta_from_payload({'loaded': [], 'unloaded': ['']}) is None
