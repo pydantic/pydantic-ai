@@ -29,8 +29,10 @@ classifiers = [
     "Topic :: Software Development",
 ]
 
+# The `main` channel's build pins Pax's sdist in the same release: `scripts/build_bleeding.sh` sets `PAX_SDIST_URL`.
+# Builds from before the rename update this package without naming Pax, which PyPI does not have at that version.
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
-dependencies = ["pydantic-ai-pax==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+dependencies = ["pydantic-ai-pax{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
 
 # The extras `pydantic-ai-pax` offers, so `pydantic-clai2[e2b]` keeps installing them.
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
@@ -70,6 +72,10 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 clai2 = "pydantic_clai2.__main__:main"
 # Matches the distribution name so `uvx pydantic-clai2` works without `--from`.
 pydantic-clai2 = "pydantic_clai2.__main__:main"
+
+[tool.hatch.metadata]
+# Only for the `main` channel's sdist, which is never uploaded to PyPI.
+allow-direct-references = true
 
 # The deprecated `pydantic_clai2` import alias, owned by this distribution alone so upgrading it never removes it.
 [tool.hatch.build.targets.wheel]
