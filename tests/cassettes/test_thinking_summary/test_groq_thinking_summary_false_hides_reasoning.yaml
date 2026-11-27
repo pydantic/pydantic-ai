@@ -1,0 +1,78 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.groq.com/openai/v1/chat/completions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "259"
+      content-type:
+      - application/json
+      host:
+      - api.groq.com
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content: >-
+            How many integers from 1 to 1000 inclusive are divisible by 3 or 5 but not by
+            7? Work it out carefully, then answer with just the number.
+        model: openai/gpt-oss-120b
+        "n": 1
+        reasoning_format: hidden
+        stream: false
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - private, max-age=0, no-store, no-cache, must-revalidate
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=15552000
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+    body:
+      type: json
+      content:
+        id: chatcmpl-a3df6909-f4eb-40cb-8740-6ae2000c1d6e
+        object: chat.completion
+        created: 1792705479
+        model: openai/gpt-oss-120b
+        choices:
+        - index: 0
+          message:
+            role: assistant
+            content: "401"
+          logprobs: null
+          finish_reason: stop
+        usage:
+          queue_time: 0.118662013
+          prompt_tokens: 108
+          prompt_time: 0.005428156
+          completion_tokens: 909
+          completion_time: 1.907097172
+          total_tokens: 1017
+          total_time: 1.912525328
+          completion_tokens_details:
+            reasoning_tokens: 899
+        usage_breakdown: null
+        system_fingerprint: fp_19b184c447
+        x_groq:
+          id: req_01m5js5eaaeej8t0y95tvqwsqh
+          seed: 65624123
+        service_tier: on_demand
+  recorded_at: 2026-10-22T21:44:39.141386+00:00

@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from collections.abc import Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from pydantic_ai import AgentRunResult, RunContext
 from pydantic_ai.capabilities import AbstractCapability, WrapRunHandler
@@ -129,9 +129,14 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
 
     Durable execution (e.g. `TemporalDurability`) is not supported: durability
     replays tool calls as activities and a live Chromium page cannot survive
-    replay or worker restart, so combining both on one agent raises `UserError`
-    at agent construction.
+    replay or worker restart, so combining both on one agent, or wrapping the
+    agent in a deprecated wrapper agent such as `TemporalAgent`, raises
+    `UserError` at construction.
     """
+
+    _durable_unsupported_reason: ClassVar[str | None] = (
+        'a live Chromium browser cannot survive activity replay or worker restart'
+    )
 
     headless: bool = True
     """Run Chromium without a visible window. `True` suits servers and CI."""
@@ -342,7 +347,9 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
         bundled Temporal/DBOS/Prefect integrations. Pydantic AI exposes no public
         marker for the durability tier, and the `innermost` ordering position is
         not one: `InputGuard` also declares `innermost`, so ordering alone would
-        reject the supported guard-plus-browser composition.
+        reject the supported guard-plus-browser composition. The deprecated
+        wrapper agents add no durability capability, so they refuse the browser
+        themselves, from `_durable_unsupported_reason`.
         """
         siblings: list[AbstractCapability[AgentDepsT]] = []
         agent.root_capability.apply(siblings.append)
@@ -350,7 +357,7 @@ class PlaywrightBrowser(AbstractCapability[AgentDepsT]):
             if isinstance(sibling, BaseDurabilityCapability):
                 raise UserError(
                     'PlaywrightBrowser does not support durable execution (e.g. TemporalDurability): '
-                    'a live Chromium browser cannot survive activity replay or worker restart. '
+                    f'{self._durable_unsupported_reason}. '
                     'Run the browser agent outside the durable agent, or remove the durability capability.'
                 )
         return self

@@ -1,0 +1,92 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "316"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: >-
+              How many integers from 1 to 1000 inclusive are divisible by 3 or 5 but not by
+              7? Work it out carefully, then answer with just the number.
+            type: text
+        model: claude-opus-5-5
+        stream: true
+        thinking:
+          type: adaptive
+          display: omitted
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=96
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-33d8f86b1319c03627652879116677ca-e5745405e8eb997f-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-opus-5-5","id":"msg_011CgJ1LNK6jpANgcq6SZzpM","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":59,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""}      }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}        }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS7AUKEAgTGAI4AUIIdGhpbmtpbmcSDG6zz8TkrRbgKu0sYRoMytdTMrxLDdU5K2KxIjBxLxN27PxDO9O6em3AeMxITseuf7se3HqWKC41FPlzhQbak/Cv8rlnBbQ+4m4jqi8qiQUdczoFTBM3IZzEP4f0Uj8TmF0H91T9euftAC8o1AnPrxVcqu1UdRSW12JMvRfSaaqg1LQuC+5TkxBD+UJutRU2qtU98tSrZdFi3X7+tw1zWBjSicq/E0OAJvkvV6hXYZjyjpv4SyCaa8q0UxZcKXlNUam5SY03ihzfoWaNb+6SQDc/LOs3xrM3RspD3ECOuVeWyMixw0VAIPcxDbKiv14tzHnjqD4U9m0OLPP21fQaK99IfXNntcDD0ZtFMUUU3vP5QdzgfjP2Wo/MnVulMa4aYR/V2ZseA4S/Y9JRrwIHMuF/TVaahiHb9p8KB0MAXJ6m0GMmmTolkhW91BwMkd6xyKnO4Vuib4OLvrqTZOWeK3v6QajKp2gldV5iWRwFMyeoV6HiJqsAJb+t78/E+H067YmOp2siZSaTw8Hrys17neZweXB3VuOtBWJDZemxuXQWMLVqfZGlAUWpxYRWfd2iMqLammtzDdrR4LVXtxMBBsr2FGIYyIFLWud3ribpZPIEcL9wbSp1Zkf5tuSOFJHaVuUpGXsR67kXO2Pll2cGwU74yVGLJ32341gi3WmEgc5jJ61mSDO1smZup8P9CrhbXlaJ9qXPT5tDcKrX5mGREbpGVVdT/g5YF35qGTcMhu7ZgW8hKRlUPLZD5irghaJw3y4oexlVy01DSDgNDqFqkWST0PmBjnsK0xd6v8t1Ky7ySHprK6YG8RutV4zBi9pGS5fM1EuhL7F4k9qE2Yn55uQ5R+kINpS4qffuj8peUMTgWLLMNO0gAtFISMd7jMkiE1Ud7XHEMXYCHE8Mwooa9QgGnV4IzgRbu6GV+xUMp07NrfXtD0Z/rbtB79INHjb4Ye+//nAOMnlIGAE="}     }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0     }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}   }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"**401**"}         }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1               }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":59,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":86,"output_tokens_details":{"thinking_tokens":81}} }
+
+        event: message_stop
+        data: {"type":"message_stop"          }
+
+  recorded_at: 2026-10-22T21:44:23.636464+00:00

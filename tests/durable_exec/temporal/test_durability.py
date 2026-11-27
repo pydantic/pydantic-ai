@@ -27,6 +27,7 @@ from typing import Any, Literal, cast
 from unittest.mock import patch
 
 import anyio
+import httpx2
 import pytest
 from pydantic import TypeAdapter
 
@@ -120,6 +121,7 @@ from pydantic_ai.exceptions import (
     ModelUnavailableError,
     SkipModelRequest,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -232,7 +234,7 @@ except ImportError:  # pragma: lax no cover
     pytest.skip('mcp not installed', allow_module_level=True)
 
 try:
-    from pydantic_ai.models.openai import OpenAIChatModel
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
     from pydantic_ai.providers.openai import OpenAIProvider
 except ImportError:  # pragma: lax no cover
     pytest.skip('openai not installed', allow_module_level=True)
@@ -915,6 +917,55 @@ async def test_durability_sticky_fallback_wraps_around_to_the_wrapped_primary(cl
     # The answer records the primary, so the conversation goes back to starting from it.
     assert output == [('primary', 'function:primary')]
     # The failed attempt on the sticky candidate, then the primary.
+    assert _scheduled_activity_count(history) == 2
+
+
+class _IgnoresStopSequences(FunctionModel):
+    unsupported_settings = frozenset({'stop_sequences'})
+
+
+unsupported_setting_fallback_durable_agent = Agent(
+    _IgnoresStopSequences(_fallback_target_fn, model_name='ignores_stop'),
+    name='durability_unsupported_setting_fallback_agent',
+    model_settings={'stop_sequences': ['STOP']},
+    capabilities=[
+        ModelFallback('fallback_target', fallback_on=(ModelAPIError, UnsupportedSettingWarning)),
+        TemporalDurability(
+            activity_config=BASE_ACTIVITY_CONFIG,
+            models={'fallback_target': FunctionModel(_fallback_target_fn, model_name='fallback_target')},
+        ),
+    ],
+)
+
+
+@workflow.defn
+class UnsupportedSettingFallbackDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> tuple[str, str | None, list[str]]:
+        result = await unsupported_setting_fallback_durable_agent.run(prompt)
+        attempts = [f'{a.model_name} {a.outcome}' for a in result.response.failed_attempts or []]
+        return result.output, result.response.model_id, attempts
+
+
+async def test_durability_fallback_on_unsupported_setting_warning(client: Client):
+    """The `UnsupportedSettingWarning` a model raises in its activity reaches `ModelFallback` as itself, unretried."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UnsupportedSettingFallbackDurableAgentWorkflow],
+        plugins=[AgentPlugin(unsupported_setting_fallback_durable_agent)],
+    ):
+        wf = await client.start_workflow(
+            UnsupportedSettingFallbackDurableAgentWorkflow.run,
+            args=['hello'],
+            id=UnsupportedSettingFallbackDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+        output = await wf.result()
+        history = await wf.fetch_history()
+    assert output == ('from fallback', 'fallback_target', ['ignores_stop error'])
+    # One attempt each: the skipped one isn't retried.
     assert _scheduled_activity_count(history) == 2
 
 
@@ -1978,6 +2029,224 @@ async def test_durability_x_search_fallback_usage_limit_is_not_retried(client: C
         'https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
     )
     assert _x_search_fallback_attempts == ['x_search']
+
+
+# --- Resuming a suspended response the provider no longer has isn't retried ---
+
+
+_expired_response_requests: list[str] = []
+_expired_response_model = OpenAIResponsesModel(
+    'gpt-5.6-sol',
+    provider=OpenAIProvider(
+        api_key='mock-api-key',
+        http_client=httpx2.AsyncClient(
+            transport=httpx2.MockTransport(
+                lambda request: (
+                    _expired_response_requests.append(f'{request.method} {request.url.path}')
+                    or httpx2.Response(
+                        404, json={'error': {'message': 'No response found.', 'type': 'invalid_request_error'}}
+                    )
+                )
+            )
+        ),
+    ),
+)
+
+_expired_response_history: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart(content='go')]),
+    ModelResponse(
+        parts=[TextPart('The answer ')],
+        model_name='gpt-5.6-sol',
+        provider_name='openai',
+        provider_response_id='resp_expired',
+        state='suspended',
+    ),
+]
+
+expired_response_agent = Agent(
+    _expired_response_model,
+    name='durability_expired_suspended_response',
+    capabilities=[
+        TemporalDurability(
+            model_activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class ExpiredSuspendedResponseWorkflow:
+    @workflow.run
+    async def run(self, messages: list[ModelMessage]) -> str:
+        return (await expired_response_agent.run(message_history=messages)).output
+
+
+async def test_durability_expired_suspended_response_is_not_retried(allow_model_requests: None, client: Client):
+    """Resuming a suspended OpenAI background response after the provider deleted it fails the model activity on its
+    first attempt: every retry would retrieve the same deleted response.
+
+    The 404 comes from a `MockTransport` rather than a recording, since recording one needs a background response
+    that has outlived the provider's retention window; what's under test is the activity's retry policy.
+    """
+    _expired_response_requests.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ExpiredSuspendedResponseWorkflow],
+        plugins=[AgentPlugin(expired_response_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ExpiredSuspendedResponseWorkflow.run,
+                args=[_expired_response_history],
+                id=ExpiredSuspendedResponseWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert activity_error.retry_state == RetryState.NON_RETRYABLE_FAILURE
+    application_error = activity_error.cause
+    assert isinstance(application_error, ApplicationError)
+    assert (application_error.type, application_error.message) == snapshot(
+        (
+            'SuspendedResponseExpired',
+            "The suspended response 'resp_expired' could not be resumed because its server-side job is no longer "
+            'available (it may have expired).',
+        )
+    )
+    assert _expired_response_requests == ['GET /v1/responses/resp_expired']
+
+
+_expired_response_delegate = Agent(_expired_response_model, name='durability_expired_suspended_response_delegate')
+
+
+async def check_background_job() -> str:
+    return (await _expired_response_delegate.run(message_history=_expired_response_history)).output
+
+
+expired_response_tool_agent = Agent(
+    FunctionModel(lambda messages, info: ModelResponse(parts=[ToolCallPart('check_background_job', {})])),
+    name='durability_expired_suspended_response_tool',
+    toolsets=[FunctionToolset(tools=[check_background_job], id='background_job_toolset')],
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class ExpiredSuspendedResponseToolWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await expired_response_tool_agent.run('check')).output
+
+
+async def test_durability_tool_resuming_expired_suspended_response_is_not_retried(
+    allow_model_requests: None, client: Client
+):
+    """A tool that resumes a sub-agent on history whose suspended response the provider deleted fails its activity on
+    the first attempt, as the model activity does.
+    """
+    _expired_response_requests.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ExpiredSuspendedResponseToolWorkflow],
+        plugins=[AgentPlugin(expired_response_tool_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ExpiredSuspendedResponseToolWorkflow.run,
+                id=ExpiredSuspendedResponseToolWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert activity_error.retry_state == RetryState.NON_RETRYABLE_FAILURE
+    application_error = activity_error.cause
+    assert isinstance(application_error, ApplicationError)
+    assert application_error.type == 'SuspendedResponseExpired'
+    assert _expired_response_requests == ['GET /v1/responses/resp_expired']
+
+
+_expired_batch_status_checks: list[str] = []
+
+
+class _ExpiredBatchTestModel(SlowBatchTestModel):
+    async def batch_status(self, batch: Batch) -> Batch:
+        _expired_batch_status_checks.append(batch.id)
+        raise ModelHTTPError(404, self.model_name, body={'error': 'not found'})
+
+
+expired_batch_agent = Agent(
+    _ExpiredBatchTestModel(),
+    name='durability_expired_batch',
+    capabilities=[
+        BatchModelRequests(**FAST_BATCH_SETTINGS),
+        TemporalDurability(
+            model_activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        ),
+    ],
+)
+
+
+@workflow.defn
+class ExpiredBatchWorkflow:
+    @workflow.run
+    async def run(self, messages: list[ModelMessage]) -> str:
+        return (await expired_batch_agent.run(message_history=messages)).output
+
+
+async def test_durability_expired_batch_is_not_retried(client: Client):
+    """Resuming a run whose pending batch the provider no longer has fails the model activity on its first attempt:
+    every retry would check the same batch.
+
+    The batch API is the in-memory `SlowBatchTestModel` rather than a recording, since recording an expired batch
+    needs one that has outlived the provider's retention period.
+    """
+    _expired_batch_status_checks.clear()
+    request = ModelRequest(parts=[UserPromptPart(content='go')])
+    # Batched before the run, for example by another process.
+    pending = (
+        await BatchPool(**FAST_BATCH_SETTINGS)
+        .wrap(SlowBatchTestModel())
+        .request([request], None, ModelRequestParameters())
+    )
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ExpiredBatchWorkflow],
+        plugins=[AgentPlugin(expired_batch_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                ExpiredBatchWorkflow.run,
+                args=[[request, pending]],
+                id=ExpiredBatchWorkflow.__name__,
+                task_queue=TASK_QUEUE,
+            )
+    activity_error = exc_info.value.cause
+    assert isinstance(activity_error, ActivityError)
+    assert activity_error.retry_state == RetryState.NON_RETRYABLE_FAILURE
+    application_error = activity_error.cause
+    assert isinstance(application_error, ApplicationError)
+    (batch_id,) = _expired_batch_status_checks
+    assert application_error.type == 'SuspendedResponseExpired'
+    assert application_error.message == (
+        f"Batch {batch_id!r} could not be checked because 'test' no longer has it or its results: "
+        'providers keep them for a limited time, and only for the project or workspace that created them.'
+    )
 
 
 # --- `ModelSettings['request_timeout']` runs on the workflow's clock ---
@@ -3065,6 +3334,7 @@ def test_durability_activity_config_not_mutated():
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
         'UsageLimitExceeded',
+        'SuspendedResponseExpired',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -3113,6 +3383,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
         'UsageLimitExceeded',
+        'SuspendedResponseExpired',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -3133,6 +3404,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
         'UsageLimitExceeded',
+        'SuspendedResponseExpired',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -3161,6 +3433,7 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
         'UsageLimitExceeded',
+        'SuspendedResponseExpired',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',

@@ -1,0 +1,413 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "471"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: My name is Bob and my favorite color is teal.
+            type: text
+        model: claude-haiku-5-5
+        stream: true
+        system:
+        - type: text
+          text: Answer in one short sentence.
+        tool_choice:
+          type: auto
+        tools:
+        - name: compact_conversation
+          description: Compact the conversation, then report the user's favorite color.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=211
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-dfb8019c49de44f41adaccff3fbcc8ec-ddf19184193b4505-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011CghAkLegQsFJoP8g145G9","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":394,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":9,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}         }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":"","signature":""} }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":""}  }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"CAQS5AUKEAgTGAI4AUIIdGhpbmtpbmcSDGdxvwTcN3K5wUOh8xoMuedLZ5rW9OVmoinyIjA2lcFGLXkcx5DT9c7rGE7/8v8/Fv9Ax0uvuadT+XoyMQXgk8XwJe3ytJwDEtdyq5sqgQX1rWCGKeBkvoxIx3kKFJNaOzBmpt1Ns1Eg4zWpnzMAPvOtV1hwiNnBX9CWfTvu0SA3+lc4Gyck+/xBK++IpO+lgfWcaqFwtJQl4PPuZNLzsQbBakYe4J00rkIDTVP/CnMt+x/BLPWuUAXzx6yhmjbI+cZU7OPw/i8SHsIlsjhNzWfMv8KFxHIeLOL2syWBL6b3DFOtERmnZn8d6KyTNqv4fvhXKuXV+xO6090Uu4AME/daQMHh+mlfyiYIFyWcLoyNoUdHlcQsaiGuN7KmZZem9Dzvkw0hxc9AogQsv2vsiJ9OxGTesLz5/e9KuQU0hPflBdA2v9cNyFzcPFV0Hx3DGFrcBY7YdQ4Hgs7xa/MH31zXcOqstS5AI2oU1DbfWeHNAjQsY8qmfISTVaboNbPvMvg69uaoaM4rArN+bUMScvCQhEjS2aAOHXFvXHcHHmHnh7ocTLl0pTCTEI+C90NfCgbHufR+Tu6jmkzeQZsUvAQyJx2o3DeVnXQmCjEDQh+wEqqo/Sg2LToG7rNdyHBoEdjEEjZrDhLk8/yLgqD3QB7zyDYUoHC0EF9fnBmTY3webPNE52AQrk+Bo5CSz7J9VDdFswDqsWdBIfXW6Xj275SUgPJo7NoYgm8XTLNYEK2TxlYrfySxK00DX4PLUJCOBPdxJxmQYDEaqBaJ/ke8S8fJfPELvayfmvAWoKfHlk/ltlNRgfeTe53sZmyrI32BK+MU3n9sBfrIRmWmC+8O6jSsXQwRwqBEu5NyOTFTKTMDFJJMKJWA8nLiZfjb06hIbwJriLnIkon7J0k6x4sAvz5zDR+k8dgGIAVOoCCv9qhk8zcHsheoK2p7ivIn9IiqpBgB"}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"Nice to meet you"}      }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":", Bob, and te"}            }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"al is a great"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":" cho"}    }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"ice!"}  }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":1   }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":394,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":58,"output_tokens_details":{"thinking_tokens":35}}  }
+
+        event: message_stop
+        data: {"type":"message_stop"  }
+
+  recorded_at: 2026-11-04T03:21:29.067604+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1746"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: My name is Bob and my favorite color is teal.
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAQS5AUKEAgTGAI4AUIIdGhpbmtpbmcSDGdxvwTcN3K5wUOh8xoMuedLZ5rW9OVmoinyIjA2lcFGLXkcx5DT9c7rGE7/8v8/Fv9Ax0uvuadT+XoyMQXgk8XwJe3ytJwDEtdyq5sqgQX1rWCGKeBkvoxIx3kKFJNaOzBmpt1Ns1Eg4zWpnzMAPvOtV1hwiNnBX9CWfTvu0SA3+lc4Gyck+/xBK++IpO+lgfWcaqFwtJQl4PPuZNLzsQbBakYe4J00rkIDTVP/CnMt+x/BLPWuUAXzx6yhmjbI+cZU7OPw/i8SHsIlsjhNzWfMv8KFxHIeLOL2syWBL6b3DFOtERmnZn8d6KyTNqv4fvhXKuXV+xO6090Uu4AME/daQMHh+mlfyiYIFyWcLoyNoUdHlcQsaiGuN7KmZZem9Dzvkw0hxc9AogQsv2vsiJ9OxGTesLz5/e9KuQU0hPflBdA2v9cNyFzcPFV0Hx3DGFrcBY7YdQ4Hgs7xa/MH31zXcOqstS5AI2oU1DbfWeHNAjQsY8qmfISTVaboNbPvMvg69uaoaM4rArN+bUMScvCQhEjS2aAOHXFvXHcHHmHnh7ocTLl0pTCTEI+C90NfCgbHufR+Tu6jmkzeQZsUvAQyJx2o3DeVnXQmCjEDQh+wEqqo/Sg2LToG7rNdyHBoEdjEEjZrDhLk8/yLgqD3QB7zyDYUoHC0EF9fnBmTY3webPNE52AQrk+Bo5CSz7J9VDdFswDqsWdBIfXW6Xj275SUgPJo7NoYgm8XTLNYEK2TxlYrfySxK00DX4PLUJCOBPdxJxmQYDEaqBaJ/ke8S8fJfPELvayfmvAWoKfHlk/ltlNRgfeTe53sZmyrI32BK+MU3n9sBfrIRmWmC+8O6jSsXQwRwqBEu5NyOTFTKTMDFJJMKJWA8nLiZfjb06hIbwJriLnIkon7J0k6x4sAvz5zDR+k8dgGIAVOoCCv9qhk8zcHsheoK2p7ivIn9IiqpBgB
+            type: thinking
+          - text: Nice to meet you, Bob, and teal is a great choice!
+            type: text
+        - role: user
+          content:
+          - text: Call the compact_conversation tool, then tell me my favorite color.
+            type: text
+        model: claude-haiku-5-5
+        stream: true
+        system:
+        - type: text
+          text: Answer in one short sentence.
+        tool_choice:
+          type: auto
+        tools:
+        - name: compact_conversation
+          description: Compact the conversation, then report the user's favorite color.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=109
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-d991cd3d2cb8d19ccdf19c72b811b0e4-8ccb8a6597abfbaa-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011CghAkQNvBEXLtWgTP53TR","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":478,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":24,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01GK4PHsLvpLDVUFYeYkAuZN","name":"compact_conversation","input":{},"caller":{"type":"direct"}}    }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}          }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0              }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":478,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":29,"output_tokens_details":{"thinking_tokens":0}}          }
+
+        event: message_stop
+        data: {"type":"message_stop"        }
+
+  recorded_at: 2026-11-04T03:21:29.809762+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "1780"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: user
+          content:
+          - text: My name is Bob and my favorite color is teal.
+            type: text
+        - role: assistant
+          content:
+          - thinking: ""
+            signature: >-
+              CAQS5AUKEAgTGAI4AUIIdGhpbmtpbmcSDGdxvwTcN3K5wUOh8xoMuedLZ5rW9OVmoinyIjA2lcFGLXkcx5DT9c7rGE7/8v8/Fv9Ax0uvuadT+XoyMQXgk8XwJe3ytJwDEtdyq5sqgQX1rWCGKeBkvoxIx3kKFJNaOzBmpt1Ns1Eg4zWpnzMAPvOtV1hwiNnBX9CWfTvu0SA3+lc4Gyck+/xBK++IpO+lgfWcaqFwtJQl4PPuZNLzsQbBakYe4J00rkIDTVP/CnMt+x/BLPWuUAXzx6yhmjbI+cZU7OPw/i8SHsIlsjhNzWfMv8KFxHIeLOL2syWBL6b3DFOtERmnZn8d6KyTNqv4fvhXKuXV+xO6090Uu4AME/daQMHh+mlfyiYIFyWcLoyNoUdHlcQsaiGuN7KmZZem9Dzvkw0hxc9AogQsv2vsiJ9OxGTesLz5/e9KuQU0hPflBdA2v9cNyFzcPFV0Hx3DGFrcBY7YdQ4Hgs7xa/MH31zXcOqstS5AI2oU1DbfWeHNAjQsY8qmfISTVaboNbPvMvg69uaoaM4rArN+bUMScvCQhEjS2aAOHXFvXHcHHmHnh7ocTLl0pTCTEI+C90NfCgbHufR+Tu6jmkzeQZsUvAQyJx2o3DeVnXQmCjEDQh+wEqqo/Sg2LToG7rNdyHBoEdjEEjZrDhLk8/yLgqD3QB7zyDYUoHC0EF9fnBmTY3webPNE52AQrk+Bo5CSz7J9VDdFswDqsWdBIfXW6Xj275SUgPJo7NoYgm8XTLNYEK2TxlYrfySxK00DX4PLUJCOBPdxJxmQYDEaqBaJ/ke8S8fJfPELvayfmvAWoKfHlk/ltlNRgfeTe53sZmyrI32BK+MU3n9sBfrIRmWmC+8O6jSsXQwRwqBEu5NyOTFTKTMDFJJMKJWA8nLiZfjb06hIbwJriLnIkon7J0k6x4sAvz5zDR+k8dgGIAVOoCCv9qhk8zcHsheoK2p7ivIn9IiqpBgB
+            type: thinking
+          - text: Nice to meet you, Bob, and teal is a great choice!
+            type: text
+        - role: user
+          content:
+          - text: Call the compact_conversation tool, then tell me my favorite color.
+            type: text
+        model: claude-haiku-5-5
+        compaction:
+          type: summarize
+        stream: true
+        system:
+        - type: text
+          text: Answer in one short sentence.
+        tool_choice:
+          type: auto
+        tools:
+        - name: compact_conversation
+          description: Compact the conversation, then report the user's favorite color.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=99
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-8f0ec1bf88d15caaa752be24bda31ac9-f3de6d25f96ebf85-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011CghAkTc98PDiZE37Nh992","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":0,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null} }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"compaction","content":"The user introduced himself as Bob and said his favorite color is teal. I replied with a short greeting that teal is a great choice. The user then asked me to call the compact_conversation tool and tell them their favorite color. I have not yet called that tool. The user's favorite color, as they stated, is teal. This summary is text only, and no tool has been called in this context window.","signature":"CAISnwoKHggTGALyARdjb21wYWN0aW9uX3NpZ25hdHVyZV92MRIMLi8pOlWkZRD2fnoGGgxqQMSg7qT7EoIzRQIiMMKfc3u8rTGllneB2tQetkBfTHLrkEnSMy6RyYBLbQk+sjCOKVPgViwjHcrW4S9jtyquCQ89JdylzYYMkVgwrBB27TG5ptOHqw4P0zbM1sWam2hFvE2V9wYlx4yl96DB7irjewmw82UX4XkQD/TUGNT0q4NGHpU+5ks/BGuzt3dv/SWQklYmo7/Y4VxDz2DKHsA+eZm5bBokTUJKi94cPAcPEQbqjOlIXjpbtIrGwuz6PtUSjKaWTZ/bAUR9WtdYvyKl53G0rNL0Uxz8mSzga12MF5o70tVFlqqlxrmSwaLkG4wM6lSySXlWgQXLTrImli/qsDoOWXFF3THo0xRfn7VP0oyrL4AH0M43DNvwVpfOJ89Czw7ZuGmMfflNNtq9y605IEe53MveDRKP3hN/u8QmWabBtaSUOheBqrAa/Ox7td/U9xa9DobCJlGPDhgeBSU/HNUC4E/ipRQBfYD3IoF4Use4Zbt5ZDsJ8V6Flymnz+rMy1VsVZ6jnc6NU0f/sobMArYskeuDGyIgodfArPDSD6qN3/d60TICDBOp6vJUJfF1Ptx/AJaK9/R3OAVJSBi2GKe6uLmfm1LWIbTWJ9m9DKlTBT269hEa1t5jPBpiBmLS8iwfprmZ/jNwqaTyJBXZPvf4OAv5M/1SXM13Z0phN51Jqj874GLuJClrZNsZiCqh7hOa1gy2Rvau8YiEorCYpLIqS1f3koCcgznNwqttHGlOOR0vBJBMZ6gcD9zTNXuKo3N9qtTuDxk50rWX8LAzVbaKNCNT+alzmoIz6eGgJCnVXU5inx9UeC7KsNRcTa1ZMWICM8Qi2Io9Q3A4E0nwiTbKlv3JahpH0AEgC58uUUy4NuywHKmGoC7GaIYZhaAmWOTj9PAq5HFEh6y8i5AEnDs737Xy692eGdPjAqdXHnqLy17kT0em1jWsH+QYIfYt9bc/YY/JHopbmnxukeLQBR3exq8TzlIwHS2K9OwQynZcWZnVbN8j1dKCKi0BZnvPXf2znM2hUvbNAQfSfwv+y9VmQMZl7nTkMa9ZpVxkg17m8mHkZnisHGluecq7K+a2Px35tdPVazQQv3n9dQEVS/e/kCA4L/rudoKruOO1ySsKAf+WtrMpm8ylrhKdS/bPZtdIMgQR5k81TEh3AxJZ2lFGm4mbB/TLL3zQVI+lCSyqDBybgS/yqp7dNa/A9h1qLvRUczSQmvz/lGD6UFVCoVeIaHH0AimKqcQWtZq9NP0L2i1w5E4W50DMcPucLx8+4iLjpeaS86hLPJTuv8OMkNiBkdhTi/YoqMXMCidnhHeKJ3IXF+KsE7CxFlJabsICRfDqT71YjtHHu0Aud2p1juTtGiGsWJE6luNp+zuM1gDvQlwUqIyULRO/DG7SzY3twSM2pTEqfMJ1TRPH2EKMEXHSUkW32lH51QocE1HvCYGbYYdCbhFtGBvZa/l4cvFglej3I+EEzoYKePTVqIRZoUCp7M6TzVPjDevSRuyk8iHDIPwg1S5e+kgIsIfnBWAsB1gaK58gW1ND47SbQzAF5ngZ/BjdlVV5vx3EIUAX1RCnnU7CvwiDxACTr6L+1IktaCeU/mdEjyAm6KAWAGeA/NQilEFx5jnXOv4Ae1jZoa1RzZkEbjA/LSTh8e8paFETQekoPRUBDGjVGFPnZI0YCw=="}       }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0           }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"compaction","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":0,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":0,"iterations":[{"input_tokens":536,"output_tokens":125,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"type":"compaction"}]}       }
+
+        event: message_stop
+        data: {"type":"message_stop"      }
+
+  recorded_at: 2026-11-04T03:21:31.011053+00:00
+- request:
+    method: POST
+    uri: https://api.anthropic.com/v1/messages?beta=true
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "2941"
+      content-type:
+      - application/json
+      host:
+      - api.anthropic.com
+    body:
+      type: json
+      content:
+        max_tokens: 128000
+        messages:
+        - role: assistant
+          content:
+          - content: >-
+              The user introduced himself as Bob and said his favorite color is teal. I
+              replied with a short greeting that teal is a great choice. The user then asked me to
+              call the compact_conversation tool and tell them their favorite color. I have not
+              yet called that tool. The user's favorite color, as they stated, is teal. This
+              summary is text only, and no tool has been called in this context window.
+            type: compaction
+            signature: >-
+              CAISnwoKHggTGALyARdjb21wYWN0aW9uX3NpZ25hdHVyZV92MRIMLi8pOlWkZRD2fnoGGgxqQMSg7qT7EoIzRQIiMMKfc3u8rTGllneB2tQetkBfTHLrkEnSMy6RyYBLbQk+sjCOKVPgViwjHcrW4S9jtyquCQ89JdylzYYMkVgwrBB27TG5ptOHqw4P0zbM1sWam2hFvE2V9wYlx4yl96DB7irjewmw82UX4XkQD/TUGNT0q4NGHpU+5ks/BGuzt3dv/SWQklYmo7/Y4VxDz2DKHsA+eZm5bBokTUJKi94cPAcPEQbqjOlIXjpbtIrGwuz6PtUSjKaWTZ/bAUR9WtdYvyKl53G0rNL0Uxz8mSzga12MF5o70tVFlqqlxrmSwaLkG4wM6lSySXlWgQXLTrImli/qsDoOWXFF3THo0xRfn7VP0oyrL4AH0M43DNvwVpfOJ89Czw7ZuGmMfflNNtq9y605IEe53MveDRKP3hN/u8QmWabBtaSUOheBqrAa/Ox7td/U9xa9DobCJlGPDhgeBSU/HNUC4E/ipRQBfYD3IoF4Use4Zbt5ZDsJ8V6Flymnz+rMy1VsVZ6jnc6NU0f/sobMArYskeuDGyIgodfArPDSD6qN3/d60TICDBOp6vJUJfF1Ptx/AJaK9/R3OAVJSBi2GKe6uLmfm1LWIbTWJ9m9DKlTBT269hEa1t5jPBpiBmLS8iwfprmZ/jNwqaTyJBXZPvf4OAv5M/1SXM13Z0phN51Jqj874GLuJClrZNsZiCqh7hOa1gy2Rvau8YiEorCYpLIqS1f3koCcgznNwqttHGlOOR0vBJBMZ6gcD9zTNXuKo3N9qtTuDxk50rWX8LAzVbaKNCNT+alzmoIz6eGgJCnVXU5inx9UeC7KsNRcTa1ZMWICM8Qi2Io9Q3A4E0nwiTbKlv3JahpH0AEgC58uUUy4NuywHKmGoC7GaIYZhaAmWOTj9PAq5HFEh6y8i5AEnDs737Xy692eGdPjAqdXHnqLy17kT0em1jWsH+QYIfYt9bc/YY/JHopbmnxukeLQBR3exq8TzlIwHS2K9OwQynZcWZnVbN8j1dKCKi0BZnvPXf2znM2hUvbNAQfSfwv+y9VmQMZl7nTkMa9ZpVxkg17m8mHkZnisHGluecq7K+a2Px35tdPVazQQv3n9dQEVS/e/kCA4L/rudoKruOO1ySsKAf+WtrMpm8ylrhKdS/bPZtdIMgQR5k81TEh3AxJZ2lFGm4mbB/TLL3zQVI+lCSyqDBybgS/yqp7dNa/A9h1qLvRUczSQmvz/lGD6UFVCoVeIaHH0AimKqcQWtZq9NP0L2i1w5E4W50DMcPucLx8+4iLjpeaS86hLPJTuv8OMkNiBkdhTi/YoqMXMCidnhHeKJ3IXF+KsE7CxFlJabsICRfDqT71YjtHHu0Aud2p1juTtGiGsWJE6luNp+zuM1gDvQlwUqIyULRO/DG7SzY3twSM2pTEqfMJ1TRPH2EKMEXHSUkW32lH51QocE1HvCYGbYYdCbhFtGBvZa/l4cvFglej3I+EEzoYKePTVqIRZoUCp7M6TzVPjDevSRuyk8iHDIPwg1S5e+kgIsIfnBWAsB1gaK58gW1ND47SbQzAF5ngZ/BjdlVV5vx3EIUAX1RCnnU7CvwiDxACTr6L+1IktaCeU/mdEjyAm6KAWAGeA/NQilEFx5jnXOv4Ae1jZoa1RzZkEbjA/LSTh8e8paFETQekoPRUBDGjVGFPnZI0YCw==
+        - role: assistant
+          content:
+          - id: toolu_01GK4PHsLvpLDVUFYeYkAuZN
+            type: tool_use
+            name: compact_conversation
+            input: {}
+        - role: user
+          content:
+          - tool_use_id: toolu_01GK4PHsLvpLDVUFYeYkAuZN
+            type: tool_result
+            content:
+            - text: "Compacted. Reminder: the favorite color is teal."
+              type: text
+            is_error: false
+        model: claude-haiku-5-5
+        stream: true
+        system:
+        - type: text
+          text: Answer in one short sentence.
+        tool_choice:
+          type: auto
+        tools:
+        - name: compact_conversation
+          description: Compact the conversation, then report the user's favorite color.
+          input_schema:
+            additionalProperties: false
+            properties: {}
+            type: object
+  response:
+    status: 200
+    headers:
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-security-policy:
+      - default-src 'none'; frame-ancestors 'none'
+      content-type:
+      - text/event-stream; charset=utf-8
+      server-timing:
+      - x-originResponse;dur=93
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      traceresponse:
+      - 00-af70828a25179a9dae3136137c573dc8-588986270feab295-01
+      transfer-encoding:
+      - chunked
+      vary:
+      - Accept-Encoding
+    body:
+      type: text
+      content: |+
+        event: message_start
+        data: {"type":"message_start","message":{"model":"claude-haiku-5-5","id":"msg_011CghAkYcmBMvkgdaJmmqzS","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":575,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":8,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}       }
+
+        event: content_block_start
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}      }
+
+        event: ping
+        data: {"type": "ping"}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Your favorite color is te"}              }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"al, Bob."}               }
+
+        event: content_block_stop
+        data: {"type":"content_block_stop","index":0               }
+
+        event: message_delta
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":575,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":16,"output_tokens_details":{"thinking_tokens":0},"iterations":[{"input_tokens":575,"output_tokens":16,"cache_read_input_tokens":0,"cache_creation_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"type":"message"}]}     }
+
+        event: message_stop
+        data: {"type":"message_stop"       }
+
+  recorded_at: 2026-11-04T03:21:31.487166+00:00
