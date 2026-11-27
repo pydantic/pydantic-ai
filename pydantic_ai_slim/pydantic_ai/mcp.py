@@ -2119,18 +2119,19 @@ class _BorrowedHTTPClient:
 class _SamplingRunContextHolder:
     def __init__(self) -> None:
         self.run_context: RunContext[Any] | None = None
-        self._lock: anyio.Lock | None = None
+
+    @functools.cached_property
+    def _lock(self) -> anyio.Lock:
+        # `anyio.Lock` binds to the event loop on which it's first used; deferring creation to first
+        # access ensures it binds to the running loop and avoids issues with Temporal's workflow sandbox.
+        return anyio.Lock()
 
     @asynccontextmanager
     async def capture(self, run_context: RunContext[Any], *, enabled: bool) -> AsyncGenerator[None]:
         if not enabled:
             yield
             return
-        lock = self._lock
-        if lock is None:
-            lock = anyio.Lock()
-            self._lock = lock
-        async with lock:
+        async with self._lock:
             self.run_context = run_context
             try:
                 yield
