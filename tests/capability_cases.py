@@ -21,9 +21,10 @@ from __future__ import annotations
 import importlib
 import pkgutil
 import warnings
-from collections.abc import Callable, Mapping, Sequence
+from collections.abc import Callable, Iterator, Mapping, Sequence
 from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
+from types import ModuleType
 from typing import Any, TypeGuard
 from unittest.mock import patch
 
@@ -243,6 +244,39 @@ def caused_by_missing_dependency(exc: BaseException) -> bool:
     return False
 
 
+def import_package_modules(
+    packages: Sequence[str], *, optional: Sequence[str] = ()
+) -> Iterator[tuple[str, ModuleType | None]]:
+    """Import every module under `packages` and `optional`, yielding each name with its module.
+
+    A module whose optional dependency group is not installed yields `None` in place of the module, and
+    a package in `optional` that is not installed at all is left out. Any other import error is raised.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        for package_name in (*packages, *optional):
+            try:
+                package = importlib.import_module(package_name)
+            except ModuleNotFoundError as exc:
+                if package_name not in optional or exc.name != package_name:
+                    raise
+                continue
+            for module_info in pkgutil.walk_packages(package.__path__, f'{package_name}.'):
+                try:
+                    module = importlib.import_module(module_info.name)
+                except Exception as exc:
+                    if not caused_by_missing_dependency(exc):
+                        # A real failure -- a broken module, a bad constant -- has to surface.
+                        # Swallowing it drops the module's contents from the walk, and a check over them
+                        # then passes because what it should have caught is invisible rather than absent.
+                        # That is not hypothetical: it is how `AWSLambdaDurability` reached this branch
+                        # with no policy entry while the exhaustiveness check was green locally.
+                        raise
+                    yield module_info.name, None
+                else:
+                    yield module_info.name, module
+
+
 def shipped_capability_types(packages: Sequence[str]) -> tuple[dict[str, type[AbstractCapability[None]]], list[str]]:
     """Every capability class in `packages`, public or not, and the modules the walk skipped.
 
@@ -253,28 +287,15 @@ def shipped_capability_types(packages: Sequence[str]) -> tuple[dict[str, type[Ab
     found: dict[str, type[AbstractCapability[None]]] = {}
     classes: set[type[AbstractCapability[None]]] = set()
     skipped: list[str] = []
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        for package_name in packages:
-            package = importlib.import_module(package_name)
-            owner = f'{package_name.split(".")[0]}.'
-            for module_info in pkgutil.walk_packages(package.__path__, f'{package_name}.'):
-                try:
-                    module = importlib.import_module(module_info.name)
-                except Exception as exc:
-                    if not caused_by_missing_dependency(exc):
-                        # A real failure -- a broken module, a bad constant -- has to surface.
-                        # Swallowing it drops the capability from `found`, and the exhaustiveness check
-                        # then passes because the capability it should have caught is invisible
-                        # rather than absent. That is not hypothetical: it is how `AWSLambdaDurability`
-                        # reached this branch with no policy entry while that check was green locally.
-                        raise
-                    skipped.append(module_info.name)
-                    continue
-                for obj in vars(module).values():
-                    if _is_capability_class(obj) and obj is not AbstractCapability and obj.__module__.startswith(owner):
-                        found[obj.__name__] = obj
-                        classes.add(obj)
+    for module_name, module in import_package_modules(packages):
+        if module is None:
+            skipped.append(module_name)
+            continue
+        owner = f'{module_name.split(".")[0]}.'
+        for obj in vars(module).values():
+            if _is_capability_class(obj) and obj is not AbstractCapability and obj.__module__.startswith(owner):
+                found[obj.__name__] = obj
+                classes.add(obj)
     # `CASES` is keyed by name, so two classes sharing one would collapse into a single entry and let
     # whichever lost ship with no case at all -- the exact gap this guards.
     assert len(found) == len(classes), (

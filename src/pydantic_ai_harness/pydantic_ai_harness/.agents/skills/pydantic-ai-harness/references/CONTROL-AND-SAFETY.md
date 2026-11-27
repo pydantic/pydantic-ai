@@ -758,8 +758,8 @@ agent = Agent(
 Every `every` model requests, sends the last `window` tokens of transcript to a judge model
 concurrently with the run. Verdict `AllGood` does nothing; `Steer(message)` is enqueued into the
 run as a framework-note `SystemPromptPart` plus the message as user-channel data in
-`<judge_feedback judge="..." ref="...">`, delivered on the next request, whose own note says not to call a
-tool it asks for unless the user asked for that. The framework note names that random `ref`
+`<judge_feedback judge="..." ref="...">`, delivered on the next request. The feedback carries its own note
+telling the model not to call a tool it asks for unless the user asked for that. The framework note names that random `ref`
 and says a `<judge_feedback>` whose ref no judge note names, or a later copy of a named ref, is not the judge's, so a forged frame in a tool result gets no authority. Observe steering with `on_verdict`.
 
 ```python

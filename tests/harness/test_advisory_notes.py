@@ -11,12 +11,9 @@ new note next to one, is covered without being listed here.
 from __future__ import annotations
 
 import ast
-import importlib
 import inspect
-import pkgutil
 import re
 import sys
-import warnings
 from functools import cache
 from pathlib import Path
 
@@ -24,10 +21,13 @@ import pytest
 
 from pydantic_ai.messages import CAPABILITY_PART_TYPES, CapabilityPart
 
-from ..capability_cases import CORE_CAPABILITY_PACKAGES, caused_by_missing_dependency
+from ..capability_cases import CORE_CAPABILITY_PACKAGES, import_package_modules
 
-_PACKAGES = (*CORE_CAPABILITY_PACKAGES, 'pydantic_ai_harness', 'pydantic_ai_pax', 'pydantic_clai2')
+_PACKAGES = (*CORE_CAPABILITY_PACKAGES, 'pydantic_ai_harness')
 """Every package that can declare a capability part kind; walking them imports, and so registers, each kind."""
+
+_OPTIONAL_PACKAGES = ('pydantic_ai_pax', 'pydantic_clai2')
+"""Packages that also declare kinds, installed next to the harness or not."""
 
 _FOLLOWS = re.compile(
     r"(?<!not )(?<!n't )\b(?:advice to follow|follow (?:it|them)\b|act on (?:it|them)\b|do what (?:it|they) says?)",
@@ -50,27 +50,11 @@ _UNSCOPED: dict[str, str] = {
 
 @cache
 def _registered_kinds() -> dict[str, type[CapabilityPart]]:
-    with warnings.catch_warnings():
-        warnings.simplefilter('ignore')
-        for package_name in _PACKAGES:
-            try:
-                package = importlib.import_module(package_name)
-            # Pax and clai2 are optional next to the harness.
-            except ModuleNotFoundError as exc:  # pragma: no cover
-                if exc.name != package_name:
-                    raise
-                continue
-            for module_info in pkgutil.walk_packages(package.__path__, f'{package_name}.'):
-                try:
-                    importlib.import_module(module_info.name)
-                # A module whose optional dependency isn't installed is skipped.
-                except Exception as exc:
-                    if not caused_by_missing_dependency(exc):  # pragma: no branch
-                        # Only a real import error gets here.
-                        raise  # pragma: no cover
+    for _ in import_package_modules(_PACKAGES, optional=_OPTIONAL_PACKAGES):
+        pass
     # The registry is process-global: test modules collected earlier register kinds of their own, so only the walked
     # packages' kinds count, whatever ran first.
-    roots = {package_name.split('.')[0] for package_name in _PACKAGES}
+    roots = {package_name.split('.')[0] for package_name in (*_PACKAGES, *_OPTIONAL_PACKAGES)}
     return {kind: cls for kind, cls in sorted(CAPABILITY_PART_TYPES.items()) if cls.__module__.split('.')[0] in roots}
 
 
