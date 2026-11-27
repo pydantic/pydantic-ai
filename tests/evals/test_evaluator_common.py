@@ -10,6 +10,7 @@ from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import pytest
 from pydantic import BaseModel, Field, RootModel, computed_field, model_serializer
+from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic_core import PydanticSerializationError, to_jsonable_python
 from pytest_mock import MockerFixture
 from typing_extensions import TypedDict
@@ -1043,18 +1044,33 @@ async def test_structured_judge_reads_every_object_question_type():
 
 
 async def test_structured_judge_confidence_for_an_aliased_field():
-    """A field is asked under its alias, so its confidence comes back under the alias, not the Python name."""
+    """A field is asked under the name it is validated from, so its confidence comes back under that name.
+
+    That is its alias, or its validation alias when it has one, on a model and on a Pydantic dataclass alike.
+    """
 
     class AliasedReply(BaseModel):
         is_polite: bool = Field(alias='is-polite', description='Is the reply polite?')
+        is_brief: bool = Field(alias='brief', validation_alias='is-brief', description='Is the reply brief?')
 
-    calls: list[JudgeCall] = []
-    model = structured_judge_model({'is-polite': True}, calls, confidence={'is-polite': 0.91})
+    @pydantic_dataclass
+    class AliasedDataclassReply:
+        is_polite: bool = Field(alias='is-polite', description='Is the reply polite?')
+        is_brief: bool = Field(alias='brief', validation_alias='is-brief', description='Is the reply brief?')
 
-    assert await StructuredJudge(AliasedReply, model=model).evaluate(MockContext(output='30 days.')) == snapshot(
-        {'is_polite': EvaluationReason(value=True, reason='confidence 0.91')}
-    )
-    assert calls[0].schema['properties'].keys() == {'is-polite'}
+    for questions in (AliasedReply, AliasedDataclassReply):
+        calls: list[JudgeCall] = []
+        model = structured_judge_model(
+            {'is-polite': True, 'is-brief': False}, calls, confidence={'is-polite': 0.91, 'is-brief': 0.7}
+        )
+
+        assert await StructuredJudge(questions, model=model).evaluate(MockContext(output='30 days.')) == snapshot(
+            {
+                'is_polite': EvaluationReason(value=True, reason='confidence 0.91'),
+                'is_brief': EvaluationReason(value=False, reason='confidence 0.70'),
+            }
+        )
+        assert calls[0].schema['properties'].keys() == {'is-polite', 'is-brief'}
 
 
 async def test_structured_judge_default_model_and_settings(mocker: MockerFixture):

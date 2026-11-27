@@ -6,7 +6,7 @@ from textwrap import dedent
 from typing import Any
 
 from pydantic import BaseModel, Field
-from pydantic.fields import FieldInfo
+from pydantic.dataclasses import is_pydantic_dataclass
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import to_json
 from typing_extensions import TypeForm
@@ -453,29 +453,6 @@ def _build_prompt(
 _judge_questions_agent = Agent(name='judge_questions')
 
 
-def _rubrics_output_type(rubrics: Mapping[str, str]) -> type[JsonSchemaValue]:
-    """One yes/no question per rubric, answered together in a single request.
-
-    The rubrics live in the field descriptions rather than in a `<Rubric>` section of the prompt,
-    because that is the only place a judge can tell them apart: a judge that takes its questions
-    from the output type, like [TypeSafe's Jev](https://pydantic.dev/docs/ai/models/typesafe/),
-    reads everything in the prompt as material to judge instead.
-    """
-    return StructuredDict(
-        {
-            'type': 'object',
-            'properties': {
-                name: {'type': 'boolean', 'description': f'Is this statement true? {rubric}'}
-                for name, rubric in rubrics.items()
-            },
-            'required': list(rubrics),
-            'additionalProperties': False,
-        },
-        name='Grading',
-        description='Judge an output against each rubric.',
-    )
-
-
 @dataclass(frozen=True)
 class JudgeAnswer:
     """The judge's answer to one question from [`judge_questions`][pydantic_evals.evaluators.llm_as_a_judge.judge_questions]."""
@@ -492,14 +469,19 @@ class JudgeAnswer:
 
 
 def _question_fields(questions: type[object]) -> dict[str, str]:
-    """Each field of a model-like type, mapped to the name it is asked under: its alias, if it has one.
+    """Each field of a model-like type, mapped to the name it is asked under.
 
     A model, a dataclass and a `TypedDict` all answer with an object of named fields, but only Pydantic's own
-    classes record an alias, so the rest are asked under the names they were written with.
+    classes record an alias, so the rest are asked under the names they were written with. A Pydantic field is
+    asked under the name it is validated from, its validation alias, else its alias. A field validated from an
+    `AliasChoices` or an `AliasPath` is asked under a name taken from them, which is not looked up here, so the
+    judge's confidence in its answer is not reported.
     """
-    if (fields := getattr(questions, '__pydantic_fields__', None)) is not None:
-        pydantic_fields: dict[str, FieldInfo] = fields
-        return {name: field.alias or name for name, field in pydantic_fields.items()}
+    if issubclass(questions, BaseModel) or is_pydantic_dataclass(questions):
+        return {
+            name: field.validation_alias if isinstance(field.validation_alias, str) else field.alias or name
+            for name, field in questions.__pydantic_fields__.items()
+        }
     if is_dataclass(questions):
         return {field.name: field.name for field in dataclass_fields(questions)}
     return {name: name for name in questions.__annotations__}
@@ -508,6 +490,17 @@ def _question_fields(questions: type[object]) -> dict[str, str]:
 def _answer_confidence(response: ModelResponse) -> Mapping[str, float]:
     """The confidence a decision model reports for each question, keyed by the name it was asked under."""
     return (response.provider_details or {}).get('confidence') or {}
+
+
+def _refuse_invalid_verdicts(rubrics: Mapping[str, str], values: Mapping[str, object]) -> None:
+    """Refuse a rubric answered with anything but a `bool`.
+
+    A rubric is a yes-or-no question, and not every model is held to the schema it was given. A `'false'` that got
+    through would be recorded as a label rather than as the assertion the rubric asked for.
+    """
+    for name in rubrics:
+        if not isinstance(values[name], bool):
+            raise ValueError(f'Judge returned an invalid verdict for {name!r}: {values[name]!r}')
 
 
 async def judge_questions(
@@ -542,43 +535,48 @@ async def judge_questions(
     # The framing that applies to every question goes in the instructions rather than the prompt,
     # which carries only what is being judged.
     instructions = f'Answer each question about <Output>{considering}.'
-    resolved_model = _resolve_judge_model(model)
+    output_type: type[object]
     if isinstance(questions, Mapping):
-        result = await _judge_questions_agent.run(
-            user_prompt,
-            model=resolved_model,
-            model_settings=model_settings,
-            instructions=instructions,
-            output_type=_rubrics_output_type(questions),
+        # One yes/no question per rubric. The rubrics live in the field descriptions rather than in a `<Rubric>`
+        # section of the prompt, because that is the only place a judge can tell them apart: a judge that takes its
+        # questions from the output type, like TypeSafe's Jev, reads everything in the prompt as material to judge.
+        output_type = StructuredDict(
+            {
+                'type': 'object',
+                'properties': {
+                    name: {'type': 'boolean', 'description': f'Is this statement true? {rubric}'}
+                    for name, rubric in questions.items()
+                },
+                'required': list(questions),
+                'additionalProperties': False,
+            },
+            name='Grading',
+            description='Judge an output against each rubric.',
         )
-        confidence = _answer_confidence(result.response)
-        verdicts: dict[str, JudgeAnswer] = {}
-        for name in questions:
-            # A rubric is a yes-or-no question, and not every model is held to the schema it was given.
-            # A `'false'` that got through would be recorded as a label rather than as the assertion the
-            # rubric asked for, so it is refused here instead.
-            verdict = result.output.get(name)
-            if not isinstance(verdict, bool):
-                raise ValueError(f'Judge returned an invalid verdict for {name!r}: {verdict!r}')
-            verdicts[name] = JudgeAnswer(verdict, confidence.get(name))
-        return verdicts
+        fields = {name: name for name in questions}
+    else:
+        output_type = questions
+        fields = _question_fields(questions)
     result = await _judge_questions_agent.run(
         user_prompt,
-        model=resolved_model,
+        model=_resolve_judge_model(model),
         model_settings=model_settings,
         instructions=instructions,
-        output_type=questions,
+        output_type=output_type,
     )
     confidence = _answer_confidence(result.response)
-    fields = _question_fields(questions)
     # Read the validated answer field by field rather than dumping it: the dump is the model's
     # serialization, which a computed field, an alias or a custom `@model_serializer` can add to,
     # rename or replace, and none of that is what the judge was asked.
+    values: dict[str, object]
     if is_str_dict(result.output):
-        # A `TypedDict` answers with a `dict`, which leaves out a key that is not required and was not answered.
+        # Rubrics answer with a `dict`, and so does a `TypedDict`, which leaves out a key that is not required and
+        # was not answered.
         values = {name: result.output.get(name) for name in fields}
     else:
         values = {name: getattr(result.output, name) for name in fields}
+    if isinstance(questions, Mapping):
+        _refuse_invalid_verdicts(questions, values)
     return {name: JudgeAnswer(values[name], confidence.get(asked_as)) for name, asked_as in fields.items()}
 
 
