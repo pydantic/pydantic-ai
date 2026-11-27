@@ -2865,7 +2865,6 @@ def test_groq_gpt_oss():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
-            'supports_inline_system_prompts': True,
             'honors_only_first_system_message': True,
             'default_framing_announcement': 'always',
             'supports_json_object_output': True,
