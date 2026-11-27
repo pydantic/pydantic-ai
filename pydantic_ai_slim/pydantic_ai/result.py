@@ -23,6 +23,7 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    are_tool_call_args_cut_off,
     incomplete_tool_call_message,
     is_incomplete_json,
     output_pipeline_scope,
@@ -334,7 +335,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                     f'Invalid response, unable to find tool call for {output_tool_name!r}'
                 )
             return await self._validate_tool_output(
-                tool_call, cut_off=message.finish_reason == 'length', allow_partial=allow_partial
+                tool_call,
+                # As in `CallToolsNode`, only the tool call the response ended on can have been cut off.
+                cut_off=message.finish_reason == 'length' and message.parts[-1] is tool_call,
+                allow_partial=allow_partial,
             )
         elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
             if not self._output_schema.allows_deferred_tools:
@@ -370,7 +374,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             )
         except ValidationError as e:
             # Say that the token limit cut the arguments off, as `CallToolsNode` does, rather than only that they're invalid.
-            if cut_off and not allow_partial and is_incomplete_json(e):
+            if cut_off and not allow_partial and are_tool_call_args_cut_off(tool_call):
                 raise exceptions.IncompleteToolCall(incomplete_tool_call_message(self._max_tokens_getter())) from e
             raise
 
