@@ -132,7 +132,7 @@ with try_import() as imports_successful:
     from pydantic_ai.messages import TextContent
     from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
-    from .mcp_task_server import TaskConfig, fastmcp_tasks
+    from .mcp_task_server import TASK_SERVER_UNAVAILABLE, TaskConfig, fastmcp_tasks
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -3228,6 +3228,7 @@ async def test_distinct_limiter_sampling_model_round_trip_completes() -> None:
     assert not any('limiter' in content.lower() for content in tool_return_contents(result))
 
 
+@pytest.mark.skipif(TASK_SERVER_UNAVAILABLE, reason='fastmcp-tasks not installed')
 class TestMCPToolsetBackgroundTasks:
     """Task-augmented execution across both generations.
 
