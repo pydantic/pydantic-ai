@@ -165,7 +165,7 @@ class TestCodeModeInputGuardrail:
             await run.verdict_due.wait()
             return GuardrailResult.block('blocked')
 
-        def ping(n: int) -> int:
+        def ping(n: int) -> int:  # pragma: no cover - the blocked prompt must never reach it
             run.calls.append(n)
             run.first_call_ran.set()
             return n

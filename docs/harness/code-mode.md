@@ -820,7 +820,7 @@ Calls into a module behave like this:
 - **Values** cross as Monty converts them, so tuples, sets, `bytes` and dates arrive unchanged. A value it can't convert fails the snippet with a `TypeError`. Return plain data, or wrap a class instance in `pydantic_monty.ClassInstance`.
 - **Not tool calls**: module calls don't count toward `max_tool_calls` (each one counts toward `max_suspensions`, as every sandbox pause does), and they don't appear in the message history or in the `run_code` metadata. They emit no spans of their own; instrument your functions if you want them traced.
 
-In a [Temporal workflow](#temporal-durability), module functions run in the workflow, as `os_access` does, so they run again on replay. Keep them to reads that return the same result on replay, and use a tool for anything with side effects, since a tool call runs once as an activity.
+Under durable execution, module functions run in workflow code, as `os_access` does, so they run again when a [Temporal](#temporal-durability) workflow replays or a DBOS or Prefect workflow recovers. Keep them to reads that return the same result each time, and use a tool for anything with side effects, since a tool call runs once as an activity or step.
 
 ## Sandbox restrictions
 

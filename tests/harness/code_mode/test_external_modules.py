@@ -43,7 +43,7 @@ WAREHOUSE = ExternalModule(
         'fx_rate': fx_rate,
         'CURRENCY': 'USD',
         # Hidden by Monty, and never dispatched even when a remote worker names it.
-        '_private': total,
+        '_priv': total,
         'util': ExternalModule({'doubled': doubled}, stubs='def doubled(n: int) -> int: ...'),
     },
     stubs='def total(region: str) -> float: ...\nasync def fx_rate(currency: str) -> float: ...\nCURRENCY: str',
@@ -105,6 +105,14 @@ async def test_module_calls_run_on_the_host_alongside_tools() -> None:
 async def test_module_calls_from_a_remote_worker(monty_relay: MontyRelay) -> None:
     """A remote worker sends module calls back to the host, as it does tool calls."""
     await _assert_module_calls(monty_relay.url)
+
+
+async def test_a_worker_naming_a_hidden_attribute_reaches_no_host_function(monty_relay: MontyRelay) -> None:
+    """Call names come from the worker, so one that reports `warehouse._priv` gets `NameError`, not the function."""
+    # Same length, so the frame stays well formed.
+    monty_relay.worker_rewrite = (b'warehouse.total', b'warehouse._priv')
+    code = 'import warehouse\ntry:\n    r = warehouse.total(region="us")\nexcept NameError as e:\n    r = str(e)\nr'
+    assert (await _agent(code, monty_sandbox=monty_relay.url).run('go')).output == "'Unknown function: warehouse._priv'"
 
 
 async def test_module_exception_is_raised_at_the_call_site() -> None:

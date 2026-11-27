@@ -1049,9 +1049,10 @@ Calls into a module behave like this:
   in the `run_code` metadata. They emit no spans of their own; instrument your functions if you want
   them traced.
 
-In a [Temporal workflow](#temporal-durability), module functions run in the workflow, as `os_access`
-does, so they run again on replay. Keep them to reads that return the same result on replay, and use
-a tool for anything with side effects, since a tool call runs once as an activity.
+Under durable execution, module functions run in workflow code, as `os_access` does, so they run
+again when a [Temporal](#temporal-durability) workflow replays or a DBOS or Prefect workflow
+recovers. Keep them to reads that return the same result each time, and use a tool for anything with
+side effects, since a tool call runs once as an activity or step.
 
 ## Sandbox restrictions
 
