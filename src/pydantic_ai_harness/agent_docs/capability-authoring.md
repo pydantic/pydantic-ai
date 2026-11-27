@@ -383,11 +383,12 @@ Where the tracer comes from:
 - A standalone helper that users call outside any run takes `tracer: Tracer | None = None` and falls
   back to `NoOpTracer()`, so it emits the same span shape as the in-run path (`compaction`'s
   `compact_messages`).
-- Record from hooks that run inside the run's span, such as `before_run` or the tool and model request
-  hooks. `for_run` runs before the run's tracing settings are final and before its `invoke_agent` span
-  opens. `Skills` still records its scan from `for_run`; moving it is a follow-up.
-- Replayed work is not exported twice only on Temporal. DBOS and Prefect don't report replay to these
-  helpers.
+- Record from `before_run` or the tool and model request hooks. `for_run` runs before the run's tracing
+  settings are final and before its `invoke_agent` span opens, so it can use a tracer or content setting
+  the run then drops. In a realtime session, `before_run` also runs before the session span opens.
+  `Skills` still records its scan from `for_run`; moving it is a follow-up.
+- Replayed work is not exported twice only on Temporal, and only from `wrap_run` on. DBOS and Prefect
+  don't report replay to these helpers.
 
 What to record, and where:
 
