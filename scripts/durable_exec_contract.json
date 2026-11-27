@@ -4738,6 +4738,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>"
       ]
     },
+    "StructuredContent.value": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_tool_return_with_raw_content"
+      ]
+    },
     "ToolAvailabilityDeltaEvent.event_kind": {
       "engines": [
         "temporal"
@@ -4782,7 +4793,43 @@
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::wrap_tool_call_result"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_record_tool_return",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_tool_return_with_raw_content"
+      ]
+    },
+    "ToolReturn.metadata": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_record_tool_return",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_tool_return_with_raw_content"
+      ]
+    },
+    "ToolReturn.return_value": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_record_tool_return"
+      ]
+    },
+    "ToolReturn.tools": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_record_tool_return",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_tool_return_with_raw_content"
       ]
     },
     "ToolReturnContent": {
@@ -4810,13 +4857,16 @@
     "UserContent": {
       "engines": [
         "dbos",
+        "durable_exec",
         "prefect",
         "temporal"
       ],
       "kinds": [
-        "annotation_only"
+        "annotation_only",
+        "import"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_sync_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.iter",
@@ -4834,28 +4884,6 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run_stream_events",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run_sync"
-      ]
-    },
-    "UserPromptPart": {
-      "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "import"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
-      ]
-    },
-    "UserPromptPart.content": {
-      "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "attribute_read"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::wrap_tool_call_result"
       ]
     },
     "WorkspaceRef": {
@@ -4954,7 +4982,19 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_ToolContentResult._content_field",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_ToolReturn._content_field"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_ToolReturn._content_field",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_ToolReturnWithRawContent._content_field"
+      ]
+    },
+    "_USER_CONTENT_TYPES": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
       ]
     },
     "_tool_kind_id": {

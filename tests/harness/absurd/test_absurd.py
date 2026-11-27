@@ -51,7 +51,10 @@ from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ExternalToolse
 from pydantic_ai_harness.absurd import AbsurdDurability
 from pydantic_ai_harness.absurd._operation_backend import (
     _CONTROL_FLOW_KINDS,  # pyright: ignore[reportPrivateUsage]
+    _ENVELOPE_KEY,  # pyright: ignore[reportPrivateUsage]
     _RAW_RESULT_KINDS,  # pyright: ignore[reportPrivateUsage]
+    _from_checkpoint,  # pyright: ignore[reportPrivateUsage]
+    _to_checkpoint,  # pyright: ignore[reportPrivateUsage]
 )
 from tests.harness._rate_limited_model import rate_limited_once
 
@@ -491,6 +494,23 @@ class TestToolResults:
         # A result kind core adds must be sorted into checkpointed or not before it can reach a task.
         kinds = set(TypeAdapter(CallToolResult).json_schema()['discriminator']['mapping'])
         assert kinds == _RAW_RESULT_KINDS | _CONTROL_FLOW_KINDS
+
+    def test_tool_return_with_non_user_content_is_checkpointed_whole(self) -> None:
+        # Its `result` is not the tool's raw return value, so it is stored under the reserved key and read back as is.
+        payload: dict[str, object] = {
+            'result': {
+                'return_value': 'ok',
+                'content': [
+                    {'value': {'kind': 'image-url', 'url': 'https://example.com/a.png'}, 'kind': 'raw_content_item'}
+                ],
+                'metadata': None,
+                'tools': None,
+            },
+            'kind': 'tool_return_with_raw_content',
+            'content_file_digests': [],
+        }
+        assert _to_checkpoint(payload) == {_ENVELOPE_KEY: payload}
+        assert _from_checkpoint(_to_checkpoint(payload)) == payload
 
     async def test_model_retry_is_not_checkpointed_and_the_tool_reruns_on_replay(self, absurd: AsyncAbsurd) -> None:
         model_calls = {'calls': 0}

@@ -45,6 +45,7 @@ from pydantic_ai import (
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     MCP,
+    AbstractCapability,
     Capability,
     PrefixTools,
     Toolset,
@@ -1866,29 +1867,77 @@ async def test_legacy_structured_tool_return_payload_decodes() -> None:
     assert unwrap_tool_call_result(decoded[0]) == ToolReturn('legacy')
 
 
-async def test_tool_return_content_is_checked_before_it_is_recorded() -> None:
-    """The activity rejects a `ToolReturn.content` item that isn't `UserContent`, as a plain run does.
+async def _non_user_content_tool() -> ToolReturn:
+    return ToolReturn('ok', content=[cast(Any, {'kind': 'image-url', 'url': 'https://example.com/a.png'})])
 
-    A result recorded before the check still decodes as it did: the check runs only on the tool's own result.
+
+class _RepairToolReturnContent(AbstractCapability[Any]):
+    async def after_tool_execute(
+        self, ctx: RunContext[Any], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, result: Any
+    ) -> Any:
+        assert isinstance(result, ToolReturn)
+        content = cast(list[Any], result.content)
+        return replace(result, content=[ImageUrl(item['url']) if isinstance(item, dict) else item for item in content])
+
+
+_non_user_content_agent = Agent(
+    TestModel(), name='non_user_content_agent', tools=[_non_user_content_tool], capabilities=[TemporalDurability()]
+)
+_repaired_content_agent = Agent(
+    TestModel(),
+    name='repaired_content_agent',
+    tools=[_non_user_content_tool],
+    capabilities=[_RepairToolReturnContent(), TemporalDurability()],
+)
+
+
+@workflow.defn
+class ToolReturnContentWorkflow:
+    @workflow.run
+    async def run(self, repaired: bool) -> str:
+        agent = _repaired_content_agent if repaired else _non_user_content_agent
+        try:
+            return (await agent.run('go')).output
+        except ValueError as error:
+            return f'{type(error).__name__}: {error}'
+
+
+async def test_tool_return_content_in_workflow_matches_plain_run(client: Client) -> None:
+    """A workflow sees a tool's `ToolReturn.content` as the tool returned it, as a run outside one does.
+
+    So `content` that isn't `UserContent` is rejected in workflow code after the tool-execution hooks, which
+    can still repair it, and the tool's activity completes on its first attempt.
     """
-    item: Any = {'kind': 'image-url', 'url': 'https://example.com/a.png', 'force_download': True}
-
-    async def return_content() -> ToolReturn:
-        return ToolReturn('ok', content=[item])
-
     with pytest.raises(ValueError) as plain:
-        UserPromptPart(content=[item])
-    with pytest.raises(ValueError) as durable:
-        await wrap_tool_call_result(return_content())
-    assert str(durable.value) == str(plain.value)
+        await _non_user_content_agent.run('go')
+    plain_repaired = (await _repaired_content_agent.run('go')).output
 
-    payloads = await pydantic_data_converter.encode(
-        [{'result': {'return_value': 'ok', 'content': [item], 'kind': 'tool-return'}, 'kind': 'tool_return'}]
-    )
-    decoded = await pydantic_data_converter.decode(payloads, [CallToolResult])  # pyright: ignore[reportArgumentType]
-    assert unwrap_tool_call_result(decoded[0]) == ToolReturn(
-        'ok', content=[ImageUrl('https://example.com/a.png', force_download=True)]
-    )
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ToolReturnContentWorkflow],
+        plugins=[AgentPlugin(_non_user_content_agent), AgentPlugin(_repaired_content_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        rejected = await client.execute_workflow(
+            ToolReturnContentWorkflow.run, args=[False], id=f'tool_return_content_{uuid.uuid4()}', task_queue=TASK_QUEUE
+        )
+        handle = client.get_workflow_handle(f'tool_return_content_repaired_{uuid.uuid4()}')
+        repaired = await client.execute_workflow(
+            ToolReturnContentWorkflow.run, args=[True], id=handle.id, task_queue=TASK_QUEUE
+        )
+        history = await handle.fetch_history()
+
+    assert rejected == f'ValueError: {plain.value}'
+    assert str(plain.value).startswith('`UserPromptPart.content[0]` must be a `UserContent` item, got `dict`.')
+    assert repaired == plain_repaired
+    scheduled = [
+        event.activity_task_scheduled_event_attributes.activity_type.name
+        for event in history.events
+        if event.HasField('activity_task_scheduled_event_attributes')
+    ]
+    assert scheduled.count('agent__repaired_content_agent__toolset__<agent>__call_tool') == 1
+    assert not [event for event in history.events if event.HasField('activity_task_failed_event_attributes')]
 
 
 # --- Heartbeat supervision ---

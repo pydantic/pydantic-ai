@@ -18,7 +18,9 @@ from ._context import current_async_task_context
 
 # A tool-call checkpoint holds the raw return value; a `ToolReturn` has no raw form, so it goes under this key.
 _ENVELOPE_KEY = '__pydantic_ai_harness_absurd_tool_result__'
-_RAW_RESULT_KINDS = frozenset({'tool_return', 'tool_content_result'})
+_RAW_RESULT_KINDS = frozenset({'tool_return', 'tool_content_result', 'tool_return_with_raw_content'})
+# A result of this kind is not a raw return value, so it is always stored under the reserved key.
+_ENVELOPED_RESULT_KIND = 'tool_return_with_raw_content'
 # Control flow (`ModelRetry`, `CallDeferred`, ...) is not checkpointed, so the call runs again on replay.
 _CONTROL_FLOW_KINDS = frozenset(
     {'approval_required', 'call_deferred', 'model_retry', 'validation_error', 'tool_failed', 'run_cancelled'}
@@ -43,7 +45,11 @@ def _to_checkpoint(payload: dict[str, object]) -> object:
     """Reduce an encoded `CallToolResult` to the stored checkpoint: the raw return value."""
     result = payload['result']
     # A raw value shaped like the envelope is enveloped too, so it reads back as itself.
-    if _is_envelope(result) or (payload['kind'] == 'tool_return' and _is_tool_return_object(result)):
+    if (
+        payload['kind'] == _ENVELOPED_RESULT_KIND
+        or _is_envelope(result)
+        or (payload['kind'] == 'tool_return' and _is_tool_return_object(result))
+    ):
         return {_ENVELOPE_KEY: payload}
     return result
 
