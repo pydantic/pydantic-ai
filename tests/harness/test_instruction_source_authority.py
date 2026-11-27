@@ -98,7 +98,7 @@ class _Seen:
 
 def _place(part: ModelRequestPart) -> tuple[str, Authority]:
     if isinstance(part, ToolReturnPart):
-        return 'tool output', 'none'
+        return f'`{part.tool_name}` output', 'none'
     if isinstance(part, CapabilityPart):
         return f'`{part.kind}` part', part.source.authority
     # Anything else, a user or system part included, is above data: only tool output and framed data may carry it.
@@ -153,6 +153,8 @@ class _InstructionSource:
     working_dir: str = '.'
     operator_reaches: Authority = 'operator'
     """The highest authority the text reaches the model at when its source is the operator's."""
+    canary_outputs: frozenset[str] = frozenset()
+    """The tools whose output must carry the canary at `'none'`, so each route the case covers is checked."""
     known_break: str | None = None
     """Why the source breaks the contract today, with its fix; the `'none'` case is then a strict xfail."""
 
@@ -243,9 +245,14 @@ def _sub_agents_calls(authority: Authority) -> list[ToolCallPart]:
 
 
 INSTRUCTION_SOURCES: dict[str, _InstructionSource] = {
-    'skills': _InstructionSource(_skills, _skills_calls),
+    'skills': _InstructionSource(
+        _skills, _skills_calls, canary_outputs=frozenset({'list_skills', 'load_skill', 'read_skill_file'})
+    ),
     'repo_context_working_dir': _InstructionSource(
-        _repo_context_working_dir, lambda _: [ToolCallPart('read_file', {'path': 'AGENTS.md'})], 'packages/foo'
+        _repo_context_working_dir,
+        lambda _: [ToolCallPart('read_file', {'path': 'AGENTS.md'})],
+        'packages/foo',
+        canary_outputs=frozenset({'read_file'}),
     ),
     'repo_context_ancestor': _InstructionSource(_repo_context_ancestor, working_dir='packages/foo'),
     'repo_context_nested': _InstructionSource(
@@ -291,7 +298,10 @@ async def _reached(name: str, directory: Path, authority: Authority) -> list[tup
     'name',
     [
         pytest.param(
-            name, marks=() if (why := source.known_break) is None else pytest.mark.xfail(strict=True, reason=why)
+            name,
+            marks=()
+            if (why := source.known_break) is None
+            else pytest.mark.xfail(strict=True, raises=AssertionError, reason=why),
         )
         for name, source in INSTRUCTION_SOURCES.items()
     ],
@@ -301,6 +311,8 @@ async def test_text_below_operator_reaches_the_model_only_as_tool_output_or_fram
 ) -> None:
     places = await _reached(name, tmp_path, 'none')
     assert places, 'the canary never reached the model, so the case checks nothing'
+    expected = {f'`{tool}` output' for tool in INSTRUCTION_SOURCES[name].canary_outputs}
+    assert expected <= {where for where, _ in places}, places
     assert [place for place in places if place[1] != 'none'] == []
 
 
