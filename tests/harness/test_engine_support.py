@@ -70,13 +70,13 @@ def test_every_cell_is_a_case_with_calls() -> None:
 def test_measured_cells_only_go_up() -> None:
     """How many cases each engine's suites measure, i.e. the cells that aren't `untested`: a PR may raise an
     engine's count by testing a cell, never lower it. It reads test tables or source, with no provider exchange to
-    record, so it isn't a VCR test."""
+    record, so it isn't a VCR test.
+
+    The number of cases with calls is pinned too, so a new case that a suite doesn't measure changes a snapshot."""
+    with_calls = [name for name, case in CASES.items() if name in PUBLIC and case.calls is not None]
+    assert len(with_calls) == snapshot(45)
     measured = Counter(
-        engine
-        for name, case in CASES.items()
-        if name in PUBLIC and case.calls is not None
-        for engine in ENGINES
-        if engine_support(name, engine).level != 'untested'
+        engine for name in with_calls for engine in ENGINES if engine_support(name, engine).level != 'untested'
     )
     assert {engine: measured[engine] for engine in ENGINES} == snapshot(
         {
