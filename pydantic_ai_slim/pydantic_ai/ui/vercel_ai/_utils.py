@@ -3,7 +3,7 @@
 from collections.abc import Callable, Iterable, Iterator, Sequence
 from dataclasses import replace
 from datetime import datetime
-from typing import Any, cast
+from typing import Any, TypeAlias, cast, get_args
 
 from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
@@ -45,6 +45,7 @@ from pydantic_ai.ui.vercel_ai.request_types import (
     UIMessage,
 )
 from pydantic_ai.ui.vercel_ai.response_types import (
+    BaseChunk,
     DataChunk,
     FileChunk,
     ProviderMetadata,
@@ -334,32 +335,49 @@ def apply_message_metadata(message: ModelMessage, metadata: object) -> None:
 #
 # If the Vercel AI SDK introduces new data-carrying UIMessagePart variants,
 # the corresponding chunk type should be added here.
-DATA_CHUNK_TYPES = (DataChunk, SourceUrlChunk, SourceDocumentChunk, FileChunk)
+DataCarryingChunk: TypeAlias = DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk
+# The same types as a tuple, for `isinstance` callers outside this package such as Pydantic AI Harness.
+DATA_CHUNK_TYPES: tuple[type[BaseChunk], ...] = get_args(DataCarryingChunk)
+_data_carrying_chunk_ta: TypeAdapter[DataCarryingChunk] = TypeAdapter(DataCarryingChunk)
 
 
-def iter_metadata_chunks(
-    tool_result: ToolReturnPart,
-) -> Iterator[DataChunk | SourceUrlChunk | SourceDocumentChunk | FileChunk]:
+def iter_metadata_chunks(tool_result: ToolReturnPart) -> Iterator[DataCarryingChunk]:
     """Yield data-carrying chunks from `tool_result.metadata` (or `.content`).
 
-    Used by both the streaming and dump paths. Only `DATA_CHUNK_TYPES` are
+    Used by both the streaming and dump paths. Only `DataCarryingChunk`s are
     yielded; protocol-control chunks are filtered out. MCP Apps data that
     `MCPToolset` attached becomes a single `data-mcp-apps` chunk.
+
+    A JSON round trip (persisted message history, a durable tool result) turns a
+    metadata chunk into a dict, so a metadata dict with a `type` key is validated
+    back into a chunk. The `type` key keeps an unrelated dict like
+    `{'url': ..., 'media_type': ...}` from matching `FileChunk`, whose `type` has a
+    default. Tool content is model-facing output, so it is never rebuilt.
     """
     if (app := get_mcp_app_tool_result(tool_result.metadata)) is not None:
         yield DataChunk(type=MCP_APPS_DATA_TYPE, id=tool_result.tool_call_id, data=mcp_app_ui_payload(app))
         return
 
     possible = tool_result.metadata or tool_result.content
-    if isinstance(possible, DATA_CHUNK_TYPES):
-        yield possible
+    from_metadata = bool(tool_result.metadata)
+
+    def as_chunk(value: object) -> DataCarryingChunk | None:
+        if isinstance(value, DataCarryingChunk):
+            return value
+        if from_metadata and is_str_dict(value) and 'type' in value:
+            try:
+                return _data_carrying_chunk_ta.validate_python(value)
+            except ValidationError:
+                pass
+        return None
+
+    if chunk := as_chunk(possible):
+        yield chunk
     elif isinstance(possible, (str, bytes)):  # pragma: no branch
         # Avoid iterable check for strings and bytes.
         pass
     elif isinstance(possible, Iterable):  # pragma: no branch
-        for item in possible:  # type: ignore[reportUnknownMemberType]
-            if isinstance(item, DATA_CHUNK_TYPES):  # pragma: no branch
-                yield item
+        yield from filter(None, map(as_chunk, possible))  # pyright: ignore[reportUnknownArgumentType]
 
 
 _TOOL_PART_TYPES = (
