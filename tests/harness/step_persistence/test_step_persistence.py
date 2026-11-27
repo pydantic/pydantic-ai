@@ -441,6 +441,81 @@ class TestFileStepStore:
 
         assert await store.list_snapshots(run_id='r1') == [snapshot]
 
+    async def test_snapshot_record_suppresses_retry_if_an_older_key_ledger_write_was_interrupted(
+        self, tmp_path: Path
+    ) -> None:
+        # Nothing orders the saves of a run, so a save that crashed between its snapshot file and its key-log
+        # line can be followed by a later save: the snapshot missing from the key log is then not the newest.
+        older = ContinuableSnapshot(run_id='r1', step_index=1, messages=[], idempotency_key='0:1:complete')
+        newer = ContinuableSnapshot(run_id='r1', step_index=2, messages=[], idempotency_key='1:2:complete')
+        await FileStepStore(tmp_path).save_snapshot(older)
+        (tmp_path / 'r1' / 'snapshot-keys.jsonl').unlink()
+        await FileStepStore(tmp_path).save_snapshot(newer)
+
+        store = FileStepStore(tmp_path)
+        await store.save_snapshot(older)
+
+        assert await store.list_snapshots(run_id='r1') == [older, newer]
+
+    async def test_keyed_snapshot_save_reads_only_snapshot_files_the_store_has_not_seen(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Counting reads is the only way to see the cost: the saved snapshots are the same either way.
+        reads: list[str] = []
+        read_text = Path.read_text
+
+        def counting_read_text(path: Path, *args: Any, **kwargs: Any) -> str:
+            if path.parent.name == 'snapshots':
+                reads.append(path.name)
+            return read_text(path, *args, **kwargs)
+
+        monkeypatch.setattr(Path, 'read_text', counting_read_text)
+
+        async def save(store: FileStepStore, index: int) -> list[str]:
+            reads.clear()
+            await store.save_snapshot(
+                ContinuableSnapshot(run_id='r1', step_index=index, messages=[], idempotency_key=f'{index}:complete')
+            )
+            return sorted(reads)
+
+        writer = FileStepStore(tmp_path)
+        assert [await save(writer, index) for index in range(4)] == [[], [], [], []]
+        # A second store over the same directory reads each existing snapshot once, then only those another
+        # store wrote since.
+        other = FileStepStore(tmp_path)
+        assert await save(other, 4) == ['0.json', '1.json', '2.json', '3.json']
+        assert await save(other, 5) == []
+        assert await save(writer, 6) == ['4.json', '5.json']
+        assert await save(other, 7) == ['6.json']
+
+    async def test_keyed_event_append_parses_only_lines_appended_since_the_last_one(
+        self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Counting parsed events is the only way to see the cost: the appended events are the same either way.
+        store = FileStepStore(tmp_path)
+        events = [
+            StepEvent(run_id='r1', kind='run_started', step_index=index, idempotency_key=f'event:{index}')
+            for index in range(4)
+        ]
+        parsed = 0
+        init = StepEvent.__init__
+
+        def counting_init(event: StepEvent, **kwargs: Any) -> None:
+            nonlocal parsed
+            parsed += 1
+            init(event, **kwargs)
+
+        monkeypatch.setattr(StepEvent, '__init__', counting_init)
+        counts: list[int] = []
+        for event in [*events, events[0]]:
+            parsed = 0
+            await store.append_event(event)
+            counts.append(parsed)
+        monkeypatch.undo()
+
+        assert counts == [0, 1, 1, 1, 1]
+        assert await store.list_events(run_id='r1') == events
+
     async def test_snapshot_scan_skips_a_partially_written_snapshot_file(self, tmp_path: Path) -> None:
         # The corrupt file is the only one in the directory on purpose: the key scan returns as soon as
         # it reads a snapshot carrying the same key, so a directory that also held a good one would only
