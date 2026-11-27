@@ -33,6 +33,7 @@ from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Wo
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repo_context import RepoContext
+from pydantic_ai_harness.require_verification import RequireVerification
 from pydantic_ai_harness.skills import SkillDefinition, Skills
 from pydantic_ai_harness.sub_agents import ModelOption, SubAgent, SubAgents, TaskControl
 from pydantic_ai_pax.builtin_plugins.coder_folders import edit_agent_folders, is_folder_name
@@ -74,6 +75,9 @@ DELEGATE_MODELS_FEATURE = 'coder-delegate-models'
 
 REVIEW_AGENT_FEATURE = 'coder-review-agent'
 """Builds without the Review specialist ignore its saved opt-in."""
+
+REQUIRE_VERIFICATION_FEATURE = 'coder-require-verification'
+"""Builds without required verification ignore its saved opt-in."""
 
 
 class DelegateModel(BaseModel):
@@ -161,6 +165,10 @@ class CoderSettings(BaseModel):
     disabled_skills: list[str] = Field(
         default_factory=list,
         description='Skill names hidden from the model and from the /commands, in every project.',
+    )
+    require_verification: bool = Field(
+        default=False,
+        description='Send the model back to run tests, lint, type checks, or a build when it finishes after editing code.',
     )
 
     @field_validator('agent_folders', 'skill_folders')
@@ -295,6 +303,14 @@ class CoderSource(Generic[DepsT]):
                 choices=('true', 'false'),
                 allow_custom=False,
             ),
+            FieldRow(
+                key='require_verification',
+                label='Require verification',
+                description=CoderSettings.model_fields['require_verification'].description or '',
+                default='false',
+                choices=('true', 'false'),
+                allow_custom=False,
+            ),
         )
 
     def current(self, row: FieldRow) -> str:
@@ -303,6 +319,7 @@ class CoderSource(Generic[DepsT]):
             'unrestricted_filesystem': settings.unrestricted_filesystem,
             'sub_agents': settings.sub_agents,
             'review_agent': settings.review_agent,
+            'require_verification': settings.require_verification,
             'agent_folders': list[JsonValue](settings.agent_folders),
             'skill_folders': list[JsonValue](settings.skill_folders),
             'disabled_skills': list[JsonValue](settings.disabled_skills),
@@ -430,6 +447,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             'disabled_skills': [DISABLED_SKILLS_FEATURE],
             'delegate_models': [DELEGATE_MODELS_FEATURE],
             'review_agent': [REVIEW_AGENT_FEATURE],
+            'require_verification': [REQUIRE_VERIFICATION_FEATURE],
         }
         return cls(host, host.settings(CoderSettings, requires=requires))
 
@@ -493,6 +511,8 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             else None,
         )
         capabilities: list[AgentCapability[DepsT]] = [coder]
+        if settings.require_verification:
+            capabilities.append(RequireVerification[DepsT]())
         if settings.sub_agents and custom_delegation:
             from pydantic_ai_pax.models.model_settings import ModelSettingsForm
 

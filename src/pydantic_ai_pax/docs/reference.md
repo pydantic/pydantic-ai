@@ -206,6 +206,33 @@ Pax's environment minus LLM provider API keys. To keep the file tools inside the
 launch directory, set **Unrestricted filesystem** to `false` in
 `/plugins configure coder`. Shell commands are not restricted either way.
 
+### Verifying edits
+
+To have the agent check its work before it finishes, set **Require verification** to `true`
+in `/plugins configure coder` (`require_verification`, off by default). The `coder` plugin
+then adds harness [`RequireVerification`](../../../docs/harness/require-verification.md)
+with its defaults. An edit is a `write_file` or `edit_file` call to a file other than
+`*.md`, `*.mdx`, or `*.rst`, or a `shell` command that changes files, such as `sed -i`,
+`ruff format`, `git checkout`, or a `>` redirect. A check is a foreground `shell` command
+such as `pytest`, `uv run pyright`, `ruff check`, `npm test`, `cargo test`, or `make lint`,
+not piped or followed by another command, and it passes when it exits with `0`. Both count
+when the agent calls `shell` from code mode's `run_code` too.
+
+When the agent answers after an edit and no check passed since, Pax adds this to the
+conversation and the agent continues, with its tools:
+
+```text
+You edited code, but no verification has passed since your last edit. Run the relevant tests, lint, type checks, or build now, each as its own foreground command whose output is not piped or followed by another command, so its exit status shows whether it passed. If verification cannot run, explain the concrete blocker instead of claiming the work is verified.
+```
+
+This happens at most twice per turn, and not again when the agent answers it without
+calling a tool, such as to explain why it cannot verify. The turn then ends with the
+agent's last answer, so a turn whose checks keep failing still finishes. Each time costs at
+least one more model request. A turn without edits is unaffected, and nothing is added while
+the setting is off. The instruction is appended to the history like any message, so the
+prompt cache before it is kept. The setting is tagged `coder-require-verification`, so an
+older Pax build ignores a saved value.
+
 ### Folder trust
 
 Pax treats every folder as untrusted until you say otherwise, as Claude Code does. The

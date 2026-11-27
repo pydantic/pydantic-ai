@@ -20,6 +20,7 @@ SUPPORTED_FEATURES: frozenset[str] = frozenset(
         'coder-task-control',
         'coder-delegate-models',
         'coder-review-agent',
+        'coder-require-verification',
         'logfire-variables-key',
         'compaction-background',
         'mcp-defer-loading',
