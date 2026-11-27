@@ -10,6 +10,7 @@ SQLite-specific behavior and the media plumbing.
 from __future__ import annotations
 
 import base64
+import json
 import logging
 import sqlite3
 from contextlib import closing
@@ -31,7 +32,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.media import DiskMediaStore, SqliteMediaStore
+from pydantic_ai_harness.media import FileMediaStore, SqliteMediaStore
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
     FileStepStore,
@@ -405,13 +406,13 @@ class TestSqliteWritersShareTheDatabase:
 
 
 # ---------------------------------------------------------------------------
-# Media integration: FileStepStore + DiskMediaStore (default)
+# Media integration: FileStepStore + FileMediaStore (default)
 # ---------------------------------------------------------------------------
 
 
 class TestFileStepStoreMedia:
     async def test_large_binary_externalized_to_media_dir(self, tmp_path: Path) -> None:
-        """Default FileStepStore wires a `DiskMediaStore(<root>/media/)`.
+        """Default FileStepStore wires a `FileMediaStore(<root>/media/)`.
 
         Large `BinaryContent` payloads end up as `<root>/media/<sha256>.bin`,
         not inlined in the snapshot JSON.
@@ -457,6 +458,39 @@ class TestFileStepStoreMedia:
         assert binary.data == payload
         assert binary.media_type == 'image/jpeg'
 
+    async def test_snapshot_from_before_the_literal_wrapper_loads(self, tmp_path: Path) -> None:
+        """A snapshot whose tool return carries the marker key unwrapped loads, next to its media markers.
+
+        Writers before the literal wrapper stored that tool return as it was. The
+        test writes the snapshot with the current writer, then unwraps it on disk.
+        """
+        store = FileStepStore(tmp_path / 'runs')
+        await store.register_run(RunRecord(run_id='r1'))
+        tool_output = {'__harness_external_media__': True, 'status': 'ok'}
+        messages: list[ModelMessage] = [
+            ModelRequest(
+                parts=[UserPromptPart(content=[BinaryContent(data=b'\xcd' * 80_000, media_type='image/jpeg')])]
+            ),
+            ModelRequest(parts=[ToolReturnPart(tool_name='fetch', tool_call_id='c1', content=tool_output)]),
+            ModelResponse(parts=[TextPart(content='x' * 80_000)]),
+        ]
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=messages))
+
+        [snap_file] = (tmp_path / 'runs' / 'r1' / 'snapshots').glob('*.json')
+        text = snap_file.read_text(encoding='utf-8')
+        wrapped = json.dumps(
+            {'__harness_external_literal__': tool_output, '__harness_external_marker_format__': 'literal-v1'}
+        )
+        assert text.count(wrapped) == 1
+        assert text.count('"__harness_external_media__": true') == 3
+        snap_file.write_text(text.replace(wrapped, json.dumps(tool_output)), encoding='utf-8')
+
+        snap = await store.latest_snapshot(run_id='r1')
+        assert snap is not None
+        assert ModelMessagesTypeAdapter.dump_python(snap.messages, mode='json') == ModelMessagesTypeAdapter.dump_python(
+            messages, mode='json'
+        )
+
     async def test_below_threshold_stays_inline(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path / 'runs', media_threshold_bytes=64 * 1024)
         await store.register_run(RunRecord(run_id='r1'))
@@ -484,7 +518,7 @@ class TestFileStepStoreMedia:
         custom_root = tmp_path / 'shared-media'
         store = FileStepStore(
             tmp_path / 'runs',
-            media_store=DiskMediaStore(custom_root),
+            media_store=FileMediaStore(custom_root),
         )
         await store.register_run(RunRecord(run_id='r1'))
         await store.save_snapshot(
@@ -559,7 +593,7 @@ class TestSqliteStepStoreMedia:
     async def test_external_media_store_override(self, tmp_path: Path) -> None:
         """SqliteStepStore can be paired with a non-sqlite media store (e.g. disk)."""
         disk = tmp_path / 'media'
-        store = SqliteStepStore(database=tmp_path / 'runs.db', media_store=DiskMediaStore(disk))
+        store = SqliteStepStore(database=tmp_path / 'runs.db', media_store=FileMediaStore(disk))
         await store.register_run(RunRecord(run_id='r1'))
         await store.save_snapshot(
             ContinuableSnapshot(run_id='r1', step_index=0, messages=_sample_messages_with_media(70_000))
@@ -757,7 +791,7 @@ class TestSqliteRowDefenses:
 class TestMediaStoreResolution:
     def test_file_store_auto_creates_disk_media_store(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path / 'runs')
-        assert isinstance(store._media_store, DiskMediaStore)  # type: ignore[reportPrivateUsage]
+        assert isinstance(store._media_store, FileMediaStore)  # type: ignore[reportPrivateUsage]
 
     def test_file_store_none_disables_media(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path / 'runs', media_store=None)

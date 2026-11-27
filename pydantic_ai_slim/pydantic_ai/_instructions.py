@@ -4,7 +4,9 @@ import warnings
 from collections import Counter
 from collections.abc import Collection, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import Generic, TypeGuard
+from typing import TYPE_CHECKING, Any, Generic, TypeGuard
+
+from pydantic.alias_generators import to_snake
 
 from pydantic_ai._deferred_capabilities import LoadCapabilityReturnPart, LoadExchanges
 from pydantic_ai._run_context import AgentDepsT, RunContext
@@ -13,6 +15,7 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     _UNSTATED_LOADS_KEY,  # pyright: ignore[reportPrivateUsage]
+    Authority,
     CapabilityInstructionSource,
     CompactionPart,
     InstructionBaselinePart,
@@ -34,6 +37,9 @@ from pydantic_ai.template import TemplateStr
 
 from . import _system_prompt
 
+if TYPE_CHECKING:
+    from .capabilities.abstract import AbstractCapability
+
 InstructionFunc = _system_prompt.PromptFunc[AgentDepsT, str | InstructionPart]
 """A function computing an instruction: it may or may not take `RunContext`, may or may not be async,
 and returns text, an [`InstructionPart`][pydantic_ai.messages.InstructionPart], or `None`.
@@ -51,6 +57,9 @@ into an id against whatever source contributes it), its
 `InstructionPart` to declare the same from inside it."""
 
 AgentInstructions = AgentInstruction[AgentDepsT] | Sequence[AgentInstruction[AgentDepsT]] | None
+"""Instructions as `Agent(instructions=...)` and `Agent.override(instructions=...)` take them and
+[`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions] returns them: one
+instruction, a sequence of them, or `None`."""
 
 
 def validate_instruction_id_segment(id: str, *, kind: str) -> None:
@@ -75,7 +84,12 @@ def validate_instruction_name(name: str) -> None:
 
 @dataclass(frozen=True, repr=False)
 class SourcedInstruction(Generic[AgentDepsT]):
-    """A lazy instruction recipe with the name and key its content should be addressed by."""
+    """An instruction as the agent collects it: a lazy recipe with the name and key its content is addressed by.
+
+    Capabilities don't build these to contribute instructions. They return instructions from
+    [`get_instructions()`][pydantic_ai.capabilities.AbstractCapability.get_instructions], and the agent
+    wraps each one with where it came from; `instruction` holds what the capability returned.
+    """
 
     instruction: AgentInstruction[AgentDepsT]
 
@@ -91,6 +105,8 @@ class SourcedInstruction(Generic[AgentDepsT]):
     """
     dynamic: bool = False
     on_change: InstructionChangePolicy = 'rewrite'
+    owner: AbstractCapability[AgentDepsT] | None = field(default=None, compare=False)
+    """The capability whose code a function instruction is, which the context it's called with is attributed to."""
 
     __repr__ = dataclasses_no_defaults_repr
 
@@ -214,7 +230,14 @@ async def resolve_sourced_instructions(
             _add_instruction_part(context, instruction, sourced.id)
         elif isinstance(instruction, str):
             _add_instruction_text(context, instruction, sourced.id)
-        elif (part := await resolve_instruction_function(sourced, instruction, run_context)) is not None:
+        elif (
+            part := await resolve_instruction_function(
+                sourced,
+                instruction,
+                # What a capability's instruction function enqueues is held to that capability's authority.
+                run_context if sourced.owner is None else run_context._attributed_to(sourced.owner),  # pyright: ignore[reportPrivateUsage]
+            )
+        ) is not None:
             if context.group:
                 context.pending_parts.append(part)
             else:
@@ -392,14 +415,33 @@ def window_prefix(baseline: InstructionBaselinePart, current: Sequence[Instructi
 
     The append-mode blocks at their baseline values, in their baseline positions, minus empty ones, with the
     rewrite-mode blocks from `current`, which [`continues_window`][pydantic_ai._instructions.continues_window]
-    has checked are the ones the baseline records.
+    has checked are the ones the baseline records. Where it let the dynamic rewrite-mode blocks change, because the
+    model reads them outside the cached prefix, they follow the other blocks.
     """
-    rewritten = iter(part for part in current if part.on_change != 'append')
+    rewritten = [part for part in current if part.on_change != 'append']
+    digests = [block for block in baseline.instructions if isinstance(block, InstructionDigest)]
+    if _digests_match(digests, rewritten):
+        return _fill_digests(baseline.instructions, rewritten)
+    kept = [block for block in baseline.instructions if isinstance(block, InstructionPart) or not block.dynamic]
+    literal = [part for part in rewritten if not part.dynamic]
+    return [*_fill_digests(kept, literal), *(part for part in rewritten if part.dynamic)]
+
+
+def _fill_digests(
+    blocks: Sequence[InstructionPart | InstructionDigest], rewritten: Sequence[InstructionPart]
+) -> list[InstructionPart]:
+    """`blocks` without their empty append-mode blocks, each digest replaced by the next part of `rewritten`."""
+    parts = iter(rewritten)
     return [
-        block if isinstance(block, InstructionPart) else next(rewritten)
-        for block in baseline.instructions
+        block if isinstance(block, InstructionPart) else next(parts)
+        for block in blocks
         if not isinstance(block, InstructionPart) or block.content
     ]
+
+
+def _digests_match(digests: Sequence[InstructionDigest], parts: Sequence[InstructionPart]) -> bool:
+    """Whether `parts` are the rewrite-mode blocks `digests` record, unchanged and in the same order."""
+    return len(digests) == len(parts) and all(map(InstructionDigest.matches, digests, parts))
 
 
 @dataclass
@@ -456,6 +498,9 @@ class LoadedInstructionValues:
     _changed: set[str] = field(default_factory=set[str], repr=False)
     """The capabilities whose value an instruction change delivered, rather than their load return."""
 
+    _authorities: dict[str, Authority] = field(default_factory=dict[str, Authority], repr=False)
+    """The authority of each loaded capability's block as an instruction change last delivered it."""
+
     _unstated: dict[str, int] = field(default_factory=dict[str, int], repr=False)
     """The index of the message holding each load whose instructions nothing has stated since, as `of` folds them."""
 
@@ -484,6 +529,10 @@ class LoadedInstructionValues:
                         loaded._unstated[capability_id] = index
         return loaded
 
+    def authority_of(self, capability_id: str) -> Authority:
+        """The authority `capability_id`'s block was last stated with, `'operator'` if no instruction change stated it."""
+        return self._authorities.get(capability_id, 'operator') if capability_id in self._changed else 'operator'
+
     def unstated_load_index(self, capability_id: str) -> int | None:
         """The index of the message holding `capability_id`'s load, if nothing has stated its instructions since.
 
@@ -504,6 +553,8 @@ class LoadedInstructionValues:
                     self.values.pop(capability_id, None)
                     self._changed.discard(capability_id)
                     self._unstated.pop(capability_id, None)
+                    # The load no longer owns the block, so a later load of the capability counts again.
+                    self._loads.forget(capability_id)
         loaded = self._loads.loads(part)
         for capability_id in loaded:
             # Moved to the end, so the values stay in load order.
@@ -528,6 +579,7 @@ class LoadedInstructionValues:
         capability_id = _changed_capability_id(change)
         previous = self.values[capability_id] if capability_id in self._changed else None
         self.values[capability_id] = change.content
+        self._authorities[capability_id] = change.authority
         self._changed.add(capability_id)
         self._unstated.pop(capability_id, None)
         return previous
@@ -598,6 +650,7 @@ def update_loaded_instruction_history(
     *,
     history: list[ModelMessage],
     keep_without_parts: Collection[str] = (),
+    authorities: Mapping[str, Authority] | None = None,
 ) -> None:
     """Record changes to loaded capabilities' instructions in history.
 
@@ -618,9 +671,12 @@ def update_loaded_instruction_history(
     A loaded block with no parts at all is withdrawn too, because the capability's instructions resolved to
     nothing or it is no longer configured, unless it's in `keep_without_parts`: a capability that's eager
     again, whose instructions are back in the prefix.
+
+    Each change carries its capability's authority from `authorities`, `'operator'` for one it doesn't list: below
+    `'operator'`, the block is rendered as framed data, as an eager capability's below it is (`LoweredInstructions`).
     """
     changes, restored = _loaded_instruction_changes(
-        messages, _loaded_texts(parts), targets, keep_without_parts=keep_without_parts
+        messages, _loaded_texts(parts), targets, keep_without_parts=keep_without_parts, authorities=authorities or {}
     )
     for index, statements in restored.items():
         _restore_statements(messages, history, index, statements)
@@ -635,6 +691,7 @@ def _loaded_instruction_changes(
     targets: Sequence[ModelRequest],
     *,
     keep_without_parts: Collection[str],
+    authorities: Mapping[str, Authority],
 ) -> tuple[list[InstructionDeltaPart], dict[int, list[InstructionDeltaPart]]]:
     """What `update_loaded_instruction_history` records, given each loaded block's `current` text.
 
@@ -648,9 +705,13 @@ def _loaded_instruction_changes(
         on_target = index is not None and any(messages[index] is target for target in targets)
         if capability_id not in current and capability_id in keep_without_parts:
             continue
-        if (content := current.get(capability_id)) == previous:
+        authority = authorities.get(capability_id, 'operator')
+        # Stated again when only its authority changed, so the model reads it at the authority it has now.
+        if (content := current.get(capability_id)) == previous and (
+            content is None or authority == loaded.authority_of(capability_id)
+        ):
             continue
-        change = _instruction_change(loaded_instruction_id(capability_id), previous, content)
+        change = _instruction_change(loaded_instruction_id(capability_id), previous, content, authority=authority)
         if index is not None and not on_target:
             restored.setdefault(index, []).append(change)
         else:
@@ -685,6 +746,116 @@ def _restore_statements(
             history[position] = restored
 
 
+@dataclass
+class LoweredInstructions:
+    """Each lowered capability's instructions as the model last received them, and the authority they carried.
+
+    A capability whose authority is below `'operator'`, lowered by
+    [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority] or its class's `authority`, has its
+    instructions, its own and its toolsets', delivered as one block, `capability:<id>`, that never enters the prefix.
+    Like a loaded capability's block (see `LoadedInstructionValues`), every statement of it is an
+    [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart] in history, carrying the block's authority:
+    the first on the request it first applies to, and one for each change since. Only the parts in the
+    [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] are folded, so a compaction ends every
+    block, and the next request states it again.
+    """
+
+    values: dict[InstructionId, tuple[str, Authority]] = field(
+        default_factory=dict[InstructionId, tuple[str, Authority]]
+    )
+    """Each block's text and authority, by id. A withdrawn block isn't in it."""
+
+    @classmethod
+    def of(cls, messages: Sequence[ModelMessage]) -> LoweredInstructions:
+        """The values at the end of `messages`."""
+        lowered = cls()
+        for _, part in loaded_window_parts(messages):
+            if is_lowered_statement(part):
+                lowered.apply(part)
+        return lowered
+
+    def apply(self, change: InstructionDeltaPart) -> bool:
+        """Fold in a statement `is_lowered_statement` accepted, returning whether an earlier one was in effect."""
+        assert change.id is not None
+        restated = self.values.pop(change.id, None) is not None
+        if change.content is not None:
+            self.values[change.id] = (change.content, change.authority)
+        return restated
+
+
+def lowered_block_id(capability: AbstractCapability[Any]) -> str:
+    """The key a capability below `'operator'` authority states its instructions under; see `lowered_instruction_id`.
+
+    Its `id`, or for a capability without one, its class's name in snake case after a `:`, which no `id` can contain:
+    stable across runs, unlike the key a run registers such a capability under, and never the key of a capability with
+    an `id`, loaded or lowered. Capabilities of one class without an `id` share the block.
+    """
+    return capability.id if capability.id is not None else f':{to_snake(type(capability).__name__)}'
+
+
+def lowered_instruction_id(block_id: str) -> InstructionId:
+    """The id of the block a capability below `'operator'` authority states its instructions as.
+
+    `capability:<id>` for a capability with an `id`, and `capability::<snake_class_name>` for one without, which renders
+    and loads back as the same id.
+    """
+    if block_id.startswith(':'):
+        return InstructionId(CapabilityInstructionSource(''), name=block_id[1:])
+    return loaded_instruction_id(block_id)
+
+
+def is_lowered_statement(part: ModelRequestPart | ModelResponsePart) -> TypeGuard[InstructionDeltaPart]:
+    """Whether `part` states a block of instructions below `'operator'` authority, which never enters the prefix."""
+    return isinstance(part, InstructionDeltaPart) and part.authority != 'operator' and part.id is not None
+
+
+def update_lowered_instruction_history(
+    messages: Sequence[ModelMessage],
+    parts: Sequence[InstructionPart],
+    authorities: Mapping[str, Authority],
+    targets: Sequence[ModelRequest],
+    *,
+    loaded: Collection[str] = (),
+) -> None:
+    """Record changes to the instructions of capabilities below `'operator'` authority on `targets`.
+
+    `authorities` are those capabilities, by the id their block is keyed beneath, and `parts` the instruction parts
+    this request resolved, after the `before_model_request` hooks; parts of other blocks are ignored. A block whose
+    joined text or authority differs from what the model last received is stated again, at the authority it has now,
+    and one in history that resolved to nothing, or whose capability is no longer lowered or configured, is withdrawn.
+    A block a load in history owns, `loaded`, is left to `update_loaded_instruction_history`, which records it at its
+    capability's authority too.
+    """
+    owned: dict[str, Authority] = {
+        capability_id: authority for capability_id, authority in authorities.items() if capability_id not in loaded
+    }
+    current: dict[InstructionId, tuple[str, Authority]] = {
+        lowered_instruction_id(capability_id): (text, owned[capability_id])
+        for capability_id, text in _loaded_texts(
+            [part for part in parts if loaded_part_capability_id(part) in owned]
+        ).items()
+        if text is not None
+    }
+    recorded = {
+        instruction_id: value
+        for instruction_id, value in LoweredInstructions.of(messages).values.items()
+        if _loaded_block_capability_id(instruction_id) not in loaded
+    }
+    changes = [
+        InstructionDeltaPart(id=instruction_id, content=content, authority=authority)
+        for instruction_id, (content, authority) in current.items()
+        if recorded.get(instruction_id) != (content, authority)
+    ]
+    changes.extend(
+        InstructionDeltaPart(id=instruction_id, content=None, authority=authority)
+        for instruction_id, (_, authority) in recorded.items()
+        if instruction_id not in current
+    )
+    if changes:
+        for target in targets:
+            target.parts = [*target.parts, *changes]
+
+
 def _recorded_instruction_values(
     messages: Sequence[ModelMessage], baseline: InstructionBaselinePart
 ) -> dict[InstructionId, str | None] | None:
@@ -704,7 +875,8 @@ def _recorded_instruction_values(
             # A loaded capability's block is delivered through history, not the prefix: its changes are no part of
             # this window, and leaving it out of `current` is no withdrawal.
             loaded.apply(part)
-        elif in_window and isinstance(part, InstructionDeltaPart):
+        elif in_window and isinstance(part, InstructionDeltaPart) and part.authority == 'operator':
+            # A block below operator authority is delivered through history, never the prefix (`LoweredInstructions`).
             if part.id is None:
                 return None
             values.apply(part)
@@ -713,25 +885,45 @@ def _recorded_instruction_values(
     return values.values
 
 
-def continues_window(baseline: InstructionBaselinePart, current: Sequence[InstructionPart]) -> bool:
+def continues_window(
+    baseline: InstructionBaselinePart, current: Sequence[InstructionPart], *, rewrites_outside_prefix: bool = False
+) -> bool:
     """Whether `current` can be sent with `baseline`'s prefix, appending changes to its append-mode blocks.
 
     Rewrite-mode blocks are sent as they are, so they must be unchanged, in the same order, per the baseline's
     digests; a block whose policy changed is one of them. An append-mode block whose id didn't survive
     deserialization (a source namespace this version doesn't know) can't be tagged, so it can't anchor a
     window either.
+
+    With `rewrites_outside_prefix`, the model reads the dynamic rewrite-mode blocks outside the cached prefix, so
+    they may change, appear or disappear. The literal ones must still be unchanged, and a change of policy still
+    ends the window.
     """
     if any(isinstance(block, InstructionPart) and block.id is None for block in baseline.instructions):
         return False
     digests = [block for block in baseline.instructions if isinstance(block, InstructionDigest)]
     rewritten = [part for part in current if part.on_change != 'append']
-    return len(digests) == len(rewritten) and all(map(InstructionDigest.matches, digests, rewritten))
+    if not rewrites_outside_prefix:
+        return _digests_match(digests, rewritten)
+    return not _policy_changed(baseline, current) and _digests_match(
+        [digest for digest in digests if not digest.dynamic], [part for part in rewritten if not part.dynamic]
+    )
+
+
+def _policy_changed(baseline: InstructionBaselinePart, current: Sequence[InstructionPart]) -> bool:
+    """Whether a block `baseline` records now has the other `on_change` policy."""
+    appends: dict[InstructionId | None, bool] = {
+        block.id: isinstance(block, InstructionPart) for block in baseline.instructions if block.id is not None
+    }
+    return any(appends.get(part.id, part.on_change == 'append') != (part.on_change == 'append') for part in current)
 
 
 def update_instruction_history(
     messages: Sequence[ModelMessage],
     instructions: list[InstructionPart] | None,
     targets: Sequence[ModelRequest],
+    *,
+    rewrites_outside_prefix: bool = False,
 ) -> list[InstructionPart] | None:
     """Preserve the instruction prefix and append changed instruction blocks to the outgoing request.
 
@@ -741,6 +933,9 @@ def update_instruction_history(
     [`InstructionDeltaPart`][pydantic_ai.messages.InstructionDeltaPart]s. When the prefix has to change
     anyway, the request opens a new window with the current values, which costs no more cache than the
     change itself. `targets` are the requests that both this request and the persisted history carry.
+
+    With `rewrites_outside_prefix`, for a model that reads the dynamic rewrite-mode blocks outside the cached
+    prefix, a change to one of them doesn't move the prefix, so the window continues.
     """
     normalized = _normalize_append_parts(instructions or [])
     baseline = instruction_window(messages)
@@ -753,7 +948,11 @@ def update_instruction_history(
             _record_baseline(targets, [])
         return None
     loaded = LoadedInstructionValues.of(messages).values
-    if baseline is not None and recorded is not None and _stays_in_window(baseline, normalized, loaded):
+    if (
+        baseline is not None
+        and recorded is not None
+        and _stays_in_window(baseline, normalized, loaded, rewrites_outside_prefix=rewrites_outside_prefix)
+    ):
         _record_window_changes(targets, recorded, normalized)
     elif any(part.on_change == 'append' for part in normalized):
         baseline = _open_window(targets, normalized, loaded)
@@ -771,7 +970,11 @@ def update_instruction_history(
 
 
 def _stays_in_window(
-    baseline: InstructionBaselinePart, normalized: Sequence[InstructionPart], loaded: Mapping[str, str | None]
+    baseline: InstructionBaselinePart,
+    normalized: Sequence[InstructionPart],
+    loaded: Mapping[str, str | None],
+    *,
+    rewrites_outside_prefix: bool,
 ) -> bool:
     """Whether the request can be sent with `baseline`'s prefix, as `continues_window` decides.
 
@@ -781,7 +984,7 @@ def _stays_in_window(
     takes_over = any(
         part.on_change == 'append' and _loaded_block_capability_id(part.id) in loaded for part in normalized
     )
-    return not takes_over and continues_window(baseline, normalized)
+    return not takes_over and continues_window(baseline, normalized, rewrites_outside_prefix=rewrites_outside_prefix)
 
 
 def _open_window(
@@ -817,38 +1020,74 @@ def _record_window_changes(
             target.parts = [*target.parts, *changes]
 
 
-def recorded_prefix(baseline: InstructionBaselinePart, instructions: str) -> list[InstructionPart] | None:
+def recorded_prefix(
+    baseline: InstructionBaselinePart, instructions: str, *, rewrites_outside_prefix: bool = False
+) -> list[InstructionPart] | None:
     """The instruction parts a request in `baseline`'s window was sent, rebuilt from its recorded `instructions`.
 
     The joined text is split into the baseline's blocks at the blank lines that join them: an append-mode block
     must match its recorded content, and a rewrite-mode block must match its digest's hash, so the parts are
     exactly the ones the request was sent. `None` if the text isn't made of the baseline's blocks.
+
+    With `rewrites_outside_prefix`, a request whose dynamic rewrite-mode blocks changed within the window sent them
+    after the other blocks (see `window_prefix`), so the text after those is one dynamic part.
     """
     blocks = [block for block in baseline.instructions if not isinstance(block, InstructionPart) or block.content]
-    return _split_recorded_prefix(blocks, instructions, 0, 0)
+    parts = _split_recorded_prefix(blocks, instructions, 0, 0)
+    if parts is not None or not rewrites_outside_prefix:
+        return parts
+    kept = [block for block in blocks if isinstance(block, InstructionPart) or not block.dynamic]
+    return _split_recorded_prefix(kept, instructions, 0, 0, dynamic_tail=True)
 
 
 def _split_recorded_prefix(
-    blocks: Sequence[InstructionPart | InstructionDigest], instructions: str, start: int, index: int
+    blocks: Sequence[InstructionPart | InstructionDigest],
+    instructions: str,
+    start: int,
+    index: int,
+    *,
+    dynamic_tail: bool = False,
 ) -> list[InstructionPart] | None:
-    """Split `instructions[start:]` into `blocks[index:]`, as `recorded_prefix` describes."""
+    """Split `instructions[start:]` into `blocks[index:]`, as `recorded_prefix` describes.
+
+    With `dynamic_tail`, text after the last block is returned as one dynamic part.
+    """
     if index == len(blocks):
-        return [] if start == len(instructions) else None
+        if start == len(instructions):
+            return []
+        return [InstructionPart(content=instructions[start:], dynamic=True)] if dynamic_tail else None
     block = blocks[index]
     last = index == len(blocks) - 1
     for end in _recorded_block_ends(block, instructions, start):
-        # Blocks are joined with a blank line, and the last one ends the text.
-        if end != len(instructions) if last else not instructions.startswith('\n\n', end):
+        if not _can_end_recorded_block(instructions, end, last=last, dynamic_tail=dynamic_tail):
             continue
-        if isinstance(block, InstructionPart):
-            part = block
-        elif _instruction_text_hash(instructions[start:end]) == block.content_hash:
-            part = InstructionPart(content=instructions[start:end], id=block.id, dynamic=block.dynamic)
-        else:
+        if (part := _recorded_block_part(block, instructions[start:end])) is None:
             continue
-        if (rest := _split_recorded_prefix(blocks, instructions, end if last else end + 2, index + 1)) is not None:
+        rest = _split_recorded_prefix(
+            blocks, instructions, end if end == len(instructions) else end + 2, index + 1, dynamic_tail=dynamic_tail
+        )
+        if rest is not None:
             return [part, *rest]
     return None
+
+
+def _can_end_recorded_block(instructions: str, end: int, *, last: bool, dynamic_tail: bool) -> bool:
+    """Whether a block can end at `end`.
+
+    Blocks are joined with a blank line, and the last one ends the text unless a dynamic tail follows it.
+    """
+    if end == len(instructions):
+        return last
+    return instructions.startswith('\n\n', end) and (dynamic_tail or not last)
+
+
+def _recorded_block_part(block: InstructionPart | InstructionDigest, text: str) -> InstructionPart | None:
+    """The part `block` records for `text`, or `None` if `text` doesn't match its digest."""
+    if isinstance(block, InstructionPart):
+        return block
+    if _instruction_text_hash(text) != block.content_hash:
+        return None
+    return InstructionPart(content=text, id=block.id, dynamic=block.dynamic)
 
 
 def _recorded_block_ends(block: InstructionPart | InstructionDigest, instructions: str, start: int) -> Sequence[int]:
@@ -871,9 +1110,14 @@ def _record_baseline(targets: Sequence[ModelRequest], instructions: list[Instruc
 
 
 def _instruction_change(
-    instruction_id: InstructionId, previous: str | None, content: str | None
+    instruction_id: InstructionId, previous: str | None, content: str | None, *, authority: Authority = 'operator'
 ) -> InstructionDeltaPart:
-    """Record a block's change, with the hash of the text it replaces so a model can send it as a diff."""
+    """Record a block's change, with the hash of the text it replaces so a model can send it as a diff.
+
+    A change below `'operator'` is rendered as framed data, never as a diff, so it records no hash.
+    """
+    if authority != 'operator':
+        return InstructionDeltaPart(id=instruction_id, content=content, authority=authority)
     base_hash = _instruction_text_hash(previous) if previous is not None and content is not None else None
     return InstructionDeltaPart(id=instruction_id, content=content, base_hash=base_hash)
 

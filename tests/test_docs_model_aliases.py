@@ -33,9 +33,12 @@ EXEMPT_PAGES = {
     'migration.md': 'migration notes name the models of their version',
     'capabilities/thinking.md': 'thinking support and settings differ per model',
     'evals/evaluators/built-in.md': "documents the judge's default model",
-    'harness/clai2.md': 'lists the models Codex offers',
+    'harness/cdp-browser.md': 'reports a benchmark run of the models it measured',
     'harness/compaction.md': 'context windows differ per model',
     'harness/gh-aw.md': 'the engine runs `openai/` models on Chat Completions, where the aliased ones reject tools at their default reasoning effort',
+    'harness/pax.md': "documents Pax's own default model and the account@model syntax "
+    'with real Codex IDs, and mirrors the Pax README, which GitHub and PyPI render without '
+    'resolving aliases',
     'realtime/azure.md': 'Azure Voice Live serves specific models',
     'realtime/overview.md': 'Azure Voice Live serves specific models',
     'realtime/troubleshooting.md': 'Azure Voice Live serves specific models',

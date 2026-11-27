@@ -234,7 +234,12 @@ def _ws_cassette(
     cassette = RealtimeCassette.load(path) if plan == 'replay' else RealtimeCassette()
     try:
         hold_open = request.node.get_closest_marker('realtime_ws_hold_open') is not None  # pyright: ignore[reportUnknownMemberType]
-        with patched_ws_connect(provider, cassette, plan, hold_open=hold_open):
+        unsent_heartbeat = request.node.get_closest_marker('realtime_ws_unsent_heartbeat')  # pyright: ignore[reportUnknownMemberType, reportUnknownVariableType]
+        if isinstance(unsent_heartbeat, pytest.Mark):
+            assert unsent_heartbeat.kwargs.get('reason'), '`realtime_ws_unsent_heartbeat` requires `reason=...`'
+        with patched_ws_connect(
+            provider, cassette, plan, hold_open=hold_open, unsent_heartbeat=unsent_heartbeat is not None
+        ):
             yield cassette
     finally:
         # Persist recorded frames even if later assertions fail, so cassettes can be recorded first
@@ -419,6 +424,16 @@ def azure_config() -> tuple[str, str]:
     )
 
 
+@pytest.fixture(scope='session')
+def azure_voice_live_credentials() -> tuple[str | None, str | None]:
+    """Capture a real Azure AI Voice Live endpoint and key, if set, before offline placeholders clear them.
+
+    Voice Live is its own resource, whose key can work while the Azure OpenAI one doesn't. Replay has neither set,
+    so the provider falls back to the Azure OpenAI placeholders, as before.
+    """
+    return os.getenv('AZURE_VOICELIVE_ENDPOINT'), os.getenv('AZURE_VOICELIVE_API_KEY')
+
+
 @pytest.fixture
 def azure_ws_cassette(
     request: pytest.FixtureRequest, azure_config: tuple[str, str]
@@ -439,15 +454,27 @@ def azure_ws_cassette(
 
 @pytest.fixture
 def azure_voice_live_ws_cassette(
-    request: pytest.FixtureRequest, azure_config: tuple[str, str]
+    request: pytest.FixtureRequest,
+    azure_config: tuple[str, str],
+    azure_voice_live_credentials: tuple[str | None, str | None],
 ) -> Iterator[tuple[AzureProvider, RealtimeCassette]]:
     """An `AzureProvider` whose Azure AI Voice Live WebSocket is cassette-backed."""
     if not azure_imports_successful():  # pragma: no cover
         pytest.skip('openai / websockets not installed')
     endpoint, api_key = azure_config
     endpoint = endpoint.partition('/openai/')[0].rstrip('/')
+    voice_live_endpoint, voice_live_api_key = azure_voice_live_credentials
     with _ws_cassette(request, 'openai') as cassette:
-        yield AzureProvider(azure_endpoint=endpoint, api_version='2026-04-10', api_key=api_key), cassette
+        yield (
+            AzureProvider(
+                azure_endpoint=endpoint,
+                api_version='2026-04-10',
+                api_key=api_key,
+                voice_live_endpoint=voice_live_endpoint,
+                voice_live_api_key=voice_live_api_key,
+            ),
+            cassette,
+        )
 
 
 @pytest.fixture

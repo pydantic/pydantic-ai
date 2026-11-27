@@ -10,7 +10,13 @@ from pydantic import ValidationError
 from pydantic_ai._instructions import AgentInstructions, SourcedInstruction, normalize_instructions
 from pydantic_ai._utils import aclose_all, replace_no_init
 from pydantic_ai.exceptions import ModelRetry
-from pydantic_ai.messages import AgentStreamEvent, ModelResponse, ToolCallPart
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    Authority,
+    ModelResponse,
+    ToolCallPart,
+    _lower_authority,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.tools import (
     AgentDepsT,
     AgentNativeTool,
@@ -39,6 +45,8 @@ from .abstract import (
     WrapRunHandler,
     WrapToolExecuteHandler,
     WrapToolValidateHandler,
+    _LoweredInstructionSource,  # pyright: ignore[reportPrivateUsage]
+    _RunIdInputsFactory,  # pyright: ignore[reportPrivateUsage]
 )
 
 if TYPE_CHECKING:
@@ -83,6 +91,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     # Name-mangled deliberately: this upholds a base-class invariant on rebinds, so a
     # subclass attribute of the same name must not be able to override it.
+    def __readopt_wrapped_identity(self) -> None:
+        # An adopted `id` belongs to the instance it was adopted from. The new wrapped capability
+        # can be a container holding that instance, which keeps the `id` itself, so adopt afresh.
+        if self._adopted_wrapped_id:
+            self.id = None
+            self._adopted_wrapped_id = False
+        self.__adopt_wrapped_identity()
+
     def __adopt_wrapped_identity(self) -> None:
         # A wrapper is transparent by default: with no explicit `id` of its own, it adopts
         # the wrapped capability's `id` and `defer_loading`. This is what lets a wrapper sit
@@ -233,8 +249,14 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # `CustomEvent`s.
         return self.wrapped._emits_app_events
 
+    @property
+    def _effective_authority(self) -> Authority:
+        # What the wrapped capability enqueues may reach `RunContext.enqueue` through the wrapper, so the wrapper
+        # carries the lower of its own authority and the wrapped one's: wrapping never raises a capability's authority.
+        return _lower_authority(super()._effective_authority, self.wrapped._effective_authority)
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
-        new_wrapped = self.wrapped.for_agent(agent)
+        new_wrapped = self.wrapped._keep_authority(self.wrapped.for_agent(agent))
         if new_wrapped is self.wrapped:
             return self
         new_self = replace_no_init(self, wrapped=new_wrapped)
@@ -242,11 +264,11 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         return new_self
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
-        new_wrapped = await self.wrapped.for_run(ctx)
+        new_wrapped = await self.wrapped._for_run_keeping_authority(ctx)
         if new_wrapped is self.wrapped:
             return self
         new_self = replace_no_init(self, wrapped=new_wrapped)
-        new_self.__adopt_wrapped_identity()
+        new_self.__readopt_wrapped_identity()
         return new_self
 
     def _prepare_run_context(self, ctx: RunContext[AgentDepsT]) -> None:
@@ -259,6 +281,9 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
     ) -> None:
         self.wrapped._validate_runtime_capabilities(ctx, capabilities)
+
+    def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
+        self.wrapped._validate_override_capabilities(capabilities)
 
     # --- Get methods ---
 
@@ -273,6 +298,17 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # capability it wraps, but a wrapper over a container has none to adopt and would
         # otherwise flatten every leaf's contribution into one unaddressable part.
         return self.wrapped._collect_instructions()
+
+    def _lowered_instruction_sources(self) -> list[_LoweredInstructionSource[AgentDepsT]]:
+        # A wrapper at operator authority passes its wrapped capability's instructions along, so any below it are the
+        # wrapped tree's. One that took `get_instructions` over decides what they say instead, but not what their
+        # toolsets say, which is still stated.
+        if self.defer_loading is True or self._effective_authority != 'operator':
+            return super()._lowered_instruction_sources()
+        sources = self.wrapped._lowered_instruction_sources()
+        if type(self).get_instructions is WrapperCapability.get_instructions:
+            return sources
+        return self._replace_lowered_instructions(sources)
 
     def get_model_settings(self) -> AgentModelSettings[AgentDepsT] | None:
         return self.wrapped.get_model_settings()
@@ -330,6 +366,11 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
 
     def get_default_run_id(self) -> str | None:
         return self.wrapped.get_default_run_id()
+
+    async def _get_default_run_id_for_inputs(self, get_inputs: _RunIdInputsFactory) -> str | None:
+        if type(self).get_default_run_id is not WrapperCapability.get_default_run_id:
+            return self.get_default_run_id()
+        return await self.wrapped._get_default_run_id_for_inputs(get_inputs)
 
     def get_default_conversation_id(self, run_id: str) -> str | None:
         return self.wrapped.get_default_conversation_id(run_id)

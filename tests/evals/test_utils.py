@@ -68,6 +68,19 @@ def test_run_until_complete_cleans_up_own_task_on_interrupt():
     assert cleaned == ['cleaned']  # our coroutine's cleanup ran
 
 
+async def test_run_until_complete_cancels_a_task_passed_in_when_the_drive_fails():
+    """A `Task` passed in is the task `run_until_complete` drives, so a failed drive cancels it.
+
+    Inside a running loop, `loop.run_until_complete()` raises before driving anything, and the cleanup
+    cancels the task. Pinned so that changing who owns a passed-in task is a deliberate decision.
+    """
+    task = asyncio.create_task(asyncio.sleep(0, result=True))
+    with pytest.raises(RuntimeError, match='This event loop is already running'):
+        run_until_complete(task)
+    with pytest.raises(asyncio.CancelledError):
+        await task
+
+
 def test_run_until_complete_propagates_coroutine_error():
     """When the coroutine itself raises, the task is already done so no cleanup is attempted and the
     exception propagates unchanged."""

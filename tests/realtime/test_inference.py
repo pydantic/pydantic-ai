@@ -6,6 +6,7 @@ from collections.abc import Iterator
 from typing import Any, get_args
 
 import pytest
+from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, messages as messages_module, realtime as realtime_module
 from pydantic_ai.exceptions import UserError
@@ -191,6 +192,11 @@ def test_infer_realtime_model_gateway_openai(env: TestEnv) -> None:
     direct_model = OpenAIRealtimeModel('gpt-realtime')
     assert direct_model._realtime_url().split('?', 1)[0] == 'wss://api.openai.com/v1/realtime'  # pyright: ignore[reportPrivateUsage]
 
+    # A GPT-Live model name picks the GPT-Live protocol through the gateway as it does without it.
+    live_model = infer_realtime_model('gateway/openai:gpt-live-1')
+    assert type(live_model).__name__ == 'OpenAILiveModel'
+    assert (live_model.model_name, live_model.base_url) == ('gpt-live-1', 'https://gateway.pydantic.dev/proxy/openai/')
+
 
 @pytest.mark.skipif(not imports_successful(), reason='xai-sdk / google-genai not installed')
 def test_infer_realtime_model_gateway_google(env: TestEnv) -> None:
@@ -300,17 +306,22 @@ def test_azure_rejects_non_azure_provider(env: TestEnv) -> None:
 
 
 def test_infer_realtime_model_unknown_provider() -> None:
-    with pytest.raises(
-        UserError,
-        match='Supported providers are `openai`, `azure`, `xai`, `elevenlabs`, `google`, `google-cloud`, and `elevenlabs-agents`',
-    ):
-        infer_realtime_model('anthropic:voice')
-
-    with pytest.raises(UserError, match=r'use the `provider:model` format .*; got \'openai\''):
-        infer_realtime_model('openai')
-
-    with pytest.raises(UserError, match=r'use the `provider:model` format .*; got \'openai:\''):
-        infer_realtime_model('openai:')
+    """An identifier without a model name is refused as such before its provider is: `gateway/groq` included."""
+    messages: list[str] = []
+    for model in ('anthropic:voice', 'openai', 'openai:', 'gateway/groq'):
+        with pytest.raises(UserError) as exc_info:
+            infer_realtime_model(model)
+        messages.append(str(exc_info.value))
+    assert messages == snapshot(
+        [
+            "Unknown realtime model provider 'anthropic'. Supported providers are `openai`, `azure`, `xai`, "
+            '`elevenlabs`, `google`, `google-cloud`, and `elevenlabs-agents`, or `gateway/openai` / `gateway/google` '
+            'to route OpenAI or Gemini Live realtime through the Pydantic AI Gateway.',
+            "Realtime model identifiers use the `provider:model` format (e.g. `openai:gpt-realtime`); got 'openai'.",
+            "Realtime model identifiers use the `provider:model` format (e.g. `openai:gpt-realtime`); got 'openai:'.",
+            "Realtime model identifiers use the `provider:model` format (e.g. `openai:gpt-realtime`); got 'gateway/groq'.",
+        ]
+    )
 
 
 async def test_agent_realtime_session_infers_string_model() -> None:

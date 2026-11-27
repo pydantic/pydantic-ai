@@ -101,6 +101,8 @@ class FakeConnection:
         if 'pg_advisory_xact_lock' in query:
             self.advisory_locks += 1
             return None
+        if 'to_regclass' in query:
+            return self.create_calls > 0
         if 'MAX(seq)' in query:
             (session,) = args
             seqs = [int(r['seq']) for r in self._rows if r['session'] == session]
@@ -180,6 +182,16 @@ class TestPostgresStore:
             for _ in range(4):
                 tg.start_soon(store.get_items)
         assert pool.connection.create_calls == 1
+
+    async def test_a_store_on_an_existing_table_issues_no_ddl(self) -> None:
+        """A role without `CREATE` on the schema can use a table that exists."""
+        pool = FakePool()
+        await PostgresPlanStore(pool).get_items()
+
+        await PostgresPlanStore(pool, session='other').add_item(_item('A'))
+
+        assert pool.connection.create_calls == 1
+        assert pool.connection.advisory_locks == 1
 
     async def test_remove_creates_the_schema_without_an_emitter(self) -> None:
         """`remove_item` skips its read when no emitter is attached, so it cannot rely on one."""

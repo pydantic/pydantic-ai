@@ -10,7 +10,7 @@ pre-agent-steps:
       # sys.path, so a repo-local pip.py or pydantic_ai_harness/ cannot be
       # imported in place of the installed packages.
       #
-      # CLAI 2.0's published `-p` command is the headless interface used by this
+      # Pax's published `-p` command is the headless interface used by this
       # engine. The agent hooks and MCP composition require Pydantic AI 2.54, and
       # GITHUB_COPILOT_INTEGRATION_ID below requires 2.59.
       python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0" "cryptography>=48.0.1"
@@ -23,9 +23,9 @@ pre-agent-steps:
       python3 -P -c "from pydantic_ai_harness import Coder"
 engine:
   id: pydantic-ai
-  version: "0.66.0"
+  version: "0.76.0"
   display-name: Pydantic AI
-  description: CLAI 2 headless runner for Pydantic AI agents with MCP tool support
+  description: Pax headless runner for Pydantic AI agents with MCP tool support
   mcp: true
   # gh-aw's threat-detection job runs only on its built-in engines, so a custom engine
   # names the one it runs on. Without this key gh-aw falls back to `copilot` anyway
@@ -86,9 +86,14 @@ engine:
       // reopen a surviving parent's stderr pipe through /proc and replace the
       // public-key header. The Python recorder writes to stderr directly after
       // protecting itself against /proc access.
+      // The capture descriptor can arrive non-blocking, and its open file description is
+      // shared with the processes that started the engine, so the recorder leaves that flag
+      // alone. A frame can be larger than the pipe, so each line is written in a loop that
+      // takes partial writes and waits for the reader to make room when the pipe is full.
       const RECORDING_MODULE = `import ctypes
       import json
       import os
+      import select
       import sys
 
       from cryptography.hazmat.primitives import serialization
@@ -100,13 +105,27 @@ engine:
               raise OSError(ctypes.get_errno(), 'Unable to protect session signing key')
       capture_fd = int(os.environ.pop('GH_AW_SESSION_CAPTURE_FD'))
       os.set_inheritable(capture_fd, False)
-      output = os.fdopen(capture_fd, 'w', encoding='utf-8', closefd=False)
+      output = os.fdopen(capture_fd, 'wb', buffering=0, closefd=False)
+      capture_poller = select.poll()
+      capture_poller.register(capture_fd, select.POLLOUT)
+
+
+      def write_line(line: str) -> None:
+          remaining = memoryview(f'{line}\\n'.encode())
+          while remaining:
+              written = output.write(remaining)
+              if written is None:
+                  capture_poller.poll()
+              else:
+                  remaining = remaining[written:]
+
+
       key = Ed25519PrivateKey.generate()
       public_key = key.public_key().public_bytes(
           encoding=serialization.Encoding.DER,
           format=serialization.PublicFormat.SubjectPublicKeyInfo,
       ).hex()
-      print(f'\\x1eGH-AW-SESSION-PUBKEY:{public_key}\\x1e', file=output, flush=True)
+      write_line(f'\\x1eGH-AW-SESSION-PUBKEY:{public_key}\\x1e')
       sequence = 0
 
 
@@ -114,7 +133,7 @@ engine:
           global sequence
           payload = json.dumps(event, separators=(',', ':'))
           signature = key.sign(f'{sequence}\\n{payload}'.encode()).hex()
-          print(f'\\x1eGH-AW-SESSION/{sequence}/{signature} {payload}', file=output, flush=True)
+          write_line(f'\\x1eGH-AW-SESSION/{sequence}/{signature} {payload}')
           sequence += 1
       `;
 
@@ -415,7 +434,7 @@ engine:
       const DEFAULT_AGENT = "gh_aw_agent:agent";
 
       // Preload the installed runner before the wrapper resolves PAI_AGENT, which
-      // can append the checkout to sys.path. The wrapper is cached before CLAI 2
+      // can append the checkout to sys.path. The wrapper is cached before Pax
       // resolves -a, so agent code imports once and import failures retain their
       // traceback.
       const LAUNCHER = `import importlib
@@ -806,21 +825,20 @@ engine:
         const mcpConfig = join(process.env.RUNNER_TEMP || "/tmp", "gh-aw", "mcp-config", "mcp-servers.json");
         delete env.GH_AW_MCP_CONFIG;
         if (existsSync(mcpConfig)) env.GH_AW_MCP_CONFIG = mcpConfig;
-        // Log only the origin because endpoint userinfo and query parameters can
+        // Log only endpoint origins because userinfo and query parameters can
         // contain credentials, and workflow run logs are not private.
-        const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
-        let otlpOrigin = "";
-        if (otlpEndpoint) {
+        const originForLog = url => {
           try {
-            otlpOrigin = new URL(otlpEndpoint).origin;
+            return new URL(url).origin;
           } catch {
-            otlpOrigin = "(unparsable)";
+            return "(unparsable)";
           }
-        }
+        };
+        const otlpEndpoint = process.env.OTEL_EXPORTER_OTLP_ENDPOINT;
         log(
-          `provider=${configuredBaseUrl ? "(PAI_BASE_URL)" : provider} model=${model} baseUrl=${baseUrl}` +
+          `provider=${configuredBaseUrl ? "(PAI_BASE_URL)" : provider} model=${model} baseUrl=${originForLog(baseUrl)}` +
             (configuredAgent ? ` agent=${configuredAgent}` : "") +
-            (otlpOrigin ? ` otlp=${otlpOrigin}` : "")
+            (otlpEndpoint ? ` otlp=${originForLog(otlpEndpoint)}` : "")
         );
         // The target is passed twice on purpose: once for LAUNCHER, which imports it
         // and hands the CLI a module already in sys.modules, and once as the `-a`
@@ -978,7 +996,7 @@ engine:
 <!--
 # Pydantic AI
 
-Shared engine definition for CLAI 2 headless execution. Import this file and set
+Shared engine definition for Pax headless execution. Import this file and set
 `engine: id: pydantic-ai`; gh-aw v1.0.1 or newer with the protected session capture
 contract described in `README.md` is required.
 

@@ -12,11 +12,18 @@ from .deepseek import deepseek_model_profile
 from .google import google_model_profile
 from .grok import grok_model_profile
 from .harmony import harmony_model_profile
+from .inclusionai import inclusionai_model_profile
 from .meta import meta_model_profile
+from .minimax import minimax_model_profile
 from .mistral import mistral_model_profile
 from .moonshotai import moonshotai_model_profile
+from .nvidia import nvidia_model_profile
 from .openai import openai_model_profile
 from .qwen import qwen_model_profile
+from .stepfun import stepfun_model_profile
+from .tencent import tencent_model_profile
+from .thinkingmachines import thinkingmachines_model_profile
+from .xiaomi import xiaomi_model_profile
 from .zai import _glm_5_3_schema_profile  # pyright: ignore[reportPrivateUsage]
 
 ModelProfileFunc = Callable[[str], ModelProfile | None]
@@ -37,18 +44,28 @@ _VENDOR_FAMILY_PROFILES: dict[str, ModelProfileFunc] = {
     'deepseek': deepseek_model_profile,
     'deepseek-ai': deepseek_model_profile,
     'google': google_model_profile,
+    'inclusionai': inclusionai_model_profile,
     # Not `muse_model_profile` for Muse ids: it describes Meta's own API (reasoning efforts, web search, phase),
     # which gateways may not accept.
     'meta': meta_model_profile,
     'meta-llama': meta_model_profile,
     'meta-models': meta_model_profile,
+    'minimax': minimax_model_profile,
+    'minimaxai': minimax_model_profile,
     'mistral': mistral_model_profile,
     'mistralai': mistral_model_profile,
     'moonshotai': moonshotai_model_profile,
+    'nvidia': nvidia_model_profile,
     'openai': _openai_family_profile,
     'qwen': qwen_model_profile,
+    'stepfun': stepfun_model_profile,
+    'stepfun-ai': stepfun_model_profile,
+    'tencent': tencent_model_profile,
+    'thinkingmachines': thinkingmachines_model_profile,
     'x-ai': grok_model_profile,
     'xai': grok_model_profile,
+    'xiaomi': xiaomi_model_profile,
+    'xiaomimimo': xiaomi_model_profile,
     # Gateways only get the GLM-5.3 schema fix, not Z.AI's native thinking settings, which they may not accept.
     'z-ai': _glm_5_3_schema_profile,
     'zai': _glm_5_3_schema_profile,

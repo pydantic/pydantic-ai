@@ -2,7 +2,7 @@
 
 Pipecat is an open-source Python framework for realtime voice and multimodal agents, maintained by Daily: frame processors compose into a pipeline, transports carry the audio, and speech-to-text, LLM, text-to-speech and speech-to-speech services slot in as stages. Pydantic AI's [realtime support](../realtime/overview.md) is a speech-to-speech agent loop on five providers behind one API, and it is the same typed [`Agent`][pydantic_ai.Agent] that runs as text, in a [web chat](../web.md) or behind your API: the call uses the same tools, dependencies and [capabilities](../realtime/capabilities.md), becomes ordinary message history you can [hand to a text agent](../realtime/history.md#handing-off-to-a-text-agent) for structured output, and is traced end to end in [Logfire](https://pydantic.dev/logfire). With Pipecat the pipeline is the product and the model is one stage in it; here the agent is the product and voice is one of its interfaces.
 
-Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for capabilities and complete agents, [Pydantic Evals](../evals.md) for evaluation, [Pydantic Graph](../graph.md) for graph-based workflows, [Pydantic Logfire](https://pydantic.dev/logfire) for observability, and [Pydantic](https://pydantic.dev/docs/validation/latest/get-started/) itself for validation. The tables below cover the whole of it.
+Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/ai/harness/) for capabilities and complete agents, [Pax](../harness/pax.md) to run any of your agents in a coding terminal, [Pydantic Evals](../evals.md) for evaluation, [Pydantic Graph](../graph.md) for graph-based workflows, [Pydantic Logfire](https://pydantic.dev/logfire) for observability, and [Pydantic](https://pydantic.dev/docs/validation/latest/get-started/) itself for validation. The tables below cover the whole of it.
 
 ## Framework
 
@@ -11,12 +11,12 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Language | Python | Python |
 | License | BSD-2-Clause | MIT |
 | Model providers | Many (services) | [Many](../models/overview.md) |
-| Extensibility | Frame processors and services | [Capabilities and toolsets](../extensibility.md); [80+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
+| Extensibility | Frame processors and services | [Capabilities and toolsets](../extensibility.md); [100+ with the Harness SDK](https://pydantic.dev/docs/ai/harness/) |
 | Harnesses | Build your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | [From Daily](https://docs.pipecat.ai/enterprise-support), for Pipecat and Pipecat Cloud | [For the framework itself](../enterprise-support.md), no platform required |
 | Durable execution | No | [Nine integrations](../durable_execution/overview.md) |
-| Interfaces | WebRTC and WebSocket transports, telephony, client SDKs | [CLI](../cli.md), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
+| Interfaces | WebRTC and WebSocket transports, telephony, client SDKs | [Pax](../harness/pax.md) coding terminal (`pax --agent` runs yours), [legacy CLI](../cli.md) (`clai`), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | Cascaded STT + LLM + TTS, and speech-to-speech services | [Speech-to-speech](../realtime/overview.md), five providers |
 | Evals | Yes | [Pydantic Evals](../evals.md) |
 | Image generation | Image-generation services | [Image Generation](../image-generation.md) |
@@ -30,7 +30,7 @@ Our realtime support means speech-to-speech models: one persistent connection, a
 | Speech-to-speech providers | Services for several providers | [Five](../realtime/overview.md#provider-support) behind one API: OpenAI, Azure OpenAI, Gemini Live, xAI, ElevenLabs |
 | Cascaded STT + LLM + TTS | Yes, the primary path; dozens of STT, LLM and TTS services | Hosted only, via [ElevenLabs Agents](../realtime/elevenlabs.md#elevenlabs-agents) or [Azure AI Voice Live](../realtime/azure.md#azure-ai-voice-live); otherwise [compose it yourself](../realtime/overview.md#other-ways-to-build-voice) around a text agent |
 | Audio transport | First-party WebRTC and WebSocket transports, Daily and LiveKit among them | Yours: [browser WebRTC sideband or WebSocket relay](../realtime/deployment.md) |
-| Telephony | PSTN and SIP in and out, DTMF, transfers | [Bridge a provider](../realtime/deployment.md#siptelephony-bridge) such as Twilio |
+| Telephony | PSTN and SIP in and out, DTMF, transfers | [Bridge Twilio Media Streams](../realtime/deployment.md#twilio-media-streams) to a session |
 | Turn detection | Silero VAD, own Smart Turn model, interruptions | [Provider turn detection, barge-in, push-to-talk](../realtime/turns.md) |
 | Noise cancellation | Krisp, ai-coustics and other filters | Provider-side only |
 | Hand off to another agent mid-call | Yes, between workers on a shared bus | No; [delegate from a tool](../realtime/tools.md#delegating-work-during-a-call) instead |

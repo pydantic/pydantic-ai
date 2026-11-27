@@ -84,7 +84,7 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     meta_profile = provider.model_profile('meta-llama/Llama-Guard-4-12B')
     meta_model_profile_mock.assert_called_with('llama-guard-4-12b')
     assert meta_profile is not None
-    assert meta_profile.get('supports_json_object_output', False) is False
+    assert meta_profile.get('supports_json_object_output', False) is True
     assert meta_profile.get('supports_json_schema_output', False) is False
     assert meta_profile.get('json_schema_transformer', None) == InlineDefsJsonSchemaTransformer
 
@@ -151,6 +151,8 @@ def test_groq_provider_model_profile(mocker: MockerFixture):
     assert openai_profile is not None
     assert openai_profile.get('supports_json_object_output', False) is True
     assert openai_profile.get('supports_json_schema_output', False) is True
+    # Groq hoists a mid-conversation system message on gpt-oss: https://github.com/pydantic/pydantic-ai/issues/14516
+    assert openai_profile.get('supports_inline_system_prompts') is False
 
     unknown_profile = provider.model_profile('unknown-model')
     assert unknown_profile is not None

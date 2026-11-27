@@ -39,9 +39,11 @@ pip:
 pip install "pydantic-ai-harness[coder,daytona,anthropic]"
 ```
 
-The `coder` extra is there because the examples use `Coder`; the sandbox itself doesn't need it. The `anthropic` extra is there because the examples use an Anthropic model; swap it for your model provider's extra. Then set `DAYTONA_API_KEY` to an API key from your Daytona dashboard, and `ANTHROPIC_API_KEY` for the examples.
+Set `DAYTONA_API_KEY` to an API key from your Daytona dashboard. The examples also use `Coder` and an Anthropic model, so they need the `coder` and `anthropic` extras and `ANTHROPIC_API_KEY`. Swap them for your own tools and model provider.
 
 ## Quick start
+
+<span id="choose-the-tools"></span>
 
 ```python {names="defined"}
 from pydantic_ai import Agent
@@ -52,13 +54,18 @@ agent = Agent('anthropic:claude-opus-5-5', capabilities=[DaytonaSandbox(), Coder
 result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
 ```
 
-`Coder`'s shell and file tools now run in the sandbox, not on your machine. With `Coder`, `RepoContext` creates the sandbox when the run starts, even without a tool call; use `Coder(repo_context=False)` for lazy creation. It keeps running after the run ends until Daytona stops it for being idle, and keeps its disk, and costs money, until you delete it; see [Clean up](#clean-up).
+`Coder`'s shell and file tools now run in the sandbox. For a narrower agent, use [`Shell`](https://pydantic.dev/docs/ai/harness/shell/), [`FileSystem`](https://pydantic.dev/docs/ai/harness/filesystem/) or your own tools on [`ctx.workspace`](https://pydantic.dev/docs/ai/core-concepts/workspace/#using-the-workspace-in-tools).
 
-Give the agent a project directory with `DaytonaSandbox(working_dir='/home/daytona/project')`: a new sandbox gets it created for you, and commands and relative paths start there.
-
-Daytona's default snapshot comes with git, Python, and ripgrep (`rg`), which `Coder` uses for searches. For your project's dependencies, build a Daytona snapshot with them installed and pass `DaytonaSandbox(snapshot='my-snapshot')`. A snapshot Daytona doesn't know fails on first use with `WorkspaceUnavailableError`.
+- `Coder` creates it when the run starts, to load the repository's instructions, even if no tool is called. Pass `Coder(repo_context=False)` to wait for the first tool call.
+- It keeps its disk, and costs money, until you delete it. Daytona stops it when idle, but doesn't delete it. See [Clean up](#clean-up).
+- Commands run as the non-root `daytona` user in `/home/daytona`. Pass `working_dir='/home/daytona/project'` to give the agent a project directory. It is created on a new sandbox.
+- The default snapshot has git, Python and `rg`, but not your project's dependencies. A snapshot is the image a new sandbox starts from. Build a Daytona snapshot with them and pass `snapshot='my-snapshot'`, or install them [before the run](#prepare-a-sandbox-before-the-run). An unknown snapshot fails on first use with `WorkspaceUnavailableError`.
 
 ## Continue in the same sandbox
+
+<span id="reattach-later"></span>
+
+Pass the message history, and the next run works in the same sandbox, starting it again if Daytona stopped it:
 
 ```python {names="defined"}
 from pydantic_ai import Agent
@@ -72,64 +79,16 @@ followup = agent.run_sync(
     'Which capability would you add next, and where would it live?',
     message_history=result.all_messages(),
 )
+ref = result.workspace.ref  # or store this, and pass `workspace=ref` to a later run
 ```
 
-The follow-up run finds the sandbox in the message history and works in it, so the clone is still there. Without the history, a run starts a new sandbox. If Daytona stopped the sandbox while it was idle, the follow-up run starts it again. If the sandbox has been deleted, the run raises `WorkspaceUnavailableError` instead of starting over in an empty one.
+The history records the sandbox as a `WorkspaceRef`, or "ref": the provider's name and the sandbox's ID. `result.workspace.ref` is the same ref, for continuing without the history.
 
-## Choose the tools
+If the sandbox has been deleted, the run raises `WorkspaceUnavailableError`. Pass `workspace='new'` to start over. [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#continuing-in-the-same-workspace) covers how runs find their workspace.
 
-For a narrower agent, use [`Shell`](../shell/) and [`FileSystem`](../filesystem/) instead of `Coder`, or write your own tool that runs in the sandbox:
+The ref holds no credentials, so the process that reattaches needs `DAYTONA_API_KEY` or a `client=` too.
 
-```python {names="defined"}
-from pydantic_ai import Agent, RunContext
-from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox
-from pydantic_ai_harness.filesystem import FileSystem
-from pydantic_ai_harness.shell import Shell
-
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[DaytonaSandbox(), Shell(), FileSystem()])
-
-
-@agent.tool
-async def run_python(ctx: RunContext, code: str) -> str:
-    """Run a Python snippet in the sandbox."""
-    result = await ctx.workspace.run(['python', '-c', code], timeout=10)
-    return result.stdout + result.stderr
-```
-
-Commands run under `sh -c` as the non-root `daytona` user. File reads refuse FIFOs rather than waiting for a writer. File writes create missing parent directories, write through a symlink to its target, and keep an existing file's mode.
-
-### What a timeout stops
-
-A command timeout starts after the sandbox is ready. A timeout or a cancelled run stops the command, and the sandbox keeps running for other commands. `WorkspaceTimeoutError` carries the last 4 KiB of each stream's output so far. If Daytona does not confirm the stop, the command may still be running: inspect the sandbox or delete it yourself. `timeout=None` removes the command deadline, not Daytona's idle stop.
-
-A command's output is collected once it exits, so `run()` returns then even if a background child it started is still running; output that child writes afterwards is not returned. A command whose combined output passes 10 MiB raises `WorkspaceOutputLimitError` once it exits, with the first 64 KiB of each stream in `stdout` and `stderr`. Redirect large or background output to a file instead; `Shell.start_command` manages its own output log.
-
-See [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/) for more.
-
-## Reattach later
-
-To come back to the sandbox without the message history, pass its ref back as `workspace=`:
-
-```python {names="defined"}
-from pydantic_ai import Agent
-from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox
-
-agent = Agent('anthropic:claude-opus-5-5', capabilities=[DaytonaSandbox(), Coder()])
-
-result = agent.run_sync('Clone https://github.com/pydantic/pydantic-ai and summarize how capabilities work.')
-ref = result.workspace.ref  # store this, e.g. in your database
-
-later = agent.run_sync('Which capability would you add next, and where would it live?', workspace=ref)
-```
-
-The ref holds no credentials, so the process that reattaches needs `DAYTONA_API_KEY` too. Pass `workspace='new'` to start a fresh sandbox even when the message history names one.
-
-`snapshot`, `auto_stop_interval`, and `allow_internet_access` only shape a new sandbox; `working_dir` and `env` apply to every command, including after you reattach. A new sandbox gets `working_dir` created for it; on an attached or caller-supplied sandbox it must already exist, or commands fail with `WorkspaceError`.
-
-Already have a `daytona.AsyncSandbox`? Pass `workspace=DaytonaSandboxBackend(sandbox=sandbox)` to a run, with `DaytonaSandboxBackend` from `pydantic_ai_harness.daytona_sandbox`. `DaytonaSandbox`'s settings don't apply to it; pass `working_dir=` and `env=` to the backend.
-
-A run leaves a backend you built open. Call `await backend.aclose()` when you are done with it: that closes the client it opened from `DAYTONA_API_KEY`, not the sandbox, and a later operation opens a new one. A `client=` or `sandbox=` you passed is never closed.
+Already have a `daytona.AsyncSandbox`? Pass `workspace=DaytonaSandboxBackend(sandbox=sandbox, working_dir=..., env=...)` to a run. `DaytonaSandbox`'s settings don't apply to it. A backend's `get_sandbox()` returns its `daytona.AsyncSandbox` for Daytona features the workspace API doesn't cover. On a backend with no sandbox yet, it creates one, which Daytona bills.
 
 ## Prepare a sandbox before the run
 
@@ -157,11 +116,27 @@ async def run_in_prepared_sandbox() -> str:
             await DaytonaSandbox().destroy(ref)
 ```
 
-The run uses the backend as it is, so `DaytonaSandbox`'s settings don't apply to it, and leaves it open: close it with `aclose()`. To keep the sandbox instead, store `backend.ref` and pass it as `workspace=` to reattach later.
+The run leaves a backend you built open, so close it with `aclose()`. That closes the client it opened from `DAYTONA_API_KEY`, not the sandbox. A `client=` or `sandbox=` you passed is never closed. To keep the sandbox, store `backend.ref` instead of destroying it.
+
+## Give the agent a desktop
+
+Pass `desktop=True` and add [`ComputerUse`](../computer_use/):
+`capabilities=[DaytonaSandbox(desktop=True), ComputerUse()]`. The screen is 1280x800; pass a size such as
+`desktop=(1440, 900)` for another. The size is set when the sandbox is created.
+
+Daytona's default snapshot has a desktop with a terminal and Chromium. A custom snapshot needs [Daytona's desktop packages](https://www.daytona.io/docs/en/computer-use/).
+
+- The desktop runs a VNC server with no password on one of the sandbox's preview ports.
+- On a private sandbox, anyone who holds a preview token for that port can see the screen and control the mouse and keyboard.
+- On a public sandbox, Daytona's preview links need no token, so anyone with the preview URL can see and control the desktop.
+- Where the snapshot's Chromium can't run its own sandbox, as in Daytona's default snapshot, the desktop start adds `--no-sandbox` to Chromium's flags through a file in `/etc/chromium.d/`. It writes the file as root or with passwordless `sudo`, on sandboxes it creates and on ones you attach with `ref=` or `sandbox=`. The file stays after the run, so a web page that breaks out of Chromium's renderer can reach the rest of the sandbox. A custom snapshot whose Chromium sandbox works is left alone.
+- Keep the sandbox private if others shouldn't see or control the desktop.
+- On Daytona's Tier 1 and Tier 2, a sandbox can reach only package registries, GitHub and AI APIs, even with `allow_internet_access=True`, so its browser can't open other sites. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/).
+- The desktop can't press print screen, pause, scroll lock or the menu key, or type characters beyond U+FFFF, such as most emoji. The agent is told when it asks for one.
 
 ## Clean up
 
-Pydantic AI never stops or deletes the sandbox. Daytona stops a container sandbox, such as one from the default snapshot, after 15 idle minutes by default (set `auto_stop_interval=` to change that, or `0` to keep it running). A stopped sandbox keeps its disk and is archived after 7 days. A sandbox from a VM snapshot is paused after 60 idle minutes instead, and is never archived. Either way, a later run starts it again, and Daytona never deletes it. Delete it with the ref you stored:
+Delete a sandbox with the ref you stored. This doesn't start a stopped sandbox:
 
 ```python {names="defined"}
 from pydantic_ai.workspaces import WorkspaceRef
@@ -172,9 +147,7 @@ async def delete_sandbox(ref: WorkspaceRef) -> None:
     await DaytonaSandbox().destroy(ref)
 ```
 
-`destroy(ref)` deletes by sandbox ID without starting a stopped sandbox, and a sandbox that no longer exists returns quietly. Only destroy sandboxes you own. Use `backend(ref)` to construct a lazy backend for an existing sandbox; `get_sandbox()` attaches to it and returns its native `daytona.AsyncSandbox` (on a backend with no sandbox yet, it creates one).
-
-A failed run returns no result, so there is no ref to store. To delete its sandbox, clean up in an `on_run_error` hook; `after_run` doesn't run when a run fails:
+A failed run returns no result, so delete its sandbox in an `on_run_error` hook:
 
 ```python
 from typing import Any
@@ -193,8 +166,7 @@ hooks = Hooks()
 @hooks.on.run_error
 async def delete_failed_run_sandbox(ctx: RunContext[None], *, error: BaseException) -> AgentRunResult[Any]:
     if ctx.workspace.ref is not None:
-        # Shielded, so an `anyio` deadline around the run doesn't cut the delete short,
-        # and bounded, so a hung API call can't hang the run indefinitely.
+        # Shielded so a deadline around the run can't cut the delete short, bounded so a hung call can't hang it.
         with anyio.move_on_after(30, shield=True):
             await DaytonaSandbox().destroy(ctx.workspace.ref)
     raise error
@@ -203,76 +175,91 @@ async def delete_failed_run_sandbox(ctx: RunContext[None], *, error: BaseExcepti
 agent = Agent('anthropic:claude-opus-5-5', capabilities=[DaytonaSandbox(), Coder(), hooks])
 ```
 
-A run that ends before its ref is stored, such as a crash, Ctrl-C, or a killed worker right after creation, leaves the sandbox behind. Every sandbox the backend creates is labelled `created-by=pydantic-ai`, and its ID is logged at `INFO` as `Created Daytona sandbox <id>`; delete it with `await DaytonaSandbox().destroy(WorkspaceRef(provider='daytona', id=...))`.
+A sandbox you don't delete keeps its disk, and a later run starts it again:
+
+- A container sandbox is stopped after 15 idle minutes and archived after 7 days. Set `auto_stop_interval=` in minutes to change the idle time, or `0` to keep it running.
+- A sandbox from a VM snapshot is paused after 60 idle minutes instead, and is never archived.
+
+### Find a lost sandbox
+
+If your program stops before it stores the ref, for example after a crash or Ctrl-C, the sandbox is left behind. To find it:
+
+- List your sandboxes in Daytona. Sandboxes Pydantic AI creates have the label `created-by=pydantic-ai`.
+- Or search your logs for `Created Daytona sandbox <id>`, logged at INFO by the `pydantic_ai_harness` logger.
+
+Then delete it: `await DaytonaSandbox().destroy(WorkspaceRef(provider='daytona', id='<id>'))`.
+
+## Keep a token out of the sandbox
+
+Pass `secrets` to give a new sandbox Daytona [Secrets](https://www.daytona.io/docs/en/secrets), as a map from environment variable name to Secret name. The variable holds a placeholder, and Daytona swaps in the real value as requests leave for the Secret's `hosts`. Create the Secret once, then use it:
+
+```python {test="skip"}
+from daytona import AsyncDaytona, CreateSecretParams
+
+from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox
+
+
+async def create_github_secret(token: str) -> None:  # a GitHub token, such as the output of `gh auth token`
+    async with AsyncDaytona() as daytona:
+        await daytona.secret.create(
+            CreateSecretParams(
+                name='github-token',
+                value=token,
+                hosts=['github.com', 'api.github.com', 'uploads.github.com'],
+            )
+        )
+
+
+sandbox = DaytonaSandbox(secrets={'GH_TOKEN': 'github-token'})
+```
+
+`gh` then works as the token's owner, while `echo $GH_TOKEN` in the sandbox prints the placeholder. For `git push`, have git send the placeholder as its password:
+
+```bash
+git config --global credential.https://github.com.helper '!f() { echo username=x-access-token; echo "password=$GH_TOKEN"; }; f'
+```
+
+- Always set `hosts` on the Secret. Without them, Daytona sends the real value to any host.
+- Daytona swaps the value only in HTTPS request headers, including git's password. Request bodies, query strings and plain HTTP keep the placeholder. Use `https://` remotes, not `git@github.com:owner/repo.git`.
+- The agent can't see the token, but it can use it for anything the token allows.
+- An attached sandbox keeps the Secrets it was created with. To swap the token, call `daytona.secret.update` with the Secret's ID. Running sandboxes pick it up within seconds.
+- To change which Secrets a running sandbox has, call `update_secrets` on `await backend.get_sandbox()`. It replaces the whole set. New variables reach only commands started after it. A sandbox created without Secrets must restart first.
 
 ## Configuration
 
 | Option | What it does |
 | --- | --- |
-| `client` | A `daytona.AsyncDaytona` to share across runs on one event loop, or to configure its API URL or target. Default: `None`, a client each run opens from `DAYTONA_API_KEY` and closes when it ends. You close a client you pass; `DaytonaSandbox` never does. |
+| `client` | A `daytona.AsyncDaytona` to share across runs on one event loop, or to configure its API URL or target. Default: `None`, a client each run opens from `DAYTONA_API_KEY` and closes when it ends. You close a client you pass. |
 | `snapshot` | Daytona snapshot a new sandbox starts from. Default: `None`, Daytona's default. An unknown snapshot fails on first use. |
-| `auto_stop_interval` | Idle minutes before Daytona stops a new sandbox; `0` disables it. Default: `None`, Daytona's default: 15 minutes for a container, while a VM pauses after 60 minutes instead. |
-| `allow_internet_access` | Whether a new sandbox can reach the internet. When `False`, what is blocked depends on your Daytona organization's tier: on Tier 3 and 4 everything, while lower tiers keep package registries, GitHub, and AI APIs reachable, so there it is not an exfiltration boundary. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/). Default: `True`. |
-| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, the sandbox's own (`/home/daytona`, where commands run as non-root `daytona`); set a project directory, or use relative paths for portable code. Created on a new sandbox; on an attached or caller-supplied sandbox it must already exist. |
-| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine's environment reaches the sandbox. |
+| `auto_stop_interval` | Idle minutes before Daytona stops a new sandbox. `0` disables it. Default: `None`, Daytona's default of 15 minutes for a container. A VM pauses after 60 minutes instead. |
+| `allow_internet_access` | Whether a new sandbox can reach the internet. Default: `True`. `False` blocks everything only for Tier 3 and 4 organizations. Lower tiers can still reach package registries, GitHub and AI APIs, so `False` doesn't stop data leaving the sandbox there. See [Daytona's network limits](https://www.daytona.io/docs/en/network-limits/). |
+| `working_dir` | Absolute directory commands start in and relative paths resolve against. Default: `None`, `/home/daytona`. Created on a new sandbox. On an attached one, it must already exist. |
+| `env` | Environment variables every command gets. Default: `None`. Nothing from your machine reaches the sandbox. The agent's commands can read these, so leave out secrets it shouldn't see. |
+| `secrets` | Daytona Secrets for a new sandbox, as a map from environment variable name to the name of an existing organization Secret. Passed to `AsyncDaytona.create` unchanged. Default: `None`. An attached sandbox keeps the ones it was created with. See [Keep a token out of the sandbox](#keep-a-token-out-of-the-sandbox). |
+| `authority` | Who wrote the sandbox's files. A capability that puts a file's text in the prompt gives it no more [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) than this. Default: `'operator'`, your own files. Use `'user'` for the user's files, and `'none'` for files nobody on your side wrote, such as a cloned third-party repository. |
+| `path_authority` | Levels for some directories and files, overriding `authority` under them. The longest matching path wins. Paths are in the sandbox, relative to the working directory or absolute, and `~` isn't expanded. Default: `None`. |
+| `desktop` | Give the sandbox a graphical display for [`ComputerUse`](../computer_use/): `True` for 1280x800, or its `(width, height)`. The size applies to a new sandbox. Default: `False`. |
 
-Daytona runs on the asyncio event loop only: its SDK uses asyncio tasks, so under Trio the backend raises `UserError`.
+`client`, `working_dir`, `env`, `desktop` (but not its size), `authority` and `path_authority` also apply when you reattach, and `destroy` uses `client`. The other options only shape a new sandbox.
+
+## Limits
+
+<span id="what-a-timeout-stops"></span>
+
+- A timeout or cancellation stops the command, not the sandbox. If Daytona doesn't confirm the stop, the command may still be running, so inspect or delete the sandbox.
+- `WorkspaceTimeoutError` carries the last 4 KiB of each stream.
+- Output is collected when the command exits, so output a background child writes afterwards is lost. Redirect it to a file. `Shell.start_command` does this for you.
+- A command whose output passes 10 MiB raises `WorkspaceOutputLimitError` once it exits. Redirect large output to a file.
+- `timeout=None` removes the command deadline, not Daytona's idle stop.
+- The Daytona SDK needs asyncio. Under Trio, every operation raises `UserError`.
 
 ## Durable execution
 
-Each activity opens its own Daytona client and closes it once its operation ends, so the worker has nothing to close. Run a Temporal dev server on `localhost:7233` first.
-
-```python
-import asyncio
-import uuid
-
-from pydantic_ai import Agent
-from pydantic_ai.durable_exec.temporal import PydanticAIPlugin, PydanticAIWorkflow, TemporalDurability
-from pydantic_ai_harness.coder import Coder
-from pydantic_ai_harness.daytona_sandbox import DaytonaSandbox
-from temporalio import workflow
-from temporalio.client import Client
-from temporalio.worker import Worker
-
-agent = Agent(
-    'anthropic:claude-opus-5-5',
-    name='daytona_coder',
-    capabilities=[DaytonaSandbox(), Coder(), TemporalDurability()],
-)
-
-
-@workflow.defn
-class SandboxWorkflow(PydanticAIWorkflow):
-    __pydantic_ai_agents__ = [agent]
-
-    @workflow.run
-    async def run(self, prompt: str) -> str:
-        return (await agent.run(prompt)).output
-
-
-async def main() -> None:
-    client = await Client.connect('localhost:7233', plugins=[PydanticAIPlugin()])
-    async with Worker(client, task_queue='sandbox', workflows=[SandboxWorkflow]):
-        print(
-            await client.execute_workflow(
-                SandboxWorkflow.run,
-                'Use the shell tool to run pwd.',
-                id=f'sandbox-{uuid.uuid4()}', task_queue='sandbox',
-            )
-        )
-
-
-if __name__ == '__main__':
-    asyncio.run(main())
-```
-
-`Coder`, `Shell`, and `FileSystem` work under DBOS, Temporal and Prefect. See the [Coder](https://pydantic.dev/docs/ai/harness/coder/#durable-execution), [Shell](https://pydantic.dev/docs/ai/harness/shell/#durable-execution), and [FileSystem](https://pydantic.dev/docs/ai/harness/filesystem/#durable-execution) guides for engine-specific limits.
-
-Removing a capability while workflows using it are still running changes their replay history. Drain those workflows or use [Temporal worker versioning](https://docs.temporal.io/production-deployment/worker-deployments/worker-versioning) before deploying the change.
+Add `TemporalDurability()` next to `DaytonaSandbox()` and install the `temporal` extra. [Workspaces](https://pydantic.dev/docs/ai/core-concepts/workspace/#durable-execution) covers what changes.
 
 ## Telemetry
 
-`DaytonaSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records the sandbox on the agent run span as `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id`, and each command or file operation a tool makes runs inside that tool call's span; operations at run start, such as `RepoContext` loading repo instructions, run in the agent run span. Creating a sandbox logs its ID at `INFO` (`Created Daytona sandbox <id>`) on the `pydantic_ai_harness.daytona_sandbox._backend` logger, so a sandbox that outlives its run can still be found.
+`DaytonaSandbox` emits no spans of its own. Core's [instrumentation](https://pydantic.dev/docs/ai/capabilities/instrumentation/) records `pydantic_ai.workspace.provider` and `pydantic_ai.workspace.id` on the agent run span, and each command or file operation runs inside its tool call's span.
 
 ## API reference
 

@@ -23,10 +23,10 @@ from openai.types.responses.response_steer_failed_event import ResponseSteerFail
 from openai.types.responses.response_steer_pending_event import ResponseSteerPendingEvent
 from openai.types.responses.responses_server_event import ResponsesServerEvent, ResponseWsError
 from openai.types.websocket_connection_options import WebSocketConnectionOptions
-from pydantic_core import from_json, to_json
+from pydantic_core import to_json
 from websockets.exceptions import ConnectionClosed, InvalidStatus, WebSocketException
 
-from ..._utils import is_str_dict
+from ... import _model_errors
 from ...exceptions import (
     ModelAPIError,
     ModelConnectionError,
@@ -157,20 +157,14 @@ class ResponsesWebSocket:
             return ModelAPIError(model_name=model_name, message=f'WebSocket handshake failed with status {status_code}')
         text = bytes(exc.response.body).decode(errors='replace')
         # Read like the SDK reads an HTTP error response, so the rejection gets the category it gets over HTTP.
-        try:
-            parsed: object = from_json(text)
-        except ValueError:
-            parsed = None
-        error: object = parsed.get('error', parsed) if is_str_dict(parsed) else None
-        fields = {key: value for key, value in error.items() if isinstance(value, str)} if is_str_dict(error) else {}
+        _, error, fields = _model_errors.parse_error_body(text)
         return status_error(
             status_code=status_code,
             code=fields.get('code'),
             error_type=fields.get('type'),
             message=fields.get('message', text),
             body=error if error is not None else text,
-            # `dict(exc.response.headers)` raises `MultipleValuesError` on a repeated header.
-            headers={name: ', '.join(exc.response.headers.get_all(name)) for name in exc.response.headers},
+            headers=_model_errors.joined_headers(exc.response.headers),
         )
 
     @staticmethod

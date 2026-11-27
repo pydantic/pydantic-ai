@@ -32,6 +32,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, 
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
+from functools import cache
 from pathlib import Path
 from typing import Any, Literal, TypeGuard
 
@@ -114,7 +115,10 @@ def inject_clock(monkeypatch: pytest.MonkeyPatch) -> Clock:
     still pass: route new time reads through `pydantic_ai._utils.now_utc`.
     """
     CLOCK.now = START
-    # Build the history schema first: built after the swap, it would see the clock's `datetime` subclass.
+    # Build the history schema first: built after the swap, it would see the clock's `datetime` subclass. Rebuilt, so
+    # it knows every capability part kind defined since it was first built, which would otherwise get an adapter of
+    # their own built after the swap.
+    ModelMessagesTypeAdapter.rebuild(force=True)
     ModelMessagesTypeAdapter.validate_json(b'[]')
     for name, module in list(sys.modules.items()):
         if name.startswith('pydantic_ai') and getattr(module, 'datetime', None) is _real_datetime:
@@ -239,7 +243,7 @@ def _chat_response(turn: Turn, index: int) -> dict[str, Any]:
         'id': f'chatcmpl_{index}',
         'object': 'chat.completion',
         'created': 0,
-        'model': 'gpt-5.6-sol',
+        'model': 'gpt-5.2',
         'choices': [{'index': 0, 'message': message, 'finish_reason': 'tool_calls' if turn.calls else 'stop'}],
         'usage': {'prompt_tokens': 10, 'completion_tokens': 5, 'total_tokens': 15},
     }
@@ -385,7 +389,10 @@ with try_import() as ui_imports_successful:
 _DEFAULT_MODEL_NAMES: dict[Provider, str] = {
     'anthropic': 'claude-opus-5-5',
     'openai-responses': 'gpt-5.6-sol',
-    'openai-chat': 'gpt-5.6-sol',
+    # The scenarios send function tools at default reasoning and at explicit efforts (`Thinking`, `agent:effort_change`).
+    # Chat Completions accepts both on gpt-5.2 live. gpt-5.5 rejects tools with an explicit effort, and on GPT-5.4,
+    # GPT-5.6 and GPT-6 `OpenAIChatModel` refuses tools with reasoning on before sending.
+    'openai-chat': 'gpt-5.2',
 }
 
 
@@ -963,6 +970,35 @@ def _module_paths(package: str) -> Iterator[tuple[str, Path]]:
         yield '.'.join((package, *(parts[:-1] if parts[-1] == '__init__' else parts))), path
 
 
+_Definitions = tuple[dict[str, ast.ClassDef], dict[str, tuple[str, str | None]]]
+"""A module's top-level classes by name, and what each name it imports refers to."""
+
+
+@cache
+def _definitions(path: Path, package: str) -> _Definitions:
+    """The definitions of the module at `path`, whose relative imports start from `package`.
+
+    Cached for the process: several suites discover capabilities while they are collected, and each discovery
+    would otherwise parse the same files again.
+    """
+    tree = ast.parse(path.read_text(encoding='utf-8'))
+    classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
+    names: dict[str, tuple[str, str | None]] = {}
+    for node in ast.walk(tree):
+        if isinstance(node, ast.ImportFrom):
+            base = package
+            for _ in range(node.level - 1):
+                base = base.rpartition('.')[0]
+            target = '.'.join(part for part in (base if node.level else '', node.module or '') if part)
+            for alias in node.names:
+                names[alias.asname or alias.name] = (target, alias.name)
+        elif isinstance(node, ast.Import):
+            for alias in node.names:
+                local = alias.asname or alias.name.split('.')[0]
+                names[local] = (alias.name if alias.asname else local, None)
+    return classes, names
+
+
 @dataclass
 class _Source:
     """The modules of the scanned packages, parsed only when resolving a name needs them.
@@ -972,46 +1008,24 @@ class _Source:
     """
 
     paths: dict[str, Path]
-    packages: set[str] = field(init=False)
-    """The modules that are packages, having modules of their own."""
-    _definitions: dict[str, tuple[dict[str, ast.ClassDef], dict[str, tuple[str, str | None]]]] = field(
-        init=False, default_factory=dict[str, tuple[dict[str, ast.ClassDef], dict[str, tuple[str, str | None]]]]
-    )
+    import_bases: dict[str, str] = field(init=False)
+    """The package each module's relative imports start from."""
     _capabilities: dict[str, bool] = field(init=False, default_factory=dict[str, bool])
 
     def __post_init__(self) -> None:
-        self.packages = {module.rpartition('.')[0] for module in self.paths}
+        packages = {module.rpartition('.')[0] for module in self.paths}
+        # A package's `__init__` is the package itself, so relative imports there start from it.
+        self.import_bases = {
+            module: module if module in packages else module.rpartition('.')[0] for module in self.paths
+        }
 
     def classes(self, module: str) -> dict[str, ast.ClassDef]:
         """The module's top-level classes, by name."""
-        return self._definitions_of(module)[0]
+        return _definitions(self.paths[module], self.import_bases[module])[0]
 
     def imports(self, module: str) -> dict[str, tuple[str, str | None]]:
         """Each name the module imports and what it refers to: `(module, attribute)`, or `(module, None)`."""
-        return self._definitions_of(module)[1]
-
-    def _definitions_of(self, module: str) -> tuple[dict[str, ast.ClassDef], dict[str, tuple[str, str | None]]]:
-        if (cached := self._definitions.get(module)) is not None:
-            return cached
-        tree = ast.parse(self.paths[module].read_text(encoding='utf-8'))
-        classes = {node.name: node for node in tree.body if isinstance(node, ast.ClassDef)}
-        # A package's `__init__` is the package itself, so relative imports there start from it.
-        package = module if module in self.packages else module.rpartition('.')[0]
-        names: dict[str, tuple[str, str | None]] = {}
-        for node in ast.walk(tree):
-            if isinstance(node, ast.ImportFrom):
-                base = package
-                for _ in range(node.level - 1):
-                    base = base.rpartition('.')[0]
-                target = '.'.join(part for part in (base if node.level else '', node.module or '') if part)
-                for alias in node.names:
-                    names[alias.asname or alias.name] = (target, alias.name)
-            elif isinstance(node, ast.Import):
-                for alias in node.names:
-                    local = alias.asname or alias.name.split('.')[0]
-                    names[local] = (alias.name if alias.asname else local, None)
-        self._definitions[module] = classes, names
-        return classes, names
+        return _definitions(self.paths[module], self.import_bases[module])[1]
 
     def is_capability(self, qualified: str) -> bool:
         """Whether the class's bases lead to `AbstractCapability`, resolving each through the source."""
@@ -1060,13 +1074,13 @@ def _is_capability_class(obj: object) -> TypeGuard[type[AbstractCapability[Any]]
     return inspect.isclass(obj) and issubclass(obj, AbstractCapability)
 
 
-def skip_unless_installed(name: str, optional_dependencies: Mapping[str, str]) -> None:
-    """Skip the case for `name` when the module its optional dependency group provides isn't installed.
+def skip_unless_installed(name: str, module: str | None) -> None:
+    """Skip the case for `name` when `module`, which its optional dependency group provides, isn't installed.
 
     Checked with `find_spec` rather than imported, since several of these SDKs are kept out of collection
-    (`TID253`). Only capabilities listed here may be skipped: any other `ImportError` fails the test.
+    (`TID253`). Only a case that names its module in `requires` may be skipped: any other `ImportError` fails
+    the test.
     """
-    module = optional_dependencies.get(name)
     if module is not None and importlib.util.find_spec(module) is None:  # pragma: lax no cover
         pytest.skip(f'`{name}` needs `{module}`, from an optional dependency group that is not installed')
 
@@ -1087,17 +1101,10 @@ def build_capabilities(
         return [cls()]
     except (TypeError, ValueError, UserError) as exc:
         pytest.fail(
-            f'`{name}()` cannot be built with its defaults ({exc}). Add a `FIXTURES` entry that configures it, '
-            "or an `EXEMPT` entry saying why it can't run offline.",
+            f'`{name}()` cannot be built with its defaults ({exc}). Give its `CASES` entry a `build` that '
+            "configures it, or an `Unbuildable` saying why it can't run offline.",
             pytrace=False,
         )
-
-
-@dataclass(frozen=True)
-class Exempt:
-    """A capability the test can't construct generically, with the reason."""
-
-    reason: str
 
 
 Check = Literal['prefix', 'ids', 'determinism', 'request-scope']

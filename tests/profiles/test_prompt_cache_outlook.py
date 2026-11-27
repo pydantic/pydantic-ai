@@ -84,7 +84,7 @@ def test_bedrock_profile_retention():
         minutes=5
     )
     assert _retention(BedrockProvider.model_profile('openai.gpt-5.6-sol')) == timedelta(minutes=30)
-    # GPT-5.6 is the only OpenAI generation with a documented Bedrock TTL.
+    # Bedrock's prompt-caching page lists no TTL for gpt-oss.
     assert _retention(BedrockProvider.model_profile('openai.gpt-oss-120b-1:0')) is None
     assert _retention(BedrockProvider.model_profile('meta.llama3-70b-instruct-v1:0')) is None
 

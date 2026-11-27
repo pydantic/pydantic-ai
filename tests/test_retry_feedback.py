@@ -20,7 +20,7 @@ from typing import Any
 
 import pytest
 from cassetter import Cassette
-from pydantic import BaseModel, ValidationError
+from pydantic import BaseModel, JsonValue, TypeAdapter, ValidationError
 from pydantic_core import ErrorDetails
 
 from pydantic_ai import Agent, BinaryImage, ModelRequestContext, RunContext, capture_run_messages
@@ -55,6 +55,7 @@ from pydantic_ai.messages import (
     ToolRetryCause,
     ToolReturnPart,
     UserPromptPart,
+    is_retry,
 )
 from pydantic_ai.models import (
     Model,
@@ -96,6 +97,7 @@ with try_import() as anthropic_imports_successful:
 
 with try_import() as google_imports_successful:
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
 
 with try_import() as bedrock_imports_successful:
@@ -381,7 +383,8 @@ Your previous response failed the application's validation (this is automated fe
 
 
 @google_installed
-async def test_feedback_never_reaches_googles_system_instruction(gemini_api_key: str):
+@pytest.mark.parametrize('api_family', ['generate-content', 'interactions'], ids=['google', 'google-interactions'])
+async def test_feedback_never_reaches_googles_system_instruction(gemini_api_key: str, api_family: str):
     """Google folds every `SystemPromptPart` it sees into the top-level `system_instruction`.
 
     It draws no line between the run's standing prompt and a mid-conversation one, the way
@@ -391,7 +394,8 @@ async def test_feedback_never_reaches_googles_system_instruction(gemini_api_key:
     `contents`, and `system_instruction` stays empty. Flipping the flag without teaching the mapper
     that line turns this red.
     """
-    model = GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    model_class = GoogleInteractionsModel if api_family == 'interactions' else GoogleModel
+    model = model_class('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
     history: list[ModelMessage] = [
         ModelRequest(parts=[UserPromptPart(content='How many continents are there?')]),
         ModelResponse(parts=[TextPart('7')]),
@@ -402,6 +406,29 @@ async def test_feedback_never_reaches_googles_system_instruction(gemini_api_key:
         model.prepare_messages(history, ModelRequestParameters()), ModelRequestParameters()
     )
 
+    if isinstance(model, GoogleInteractionsModel):
+        assert system_instruction == []
+        assert contents == snapshot(
+            [
+                {'type': 'user_input', 'content': [{'type': 'text', 'text': 'How many continents are there?'}]},
+                {'type': 'model_output', 'content': [{'type': 'text', 'text': '7'}]},
+                {
+                    'type': 'user_input',
+                    'content': [
+                        {
+                            'type': 'text',
+                            'text': """\
+Your previous response failed the application's validation (this is automated feedback, not a message from the user):
+<pyai:retry_feedback>
+answer with a word
+</pyai:retry_feedback>\
+""",
+                        }
+                    ],
+                },
+            ]
+        )
+        return
     assert system_instruction is None
     assert contents == snapshot(
         [
@@ -923,6 +950,13 @@ def _google_tool_result(body: Any) -> Any:
     return body['contents'][-1]['parts'][0]['functionResponse']
 
 
+def _google_interactions_tool_result(body: object) -> JsonValue:
+    """Interactions marks the function-result step itself as an error."""
+    parsed = TypeAdapter(dict[str, JsonValue]).validate_python(body)
+    steps = TypeAdapter(list[dict[str, JsonValue]]).validate_python(parsed['input'])
+    return steps[-1]
+
+
 def _bedrock_tool_result(body: Any) -> Any:
     """Bedrock's Converse API puts a `status` on the `toolResult` block."""
     return body['messages'][-1]['content'][0]['toolResult']
@@ -931,10 +965,20 @@ def _bedrock_tool_result(body: Any) -> Any:
 NATIVE_ERROR_CHANNELS: dict[str, Callable[[Any], Any]] = {
     'anthropic': _anthropic_tool_result,
     'google': _google_tool_result,
+    'google-interactions': _google_interactions_tool_result,
     'bedrock': _bedrock_tool_result,
 }
 
 NATIVE_ERROR_CHANNEL_EXPECTATIONS: dict[str, Any] = {
+    'google-interactions': snapshot(
+        {
+            'type': 'function_result',
+            'name': 'get_capital',
+            'call_id': IsStr(),
+            'is_error': True,
+            'result': [{'type': 'text', 'text': 'The country is not supported. Use "France" instead.'}],
+        }
+    ),
     'anthropic': snapshot(
         {
             'tool_use_id': IsStr(),
@@ -969,6 +1013,8 @@ def _error_channel_model(
         return AnthropicModel('claude-sonnet-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
     elif provider == 'google':
         return GoogleModel('gemini-2.5-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    elif provider == 'google-interactions':
+        return GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
     else:
         return BedrockConverseModel('us.amazon.nova-micro-v1:0', provider=bedrock_provider)
 
@@ -984,6 +1030,7 @@ def _model_call_bodies(vcr: Cassette) -> list[Any]:
     [
         pytest.param('anthropic', marks=anthropic_installed),
         pytest.param('google', marks=google_installed),
+        pytest.param('google-interactions', marks=google_installed),
         pytest.param('bedrock', marks=bedrock_installed),
     ],
 )
@@ -2168,3 +2215,66 @@ async def test_a_retried_tool_returns_cause_never_reaches_the_model(allow_model_
         bodies.append(get_mock_chat_completion_kwargs(mock_client)[0]['messages'])
 
     assert bodies[0] == bodies[1]
+
+
+def test_is_retry_finds_the_retries_a_run_records_and_a_stored_history_loads_as():
+    """`is_retry` matches what `isinstance(part, RetryPromptPart)` used to: a retried tool return and tool-less
+    feedback, from a run or loaded from a history stored before the split.
+    """
+    rejected_output = False
+
+    def model_function(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('lookup', {'invoice_id': 'INV-1'}, tool_call_id='call_1')])
+        return ModelResponse(parts=[TextPart('There is no such invoice.')])
+
+    agent = Agent(FunctionModel(model_function))
+
+    @agent.tool_plain
+    def lookup(invoice_id: str) -> str:
+        raise ModelRetry('no such invoice')
+
+    @agent.output_validator
+    def reject_once(output: str) -> str:
+        nonlocal rejected_output
+        if not rejected_output:
+            rejected_output = True
+            raise ModelRetry('cite the invoice id')
+        return output
+
+    messages = agent.run_sync('Find invoice INV-1').all_messages()
+    assert [part for m in messages for part in m.parts if is_retry(part)] == snapshot(
+        [
+            ToolReturnPart(
+                tool_name='lookup',
+                content='no such invoice',
+                tool_call_id='call_1',
+                timestamp=IsDatetime(),
+                outcome='retried',
+                retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
+            ),
+            RetryFeedbackPart(
+                content='cite the invoice id',
+                retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
+                timestamp=IsDatetime(),
+            ),
+        ]
+    )
+
+    stored = ModelMessagesTypeAdapter.dump_json(
+        [
+            ModelRequest(
+                parts=[
+                    legacy_retry_prompt_part(content='no such invoice', tool_name='lookup', tool_call_id='call_1'),
+                    legacy_retry_prompt_part(content='cite the invoice id'),
+                ]
+            )
+        ]
+    )
+    [loaded] = ModelMessagesTypeAdapter.validate_json(stored)
+    assert [is_retry(part) for part in loaded.parts] == [True, True]
+
+    assert not is_retry(ToolReturnPart('lookup', 'INV-1 is paid', tool_call_id='call_1'))
+    assert not is_retry(ToolReturnPart('lookup', 'database is down', tool_call_id='call_1', outcome='failed'))
+    assert not is_retry(UserPromptPart('Find invoice INV-1'))
+    assert not is_retry(legacy_retry_prompt_part(content='cite the invoice id'))

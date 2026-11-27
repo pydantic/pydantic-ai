@@ -21,9 +21,6 @@ AGENT_INSTRUCTION_FILES = {'AGENTS.md', 'CLAUDE.md'}
 # Pages left out of `docs/navigation.yml` on purpose. Publishing one is a decision of its own: add its
 # navigation entry and remove it from here.
 UNPUBLISHED_PAGES = {
-    'harness/clai2.md': (
-        'Disagrees with the CLAI2 README and code in several places: https://github.com/pydantic/pydantic-ai/issues/8938'
-    ),
     'harness/mutation-testing.md': (
         "Contributor guidance for mutation-testing the harness's own filesystem and shell toolsets, "
         'not something a reader of these docs can use.'
