@@ -807,9 +807,10 @@ print(result.output)
     regardless of finish reason, except for output that was cut off at `'length'` into JSON that doesn't parse,
     or into a tool call with no arguments: a tool call, function or output tool alike, raises
     [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
-    `OutputTokenLimitExceeded`, itself an `UnexpectedModelBehavior`) right away. (Under the default `'graceful'`
-    [end strategy](../output.md#parallel-output-tool-calls), a function tool call after an output tool call that
-    already produced the final result is re-prompted like any other invalid-arguments failure instead.) Likewise,
+    `OutputTokenLimitExceeded`, itself an `UnexpectedModelBehavior`) right away. (Under the `'graceful'` and
+    `'exhaustive'` [end strategies](../output.md#parallel-output-tool-calls), a function tool call in a response that
+    also has an output tool call with valid arguments is re-prompted like any other invalid-arguments failure
+    instead.) Likewise,
     [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]
     text raises `OutputTokenLimitExceeded` right away.
 

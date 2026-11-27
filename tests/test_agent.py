@@ -5342,11 +5342,16 @@ async def test_streamed_output_is_kept_when_a_later_function_tool_call_is_cut_of
     ] == snapshot([('final_result', 'success'), ('get_weather', 'retried')])
 
 
-def test_cut_off_function_tool_call_after_an_output_tool_call_is_retried_in_run():
+@pytest.mark.parametrize('end_strategy', ['graceful', 'exhaustive'])
+def test_cut_off_function_tool_call_after_a_valid_output_tool_call_is_retried_in_run(
+    end_strategy: Literal['graceful', 'exhaustive'],
+):
     """In `run()`, a cut-off function tool call after a valid output tool call is retried instead of raising.
 
-    The response has a valid output, so the run doesn't fail on it: under the default `'graceful'` end strategy, the
-    function tool call's retry sets the output aside and the model is re-prompted, as for any other invalid arguments.
+    The response has a valid output, so the run doesn't fail on it: the function tool call's retry sets the output aside
+    and the model is re-prompted, as for any other invalid arguments. `'exhaustive'` validates function tool calls before
+    it runs any output tool, so it only checks the output tool call's arguments then: the output function still runs
+    once per response.
 
     Not a VCR test: no provider reliably ends a response at `max_tokens` inside a function tool call that follows a
     complete output tool call; `test_openai_responses_function_tool_call_cut_off_by_max_tokens` records a cut-off function
@@ -5364,7 +5369,13 @@ def test_cut_off_function_tool_call_after_an_output_tool_call_is_retried_in_run(
             )
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"name": "Lyon", "population": 2}')])
 
-    agent = Agent(FunctionModel(respond), output_type=ToolOutput(_City))
+    output_calls: list[str] = []
+
+    def city(name: str, population: int) -> _City:
+        output_calls.append(name)
+        return _City(name=name, population=population)
+
+    agent = Agent(FunctionModel(respond), output_type=ToolOutput(city), end_strategy=end_strategy)
 
     @agent.tool_plain
     def get_weather(city: str) -> str:
@@ -5372,6 +5383,7 @@ def test_cut_off_function_tool_call_after_an_output_tool_call_is_retried_in_run(
 
     result = agent.run_sync('Hello')
     assert result.output == _City(name='Lyon', population=2)
+    assert output_calls == ['Paris', 'Lyon']
     assert [
         (part.tool_name, part.content, part.outcome)
         for part in result.all_messages()[2].parts
@@ -5397,6 +5409,42 @@ def test_cut_off_function_tool_call_after_an_output_tool_call_is_retried_in_run(
             ),
         ]
     )
+
+
+@pytest.mark.parametrize('end_strategy', ['graceful', 'exhaustive'])
+def test_cut_off_function_tool_call_after_an_invalid_output_tool_call_raises(
+    end_strategy: Literal['graceful', 'exhaustive'],
+):
+    """A cut-off function tool call after an output tool call whose arguments don't validate raises right away.
+
+    With no valid output in the response, re-prompting with the same token limit would only cut the call off again.
+
+    Not a VCR test: no provider reliably ends a response at `max_tokens` inside a function tool call that follows an
+    output tool call with invalid arguments; `test_openai_responses_function_tool_call_cut_off_by_max_tokens` records a
+    cut-off function tool call on its own.
+    """
+    requests = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        return ModelResponse(
+            parts=[
+                ToolCallPart(info.output_tools[0].name, {'name': 'Paris'}),
+                ToolCallPart('get_weather', '{"city": "Par'),
+            ],
+            finish_reason='length',
+        )
+
+    agent = Agent(FunctionModel(respond), output_type=ToolOutput(_City), end_strategy=end_strategy)
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return 'sunny'  # pragma: no cover
+
+    with pytest.raises(IncompleteToolCall):
+        agent.run_sync('Hello')
+    assert requests == 1
 
 
 def test_empty_response_with_finish_reason_length():
