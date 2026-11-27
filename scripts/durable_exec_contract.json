@@ -78,9 +78,32 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::CancelGuard.cancel"
       ]
     },
+    "RunCancellation.cancel_requested": {
+      "engines": [
+        "hatchet"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_durability.py::_TerminalEventPublisher.wrap_run"
+      ]
+    },
+    "RunCancellation.timed_out": {
+      "engines": [
+        "hatchet"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_durability.py::_TerminalEventPublisher.wrap_run"
+      ]
+    },
     "provide_run_deadline": {
       "engines": [
         "dbos",
+        "hatchet",
         "temporal"
       ],
       "kinds": [
@@ -88,6 +111,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_durability.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>"
       ]
     }
@@ -534,7 +558,8 @@
     },
     "RunContext._cancellation": {
       "engines": [
-        "durable_exec"
+        "durable_exec",
+        "hatchet"
       ],
       "kinds": [
         "attribute_read"
@@ -544,7 +569,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::guard_run_context"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::guard_run_context",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_durability.py::_TerminalEventPublisher.wrap_run"
       ]
     },
     "RunContext._capability": {
@@ -823,6 +849,7 @@
       "engines": [
         "dbos",
         "durable_exec",
+        "hatchet",
         "prefect",
         "temporal"
       ],
@@ -835,6 +862,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.serialize_run_context",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._call_tool_in_child_workflow",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_durability.py::HatchetDurability._tool_run_context_scope",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_project_run_context",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._tool_run_context_scope"
       ]
@@ -3698,13 +3726,15 @@
     },
     "RunCancelled": {
       "engines": [
-        "durable_exec"
+        "durable_exec",
+        "hatchet"
       ],
       "kinds": [
         "import"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_durability.py::<module>"
       ]
     },
     "RunCancelled.metadata": {
@@ -3720,13 +3750,15 @@
     },
     "RunTimedOut": {
       "engines": [
-        "durable_exec"
+        "durable_exec",
+        "hatchet"
       ],
       "kinds": [
         "import"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_durability.py::<module>"
       ]
     },
     "SkipModelRequest": {
@@ -6853,6 +6885,39 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/absurd/_capability.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/pgtask/_capability.py::<module>"
+      ]
+    },
+    "ToolManager": {
+      "engines": [
+        "hatchet"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_durability.py::<module>"
+      ]
+    },
+    "ToolManager.parallel_execution_mode": {
+      "engines": [
+        "hatchet"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_durability.py::HatchetDurability.wrap_run"
+      ]
+    },
+    "_parallel_execution_mode_ctx_var": {
+      "engines": [
+        "hatchet"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_durability.py::<module>"
       ]
     }
   },

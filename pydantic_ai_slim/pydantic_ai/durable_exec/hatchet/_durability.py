@@ -1,16 +1,21 @@
 from __future__ import annotations
 
+import asyncio
 import warnings
-from collections.abc import AsyncIterable, Mapping, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Generator, Mapping, Sequence
+from contextlib import contextmanager
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-from typing import Any, Literal, cast
+from typing import TYPE_CHECKING, Any, Literal, cast
 from weakref import WeakKeyDictionary
 
+import anyio
 from hatchet_sdk import DurableContext, Hatchet, Standalone
 from pydantic import JsonValue, TypeAdapter
+from pydantic_core import to_json
 
 from pydantic_ai._agent_graph import set_agent_graph_sleep
+from pydantic_ai._cancel import provide_run_deadline
 from pydantic_ai._utils import aclose_if_supported
 from pydantic_ai.agent import EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
@@ -33,12 +38,18 @@ from pydantic_ai.exceptions import (
     ModelQuotaExceededError,
     ModelRequestRejectedError,
     ModelRequestTimeout,
+    RunCancelled,
+    RunTimedOut,
     UserError,
 )
 from pydantic_ai.messages import AgentStreamEvent
 from pydantic_ai.models import Model
 from pydantic_ai.output import OutputDataT
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+from pydantic_ai.tool_manager import (
+    ToolManager,
+    _parallel_execution_mode_ctx_var,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolsetTool
@@ -54,6 +65,9 @@ from ._operation_backend import (
 from ._run_context import HatchetRunContext, deserialize_run_context
 from ._spec import HATCHET_ENGINE_SPEC
 from ._transports import HatchetParameterTransports, TaskInput
+
+if TYPE_CHECKING:
+    from hatchet_sdk.features.streams import StreamEvent
 
 _DEFAULT_NON_RETRYABLE_MODEL_ERRORS: tuple[type[ModelAPIError], ...] = (
     ModelRequestRejectedError,
@@ -338,7 +352,8 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
 
     def load_deps(self, payload: JsonValue) -> Any:
         assert self._deps_adapter is not None
-        return self._deps_adapter.validate_python(payload)
+        # Validated as the JSON it was dumped as, which a strict model accepts where it would reject the Python form.
+        return self._deps_adapter.validate_json(to_json(payload))
 
     # --- Capability hooks ---
 
@@ -386,8 +401,27 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         # Recorded before the run spawns anything, so a replay starts its clock at the same time. A run with a
         # `timeout=` recorded it already, to count the deadline from.
         start = _run_start_times.get(durable_ctx, {}).pop(ctx.run_id, None) or await durable_ctx.aio_now()
-        with set_agent_graph_sleep(durable_sleep), durable_clock(start):
+        # Parallel tool calls emit their events once all of them are done, in call order: a replay hands their results
+        # back in another order than they finished, and event IDs and event handler tasks are numbered by position.
+        mode = 'sequential' if _parallel_execution_mode_ctx_var.get() == 'sequential' else 'parallel_ordered_events'
+        with (
+            set_agent_graph_sleep(durable_sleep),
+            durable_clock(start),
+            ToolManager.parallel_execution_mode(mode),
+        ):
             return await super().wrap_run(ctx, handler=handler)
+
+    @contextmanager
+    def _tool_run_context_scope(self, ctx: RunContext[AgentDepsT]) -> Generator[RunContext[AgentDepsT]]:
+        with super()._tool_run_context_scope(ctx) as durable_ctx:
+            if ctx.deadline is None or self.in_durable_context:
+                # In the durable task, the run already provides its deadline, on its replay-safe clock.
+                yield durable_ctx
+                return
+            # A child task doesn't share the durable task's context, so an agent a tool runs here inherits the run's
+            # deadline from the serialized context instead.
+            with provide_run_deadline(ctx.deadline):
+                yield durable_ctx
 
     # --- Durable streams ---
 
@@ -455,15 +489,13 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
                 self.hatchet, config, topic, message_id=f'{ctx.run_id}:result', event=AgentRunResultEvent(result)
             )
 
-    async def _publish_terminal_error(self, ctx: RunContext[AgentDepsT], error: BaseException) -> None:
+    async def _publish_terminal_error(self, ctx: RunContext[AgentDepsT], error_name: str) -> None:
         config = self._event_stream
         topic = self._run_topic()
         if config is not None and topic is not None:
             # Only the exception type: a consumer may show the stream to end users, and the message can carry a
             # provider's error body or a tool's internals. The durable task's own result has the full error.
-            await publish_event(
-                self.hatchet, config, topic, message_id=f'{ctx.run_id}:result', error=type(error).__name__
-            )
+            await publish_event(self.hatchet, config, topic, message_id=f'{ctx.run_id}:result', error=error_name)
 
     def stream_agent_events(
         self,
@@ -479,14 +511,17 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         that carries the run's result, so they can be handed to a [`UIAdapter`][pydantic_ai.ui.UIAdapter]. The
         topic keeps its messages after the run, so a consumer can subscribe late, or again.
 
-        A durable task that's cancelled publishes no terminal event, because Hatchet stops a task it evicts the same
-        way and an evicted task's run continues once it's restored. A consumer that has to notice a cancelled run
-        checks the workflow run's status, e.g. with `hatchet.runs.aio_get_status(workflow_run_id)`.
+        A run that times out or cancels itself ends the iterator like any failed run. A durable task that Hatchet
+        cancels publishes no terminal event, because Hatchet stops a task it evicts the same way and an evicted task's
+        run continues once it's restored. A consumer that has to notice a cancelled run checks the workflow run's
+        status, e.g. with `hatchet.runs.aio_get_status(workflow_run_id)`.
 
         Args:
             workflow_run_id: The workflow run ID of the durable task running the agent.
             output_type: The agent's output type, so the terminal event's result is decoded into it.
-            cursor: The `cursor` of an earlier iterator, to resume right after the last event it read.
+            cursor: The `cursor` of an earlier iterator, to resume right after the last event it read. The new
+                iterator doesn't know which events the earlier one yielded, so an event a replayed durable task
+                published again after that cursor is yielded again.
         """
         config = self._event_stream
         if config is None:
@@ -495,8 +530,11 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
                 'Pass `event_stream=True` to publish them.'
             )
         topic = config.topic(self._stream_agent_name(), workflow_run_id)
-        subscription = self.hatchet.streams.aio_subscribe(topic, namespace=config.namespace, cursor=cursor)
-        return HatchetAgentRunEvents(subscription, output_type=output_type)
+
+        def subscribe(after: str | None) -> AsyncIterator[StreamEvent]:
+            return self.hatchet.streams.aio_subscribe(topic, namespace=config.namespace, cursor=after)
+
+        return HatchetAgentRunEvents(subscribe, output_type=output_type, cursor=cursor)
 
     def _stream_agent_name(self) -> str:
         """The agent whose topic `stream_agent_events` reads: this capability's, once it's attached to one agent."""
@@ -533,10 +571,20 @@ class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
         """End subscribers' iteration when the run fails, as no result event will: a topic outlives its runs.
 
         Wrapping the run sees a failure from any capability's hook, including an `after_run` that raises, which
-        `on_run_error` doesn't.
+        `on_run_error` doesn't. A run's own cancellation, by its `timeout=` or `RunContext.cancel()`, reaches it as
+        a `CancelledError` and ends the run with `RunTimedOut` or `RunCancelled`, so it's published as that. Hatchet
+        cancelling or evicting the durable task isn't the run's own, and publishes nothing.
         """
         try:
             return await handler()
         except Exception as error:
-            await self._durability._publish_terminal_error(ctx, error)  # pyright: ignore[reportPrivateUsage]
+            await self._durability._publish_terminal_error(ctx, type(error).__name__)  # pyright: ignore[reportPrivateUsage]
+            raise
+        except asyncio.CancelledError:
+            cancellation = ctx._cancellation  # pyright: ignore[reportPrivateUsage]
+            if cancellation is not None and cancellation.cancel_requested:
+                error_name = RunTimedOut.__name__ if cancellation.timed_out else RunCancelled.__name__
+                # Shielded, as the cancellation would otherwise interrupt the publish.
+                with anyio.CancelScope(shield=True):
+                    await self._durability._publish_terminal_error(ctx, error_name)  # pyright: ignore[reportPrivateUsage]
             raise
