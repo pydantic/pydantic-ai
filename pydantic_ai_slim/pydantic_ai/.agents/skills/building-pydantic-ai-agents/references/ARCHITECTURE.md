@@ -127,9 +127,9 @@ Be opinionated here. Any capability should at least be evaluated for deferral; e
 Need model thinking/reasoning?
 ├── Yes → Use Thinking(effort='high')
 └── Need web search?
-    ├── Yes → Use WebSearch() (auto-fallback to local)
+    ├── Yes → Use WebSearch() (native only; add local='duckduckgo' or local=<tool> for other models)
     └── Need URL fetching?
-        ├── Yes → Use WebFetch()
+        ├── Yes → Use WebFetch() (native only; add local=True for other models)
         └── Need MCP servers?
             ├── Yes → Use MCP()
             └── Need lifecycle hooks only?
@@ -156,7 +156,7 @@ Need deterministic, fast tests?
 | Scenario | Mode |
 |----------|------|
 | Need structured data and want maximum provider compatibility | `ToolOutput` (default) — works with all providers, supports streaming |
-| Want the provider to natively enforce JSON schema compliance | `NativeOutput` — OpenAI, Anthropic, Google only; limited streaming; Anthropic limits strict schema complexity per request (`ModelRequestRejectedError` before sending when over) |
+| Want the provider to natively enforce JSON schema compliance | `NativeOutput` — models whose profile supports JSON schema output (OpenAI, Anthropic, Google, and many others such as Groq, xAI, Bedrock, DeepSeek, OpenRouter, Ollama and vLLM); limited streaming; Anthropic limits strict schema complexity per request (`ModelRequestRejectedError` before sending when over) |
 | Provider doesn't support tools or JSON mode | `PromptedOutput` — works everywhere as a fallback |
 | LLM returns non-JSON structured text (markdown, YAML, domain-specific) | `TextOutput` — custom parsing function |
 
@@ -215,10 +215,10 @@ To let the users of an open-source or local app run it on their own ChatGPT plan
 | `Thinking` | Model thinking/reasoning at configurable effort | Yes |
 | `Hooks` | Decorator-based lifecycle hook registration | No |
 | `RaiseContentFilterError` | Raises `ContentFilterError` for model responses with `finish_reason='content_filter'` | Yes |
-| `WebSearch` | Web search — native when supported, local fallback | Yes |
-| `WebFetch` | URL fetching — native when supported, custom fallback | Yes |
+| `WebSearch` | Web search — native only by default; `local='duckduckgo'`, `local=True` or a tool adds a local fallback for other models | Yes |
+| `WebFetch` | URL fetching — native only by default; `local=True` or a tool adds a local fallback for other models | Yes |
 | `ImageGeneration` | Image generation — native when supported, direct fallback via an image model name or `ImageGenerator` | Yes |
-| `MCP` | MCP server — native when supported, direct connection | Yes |
+| `MCP` | MCP server — runs the server locally by default; `native=True` uses the provider's MCP tool where supported | Yes |
 | `LocalWorkspace` | A `ctx.workspace` on this machine (host subprocesses and files, no isolation); `read_only=True` refuses commands and changes; `authority='user'` or `'none'` marks its files as not the operator's, `path_authority={path: level}` per directory or file | Yes |
 | `FileUnderstanding` | Replaces files the serving model's profile rejects with descriptions written by `fallback_subagent_model`, judged per attempt (each `ModelFallback` candidate by its own profile) | Yes |
 | `PrepareTools` | Filters or modifies tool definitions per step | No |
@@ -227,6 +227,8 @@ To let the users of an open-source or local app run it on their own ChatGPT plan
 | `Toolset` | Wraps an `AbstractToolset` | No |
 | `ProcessHistory` | Wraps a history processor function — a thin wrapper over the `before_model_request` hook | No |
 | `ModelFallback` | Attempts other models when a request fails or its response is rejected | Yes |
+| `RetryOnModelErrors` | Retries the same model on rate limits, overloaded or unavailable models, 5xx and connection errors, with backoff | Yes |
+| `Caching` | Prompt caching across providers; several providers cache nothing without it | Yes |
 | `BatchModelRequests` | Sends model requests through the OpenAI, Anthropic or Gemini batch API at batch prices; runs started together share batches | Yes |
 
 ### When to Use Each Agent Method

@@ -136,6 +136,8 @@ Rules of thumb:
 
 ## Manage Context Size
 
+Before writing your own trimming, consider ready-made compaction: the provider-native `OpenAICompaction` (OpenAI Responses API) and `AnthropicCompaction` capabilities, or Pydantic AI Harness's model-agnostic strategies, whose `TieredCompaction` is the recommended default (see [Compaction](https://pydantic.dev/docs/ai/capabilities/compaction/), [Compaction strategies](https://pydantic.dev/docs/ai/harness/compaction/) and the `pydantic-ai-harness` skill). Write a processor as below when you need an app-specific policy.
+
 Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`.
 
 In `before_model_request` and `wrap_model_request`, use the two message views deliberately:

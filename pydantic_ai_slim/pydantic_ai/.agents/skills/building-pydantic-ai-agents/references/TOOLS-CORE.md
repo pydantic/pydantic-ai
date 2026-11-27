@@ -159,5 +159,5 @@ agent = Agent(
 
 Good default split:
 
-- use `WebSearch()` capability when the user wants model-agnostic search with native fallback
+- use the `WebSearch()` capability when the user wants the provider's native search; it is native-only by default, so add `local='duckduckgo'` (or another tool) to search on models without native search
 - use `duckduckgo_search_tool()` / Tavily / Exa when the user explicitly wants those engines as tools
