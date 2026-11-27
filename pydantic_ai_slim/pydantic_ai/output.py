@@ -3,13 +3,13 @@ from __future__ import annotations
 import copy
 import inspect
 import math
-from collections.abc import Awaitable, Callable, Iterable, Mapping, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, cast, overload
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
-from pydantic_core import PydanticCustomError, core_schema
+from pydantic_core import PydanticCustomError, SchemaError, SchemaValidator, core_schema
 from typing_extensions import TypeAliasType, TypeForm, TypeVar
 
 from . import _utils, exceptions
@@ -418,8 +418,9 @@ def StructuredDict(
         name: Optional name of the structured output. If not provided, the `title` field of the JSON schema will be used if it's present.
         description: Optional description of the structured output. If not provided, the `description` field of the JSON schema will be used if it's present.
         validate: Whether to validate the output against the JSON schema. Values are not converted: `"42"` where the
-            schema asks for an integer is an error, not `42`. Requires the `jsonschema` package, installed with
-            `pip install "pydantic-ai-slim[jsonschema]"`.
+            schema asks for an integer is an error, not `42`. `pattern` and `patternProperties` are checked with a
+            linear-time regex engine, so a pattern that uses lookarounds or backreferences raises a `UserError` here.
+            Requires the `jsonschema` package, installed with `pip install "pydantic-ai-slim[jsonschema]"`.
 
     Example:
     ```python {title="structured_dict.py"}
@@ -487,7 +488,7 @@ def StructuredDict(
 def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, Any]], dict[str, Any]]:
     """Build a function that checks a value against `json_schema` and raises a validation error listing what's wrong."""
     try:
-        from jsonschema.validators import validator_for
+        from jsonschema.validators import extend, validator_for
         from referencing import Registry
         from referencing.exceptions import Unresolvable
     except ImportError as e:
@@ -496,8 +497,20 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
             'Install it with `pip install "pydantic-ai-slim[jsonschema]"`.'
         ) from e
 
+    matchers = _compile_schema_patterns(json_schema)
+    validator_class = validator_for(json_schema)
+    # `pattern` checks use pydantic-core's linear-time regex engine rather than Python's backtracking `re`, so
+    # crafted model output can't stall the event loop on a pattern like `^(a+)+$`.
+    validator_class = extend(
+        validator_class,
+        {
+            'pattern': _pattern_keyword(matchers),
+            'patternProperties': _pattern_properties_keyword(matchers),
+            'additionalProperties': _additional_properties_keyword(matchers),
+        },
+    )
     # An empty registry resolves references inside the schema and never fetches a remote one.
-    validator = validator_for(json_schema)(json_schema, registry=Registry())
+    validator = validator_class(json_schema, registry=Registry())
 
     def validate(value: dict[str, Any]) -> dict[str, Any]:
         # JSON has no NaN or infinity, and they pass `minimum`/`maximum` checks, so they're refused first.
@@ -523,6 +536,99 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
         return value
 
     return validate
+
+
+_NON_SCHEMA_KEYWORDS = frozenset({'enum', 'const', 'default', 'examples'})
+"""Keywords whose values are data rather than subschemas, so a `pattern` key inside them isn't a pattern."""
+
+
+def _compile_schema_patterns(json_schema: JsonSchemaValue) -> dict[str, Callable[[str], bool]]:
+    """Compile every `pattern` and `patternProperties` key in `json_schema` with pydantic-core's Rust regex engine.
+
+    Raises a `UserError` naming the pattern when the engine can't compile it, such as a lookaround or a backreference.
+    """
+    return {pattern: _compile_pattern(pattern) for pattern in _schema_patterns(json_schema)}
+
+
+def _compile_pattern(pattern: str) -> Callable[[str], bool]:
+    try:
+        validator = SchemaValidator(core_schema.str_schema(pattern=pattern, regex_engine='rust-regex'))
+    except SchemaError as e:
+        raise exceptions.UserError(
+            f'`StructuredDict(validate=True)` checks `pattern` with a linear-time regex engine, which does not '
+            f'support the pattern {pattern!r} (lookarounds and backreferences are not supported): {e}'
+        ) from e
+    return validator.isinstance_python
+
+
+def _schema_patterns(node: Any) -> Iterator[str]:
+    """Every `pattern` and `patternProperties` key in a JSON schema, skipping keywords whose values are data."""
+    if isinstance(node, list):
+        for item in cast(list[Any], node):
+            yield from _schema_patterns(item)
+        return
+    if not isinstance(node, dict):
+        return
+    node = cast(dict[str, Any], node)
+    if isinstance(pattern := node.get('pattern'), str):
+        yield pattern
+    if isinstance(pattern_properties := node.get('patternProperties'), dict):
+        yield from cast(dict[str, Any], pattern_properties)
+    for key, value in node.items():
+        if key not in _NON_SCHEMA_KEYWORDS:
+            yield from _schema_patterns(value)
+
+
+def _pattern_keyword(matchers: dict[str, Callable[[str], bool]]) -> Callable[..., Iterator[Any]]:
+    from jsonschema.exceptions import ValidationError
+
+    def pattern(validator: Any, pattern: str, instance: Any, schema: Any) -> Iterator[Any]:
+        if validator.is_type(instance, 'string') and not matchers[pattern](instance):
+            yield ValidationError(f'{instance!r} does not match {pattern!r}')
+
+    return pattern
+
+
+def _pattern_properties_keyword(matchers: dict[str, Callable[[str], bool]]) -> Callable[..., Iterator[Any]]:
+    def pattern_properties(
+        validator: Any, pattern_properties: dict[str, Any], instance: Any, schema: Any
+    ) -> Iterator[Any]:
+        if not validator.is_type(instance, 'object'):
+            return
+        for pattern, subschema in pattern_properties.items():
+            for key, value in instance.items():
+                if matchers[pattern](key):
+                    yield from validator.descend(value, subschema, path=key, schema_path=pattern)
+
+    return pattern_properties
+
+
+def _additional_properties_keyword(matchers: dict[str, Callable[[str], bool]]) -> Callable[..., Iterator[Any]]:
+    """`additionalProperties`, matching `patternProperties` keys with `matchers` instead of `re.search`."""
+    from jsonschema.exceptions import ValidationError
+
+    def additional_properties(validator: Any, additional: Any, instance: Any, schema: Any) -> Iterator[Any]:
+        if not validator.is_type(instance, 'object'):
+            return
+        extras = _additional_keys(instance, schema, matchers)
+        if validator.is_type(additional, 'object'):
+            for extra in extras:
+                yield from validator.descend(instance[extra], additional, path=extra)
+        elif additional is False and extras:
+            names = ', '.join(repr(extra) for extra in sorted(extras, key=str))
+            verb = 'was' if len(extras) == 1 else 'were'
+            yield ValidationError(f'Additional properties are not allowed ({names} {verb} unexpected)')
+
+    return additional_properties
+
+
+def _additional_keys(
+    instance: dict[str, Any], schema: dict[str, Any], matchers: dict[str, Callable[[str], bool]]
+) -> list[str]:
+    """The keys of `instance` that neither `properties` nor a `patternProperties` pattern in `schema` covers."""
+    properties = schema.get('properties', {})
+    patterns = [matchers[pattern] for pattern in schema.get('patternProperties', {})]
+    return [key for key in instance if key not in properties and not any(match(key) for match in patterns)]
 
 
 def _non_finite_numbers(value: Any, path: str = '') -> list[tuple[str, float]]:

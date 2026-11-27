@@ -2,6 +2,7 @@ import asyncio
 import json
 import re
 import sys
+import time
 from collections import defaultdict
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable, Iterator, Sequence
 from contextlib import asynccontextmanager, nullcontext
@@ -3121,6 +3122,41 @@ def test_output_type_structured_dict_refuses_non_finite_numbers():
             '{"error":[{"type":"json_schema_mismatch","loc":[],"msg":"Output does not match the JSON schema: at `score`: nan is not a finite number","input":{"score":null}}]}'
         ]
     )
+
+
+def test_structured_dict_validate_checks_patterns_in_linear_time():
+    """A backtracking-prone pattern is checked in linear time, so crafted output is refused quickly instead of stalling.
+
+    It feeds deliberately crafted output, which no provider sends on demand, so this is a unit test.
+    """
+    Code = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {'code': {'type': 'string', 'pattern': '^(a+)+$'}},
+            'patternProperties': {'^(x+)+$': {'type': 'integer'}},
+            'additionalProperties': False,
+        },
+        validate=True,
+    )
+    agent = Agent(
+        TestModel(custom_output_args={'code': 'a' * 5000 + '!', 'x' * 5000: 1, 'y': 2}), output_type=Code, retries=0
+    )
+
+    start = time.perf_counter()
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        agent.run_sync('Code')
+    assert time.perf_counter() - start < 2
+
+
+def test_structured_dict_validate_refuses_lookaround_patterns():
+    """A pattern the linear-time engine can't compile is refused when the `StructuredDict` is created.
+
+    It checks a configuration error raised before any request, so this is a unit test.
+    """
+    with pytest.raises(UserError, match=r"does not support the pattern '\(\?=a\)a'"):
+        StructuredDict(
+            {'type': 'object', 'properties': {'code': {'type': 'string', 'pattern': '(?=a)a'}}}, validate=True
+        )
 
 
 def test_structured_dict_validate_does_not_fetch_remote_refs():
