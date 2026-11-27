@@ -408,6 +408,60 @@ class TestProtectedApprovalsAreNotRemembered:
         assert [part.metadata for part in returns] == [None, None]
 
 
+class TestDurableRunsDoNotExpandFromTheProcess:
+    """A replay may run on a worker whose environment differs, so a durable run never expands `~` or a variable."""
+
+    CONFIG = ('/home/me/.config/pydantic-ai-pax', '/home/me/.config/pydantic-ai-pax/*')
+
+    async def _asked(self, command: str, *, durable: bool) -> list[str]:
+        def run_command(command: str) -> str:
+            return 'ran'
+
+        person = _Person()
+        agent = Agent[None, str](
+            _calls(('run_command', {'command': command})),
+            deps_type=type(None),
+            tools=[Tool(run_command, metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'})],
+            capabilities=[
+                *([_DBOSDurability()] if durable else []),
+                Permissions('auto', protected_paths=self.CONFIG),
+                HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person)),
+            ],
+        )
+        await agent.run('go')
+        return [asked.subject for asked in person.asked]
+
+    @pytest.mark.parametrize(
+        'command',
+        ['echo x > ~/.config/pydantic-ai-pax/config.db', 'cp x $CONFIG_HOME/pydantic-ai-pax/plugins/x.py'],
+    )
+    async def test_the_same_command_asks_whatever_the_environment(
+        self, monkeypatch: pytest.MonkeyPatch, command: str
+    ) -> None:
+        decisions: list[list[str]] = []
+        for home in ('/home/me', '/home/elsewhere'):
+            monkeypatch.setenv('HOME', home)
+            monkeypatch.setenv('CONFIG_HOME', f'{home}/.config')
+            decisions.append(await self._asked(command, durable=True))
+        assert decisions == [[command], [command]]
+
+    async def test_outside_a_durable_run_the_environment_is_expanded(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        command = 'echo x > ~/.config/pydantic-ai-pax/config.db'
+        monkeypatch.setenv('HOME', '/home/me')
+        assert await self._asked(command, durable=False) == [command]
+        monkeypatch.setenv('HOME', '/home/elsewhere')
+        assert await self._asked(command, durable=False) == []
+
+    async def test_reading_and_unexpanded_commands_still_run(self) -> None:
+        assert await self._asked('cat ~/.config/pydantic-ai-pax/config.db', durable=True) == []
+        assert await self._asked('echo x > notes.md', durable=True) == []
+
+    async def test_a_windows_variable_counts_as_needing_expansion(self) -> None:
+        workspace = Workspace(_WindowsWorkspace())
+        assert await command_locations(workspace, 'copy x %APPDATA%\\pax', posix=False, expand=False) is None
+        assert await command_locations(workspace, 'copy x 100%', posix=True, expand=False) is not None
+
+
 class TestMatching:
     def test_a_relative_glob_matches_the_end_of_a_path(self) -> None:
         assert matches('/repo/.pax/settings.json', ['.pax/*'], posix=True)
@@ -530,6 +584,7 @@ class TestCommandWords:
 
 async def _names_protected(workspace: Workspace, command: str, *, posix: bool) -> bool:
     locations = await command_locations(workspace, command, posix=posix)
+    assert locations is not None
     return any(matches(location, PROTECTED, posix=posix) for location in locations)
 
 
