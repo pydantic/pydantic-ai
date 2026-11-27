@@ -96,6 +96,10 @@ An [external tool](https://pydantic.dev/docs/ai/tools-toolsets/deferred-tools/#e
 
 `on_tainted='block'` can't stop a call your application runs, so the gate refuses a gated external tool in that mode with a `UserError` before the run's first request, including the frontend tools a UI adapter registers. Use `'ask'`, or leave the tool out of `gated_tools`.
 
+## Output functions
+
+An [output function](https://pydantic.dev/docs/ai/core-concepts/output/#output-functions) runs when the model gives its final output, which is not a tool call, so the gate does not hold it, in `'ask'` or `'block'` mode. Don't give an agent that reads untrusted content an output function that acts outside the run, such as one that sends the output: return the output, and act on it in your application.
+
 ## Letting a model answer
 
 [Approval Reviewer](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/approval_reviewer/) leaves calls this gate holds to the person unless it is built with `review_untrusted_content=True`. Then it is shown the gate's reason next to the call. It answers only its `question`, so the question should name every harm the gated tools can do.
