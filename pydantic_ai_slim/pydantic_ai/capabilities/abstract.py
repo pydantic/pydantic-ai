@@ -258,8 +258,9 @@ class _CapabilityAuthority:
     [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority]. The ceiling covers what the
     capability sends mid-conversation, including its tools' `ToolReturn.content`, and its instructions, which below
     `'operator'` reach the model as [framed data](../capabilities/custom.md#lowered-instructions) instead of as
-    instructions. It doesn't cap its tool names and descriptions or its tools' return values: review or leave those
-    out yourself.
+    instructions. Below `'operator'` its model request hooks can't write the model's turn either: a response they make
+    up raises `UserError`, and a `ModelRetry` they raise sends its message as the capability's own text. It doesn't
+    cap its tool names and descriptions or its tools' return values: review or leave those out yourself.
 
     For a workspace capability, such as [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace], it's also the
     default authority of the workspace's files. A file another capability reads through a workspace carries the

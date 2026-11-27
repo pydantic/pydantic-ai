@@ -114,6 +114,7 @@ from ._deferred_capabilities import (
     parse_loaded_capabilities,
     registered_loaded_capability_ids,
 )
+from ._enqueue import feedback_held_to, held_part
 from ._genai_prices import best_effort_price, fill_response_cost
 from ._history_mirroring import HistoryMirroringMessages, MirroredHistory
 from ._instructions import (
@@ -5255,7 +5256,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # A retry without a response gives up on this step, so its request-scoped parts go with it. When the
         # response was kept in history it answers them, and this is a no-op.
         _drop_unanswered_request_scoped_prompts(ctx.state)
-        retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[m]))
+        part: _messages.ModelRequestPart = m
+        if (held := feedback_held_to(error)) is not None:
+            # A capability below operator authority raised it from a model request hook: what it says reaches the
+            # model as the capability's own text, as if it had enqueued it, not as the application's validation.
+            part = held_part(m, *held)
+        retry_node = ModelRequestNode[DepsT, NodeRunEndT](_messages.ModelRequest(parts=[part]))
         self._result = retry_node
         return retry_node
 

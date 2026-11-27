@@ -4,11 +4,12 @@ from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequenc
 from copy import copy
 from dataclasses import dataclass, field, replace
 from datetime import datetime
-from typing import TYPE_CHECKING, Any, Self, cast
+from typing import TYPE_CHECKING, Any, Literal, Self, cast
 
 from pydantic import ValidationError
 from typing_extensions import TypeIs
 
+from pydantic_ai._enqueue import copy_said, hold_added_messages, hold_feedback, says_the_same, snapshot_messages
 from pydantic_ai._history_mirroring import keep_mirroring
 from pydantic_ai._instructions import (
     AgentInstruction,
@@ -18,8 +19,15 @@ from pydantic_ai._instructions import (
     validate_instruction_id_segment,
 )
 from pydantic_ai._utils import aclose_all, gather, replace_no_init
-from pydantic_ai.exceptions import ModelRetry, RetryModelRequest
-from pydantic_ai.messages import AgentStreamEvent, Authority, ModelResponse, ToolCallPart
+from pydantic_ai.exceptions import ModelRetry, RetryModelRequest, SkipModelRequest, UserError
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    Authority,
+    InstructionPart,
+    ModelResponse,
+    ModelResponsePart,
+    ToolCallPart,
+)
 from pydantic_ai.settings import ModelSettings, merge_model_settings
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -783,7 +791,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
                 messages = request_context.messages
-                request_context = await capability.before_model_request(cap_ctx, request_context)
+                request_context = await _request_hook_held('before_model_request', capability, cap_ctx, request_context)
                 keep_mirroring(messages, request_context)
         return request_context
 
@@ -794,7 +802,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> ModelRequestContext:
         for capability in self._dispatch:
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                request_context = await capability.prepare_model_request(cap_ctx, request_context)
+                request_context = await _request_hook_held(
+                    'prepare_model_request', capability, cap_ctx, request_context
+                )
         return request_context
 
     async def after_model_request(
@@ -806,9 +816,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     ) -> ModelResponse:
         for capability in reversed(self._dispatch):
             if (cap_ctx := _ctx_for_active_cap(capability, ctx)) is not None:
-                response = await capability.after_model_request(
-                    cap_ctx, request_context=request_context, response=response
-                )
+                response = await _after_model_request_held(capability, cap_ctx, request_context, response)
         return response
 
     async def wrap_model_request(
@@ -838,8 +846,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 cap_ctx = _ctx_for_active_cap(capability, ctx)
                 if cap_ctx is None or not capability._handles_model_request_error(cap_ctx, request_context):
                     continue
+                said = _what_it_says(error, copy=True)
                 try:
-                    return await capability.on_model_request_error(
+                    recovered = await capability.on_model_request_error(
                         cap_ctx, request_context=request_context, error=error
                     )
                 except RetryModelRequest:
@@ -848,7 +857,12 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     # an outer one recover from — or re-wrap — the request for another attempt.
                     raise
                 except Exception as new_error:
+                    _hold_raised_from_error_hook(cap_ctx, new_error, handed=error, said=said)
                     error = new_error
+                    continue
+                if (held := _held_to_ceiling(cap_ctx)) is not None:
+                    raise _writes_model_turn(held, 'return a response from `on_model_request_error`')
+                return recovered
             raise error
         finally:
             # The raised error's traceback holds this frame; retaining error would keep ctx.deps in a cycle.
@@ -1178,13 +1192,67 @@ def _make_model_request_wrap(
     inner: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
 ) -> Callable[[ModelRequestContext], Awaitable[ModelResponse]]:
     async def wrapped(request_context: ModelRequestContext) -> ModelResponse:
-        return await cap.wrap_model_request(
-            _ctx_for_cap(cap, ctx),
-            request_context=request_context,
-            handler=inner,
-        )
+        cap_ctx = _ctx_for_cap(cap, ctx)
+        held = _held_to_ceiling(cap_ctx)
+        if held is None:
+            return await cap.wrap_model_request(cap_ctx, request_context=request_context, handler=inner)
+        handler = _HeldHandler(held, inner, request_context)
+        try:
+            response = await cap.wrap_model_request(cap_ctx, request_context=request_context, handler=handler)
+        except SkipModelRequest as e:
+            if handler.handed_on(e):
+                raise
+            raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from e
+        except ModelRetry as e:
+            if not handler.handed_on(e):
+                # The retry keeps the handler's response in history, so it can't have changed it either.
+                _check_handler_responses_unchanged(held, handler.returned)
+                hold_feedback(e, held)
+            raise
+        if not any(response is returned for returned, _ in handler.returned):
+            raise _writes_model_turn(held, "return a response from `wrap_model_request` other than its handler's")
+        _check_handler_responses_unchanged(held, handler.returned)
+        return response
 
     return wrapped
+
+
+class _HeldHandler:
+    """The handler a capability below `'operator'` gets in `wrap_model_request`, recording what it hands back.
+
+    What the handler returned or raised is the model's or an inner capability's, not the capability's own, and what
+    the capability added to the request before calling it is held as `before_model_request`'s additions are.
+    """
+
+    def __init__(
+        self,
+        held: tuple[str, Authority],
+        inner: Callable[[ModelRequestContext], Awaitable[ModelResponse]],
+        request_context: ModelRequestContext,
+    ) -> None:
+        self._held = held
+        self._inner = inner
+        self._snapshot = snapshot_messages(request_context.messages)
+        self._instructions = copy_said(request_context.model_request_parameters.instruction_parts or [])
+        # Each response with a copy of its parts, so a change made to it in place isn't taken for the handler's.
+        self.returned: list[tuple[ModelResponse, Sequence[ModelResponsePart]]] = []
+        # Each error with what it told the model when raised, so one changed before it's re-raised isn't handed on.
+        self._raised: list[tuple[BaseException, object]] = []
+
+    async def __call__(self, request_context: ModelRequestContext) -> ModelResponse:
+        hold_added_messages(request_context.messages, self._snapshot, *self._held)
+        _check_instructions_unchanged(self._held, self._instructions, request_context)
+        try:
+            response = await self._inner(request_context)
+        except BaseException as e:
+            self._raised.append((e, _what_it_says(e, copy=True)))
+            raise
+        self.returned.append((response, copy_said(response.parts)))
+        return response
+
+    def handed_on(self, error: BaseException) -> bool:
+        """Whether `error` is one the handler raised, unchanged."""
+        return any(error is raised and says_the_same(_what_it_says(error), said) for raised, said in self._raised)
 
 
 def _make_tool_validate_wrap(
@@ -1402,3 +1470,145 @@ def _capability_active(capability: AbstractCapability[AgentDepsT], ctx: RunConte
     # `_build_run_capabilities`), which is also the key they're registered under, so we read
     # it directly rather than resolving the instance back to its run-local registry id.
     return capability.id is not None and ctx._is_deferred_capability_dispatch_active(capability.id)  # pyright: ignore[reportPrivateUsage]
+
+
+async def _request_hook_held(
+    hook: Literal['before_model_request', 'prepare_model_request'],
+    capability: AbstractCapability[AgentDepsT],
+    cap_ctx: RunContext[AgentDepsT],
+    request_context: ModelRequestContext,
+) -> ModelRequestContext:
+    """`capability`'s `before_model_request` or `prepare_model_request`, held to its authority below `'operator'`.
+
+    It can't write the model's turn with `SkipModelRequest` or change the instructions, its `ModelRetry` feedback is
+    its own text, and what it adds to the request's messages is held as if it had enqueued it.
+    """
+    held = _held_to_ceiling(cap_ctx)
+    run_hook = capability.before_model_request if hook == 'before_model_request' else capability.prepare_model_request
+    if held is None or getattr(type(capability), hook) is getattr(AbstractCapability, hook):
+        return await run_hook(cap_ctx, request_context)
+    snapshot = snapshot_messages(request_context.messages)
+    instructions = copy_said(request_context.model_request_parameters.instruction_parts or [])
+    try:
+        request_context = await run_hook(cap_ctx, request_context)
+    except SkipModelRequest as e:
+        raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from e
+    except ModelRetry as e:
+        # What it added is already in the history the deprecated mirroring appends to, and the retry keeps it.
+        hold_added_messages(request_context.messages, snapshot, *held)
+        _check_instructions_unchanged(held, instructions, request_context)
+        hold_feedback(e, held)
+        raise
+    hold_added_messages(request_context.messages, snapshot, *held)
+    _check_instructions_unchanged(held, instructions, request_context)
+    return request_context
+
+
+def _check_instructions_unchanged(
+    held: tuple[str, Authority], instructions: Sequence[InstructionPart], request_context: ModelRequestContext
+) -> None:
+    """Raise if a capability below `'operator'` added to or changed the request's instructions.
+
+    The model reads them as the operator's, so there's no lower authority to hold them to. Removing them adds nothing.
+    """
+    if any(
+        not any(says_the_same(part, old) for old in instructions)
+        for part in request_context.model_request_parameters.instruction_parts or ()
+    ):
+        capability_id, ceiling = held
+        raise UserError(
+            f"Capability {capability_id!r} has {ceiling!r} authority, so it cannot add to or change the request's "
+            "instructions, which the model reads as the operator's. Only a capability with operator authority can "
+            'write instructions.'
+        )
+
+
+async def _after_model_request_held(
+    capability: AbstractCapability[AgentDepsT],
+    cap_ctx: RunContext[AgentDepsT],
+    request_context: ModelRequestContext,
+    response: ModelResponse,
+) -> ModelResponse:
+    """`capability`'s `after_model_request`, held to its authority when that's below `'operator'`.
+
+    It can't replace the response, change its parts in place or skip with a response of its own, and its `ModelRetry`
+    feedback is its own text.
+    """
+    held = _held_to_ceiling(cap_ctx)
+    if held is None or type(capability).after_model_request is AbstractCapability.after_model_request:
+        return await capability.after_model_request(cap_ctx, request_context=request_context, response=response)
+    parts = copy_said(response.parts)
+    try:
+        returned = await capability.after_model_request(cap_ctx, request_context=request_context, response=response)
+    except SkipModelRequest as e:
+        raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from e
+    except ModelRetry as e:
+        # The retry keeps the response in history, so it can't have changed it either.
+        _check_handler_responses_unchanged(held, [(response, parts)], 'in `after_model_request`')
+        hold_feedback(e, held)
+        raise
+    # A durable hook's return comes back through its engine as a new object, so what the model reads is compared.
+    if returned is not response and not says_the_same(returned.parts, parts):
+        raise _writes_model_turn(held, 'return a different response from `after_model_request`')
+    _check_handler_responses_unchanged(held, [(response, parts)], 'in `after_model_request`')
+    return returned
+
+
+def _what_it_says(error: BaseException, *, copy: bool = False) -> object:
+    """What an error tells the model: a skip's response parts or a retry's feedback, or `None`."""
+    if isinstance(error, SkipModelRequest):
+        return copy_said(error.response.parts) if copy else error.response.parts
+    if isinstance(error, ModelRetry):
+        return error.message
+    return None
+
+
+def _check_handler_responses_unchanged(
+    held: tuple[str, Authority],
+    responses: Sequence[tuple[ModelResponse, Sequence[ModelResponsePart]]],
+    where: str = 'its handler returned in `wrap_model_request`',
+) -> None:
+    """Raise if a capability below operator authority changed a response's parts in place since they were copied."""
+    if any(not says_the_same(response.parts, parts) for response, parts in responses):
+        raise _writes_model_turn(held, f"change the response's parts {where}")
+
+
+def _hold_raised_from_error_hook(
+    cap_ctx: RunContext[Any], raised: Exception, *, handed: Exception, said: object
+) -> None:
+    """Hold what a capability's `on_model_request_error` raised itself, rather than handed on, to its authority.
+
+    Re-raising the error it was `handed` hands it on, unless the hook changed what it says (`said` before the hook ran).
+    """
+    if raised is handed and says_the_same(_what_it_says(raised), said):
+        return
+    if (held := _held_to_ceiling(cap_ctx)) is None:
+        return
+    if isinstance(raised, SkipModelRequest):
+        raise _writes_model_turn(held, 'raise `SkipModelRequest` with a response') from raised
+    if isinstance(raised, ModelRetry):
+        hold_feedback(raised, held)
+
+
+def _held_to_ceiling(cap_ctx: RunContext[Any]) -> tuple[str, Authority] | None:
+    """The capability running a hook with `cap_ctx` and its authority, when that's below `'operator'`.
+
+    `None` for a capability at `'operator'`, and for an app-facing callback capability such as `Hooks`, whose
+    functions are the application's own.
+    """
+    capability = cap_ctx._capability  # pyright: ignore[reportPrivateUsage]
+    if capability is None or capability._emits_app_events:  # pyright: ignore[reportPrivateUsage]
+        return None
+    ceiling = capability._effective_authority  # pyright: ignore[reportPrivateUsage]
+    if ceiling == 'operator':
+        return None
+    capability_id = cap_ctx._calling_capability_id() or type(capability).__name__  # pyright: ignore[reportPrivateUsage]
+    return capability_id, ceiling
+
+
+def _writes_model_turn(held: tuple[str, Authority], what: str) -> UserError:
+    capability_id, ceiling = held
+    return UserError(
+        f'Capability {capability_id!r} has {ceiling!r} authority, so it cannot {what}, which the model reads as its '
+        "own turn. Only a capability with operator authority can write the model's turns."
+    )

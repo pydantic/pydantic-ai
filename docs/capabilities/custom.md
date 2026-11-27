@@ -458,7 +458,7 @@ A capability can cap the authority of everything it enqueues with its [`authorit
 
 To lower one instance rather than a whole class, call [`with_authority()`][pydantic_ai.capabilities.AbstractCapability.with_authority], which returns a lowered copy: with two instances of the reviewer above in one agent, one of them lowered with `.with_authority('none')`, only what that one enqueues is framed as data. `with_authority('operator')` on a capability whose class sets `'none'` leaves it at `'none'`.
 
-The ceiling covers what the capability sends mid-conversation, wherever its code runs: a hook, a tool, `for_run`, a `DynamicCapability` factory, or a function it returns for its toolset, instructions, model settings or description. It also covers the capability's [instructions](#lowered-instructions). It doesn't cap its tool names and descriptions or its tools' return values, which reach the model as the application configured them: review or leave those out yourself. Content the application enqueues itself, from [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] or a [`Hooks`](../hooks.md) function, keeps its voice.
+The ceiling covers what the capability sends mid-conversation, wherever its code runs: a hook, a tool, `for_run`, a `DynamicCapability` factory, or a function it returns for its toolset, instructions, model settings or description. It also covers the capability's [instructions](#lowered-instructions), and the model's turn and retry feedback its model request hooks write (below). It doesn't cap its tool names and descriptions or its tools' return values, which reach the model as the application configured them: review or leave those out yourself. Content the application enqueues itself, from [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] or a [`Hooks`](../hooks.md) function, keeps its voice.
 
 Below `'operator'`, `ctx.enqueue` treats what the capability sends by kind, so nothing reaches the model as the application's or the user's words:
 
@@ -476,6 +476,15 @@ Anything else raises `UserError` in `ctx.enqueue`:
 - a typed tool return such as a tool search result, which the framework acts on;
 - a `ModelResponse`, which the model reads as its own, and a `ModelRequest` with `instructions`, which it reads in the application's voice;
 - a `SpeechPart` from a capability at `'none'`, since it reads as the user's own turn.
+
+The same holds for the model's turn when the capability's model request hooks write it. Below `'operator'`:
+
+- A hook that raises [`SkipModelRequest`][pydantic_ai.exceptions.SkipModelRequest] with a response, an `after_model_request` that returns a different response or changes the parts of the one it was given, a `wrap_model_request` that returns anything but its handler's response or changes its parts, and an `on_model_request_error` that returns a response each raise `UserError`. Such a capability can still inspect the response, raise an error, or hand on what its handler returned.
+- A part its `before_model_request` or `prepare_model_request` adds to `request_context.messages` directly, or its `wrap_model_request` adds before calling its handler, or one either changes there in place, is held as if it had enqueued it.
+- Adding or changing a `ModelResponse` there, or the instructions in `request_context.model_request_parameters`, raises `UserError`. Removing messages, or copying them, adds nothing.
+- A [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] it raises from one of these hooks sends its message as the capability's own text, as retry feedback it enqueues does: plain user text at `'user'`, and data at `'none'`.
+
+A [`Hooks`](../hooks.md) function is the application's own, so none of this applies to it. These checks are best effort: they cover what a hook returns or raises, the response it's handed, and the messages the hooks above change, which is what a hook that means well touches. They don't follow edits to `request_context.messages` from `after_model_request`, `on_model_request_error` or `wrap_model_request` after its handler returns, or capability code that reaches the run's objects some other way. A ceiling sets the voice a capability's content reaches the model in; it isn't a way to run code you don't trust.
 
 A downgraded instruction part with `scope='request'` still applies to its own request only: Pydantic AI leaves it out of later requests. It's on the user channel, which no provider clears, so it goes last in its request, and the cache breakpoints Pydantic AI places on the message history go ahead of it. That leaves the conversation before it cached, even for a capability that sends one on every step.
 

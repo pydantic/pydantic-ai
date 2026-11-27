@@ -1,5 +1,6 @@
-"""Capability hooks that run as durable operations under Temporal: a `RetryModelRequest` one raises, and an
-`after_model_request` that returns its response, and a `before_model_request` annotated as returning `Any`.
+"""Capability hooks that run as durable operations under Temporal: a `RetryModelRequest` one raises, an
+`after_model_request` that returns its response, a `before_model_request` annotated as returning `Any`, and one held
+to a lower authority that hands its request on unchanged.
 
 In a module of its own: building a durable operation for a hook takes a while, and a Temporal workflow imports its
 module again in the sandbox for every run, so an agent with one makes every workflow defined beside it slower.
@@ -7,14 +8,15 @@ module again in the sandbox for every run, so an agent with one makes every work
 
 from __future__ import annotations
 
-from datetime import timedelta
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 import pytest
 
-from pydantic_ai import Agent, ModelMessage, ModelResponse, RunContext, TextPart
+from pydantic_ai import Agent, ModelMessage, ModelRequest, ModelResponse, RunContext, TextPart, UserPromptPart
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import RetryModelRequest
+from pydantic_ai.messages import SystemPromptPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -86,6 +88,74 @@ async def test_durability_hook_running_as_an_activity_can_reroute_the_request(cl
             execution_timeout=timedelta(seconds=30),
         )
     assert output == 'from the rerouted model'
+
+
+class _HandsOnDurably(AbstractCapability[Any]):
+    id = 'hands_on_durably'
+
+    @durable_operation('before_model_request')
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        return request_context
+
+
+_sent: list[list[str]] = []
+"""The parts of the first request each model call was sent, by type: the model runs in an activity of this process."""
+
+
+def _recording_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    first = messages[0]
+    assert isinstance(first, ModelRequest)
+    _sent.append([type(part).__name__ for part in first.parts])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+_hands_on_agent = Agent(
+    FunctionModel(_recording_model_fn),
+    name='durable_hook_hands_on',
+    capabilities=[_HandsOnDurably().with_authority('user'), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+_T = datetime(2026, 1, 1, tzinfo=UTC)
+
+
+@workflow.defn
+class DurableHookHandsOnWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        history: list[ModelMessage] = [
+            ModelRequest(
+                parts=[
+                    # Comes back from the activity a list, which the model doesn't read.
+                    SystemPromptPart('Be brief.', metadata={'pair': (1, 2)}, timestamp=_T),
+                    UserPromptPart('Hi.', timestamp=_T),
+                ],
+                timestamp=_T,
+            ),
+            ModelResponse(parts=[TextPart('Hello.')], timestamp=_T),
+        ]
+        return (await _hands_on_agent.run(prompt, message_history=history)).output
+
+
+async def test_durability_a_lowered_capability_can_hand_on_the_request_its_durable_hook_gets(client: Client):
+    """The activity sends the messages back rebuilt, which isn't a change, so the system prompt keeps its voice."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DurableHookHandsOnWorkflow],
+        plugins=[AgentPlugin(_hands_on_agent)],
+    ):
+        _sent.clear()
+        output = await client.execute_workflow(
+            DurableHookHandsOnWorkflow.run,
+            args=['Hello'],
+            id=DurableHookHandsOnWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+    assert output == 'done'
+    assert _sent == [['SystemPromptPart', 'UserPromptPart']]
 
 
 class _ChecksTheResponseDurably(AbstractCapability[Any]):

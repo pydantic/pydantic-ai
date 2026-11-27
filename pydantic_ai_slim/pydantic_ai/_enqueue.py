@@ -8,15 +8,16 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Iterable, Sequence
-from dataclasses import dataclass, field, replace
-from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias
+from copy import deepcopy
+from dataclasses import dataclass, field, fields, is_dataclass, replace
+from typing import TYPE_CHECKING, Any, Literal, SupportsIndex, TypeAlias, TypeVar, cast
 
 from ._appended_messages import append_to_history
 from ._capability_parts import operator_voice_lookalike
 from ._framing import resembles_frame
 from ._utils import fill_run_metadata
 from ._uuid import uuid7
-from .exceptions import UserError
+from .exceptions import ModelRetry, UserError
 from .messages import (
     Authority,
     CapabilityLoadDeltaPart,
@@ -774,6 +775,182 @@ def _deliver_into_request(
     ctx._appended_messages.replace(target, replaced)  # pyright: ignore[reportPrivateUsage]
     request_context.messages = [replaced if message is target else message for message in request_context.messages]
     return events
+
+
+def hold_feedback(error: ModelRetry, held: tuple[str, Authority]) -> None:
+    """Mark retry feedback a capability below `'operator'` wrote, so it reaches the model with that authority.
+
+    Only for one it raised or changed: one that hands on an inner capability's unchanged keeps that one's mark.
+    """
+    error._held_to = held  # pyright: ignore[reportAttributeAccessIssue]
+
+
+def feedback_held_to(error: ModelRetry) -> tuple[str, Authority] | None:
+    """The capability and authority `hold_feedback` marked `error` with, if any."""
+    return getattr(error, '_held_to', None)
+
+
+@dataclass
+class MessagesSnapshot:
+    """What the messages a hook received said before it ran, for `hold_added_messages`.
+
+    Copies, not the messages themselves, which the hook can change.
+    """
+
+    # The messages and parts received, kept alive so their `id`s stay theirs.
+    received: list[object]
+    # By the `id` of each message and request part received, what it said, to tell one the hook edited in place.
+    said: dict[int, object]
+    # What each response and request part received said, by `_fingerprint`, to tell a new one from a copy.
+    copies: dict[tuple[type, object], list[object]]
+    # The `instructions` of the requests received.
+    instructions: set[str | None]
+
+
+def snapshot_messages(messages: Sequence[ModelMessage]) -> MessagesSnapshot:
+    """What `messages` say before a hook runs, for `hold_added_messages`."""
+    snapshot = MessagesSnapshot(received=[], said={}, copies={}, instructions=set())
+    for message in messages:
+        if isinstance(message, ModelResponse):
+            _snapshot_item(snapshot, message, copy_said(message))
+            continue
+        snapshot.received.append(message)
+        snapshot.said[id(message)] = _request_shape(message)
+        snapshot.instructions.add(message.instructions)
+        for part in message.parts:
+            # A plain tool return is tool output whoever edits it, and can hold any object. A typed one is copied: the
+            # framework acts on it, so `within_ceiling` refuses an edited one.
+            _snapshot_item(snapshot, part, part if type(part) is ToolReturnPart else copy_said(part))
+    return snapshot
+
+
+T = TypeVar('T')
+
+
+def copy_said(item: T) -> T:
+    """A deep copy of what `item` tells the model, sharing every `metadata` in it, which the model doesn't read.
+
+    Application metadata can hold any object: one whose copy doesn't equal it would make an unchanged item look
+    edited, and one that can't be copied would fail a hook that changed nothing.
+    """
+    memo: dict[int, Any] = {}
+    _share_metadata(item, memo)
+    return deepcopy(item, memo)
+
+
+def _share_metadata(value: object, memo: dict[int, Any]) -> None:
+    if isinstance(value, list | tuple):
+        for item in cast(Sequence[object], value):
+            _share_metadata(item, memo)
+    elif is_dataclass(value) and not isinstance(value, type):
+        for f in fields(value):
+            child = getattr(value, f.name, None)
+            if f.name == 'metadata':
+                memo[id(child)] = child
+            else:
+                _share_metadata(child, memo)
+
+
+def says_the_same(a: object, b: object) -> bool:
+    """Whether `a` and `b` tell the model the same, comparing every field but `metadata`, which the model doesn't read.
+
+    A durable hook's return comes back through its engine rebuilt, with application metadata that needn't equal the
+    original, such as a tuple that comes back a list, so a hook that changed nothing still compares the same.
+    """
+    if is_dataclass(a) and not isinstance(a, type):
+        return type(a) is type(b) and all(
+            says_the_same(getattr(a, f.name), getattr(b, f.name))
+            for f in fields(a)
+            if f.compare and f.name != 'metadata'
+        )
+    if isinstance(a, list | tuple) and isinstance(b, list | tuple):
+        first, second = cast(Sequence[object], a), cast(Sequence[object], b)
+        return len(first) == len(second) and all(says_the_same(x, y) for x, y in zip(first, second))
+    if isinstance(a, dict) and isinstance(b, dict):
+        first_map, second_map = cast(dict[object, object], a), cast(dict[object, object], b)
+        return first_map.keys() == second_map.keys() and all(
+            says_the_same(value, second_map[key]) for key, value in first_map.items()
+        )
+    return a == b
+
+
+def _snapshot_item(snapshot: MessagesSnapshot, item: ModelResponse | ModelRequestPart, said: object) -> None:
+    snapshot.received.append(item)
+    snapshot.said[id(item)] = said
+    snapshot.copies.setdefault(_fingerprint(item), []).append(said)
+
+
+def _fingerprint(item: object) -> tuple[type, object]:
+    """A key equal items share, so a new item is only compared with the received ones that could equal it."""
+    return type(item), getattr(item, 'timestamp', None)
+
+
+def hold_added_messages(
+    messages: Sequence[ModelMessage], snapshot: MessagesSnapshot, capability_id: str, ceiling: Authority
+) -> None:
+    """Hold what a capability below operator authority added to `messages` in a hook to its ceiling, in place.
+
+    A part or response counts as added when it's a new one equal to none the hook received, or one it received and
+    changed in place, so a hook that copies the history or only removes from it adds nothing. Each added request part
+    is held as `ctx.enqueue` holds it, and an added or changed `ModelResponse`, or `instructions` no request it
+    received had, raises `UserError`. Held in place, so the history the deprecated mirroring already appended them to
+    is held too.
+    """
+    added = _Added(snapshot)
+    for message in messages:
+        if added(message):
+            _check_added_message(message, snapshot.instructions, capability_id, ceiling)
+        if isinstance(message, ModelRequest):
+            message.parts = [held_part(part, capability_id, ceiling) if added(part) else part for part in message.parts]
+
+
+def _check_added_message(
+    message: ModelMessage, instructions: set[str | None], capability_id: str, ceiling: Authority
+) -> None:
+    """Raise for an added message a capability below operator authority can't send at all.
+
+    Only the message itself: a copy of one the hook received keeps that one's parts and instructions, which it didn't
+    add, and `hold_added_messages` holds the parts it did add.
+    """
+    if isinstance(message, ModelResponse):
+        _response_within_ceiling(message, capability_id, ceiling)
+    elif message.instructions not in instructions:
+        _request_within_ceiling(replace(message, parts=[]), capability_id, ceiling)
+
+
+def _request_shape(message: ModelRequest) -> tuple[str | None, list[int]]:
+    """A request's instructions and which parts it has, which an edit in place to the request itself changes."""
+    return message.instructions, [id(part) for part in message.parts]
+
+
+_NOT_RECEIVED = object()
+
+
+class _Added:
+    """Whether a message or part is one a hook added: a new one equal to none it received, or one it changed.
+
+    A new request always counts, as what it can add itself is `instructions`, which `_check_added_message` checks
+    against those received; its parts are checked one by one.
+    """
+
+    def __init__(self, snapshot: MessagesSnapshot):
+        self._snapshot = snapshot
+
+    def __call__(self, item: ModelMessage | ModelRequestPart) -> bool:
+        said = self._snapshot.said.get(id(item), _NOT_RECEIVED)
+        if said is _NOT_RECEIVED:
+            if isinstance(item, ModelRequest):
+                return True
+            return not any(says_the_same(item, old) for old in self._snapshot.copies.get(_fingerprint(item), ()))
+        if isinstance(item, ModelRequest):
+            return _request_shape(item) != said
+        return not says_the_same(item, said)
+
+
+def held_part(part: ModelRequestPart, capability_id: str, ceiling: Authority) -> ModelRequestPart:
+    """`part` as `ctx.enqueue` sends it for a capability at `ceiling`: within the ceiling, and attributed to the capability."""
+    held = within_ceiling(part, capability_id, ceiling)
+    return _stamped(held, capability_id, ceiling) if isinstance(held, CapabilityPart) else held
 
 
 def _put_deliveries(
