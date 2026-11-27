@@ -1615,6 +1615,19 @@ class TestRuntimeToolsets:
         assert result.output == 'done'
 
 
+class TestRealtime:
+    def test_session_rejected_in_handler(self) -> None:
+        # Refused before the realtime model is resolved, so the provider is never contacted.
+        agent = build_agent(act)
+
+        async def open_session() -> None:
+            async with agent.realtime('openai:gpt-realtime').session():
+                pass  # pragma: no cover
+
+        with pytest.raises(UserError, match='Realtime sessions cannot run in AWS Lambda handler code'):
+            run_durable(open_session, context=FakeDurableContext())
+
+
 class TestEnqueueGuard:
     def test_enqueue_inside_a_checkpointed_tool_raises(self) -> None:
         def act(ctx: RunContext[object]) -> None:

@@ -704,6 +704,15 @@ async def test_synchronous_entry_task_activates_and_resets_context() -> None:
     assert runtime.current_task_context is None
 
 
+async def test_realtime_session_is_rejected_inside_a_workflow() -> None:
+    # Refused before the realtime model is resolved, so the provider is never contacted.
+    agent, render_workflows, _ = build_agent()
+    with render_workflows.activate(RecordingTaskContext()):
+        with pytest.raises(UserError, match='Realtime sessions cannot run in Render Workflows workflow code'):
+            async with agent.realtime('openai:gpt-realtime').session():
+                pass  # pragma: no cover
+
+
 def test_binding_an_agent_inside_a_workflow_is_rejected() -> None:
     runtime = RenderWorkflows[None](Workflows())
     with runtime.activate(RecordingTaskContext()), pytest.raises(UserError, match='constructed outside'):

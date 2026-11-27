@@ -147,7 +147,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.profiles import ModelProfile
-from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
+from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings, WebRTCSession
 from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput, ResponseDone
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.settings import ModelSettings
@@ -9509,3 +9509,22 @@ async def test_realtime_session_with_durability_outside_workflow_does_not_warn()
     async with agent.realtime(_RealtimeModel()).session() as session:
         async for _ in session:
             pass
+
+
+async def test_realtime_session_with_durability_in_workflow_is_refused(monkeypatch: pytest.MonkeyPatch) -> None:
+    """In workflow code, a session and the signaling for one are refused before the provider is contacted.
+
+    Temporal can't record or replay a live connection. The agent is built outside the workflow, as it must be.
+    """
+    agent = Agent(TestModel(), name='realtime_durability_in_workflow', capabilities=[TemporalDurability()])
+    realtime = agent.realtime(_RealtimeModel())
+    monkeypatch.setattr(workflow, 'in_workflow', lambda: True)
+    with pytest.raises(UserError, match='Realtime sessions cannot run in Temporal workflow code'):
+        async with realtime.session():
+            pass  # pragma: no cover
+    with pytest.raises(UserError, match='cannot run in Temporal workflow code'):
+        await realtime.answer_webrtc_offer('v=0')
+    with pytest.raises(UserError, match='cannot run in Temporal workflow code'):
+        await realtime.create_client_secret()
+    with pytest.raises(UserError, match='cannot run in Temporal workflow code'):
+        await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))

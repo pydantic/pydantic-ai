@@ -51,7 +51,7 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
-from .._runtime_toolsets import reject_run_timeout, reject_unsupported_runtime_toolsets
+from .._runtime_toolsets import realtime_in_container_error, reject_run_timeout, reject_unsupported_runtime_toolsets
 from .._workspace import RejectWorkspaceInContainer
 from ._activity_execution import execute_activity
 from ._durability import serialization_user_error
@@ -1324,12 +1324,9 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             yield run
 
     def _check_realtime_signaling(self) -> None:
+        # An activity is outside the workflow, so a session or signaling there runs as it would anywhere.
         if workflow.in_workflow():
-            raise UserError(
-                '`agent.realtime(...).answer_webrtc_offer()`, `.create_client_secret()` and `.hang_up()` cannot '
-                'be used inside a Temporal workflow, as they issue non-deterministic provider requests. Use '
-                'them outside a workflow instead.'
-            )
+            raise realtime_in_container_error(engine='Temporal', container_noun='workflow', unit_noun='activity')
 
     @asynccontextmanager
     async def _resolve_realtime_session(
@@ -1403,11 +1400,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         inside a Temporal workflow; calling it there raises a `UserError`. Outside a workflow it
         delegates to the wrapped agent unchanged.
         """
-        if workflow.in_workflow():
-            raise UserError(
-                '`agent.realtime(...).session()` cannot be used inside a Temporal workflow, as it runs a '
-                'long-lived, non-deterministic connection. Use it outside a workflow instead.'
-            )
+        self._check_realtime_signaling()
         async with super()._open_realtime_session(
             model,
             deps=deps,

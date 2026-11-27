@@ -64,6 +64,14 @@ GPT-Live sends the agent's instructions and system prompt only to the backend mo
 delegated work, never to the voice model the caller hears. Put the persona, language, and speaking
 style in `openai_live_instructions`. See [How delegation works](openai.md#how-delegation-works).
 
+## "Realtime sessions cannot run in ... code"
+
+The session, or `answer_webrtc_offer()`, `create_client_secret()` or `hang_up()`, was called in the
+workflow (or flow, handler, task or orchestration) code of a
+[durable execution](../durable_execution/overview.md) engine, which can't record or replay a live
+provider connection. Call it outside the workflow, and start durable work from the session's tools.
+See [Durable execution](deployment.md#durable-execution).
+
 ## Gemini reaches its session limit
 
 Set the `reconnect` setting to a [`ReconnectPolicy`][pydantic_ai.realtime.ReconnectPolicy]; Gemini

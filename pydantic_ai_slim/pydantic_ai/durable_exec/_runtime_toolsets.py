@@ -52,6 +52,16 @@ def reject_run_timeout(timeout: float | None, *, wrapper: str, capability: str) 
         )
 
 
+def realtime_in_container_error(*, engine: str, container_noun: str, unit_noun: str) -> UserError:
+    """The error raised when a realtime session, or the signaling for one, starts in a durable container's own code."""
+    return UserError(
+        f'Realtime sessions cannot run in {engine} {container_noun} code: a live provider connection cannot be '
+        'recorded or replayed. That includes `answer_webrtc_offer()`, `create_client_secret()` and `hang_up()`, '
+        f'which send provider requests. Use them outside the {container_noun}, or inside a durable {unit_noun}. '
+        'See https://pydantic.dev/docs/ai/realtime/deployment/#durable-execution'
+    )
+
+
 def _runtime_toolset_kind(toolset: AbstractToolset[Any]) -> RuntimeToolsetKind | None:
     """Classify a leaf toolset for durable-execution runtime support, or `None` if it needs no wrapping."""
     from ..toolsets._dynamic import DynamicToolset

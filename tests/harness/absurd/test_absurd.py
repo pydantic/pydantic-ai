@@ -255,6 +255,14 @@ class TestDurability:
                 await agent.run('hi', toolsets=[late])
         assert calls == {'calls': 0}
 
+    async def test_realtime_session_rejected_inside_task(self, absurd: AsyncAbsurd) -> None:
+        # Refused before the realtime model is resolved, so the provider is never contacted.
+        agent: Agent[object, str] = Agent(_make_model(), name='a', capabilities=[AbsurdDurability()])
+        async with running_task_context(absurd):
+            with pytest.raises(UserError, match='Realtime sessions cannot run in Absurd task code'):
+                async with agent.realtime('openai:gpt-realtime').session():
+                    pass  # pragma: no cover
+
     async def test_override_toolsets_rejected_inside_task(self, absurd: AsyncAbsurd) -> None:
         calls = {'calls': 0}
         agent: Agent[object, str] = Agent(

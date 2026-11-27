@@ -42,9 +42,10 @@ from .. import (
 from .._cancel import CancellationToken, RunBinding, provide_run_binding
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
-from .._run_context import set_current_run_context
+from .._run_context import check_realtime_durability, set_current_run_context
 from .._run_conversation import failed_run_conversation
 from ..capabilities import AgentCapability
+from ..capabilities._dynamic import wrap_capability_funcs
 from ..conversation import Conversation
 from ..exceptions import RunCancelled
 from ..output import OutputDataT, OutputSpec, PendingModelResponse
@@ -2051,11 +2052,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         yield
 
     def _check_realtime_signaling(self) -> None:
-        """Raise if this agent can't issue a provider request for a browser call here and now.
+        """Raise if this agent can't open a realtime session or issue a provider request for a browser call here and now.
 
-        `_resolve_realtime_session` applies the same check, for the signaling that resolves the agent;
-        [`AgentRealtime.hang_up`][pydantic_ai.agent.AgentRealtime.hang_up], which needs no resolution, calls
-        this directly. Durable agents override it to refuse inside a workflow.
+        `_resolve_realtime_session` applies the same check, for sessions and the signaling that resolves the
+        agent; [`AgentRealtime.hang_up`][pydantic_ai.agent.AgentRealtime.hang_up], which needs no resolution,
+        calls this directly. `Agent` defers to its durability capability, and the durable wrapper agents
+        override it, so both refuse in workflow code outside a durable unit.
         """
 
     @asynccontextmanager
@@ -2478,6 +2480,8 @@ class AgentRealtime(Generic[AgentDepsT]):
         from pydantic_ai.realtime import RealtimeModel, infer_realtime_model
 
         self._agent._check_realtime_signaling()  # pyright: ignore[reportPrivateUsage]
+        # A durability capability passed for this call isn't the agent's, so the check above doesn't see it.
+        check_realtime_durability(wrap_capability_funcs(self._capabilities))
         model = self._model if isinstance(self._model, RealtimeModel) else infer_realtime_model(self._model)
         await model.hang_up(session)
 

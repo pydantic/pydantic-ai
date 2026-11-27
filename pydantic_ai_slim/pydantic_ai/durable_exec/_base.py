@@ -131,6 +131,7 @@ from ._operation_backend import (
 )
 from ._runtime_toolsets import (
     cancellation_token_unsupported_error,
+    realtime_in_container_error,
     reject_unsupported_runtime_toolsets,
 )
 from ._spec import DurabilityEngineSpec
@@ -403,6 +404,20 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         # context and pass through outside one; a realtime session makes no such calls to route.
         # Measured against this class, so a subclass that adds its own hooks still warns.
         return self._realtime_uncalled_hooks_overriding(BaseDurabilityCapability)
+
+    def _check_realtime(self) -> None:
+        """Refuse a realtime session, or the signaling for one, in this engine's container code.
+
+        The agent calls this before it resolves anything for a session or for browser-call signaling, so
+        the provider is never contacted. A live connection can't be recorded or replayed, so neither can
+        run where the engine replays code. Inside a durable unit the engine records the result like any
+        other I/O, and outside the container nothing is replayed, so both run as they would without
+        this capability.
+        """
+        if self.in_durable_context and not self.in_durable_unit:
+            raise realtime_in_container_error(
+                engine=self.engine_name, container_noun=self.durable_container_noun, unit_noun=self.durable_unit_noun
+            )
 
     @property
     def engine_name(self) -> str:
@@ -847,8 +862,13 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         are registered with the worker. Walks the agent's capability chain and returns the single
         match or `None`, raising a `UserError` if multiple instances are attached.
         """
+        return cls._find_in(agent.root_capability)
+
+    @classmethod
+    def _find_in(cls, root: AbstractCapability[Any]) -> Self | None:
+        """Return the instance of this durability capability in a capability tree, as `from_agent` does for an agent's."""
         found: list[Self] = []
-        for capability in leaf_capabilities(agent.root_capability):
+        for capability in leaf_capabilities(root):
             while isinstance(capability, WrapperCapability):
                 capability = capability.wrapped
             if isinstance(capability, cls):

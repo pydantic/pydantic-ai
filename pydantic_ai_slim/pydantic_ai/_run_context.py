@@ -647,12 +647,7 @@ class RunContext(Generic[RunContextAgentDepsT]):
 
     @property
     def _durability(self) -> BaseDurabilityCapability[object] | None:
-        # Looked up through `sys.modules` like `realtime`: without the module, no durability capability exists.
-        durable_exec = sys.modules.get('pydantic_ai.durable_exec._base')
-        if durable_exec is None or self.agent is None:
-            return None
-        base: type[BaseDurabilityCapability[object]] = durable_exec.BaseDurabilityCapability
-        return base.from_agent(self.agent)
+        return find_durability(self.agent.root_capability if self.agent is not None else None)
 
     @property
     def last_attempt(self) -> bool:
@@ -1457,6 +1452,25 @@ def with_tool_name_layer(ctx: RunContext[AgentDepsT], layer: str | Mapping[str, 
 def without_tool_name_path(ctx: RunContext[AgentDepsT]) -> RunContext[AgentDepsT]:
     """The context to hand user code that runs while tools are listed, without the listing's tool name path."""
     return with_tool_name_path(ctx, ()) if ctx._tool_name_path else ctx  # pyright: ignore[reportPrivateUsage]
+
+
+def find_durability(capability: AbstractCapability[Any] | None) -> BaseDurabilityCapability[object] | None:
+    """The durability capability in a capability tree, if any.
+
+    Looked up through `sys.modules` like `RunContext.realtime`: without the module, no durability capability exists.
+    """
+    durable_exec = sys.modules.get('pydantic_ai.durable_exec._base')
+    if durable_exec is None or capability is None:
+        return None
+    base: type[BaseDurabilityCapability[object]] = durable_exec.BaseDurabilityCapability
+    return base._find_in(capability)  # pyright: ignore[reportPrivateUsage]
+
+
+def check_realtime_durability(capabilities: Sequence[AbstractCapability[Any]]) -> None:
+    """Let a durability capability in these trees refuse a realtime session, or the signaling for one, in its container's code."""
+    for capability in capabilities:
+        if (durability := find_durability(capability)) is not None:
+            durability._check_realtime()  # pyright: ignore[reportPrivateUsage]
 
 
 _IN_DURABLE_UNIT: ContextVar[bool] = ContextVar('pydantic_ai.durable_exec.in_durable_unit', default=False)

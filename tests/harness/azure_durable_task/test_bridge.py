@@ -131,6 +131,26 @@ def test_task_group_receives_failure_before_the_other_activity_finishes(durable_
         assert durable_worker.activity_calls == ['failed__model.request']
 
 
+def test_realtime_session_is_refused_in_orchestration(durable_worker: InMemoryWorker) -> None:
+    # Orchestrator code must stay deterministic, and a live provider connection can't be replayed, so the
+    # session is refused before the realtime model is resolved.
+    agent = Agent(TestModel(), name='realtime', capabilities=[AzureDurableTaskDurability()])
+
+    def orchestrator(context: task.OrchestrationContext, payload: object) -> Generator[task.Task[object], object, None]:
+        async def body() -> None:
+            with pytest.raises(
+                UserError, match='Realtime sessions cannot run in Azure Durable Task orchestration code'
+            ):
+                async with agent.realtime('openai:gpt-realtime').session():
+                    pass  # pragma: no cover
+
+        return (yield from run_durable(context, body))
+
+    durable_worker.add_orchestrator(orchestrator)
+    instance_id = durable_worker.schedule(orchestrator)
+    durable_worker.wait(instance_id).raise_if_failed()
+
+
 @pytest.mark.parametrize('retain', [True, False])
 @pytest.mark.parametrize('empty', [True, False])
 def test_owned_loop_closes_async_generators(durable_worker: InMemoryWorker, retain: bool, empty: bool) -> None:

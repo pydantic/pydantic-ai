@@ -18,7 +18,8 @@ client and the provider:
   your backend, which bridges it to the session.
 
 [Hosting the backend](#hosting) covers what the server running these sessions needs: long-lived
-connections, routing, timeouts, and draining on deploy.
+connections, routing, timeouts, and draining on deploy. [Durable execution](#durable-execution) covers
+how a call's work can be made durable when the session itself can't.
 
 In every setup the session — with its [tools](tools.md), [history](history.md), and
 [usage limits](observability.md#usage-and-limits) — runs on your backend. Wiring a browser straight
@@ -375,3 +376,35 @@ platform can't see it. Give the sideband CPU outside requests (on Cloud Run, ins
 the default request-based billing) or run it on a worker or VM; scale on your own count of live
 sideband tasks, since request metrics show an idle instance; and on shutdown, wait for the tasks in
 `sideband_tasks` or hang up their calls before the process exits.
+
+## Durable execution {#durable-execution}
+
+A realtime session holds one long-lived connection to the provider, and the model's speech can't be
+recorded and replayed the way a [durable execution](../durable_execution/overview.md) engine replays
+a workflow. So the engines in Pydantic AI and [Pydantic AI Harness](../harness/index.md) refuse to
+open a session in the code the engine replays (a workflow, flow or orchestration, an AWS Lambda
+durable handler, or an Absurd or pgtask task), whether you use a durability capability such as
+`TemporalDurability`, on the agent or for one call, or a wrapper agent such as `TemporalAgent`: it
+raises a [`UserError`][pydantic_ai.exceptions.UserError] before the provider is contacted. The same
+goes for the browser-call signaling,
+[`answer_webrtc_offer()`][pydantic_ai.agent.AgentRealtime.answer_webrtc_offer],
+[`create_client_secret()`][pydantic_ai.agent.AgentRealtime.create_client_secret] and
+[`hang_up()`][pydantic_ai.agent.AgentRealtime.hang_up], which send provider requests. Inside a durable
+unit whose result the engine records, both run as usual: an activity, step or task that Pydantic AI
+runs, such as a tool call's, and on Temporal, DBOS and Prefect also one you create yourself. If the
+engine retries that unit, the whole call runs again from the start, so this suits signaling, not a
+live call.
+
+Outside a workflow, the same agent, with its durability capability, opens an ordinary session that
+isn't durable. You can use one agent for durable runs and for voice. To make a call's work durable:
+
+- **Run the session in your call-handling process**, as in the setups above.
+- **Start durable work from a tool.** A tool that does something slow or with side effects starts a
+  workflow (or a durable agent run) and returns, instead of doing the work during the call. Use
+  [`ctx.tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id] as the workflow ID, so a retried
+  tool call doesn't start the work twice.
+- **Hand the call to a durable run afterwards.** `session.all_messages()` is ordinary
+  [message history](../message-history.md): pass it to the durable agent's `run()` to follow up on
+  the call.
+
+If the process hosting the call dies, the call ends. The workflows its tools started keep running.

@@ -1503,7 +1503,7 @@ async def test_run_stream_events_in_flow(allow_model_requests: None) -> None:
 async def test_realtime_session_in_flow() -> None:
     """Realtime sessions open a long-lived, non-deterministic connection, so they can't run in a flow."""
     with patch.object(FlowRunContext, 'get', return_value=object()):
-        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+        with pytest.raises(UserError, match='cannot run in Prefect flow code'):
             async with simple_prefect_agent.realtime(cast('Any', object())).session():
                 pass  # pragma: no cover
 
@@ -1512,11 +1512,11 @@ async def test_realtime_signaling_in_flow() -> None:
     """Browser-call signaling issues a live provider request, so it is guarded like a session."""
     with patch.object(FlowRunContext, 'get', return_value=object()):
         realtime = simple_prefect_agent.realtime(cast('Any', object()))
-        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+        with pytest.raises(UserError, match='cannot run in Prefect flow code'):
             await realtime.answer_webrtc_offer('v=0')
-        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+        with pytest.raises(UserError, match='cannot run in Prefect flow code'):
             await realtime.create_client_secret()
-        with pytest.raises(UserError, match='cannot be used inside a Prefect flow'):
+        with pytest.raises(UserError, match='cannot run in Prefect flow code'):
             await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
@@ -1571,6 +1571,105 @@ async def test_realtime_session_with_durability_capability_outside_flow() -> Non
     agent = Agent(TestModel(), name='realtime_durability', capabilities=[PrefectDurability()])
     async with agent.realtime(_FakeRealtimeModel()).session() as session:
         assert [event async for event in session] == []
+
+
+async def test_realtime_signaling_in_task() -> None:
+    """Inside a task, where Prefect records the result, signaling is delegated to the wrapped agent."""
+    with (
+        patch.object(FlowRunContext, 'get', return_value=object()),
+        patch.object(TaskRunContext, 'get', return_value=object()),
+    ):
+        realtime = simple_prefect_agent.realtime(_FakeRealtimeModel())
+        # The fake model has no WebRTC support, so reaching its own refusal shows the flow guard let the call through.
+        with pytest.raises(UserError, match='does not support WebRTC'):
+            await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot end a call from the server'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
+
+
+async def test_realtime_session_in_task() -> None:
+    """Inside a task, where Prefect records the result, a session is delegated to the wrapped agent."""
+    with (
+        patch.object(FlowRunContext, 'get', return_value=object()),
+        patch.object(TaskRunContext, 'get', return_value=object()),
+    ):
+        async with simple_prefect_agent.realtime(_FakeRealtimeModel()).session() as session:
+            assert [event async for event in session] == []
+
+
+async def test_realtime_session_with_durability_capability_in_task() -> None:
+    """Inside a task, where Prefect records the result, `PrefectDurability` lets a session open."""
+    agent = Agent(TestModel(), name='realtime_durability_in_task', capabilities=[PrefectDurability()])
+
+    @task(cache_policy=NO_CACHE)
+    async def open_session() -> int:
+        async with agent.realtime(_FakeRealtimeModel()).session() as session:
+            return len([event async for event in session])
+
+    @flow(name='test_realtime_session_with_durability_capability_in_task')
+    async def run_session_task() -> int:
+        return await open_session()
+
+    assert await run_session_task() == 0
+
+
+async def test_realtime_session_with_durability_capability_in_flow() -> None:
+    """`PrefectDurability` refuses a session in flow code, before the provider is contacted."""
+    agent = Agent(TestModel(), name='realtime_durability_in_flow', capabilities=[PrefectDurability()])
+
+    @flow(name='test_realtime_session_with_durability_capability_in_flow')
+    async def open_session() -> None:
+        async with agent.realtime(_FakeRealtimeModel()).session():
+            pass  # pragma: no cover
+
+    with pytest.raises(UserError) as exc_info:
+        await open_session()
+    assert str(exc_info.value) == snapshot(
+        'Realtime sessions cannot run in Prefect flow code: a live provider connection cannot be recorded or replayed. That includes `answer_webrtc_offer()`, `create_client_secret()` and `hang_up()`, which send provider requests. Use them outside the flow, or inside a durable task. See https://pydantic.dev/docs/ai/realtime/deployment/#durable-execution'
+    )
+
+
+async def test_realtime_with_per_call_durability_capability_in_flow() -> None:
+    """A durability capability passed for one call refuses in flow code too, though the agent has none."""
+    agent = Agent(TestModel(), name='realtime_per_call_durability')
+    realtime = agent.realtime(_FakeRealtimeModel(), capabilities=[PrefectDurability()])
+
+    @flow(name='test_realtime_with_per_call_durability_capability_in_flow')
+    async def call() -> None:
+        with pytest.raises(UserError, match='cannot run in Prefect flow code'):
+            async with realtime.session():
+                pass  # pragma: no cover
+        with pytest.raises(UserError, match='cannot run in Prefect flow code'):
+            await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
+
+    await call()
+
+
+async def test_realtime_signaling_with_durability_capability_in_flow_and_task() -> None:
+    """Signaling is refused in flow code but runs inside a task, where Prefect records its result."""
+    agent = Agent(TestModel(), name='realtime_signaling_in_flow', capabilities=[PrefectDurability()])
+    realtime = agent.realtime(_FakeRealtimeModel())
+    call = WebRTCSession(provider_name='openai', session_id='rtc_x')
+
+    @task(cache_policy=NO_CACHE)
+    async def signal_in_task() -> None:
+        # The fake model has no WebRTC support, so reaching its own refusal shows the durability check let the call through.
+        with pytest.raises(UserError, match='does not support WebRTC'):
+            await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot end a call from the server'):
+            await realtime.hang_up(call)
+
+    @flow(name='test_realtime_signaling_with_durability_capability_in_flow_and_task')
+    async def signal() -> None:
+        with pytest.raises(UserError, match='cannot run in Prefect flow code'):
+            await realtime.answer_webrtc_offer('v=0')
+        with pytest.raises(UserError, match='cannot run in Prefect flow code'):
+            await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot run in Prefect flow code'):
+            await realtime.hang_up(call)
+        await signal_in_task()
+
+    await signal()
 
 
 async def test_iter_in_flow(allow_model_requests: None) -> None:

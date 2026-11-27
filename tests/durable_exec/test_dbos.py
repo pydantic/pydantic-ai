@@ -1353,7 +1353,7 @@ async def test_dbos_agent_realtime_session_in_workflow():
     # A realtime session opens a long-lived, non-deterministic connection, so it can't run inside a
     # workflow; the guard trips before the model is ever connected.
     with patch.object(DBOS, 'workflow_id', 'wf-1'):
-        with pytest.raises(UserError, match='cannot be used inside a DBOS workflow'):
+        with pytest.raises(UserError, match='cannot run in DBOS workflow code'):
             async with simple_dbos_agent.realtime(cast('Any', object())).session():
                 pass  # pragma: no cover
 
@@ -1363,11 +1363,11 @@ async def test_dbos_agent_realtime_signaling_in_workflow():
     # the two helpers reach the agent through `_resolve_realtime_session`, which the wrapper guards too.
     with patch.object(DBOS, 'workflow_id', 'wf-1'):
         realtime = simple_dbos_agent.realtime(cast('Any', object()))
-        with pytest.raises(UserError, match='cannot be used directly inside a DBOS workflow'):
+        with pytest.raises(UserError, match='cannot run in DBOS workflow code'):
             await realtime.answer_webrtc_offer('v=0')
-        with pytest.raises(UserError, match='cannot be used directly inside a DBOS workflow'):
+        with pytest.raises(UserError, match='cannot run in DBOS workflow code'):
             await realtime.create_client_secret()
-        with pytest.raises(UserError, match='cannot be used directly inside a DBOS workflow'):
+        with pytest.raises(UserError, match='cannot run in DBOS workflow code'):
             await realtime.hang_up(WebRTCSession(provider_name='openai', session_id='rtc_x'))
 
 
@@ -1427,6 +1427,81 @@ async def test_dbos_agent_realtime_session_outside_workflow():
     async with simple_dbos_agent.realtime(_FakeRealtimeModel()).session() as session:
         assert isinstance(session, RealtimeSession)
         assert [event async for event in session] == []
+
+
+async def test_dbos_agent_realtime_session_in_step():
+    # Inside a step, where DBOS records the result, a session is delegated to the wrapped agent like signaling is.
+    with patch.object(DBOS, 'workflow_id', 'wf-1'), patch.object(DBOS, 'step_id', 7):
+        async with simple_dbos_agent.realtime(_FakeRealtimeModel()).session() as session:
+            assert [event async for event in session] == []
+
+
+async def test_dbos_durability_realtime_session_outside_workflow(dbos: DBOS) -> None:
+    """Outside a workflow nothing is replayed, so the agent opens an ordinary session that isn't durable."""
+    agent = Agent(TestModel(), name='durability_realtime_outside', capabilities=[DBOSDurability()])
+    async with agent.realtime(_FakeRealtimeModel()).session() as session:
+        assert [event async for event in session] == []
+
+
+async def test_dbos_durability_realtime_session_in_workflow(dbos: DBOS) -> None:
+    """`DBOSDurability` refuses a session in workflow code, before the provider is contacted."""
+    agent = Agent(TestModel(), name='durability_realtime_session', capabilities=[DBOSDurability()])
+
+    @DBOS.workflow()
+    async def open_session() -> None:
+        async with agent.realtime(_FakeRealtimeModel()).session():
+            pass  # pragma: no cover
+
+    with workflow_raises(
+        UserError,
+        snapshot(
+            'Realtime sessions cannot run in DBOS workflow code: a live provider connection cannot be recorded or replayed. That includes `answer_webrtc_offer()`, `create_client_secret()` and `hang_up()`, which send provider requests. Use them outside the workflow, or inside a durable step. See https://pydantic.dev/docs/ai/realtime/deployment/#durable-execution'
+        ),
+    ):
+        await open_session()
+
+
+async def test_dbos_durability_realtime_session_in_step(dbos: DBOS) -> None:
+    """Inside a step, where DBOS records the result, `DBOSDurability` lets a session open."""
+    agent = Agent(TestModel(), name='durability_realtime_session_in_step', capabilities=[DBOSDurability()])
+
+    @DBOS.step()
+    async def open_session() -> int:
+        async with agent.realtime(_FakeRealtimeModel()).session() as session:
+            return len([event async for event in session])
+
+    @DBOS.workflow()
+    async def run_session_step() -> int:
+        return await open_session()
+
+    assert await run_session_step() == 0
+
+
+async def test_dbos_durability_realtime_signaling_in_workflow_and_step(dbos: DBOS) -> None:
+    """Signaling is refused in workflow code but runs inside a step, where DBOS records its result."""
+    agent = Agent(TestModel(), name='durability_realtime_signaling', capabilities=[DBOSDurability()])
+    realtime = agent.realtime(_FakeRealtimeModel())
+    call = WebRTCSession(provider_name='openai', session_id='rtc_x')
+
+    @DBOS.step()
+    async def signal_in_step() -> None:
+        # The fake model has no WebRTC support, so reaching its own refusal shows the durability check let the call through.
+        with pytest.raises(UserError, match='does not support WebRTC'):
+            await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot end a call from the server'):
+            await realtime.hang_up(call)
+
+    @DBOS.workflow()
+    async def signal() -> None:
+        with pytest.raises(UserError, match='cannot run in DBOS workflow code'):
+            await realtime.answer_webrtc_offer('v=0')
+        with pytest.raises(UserError, match='cannot run in DBOS workflow code'):
+            await realtime.create_client_secret()
+        with pytest.raises(UserError, match='cannot run in DBOS workflow code'):
+            await realtime.hang_up(call)
+        await signal_in_step()
+
+    await signal()
 
 
 async def test_dbos_agent_iter_in_workflow(allow_model_requests: None, dbos: DBOS):

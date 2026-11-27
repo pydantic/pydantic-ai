@@ -85,7 +85,12 @@ from .._cancel import (
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions, lowered_block_id
 from .._output import OutputToolset
-from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
+from .._run_context import (
+    RealtimeEventBuffer,
+    check_realtime_durability,
+    dispatch_event_stream,
+    set_current_run_context,
+)
 from .._run_conversation import failed_run_conversation
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
@@ -4167,6 +4172,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
 
         return schema
 
+    def _check_realtime_signaling(self) -> None:
+        """Let the agent's durability capability refuse a realtime session or signaling in its container's code.
+
+        `_resolve_realtime_session` calls this first, and `hang_up` calls it directly, so every realtime
+        entry point is checked before any configuration is resolved or the provider is contacted.
+        """
+        check_realtime_durability([self.root_capability])
+
     @asynccontextmanager
     async def _resolve_realtime_session(  # noqa: C901
         self,
@@ -4193,6 +4206,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         asks for that: signaling only reads back the instructions and tools a session would advertise,
         and is not itself a run.
         """
+        self._check_realtime_signaling()
+        # A durability capability passed for this session isn't the agent's, so the check above doesn't see it.
+        run_capabilities = wrap_capability_funcs(capabilities)
+        check_realtime_durability(run_capabilities)
         from ..realtime import RealtimeModel, infer_realtime_model
         from ..realtime._utils import resolve_realtime_request_tools, session_instructions
 
@@ -4239,7 +4256,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # a `RealtimeModel`, never an `InstrumentedModel`, so there's no wrapped model to unwrap; the
         # settings come straight from `_resolve_instrumentation_settings()`. The helper skips injection if
         # the user already supplied an `Instrumentation` capability (agent- or call-level).
-        extra_capabilities = self._bind_run_capabilities(wrap_capability_funcs(capabilities))
+        extra_capabilities = self._bind_run_capabilities(run_capabilities)
         instrumentation_settings = self._resolve_instrumentation_settings()
         instrumentation_cap = (
             InstrumentationCap(settings=instrumentation_settings) if instrumentation_settings is not None else None

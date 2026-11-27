@@ -51,11 +51,16 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
-from .._runtime_toolsets import reject_cancellation_token, reject_run_timeout, reject_unsupported_runtime_toolsets
+from .._runtime_toolsets import (
+    realtime_in_container_error,
+    reject_cancellation_token,
+    reject_run_timeout,
+    reject_unsupported_runtime_toolsets,
+)
 from .._workspace import RejectWorkspaceInContainer
 from ._function_toolset import gate_tool_instance_defaults
 from ._model import DBOSModel
-from ._utils import StepConfig, using_durable_sleep
+from ._utils import StepConfig, in_workflow_code, using_durable_sleep
 
 if TYPE_CHECKING:
     from pydantic_ai.agent.spec import AgentSpec
@@ -1295,12 +1300,8 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 yield run
 
     def _check_realtime_signaling(self) -> None:
-        if DBOS.workflow_id is not None and DBOS.step_id is None:
-            raise UserError(
-                '`agent.realtime(...).answer_webrtc_offer()`, `.create_client_secret()` and `.hang_up()` cannot '
-                'be used directly inside a DBOS workflow, as they issue non-deterministic provider requests. '
-                'Call them from inside a DBOS step, or outside the workflow.'
-            )
+        if in_workflow_code():
+            raise realtime_in_container_error(engine='DBOS', container_noun='workflow', unit_noun='step')
 
     @asynccontextmanager
     async def _resolve_realtime_session(
@@ -1371,15 +1372,11 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
     ) -> AsyncGenerator[RealtimeSession]:
         """Open a realtime speech-to-speech session; see [`Agent.realtime`][pydantic_ai.agent.Agent.realtime] for the parameters.
 
-        A realtime session runs a long-lived, non-deterministic connection, so it cannot be opened
-        inside a DBOS workflow; calling it there raises a `UserError`. Outside a workflow it delegates
-        to the wrapped agent unchanged.
+        A realtime session runs a long-lived, non-deterministic connection, so it cannot be opened in
+        DBOS workflow code; calling it there raises a `UserError`. Inside a step, where DBOS records
+        the result, and outside workflows entirely, it delegates to the wrapped agent unchanged.
         """
-        if DBOS.workflow_id is not None:
-            raise UserError(
-                '`agent.realtime(...).session()` cannot be used inside a DBOS workflow, as it runs a '
-                'long-lived, non-deterministic connection. Use it outside a workflow instead.'
-            )
+        self._check_realtime_signaling()
         async with super()._open_realtime_session(
             model,
             deps=deps,
