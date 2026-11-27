@@ -1002,13 +1002,18 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
 
         Content in a `ToolReturn` a tool in this run produced is part of its result, sent as data. Content `supplied`
         with a deferred result came from outside the run (the application, or the user answering), so it keeps the
-        user's voice, as it always has: it goes in a `UserPromptPart` after the request's tool results.
+        user's voice, as it always has: it goes in a `UserPromptPart` after the request's tool results. So do the items
+        of its `attachments`, after the content, so nothing supplied reaches the return part's attachments.
         """
         if supplied and isinstance(tool_result, _messages.ToolReturn):
             answer = cast(_messages.ToolReturn[Any], tool_result)
-            if answer.content:
-                self.supplied_user_parts[call.tool_call_id] = self._supplied_user_part(call, answer.content)
-                tool_result = dataclasses.replace(answer, content=None)
+            content = answer.content
+            if answer.attachments:
+                items = [] if not content else [content] if isinstance(content, str) else list(content)
+                content = [*items, *(attachment.content for attachment in answer.attachments)]
+            if content:
+                self.supplied_user_parts[call.tool_call_id] = self._supplied_user_part(call, content)
+                tool_result = dataclasses.replace(answer, content=None, attachments=())
         # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
         # (e.g. `'tool-search'`), promote the return part to that subclass. This keeps the
         # typed identity intact across multi-turn history: the next turn's discovery parser /
