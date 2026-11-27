@@ -1247,6 +1247,33 @@ async def test_queue_edit_save_cannot_confirm_a_previously_focused_approval() ->
             tasks.cancel_scope.cancel()
 
 
+@pytest.mark.parametrize('queued', [False, True])
+async def test_a_key_that_closes_the_queue_panel_cannot_confirm_a_focused_approval(queued: bool) -> None:
+    """F4 drops question focus, so Enter passing through the closing panel never approves."""
+    async with editor() as (live, _, _):
+        answerer = TerminalAnswerer(full_screen=live.suspended, console=live.console, composer=composer(live))
+        responses: list[AskUserResponse] = []
+
+        async def ask() -> None:
+            responses.append(await answerer.ask_approval(permission_request()))
+
+        async with anyio.create_task_group() as tasks:
+            tasks.start_soon(ask)
+            await anyio.wait_all_tasks_blocked()
+            if queued:
+                live.submit('queued')
+            live.feed('f2')
+            await anyio.lowlevel.checkpoint()
+            assert live.questions.focused
+            live.feed('f4')
+            await anyio.lowlevel.checkpoint()
+            live.feed('enter')
+            await anyio.wait_all_tasks_blocked()
+            assert responses == []
+            assert not live.questions.focused and not live.questions.routing
+            tasks.cancel_scope.cancel()
+
+
 @pytest.mark.parametrize('height', [6, 7, 8, 12, 24])
 @pytest.mark.parametrize('editing', [False, True])
 async def test_input_hints_fit_without_displacing_pinned_status_or_pending_work(height: int, editing: bool) -> None:

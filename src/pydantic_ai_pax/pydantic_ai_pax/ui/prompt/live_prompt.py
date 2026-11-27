@@ -442,6 +442,8 @@ class LivePrompt:
             self._queue_open = not self._queue_open
             self._queue_selected = next(iter(self.runnable_prompts()), None)
             self._queue_armed = False
+            # A key that closes the panel reaches the editor, so it must not confirm a question focused before F4.
+            self.questions.focused = self.questions.routing = False
             asyncio.get_running_loop().call_soon(self.arm_queue)
             return True
         if not self._queue_open:
