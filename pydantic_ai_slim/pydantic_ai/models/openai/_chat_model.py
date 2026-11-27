@@ -407,6 +407,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if not _profile.get('openai_chat_supports_web_search', False):
             new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
+        if (provider := self.provider) is not None and (
+            provider.name == 'openai' or is_azure(provider.client, provider.name)
+        ):
+            # The OpenAI profile allows image output for models that generate images through the Responses API's image
+            # generation tool, which OpenAI's Chat Completions doesn't offer.
+            _profile = merge_profile(_profile, ModelProfile(supports_image_output=False))
         return cast(OpenAIModelProfile, _profile)
 
     def prepare_request(
