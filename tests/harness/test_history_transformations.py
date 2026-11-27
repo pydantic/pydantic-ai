@@ -69,6 +69,11 @@ from .test_capability_routes import CASES, PROBES, PUBLIC, RouteRun, _calls, _na
 
 with try_import():
     from pydantic_ai.ui.ag_ui import AGUIAdapter
+    from pydantic_ai.ui.ag_ui._utils import (  # pyright: ignore[reportPrivateUsage]
+        DEFAULT_AG_UI_VERSION,
+        ENCRYPTED_VALUE_VERSION,
+        parse_ag_ui_version,
+    )
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter
 
 Transformation = Literal[
@@ -199,6 +204,21 @@ async def _vercel_ai(native: RouteRun, directory: Path) -> list[ModelMessage]:
     return VercelAIAdapter.load_messages(VercelAIAdapter.dump_messages(native.messages))
 
 
+def _ag_ui_exempt() -> dict[str, Exempt]:
+    """Below ag-ui-protocol 0.1.11 a typed tool return reloads as its base `ToolReturnPart`, as the adapter warns.
+
+    There's no `encrypted_value` field to carry the part's kind, so only the cases whose tools return typed parts
+    are affected, and only on the kept-unchanged and nothing-new checks.
+    """
+    if not ui_imports_successful() or parse_ag_ui_version(DEFAULT_AG_UI_VERSION) >= ENCRYPTED_VALUE_VERSION:
+        return {}
+    known = Known(
+        'ag-ui-protocol < 0.1.11 has no `encrypted_value`, so a typed tool return reloads as `ToolReturnPart`',
+        checks=frozenset({'kept_unchanged', 'nothing_new'}),
+    )
+    return dict.fromkeys(('DeduplicateFileReads', 'FileSystem'), known)
+
+
 async def _ag_ui(native: RouteRun, directory: Path) -> list[ModelMessage]:
     with warnings.catch_warnings():
         # The lowest supported ag-ui-protocol can't carry encrypted reasoning, which the adapter warns about.
@@ -243,6 +263,7 @@ _TRANSFORMS: dict[Transformation, Transform] = {
         _ag_ui,
         # Documented: the server owns capability parts, system prompts and instruction records, so a client never holds one.
         drops=_instruction_record,
+        exempt=_ag_ui_exempt(),
         functions=('pydantic_ai.ui.ag_ui._adapter.AGUIAdapter.load_messages',),
     ),
     'sub_agent_handoff': Transform(
