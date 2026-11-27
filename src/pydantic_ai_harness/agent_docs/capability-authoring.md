@@ -417,8 +417,9 @@ Content:
   that produced it.
 - Never put content in a span's name or in `logfire.msg`. Logfire does not scrub `logfire.msg`.
 - `open_span` sets `error.type` on an uncaught error. It records the error's message only when the run
-  captures content, because an exception message can quote content. A cancellation is not an error and
-  leaves the status unset. For an exception that is an expected answer, such as a `FileNotFoundError`
+  captures content, because an exception message can quote content. A cancellation is not an error, and
+  neither is a deferral, an approval request or a skip (`CallDeferred`, `ApprovalRequired`,
+  `SkipToolExecution`, `SkipModelRequest`): they leave the status unset. For an exception that is an expected answer, such as a `FileNotFoundError`
   from an existence check, catch it inside the span and record the outcome as an attribute.
 - `content=` and `attributes=` are built even when nothing is recorded, so pass plain values. When
   building a content value costs something or can raise, such as `str()` of an object a guard returned

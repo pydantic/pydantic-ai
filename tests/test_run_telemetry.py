@@ -39,7 +39,8 @@ from pydantic_ai.capabilities import (
     tool_call_span,
 )
 from pydantic_ai.durable_exec import DurableRunContext
-from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, SkipModelRequest, SkipToolExecution
+from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.realtime.codec import ResponseDone, ToolCall
@@ -436,6 +437,30 @@ def test_a_cancellation_is_not_an_error():
 
     [span] = exporter.get_finished_spans()
     assert (span.status.status_code.name, span.events) == ('UNSET', ())
+
+
+@pytest.mark.parametrize(
+    'control_flow',
+    [
+        ApprovalRequired(),
+        CallDeferred(),
+        SkipToolExecution('skipped'),
+        SkipModelRequest(ModelResponse(parts=[TextPart('skipped')])),
+    ],
+    ids=type,
+)
+def test_a_deferral_or_skip_is_not_an_error(control_flow: Exception):
+    """A capability span around a tool that asks for approval stays unmarked, like the `execute_tool` span around it."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    with pytest.raises(type(control_flow)):
+        with open_span(traced_context(provider.get_tracer('test'), True), 'example checked call'):
+            raise control_flow
+
+    [span] = exporter.get_finished_spans()
+    assert (span.status.status_code.name, span.events, dict(span.attributes or {})) == ('UNSET', (), {})
 
 
 class ExampleError(Exception):
