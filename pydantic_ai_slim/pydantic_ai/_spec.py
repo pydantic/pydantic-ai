@@ -292,14 +292,14 @@ def build_schema_types(
     schema_types: list[Any] = []
     for name, cls in registry.items():
         target = get_schema_target(cls) if get_schema_target is not None else cls
-        schema_types.extend(_target_schema_types(name, target))
+        schema_types.extend(_target_schema_types(name, target, skip_receiver=target is cls.__init__))
 
     return schema_types
 
 
-def _target_schema_types(name: str, target: Callable[..., object]) -> list[Any]:
+def _target_schema_types(name: str, target: Callable[..., object], *, skip_receiver: bool = False) -> list[Any]:
     """The schema types of the spec forms that can load `target` under `name`."""
-    spec_type_hints = _spec_param_type_hints(target)
+    spec_type_hints = _spec_param_type_hints(target, skip_receiver=skip_receiver)
     if spec_type_hints is None:
         return []
     type_hints, required_type_hints = spec_type_hints
@@ -326,7 +326,9 @@ def _target_schema_types(name: str, target: Callable[..., object]) -> list[Any]:
     return schema_types
 
 
-def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any], dict[str, Any]] | None:
+def _spec_param_type_hints(
+    target: Callable[..., object], *, skip_receiver: bool = False
+) -> tuple[dict[str, Any], dict[str, Any]] | None:
     """The type hints of `target`'s spec parameters, with optional ones as `NotRequired`.
 
     The second dict holds the type hints of its required parameters only. Returns `None` when a required parameter's
@@ -342,9 +344,12 @@ def _spec_param_type_hints(target: Callable[..., object]) -> tuple[dict[str, Any
 
     required_type_hints: dict[str, Any] = {}
 
-    for p in parameters.values():
-        # Skip self/cls (unbound instance/class methods) and *args/**kwargs
-        if p.name in ('self', 'cls') and p.kind in (p.POSITIONAL_ONLY, p.POSITIONAL_OR_KEYWORD):
+    for index, p in enumerate(parameters.values()):
+        # Skip receiver (unbound __init__ first positional param, or self/cls) and *args/**kwargs
+        if ((skip_receiver and index == 0) or p.name in ('self', 'cls')) and p.kind in (
+            p.POSITIONAL_ONLY,
+            p.POSITIONAL_OR_KEYWORD,
+        ):
             type_hints.pop(p.name, None)
             continue
         if p.kind in (p.VAR_POSITIONAL, p.VAR_KEYWORD):

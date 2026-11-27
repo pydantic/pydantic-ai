@@ -4199,3 +4199,34 @@ async def test_distinct_ids_keep_both_one_off_capabilities() -> None:
     await agent.run('hi', capabilities=[WebSearch(native=False, local=run_level, id='run')])
 
     assert offered == [['agent_level', 'run_level']]
+
+
+def test_agent_spec_schema_accepts_bare_name_for_init_with_non_self_receiver() -> None:
+    """Regression test for #14865: unbound __init__ receiver must be skipped by position, not name."""
+    if not jsonschema_imports_successful:
+        pytest.skip('jsonschema not installed')
+
+    @dataclass(init=False)
+    class ThisSelf(AbstractCapability[None]):
+        n: int
+
+        def __init__(this, n: int = 0) -> None:  # pyright: ignore[reportSelfClsParameterName]
+            this.n = n
+
+    def _external_init(inst: Any, n: int = 0) -> None:
+        inst.n = n
+
+    @dataclass(init=False)
+    class ExternalInit(AbstractCapability[None]):
+        n: int
+        __init__ = _external_init  # type: ignore[assignment]
+
+    schema = AgentSpec.model_json_schema_with_capabilities(custom_capability_types=[ThisSelf, ExternalInit])
+    validator = validator_for(schema)(schema)
+
+    for cap_name in ('ThisSelf', 'ExternalInit'):
+        spec_dict = {'model': 'test', 'capabilities': [cap_name]}
+        errors = list(validator.iter_errors(spec_dict))
+        assert errors == [], f'{cap_name} bare name rejected by schema: {errors}'
+        loaded = Agent.from_spec(spec_dict, custom_capability_types=[ThisSelf, ExternalInit])
+        assert loaded is not None
