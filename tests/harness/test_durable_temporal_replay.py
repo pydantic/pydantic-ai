@@ -188,6 +188,7 @@ async def _breaks(name: str, temporal: _Temporal, count_requests: Callable[[], C
         prefix=f'agent__{_AGENTS[name].name}__',
         model_request='model_request',
         calls=len(calls.made),
+        follow_ups=calls.follow_ups,
         expected=calls.durable_steps.temporal,
         engine='temporal',
     )

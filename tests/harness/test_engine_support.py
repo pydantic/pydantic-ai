@@ -73,26 +73,27 @@ def test_every_cell_is_a_case_with_calls() -> None:
         assert CASES[name].calls is not None, f'`ENGINE_SUPPORT` names {name}, which has no `calls` to run'
 
 
-def test_untested_cells_only_go_down() -> None:
-    """How many cases each engine runs no suite for: test a cell to lower its engine's count, never raise it.
+def test_measured_cells_only_go_up() -> None:
+    """How many cases each engine's suites measure, i.e. the cells that aren't `untested`: raise a count, never lower it.
 
-    It reads test tables or source, with no provider exchange to record, so it isn't a VCR test.
+    The number of cases with calls is pinned too, so a new case that a suite doesn't measure changes a snapshot. It
+    reads test tables or source, with no provider exchange to record, so it isn't a VCR test.
     """
-    untested = Counter(
-        engine
-        for name, case in CASES.items()
-        if name in PUBLIC and case.calls is not None
-        for engine in ENGINES
-        if engine_support(name, engine).level == 'untested'
+    with_calls = [name for name, case in CASES.items() if name in PUBLIC and case.calls is not None]
+    assert len(with_calls) == snapshot(45)
+    measured = Counter(
+        engine for name in with_calls for engine in ENGINES if engine_support(name, engine).level != 'untested'
     )
-    assert dict(untested) == snapshot(
+    assert {engine: measured[engine] for engine in ENGINES} == snapshot(
         {
-            'prefect': 44,
-            'aws_lambda': 44,
-            'absurd': 44,
-            'pgtask': 44,
-            'azure_durable_task': 44,
-            'render': 44,
+            'dbos': 45,
+            'temporal': 45,
+            'prefect': 0,
+            'aws_lambda': 0,
+            'absurd': 0,
+            'pgtask': 0,
+            'azure_durable_task': 0,
+            'render': 0,
         }
     )
 

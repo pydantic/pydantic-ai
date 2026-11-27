@@ -179,8 +179,8 @@ class DurableSteps:
 
     The names are persisted: a workflow recorded by one release replays by them in the next, so `DURABLE_DBOS` and
     `DURABLE_TEMPORAL` fail when a case records anything else. The run's own model requests are left out, as
-    every case makes one per call and one to answer. A case whose tools do no I/O through a durable unit records
-    nothing, which is checked too.
+    every case makes one per call, one per follow-up its calls' `follow_ups` counts, and one to answer. A case
+    whose tools do no I/O through a durable unit records nothing, which is checked too.
     """
 
     dbos: tuple[str, ...] = ()
@@ -203,6 +203,9 @@ class Calls:
     registers a workflow before launch. A toolset it builds has an `id`, which Temporal names its activities by."""
     durable_steps: DurableSteps = DurableSteps()
     """What the calls record under each durable engine, run one per response."""
+    follow_ups: int = 0
+    """How many extra model requests the calls cause in all, one per result that arrives as a follow-up message
+    (`BackgroundTools` delivers each backgrounded call's result in a later request). `journal_breaks` adds it once."""
     moves_cache_prefix: str | None = None
     """Why running the calls rewrites earlier history by design, which moves the prompt-cache prefix: a suite
     that runs them one per response marks the run `moves_cache_prefix` with it."""
@@ -848,7 +851,7 @@ DECLARES_CALLS = Contract(
         ),
         'BubblewrappedWorkspace': Exempt('needs a sandbox backend: the `bwrap` binary and user namespaces'),
         'PlaywrightBrowser': Exempt('needs a browser that Playwright launches'),
-        **dict.fromkeys(('BackgroundTools', 'CodeMode', 'IPythonCodeMode', 'ToolBridge', 'ToolSearch'), Exempt(_ROUTE)),
+        **dict.fromkeys(('CodeMode', 'IPythonCodeMode', 'ToolBridge', 'ToolSearch'), Exempt(_ROUTE)),
         **dict.fromkeys(
             (
                 'AskUser',

@@ -63,9 +63,10 @@ UNPROMPTED_REQUEST = 'model.unprompted_request'
 def one_call_per_response(made: tuple[ToolCall, ...]) -> FunctionModel:
     """A model that makes the calls in order, one per response, then answers; call `i` gets the ID `call_{i}`.
 
-    It doesn't stream, so a run makes one model request per call and one to answer. A request whose first message
-    isn't the run's `PROMPT` gets the answer, and is counted in `REQUESTS`: it is a capability's own run on the
-    run's model, such as `BrowserUse`'s browser agent, whose requests recovery must not make again.
+    It doesn't stream, so a run makes one model request per call, one per follow-up its case's `follow_ups` counts,
+    and one to answer: every request past the calls gets the answer. A request whose first message isn't the run's
+    `PROMPT` gets the answer, and is counted in `REQUESTS`: it is a capability's own run on the run's model, such as
+    `BrowserUse`'s browser agent, whose requests recovery must not make again.
     """
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -98,20 +99,30 @@ def build_case(name: str, directory: Path) -> list[AbstractCapability[None]]:
 
 
 def journal_breaks(
-    recorded: Sequence[str], *, prefix: str, model_request: str, calls: int, expected: tuple[str, ...], engine: str
+    recorded: Sequence[str],
+    *,
+    prefix: str,
+    model_request: str,
+    calls: int,
+    follow_ups: int,
+    expected: tuple[str, ...],
+    engine: str,
 ) -> list[str]:
     """How the durable units a run recorded differ from what its case's `durable_steps` lists for `engine`.
 
     `recorded` holds the units' names, each starting with `prefix`. The run's own model requests are left out of
-    the comparison, but there must be one per call and one to answer.
+    the comparison, but there must be one per call, one per follow-up its case's `follow_ups` counts, and one to
+    answer.
     """
     units = [unit.removeprefix(prefix) for unit in recorded]
     requests = units.count(model_request)
     journaled = tuple(unit for unit in units if unit != model_request)
     counted = (
         []
-        if requests == calls + 1
-        else [f'the run recorded {requests} `{model_request}` units, not one per call and one to answer']
+        if requests == calls + follow_ups + 1
+        else [
+            f'the run recorded {requests} `{model_request}` units, not one per call, one per follow-up and one to answer'
+        ]
     )
     drifted = (
         []
