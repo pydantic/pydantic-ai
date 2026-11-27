@@ -130,6 +130,8 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     """The chain as the first pass started it, which every later pass starts over from."""
     _pass_errors: int = field(repr=False)
     """How many of the chain's errors earlier passes raised, so the current pass's are the ones after them."""
+    _pass_wait: float | None = field(repr=False)
+    """The wait before the pass about to start, made when its first attempt is prepared."""
 
     def __init__(
         self,
@@ -226,6 +228,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         self._pass = 1
         self._pass_chain = []
         self._pass_errors = 0
+        self._pass_wait = None
 
     def get_ordering(self) -> CapabilityOrdering:
         # Innermost so a rejected attempt is judged before any other capability's
@@ -275,6 +278,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             _pass=1,
             _pass_chain=[],
             _pass_errors=0,
+            _pass_wait=None,
         )
 
     async def prepare_model_request(
@@ -301,6 +305,15 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             self._pass = 1
             self._pass_chain = []
             self._pass_errors = 0
+            self._pass_wait = None
+        if self._pass_wait is not None:
+            # Waited here rather than in the hook that started the pass, so the agent has already recorded the last
+            # attempt of the pass before as ending when its model failed. The next attempt is timed from after this
+            # hook, and a `RetryOnModelErrors`' `request_timeout` from its own `prepare_model_request`, which runs
+            # after this one. Through the agent graph's sleep, which a durable execution engine replaces with its own
+            # durable timer.
+            delay, self._pass_wait = self._pass_wait, None
+            await _agent_graph_sleep(delay)
         if not self._pin_checked:
             self._pin_checked = True
             if (pinned := self._pinned_candidate(request_context)) is not None:
@@ -313,7 +326,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         if moved and self._already_attempted(request_context.model):
             # A candidate given as a string, which the agent resolved only now, turned out to be a model already
             # attempted this step, like the step's own model under an alias.
-            raise await self._advance(ctx)
+            raise self._advance(ctx)
         if not self._pass_chain:
             # Where a later pass starts over: this first attempt's model, by the ID it was selected by if it has one,
             # so the agent resolves it the same way again, then the candidates the first pass would move on to.
@@ -335,7 +348,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             raise error
         if not await self._chain.falls_back(error):
             raise error
-        raise await self._advance(ctx)
+        raise self._advance(ctx)
 
     async def after_model_request(
         self,
@@ -355,7 +368,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         # The core records a rejected response's tokens and cost before the next attempt, so a
         # rejected generation is still paid for in `RunUsage` even though it never enters history,
         # and records the attempt on the response that answers, as `FallbackModel` does.
-        raise await self._advance(ctx)
+        raise self._advance(ctx)
 
     def _new_chain(self) -> FallbackChain:
         return FallbackChain(self._predicates, owner='ModelFallback')
@@ -400,7 +413,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             return _is_or_wraps(request_context.model, default)
         return default is not None and request_context.model_id == default
 
-    async def _advance(self, ctx: RunContext[AgentDepsT]) -> RetryModelRequest:
+    def _advance(self, ctx: RunContext[AgentDepsT]) -> RetryModelRequest:
         """Return the exception that moves to the next untried candidate, or the next pass, or the aggregated failure."""
         while self._remaining:
             candidate = self._remaining.pop(0)
@@ -408,8 +421,8 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 self._moved = True
                 return RetryModelRequest(candidate)
         if self._pass < self.passes and self._waiting_may_help() and (delay := self._pass_delay(ctx)) is not None:
-            # Through the agent graph's sleep, which a durable execution engine replaces with its own durable timer.
-            await _agent_graph_sleep(delay)
+            # Waited before the pass's first attempt (see `prepare_model_request`), once the agent recorded this one.
+            self._pass_wait = delay
             self._pass += 1
             self._pass_errors = len(self._chain.exceptions)
             first, *self._remaining = self._pass_chain

@@ -44,6 +44,7 @@ from pydantic_ai import (
     TextPart,
     ToolCallPart,
     UserPromptPart,
+    _model_request_attempts,
     capture_run_messages,
     exceptions,
     messages as _messages,
@@ -3661,6 +3662,46 @@ async def test_a_second_pass_starts_over_from_the_first_model():
     assert 0.5 <= delays[0] <= 1.0
 
 
+async def test_a_sticky_conversation_s_next_pass_starts_over_from_the_sticky_model():
+    """A pass after one that started on the sticky candidate starts on it again, then goes on down the rotated chain."""
+    calls: list[str] = []
+    agent = Agent(
+        _fails_then_answers('primary', 1, calls),
+        capabilities=[ModelFallback(_fails_then_answers('backup', 1, calls), sticky=True, passes=2)],
+    )
+    async with _recorded_sleeps() as delays:
+        result = await agent.run('x', message_history=_sticky_history('function:backup'))
+    assert calls == ['backup', 'primary', 'backup']
+    assert result.output == 'backup answered'
+    assert _attempted(result.response.failed_attempts) == [('backup', 'fallback'), ('primary', 'fallback')]
+    assert len(delays) == 1
+
+
+async def test_a_next_pass_starts_over_from_the_step_model_s_id():
+    """A step model given by an ID is selected by that ID again in the next pass, so a resolver resolves it afresh."""
+    calls: list[str] = []
+    resolved: list[str] = []
+
+    def resolve(ctx: ModelResolutionContext[None], model_id: str) -> Model | None:
+        if model_id != 'my-primary':
+            return None
+        resolved.append(model_id)
+        return _fails_then_answers('primary', 1, calls)
+
+    agent = Agent(
+        'my-primary',
+        deps_type=type(None),
+        capabilities=[ResolveModelId(resolve), ModelFallback(_fails_then_answers('backup', 1, calls), passes=2)],
+    )
+    async with _recorded_sleeps():
+        result = await agent.run('x')
+    assert calls == ['primary', 'backup', 'primary']
+    assert result.output == 'primary answered'
+    # Recorded as the ID it was selected by, not the model the first pass resolved it to.
+    assert result.response.model_id == 'my-primary'
+    assert len(resolved) >= 2
+
+
 async def test_a_later_pass_moves_on_down_the_chain_again():
     """A model that fails again in the next pass falls back to the next one, as in the first pass."""
     calls: list[str] = []
@@ -3809,8 +3850,38 @@ def test_passes_and_delays_are_validated():
         ModelFallback('test', passes=0)
     with pytest.raises(UserError, match='`initial_delay` and `max_delay` must not be negative'):
         ModelFallback('test', initial_delay=-1)
+    with pytest.raises(UserError, match='`initial_delay` and `max_delay` must not be negative'):
+        ModelFallback('test', max_delay=-1)
 
 
 def test_passes_from_spec():
     capability = ModelFallback.from_spec(['test'], passes=3, initial_delay=0.5, max_delay=5)
     assert (capability.passes, capability.initial_delay, capability.max_delay) == (3, 0.5, 5)
+
+
+async def test_the_wait_between_passes_is_no_attempt_s_duration(monkeypatch: pytest.MonkeyPatch):
+    """The last failed attempt of a pass ends when its model failed: the wait after it isn't part of any attempt.
+
+    Attempts are timed on a monotonic clock that this test moves forward by each wait instead of sleeping, so an
+    attempt the wait was counted in would last at least that long.
+    """
+    offset = 0
+    real_perf_counter_ns = _model_request_attempts.perf_counter_ns
+    monkeypatch.setattr(_model_request_attempts, 'perf_counter_ns', lambda: real_perf_counter_ns() + offset)
+
+    async def sleep(delay: float) -> None:
+        nonlocal offset
+        offset += round(delay * 1e9)
+
+    calls: list[str] = []
+    agent = Agent(
+        _fails_then_answers('a', 1, calls),
+        capabilities=[ModelFallback(_fails_then_answers('b', 1, calls), passes=2, initial_delay=60, max_delay=60)],
+    )
+    with Agent.using_sleep(sleep):
+        result = await agent.run('x')
+    assert calls == ['a', 'b', 'a']
+    assert offset >= 30e9
+    attempts = result.response.failed_attempts or []
+    assert [attempt.model_name for attempt in attempts] == ['a', 'b']
+    assert all(attempt.duration < timedelta(seconds=10) for attempt in attempts), attempts
