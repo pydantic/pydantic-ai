@@ -546,6 +546,8 @@ DBOS retries a step inside the step, after sleeping its backoff in the process t
 
 DBOS has no selective non-retryable-exception support, so if you enable step retries (`retries_allowed`), framework misconfiguration errors like `UserError` are retried along with everything else. The Temporal and Prefect integrations mark those non-retryable; on DBOS, expect a misconfigured agent to burn its full retry budget before failing.
 
+When the provider rejects the Native Output schema the model inferred as [too complex](../models/anthropic.md#schema-complexity-limits), workflow code attempts the request again in Tool Output, in a new step. The switch lasts for the agent run: a new run in the same or another workflow infers Native Output again and waits for the rejection once more. To skip that wait, wrap the output type in [`ToolOutput`][pydantic_ai.output.ToolOutput].
+
 ## Observability with Logfire
 
 DBOS can be configured to generate OpenTelemetry spans for each workflow and step execution, and Pydantic AI emits spans for each agent run, model request, and tool invocation. Run `uvx logfire-cli wizard --task pydantic-ai` once to [set up Pydantic Logfire](../logfire.md#using-logfire) and send these spans there for a full, end-to-end view of what's happening in your application.
