@@ -125,6 +125,7 @@ from ._run_context import (
     recorded_workspace_ref,
     set_current_run_context,
 )
+from ._run_conversation import keep_step_history
 from ._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from .conversation import Conversation
 from .exceptions import ToolRetryError
@@ -3685,6 +3686,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         This runs once per request step. Everything that depends on which model serves the request
         runs per attempt, in `_prepare_attempt`.
         """
+        # Before the hooks rewrite the history again, keep what a capability put in it for the previous step.
+        keep_step_history(ctx.state)
         persistent_messages_before_processing = len(ctx.state.message_history)
         mirrored_messages = HistoryMirroringMessages(
             request_context.messages, MirroredHistory(ctx.state.message_history, ctx.state.appended_messages)

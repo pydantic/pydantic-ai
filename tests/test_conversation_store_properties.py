@@ -688,16 +688,6 @@ KNOWN_FINDINGS = [
         'goes on from, an exchange a UI sent or a message a `before_run` hook added, though the model was sent it '
         'before them. The persistence docs describe this placement: after the messages the run was given.',
     ),
-    KnownFinding(
-        'superseded-summary-is-lost',
-        frozenset({'S6'}),
-        # Only a run that makes more than one request can summarize its own summary.
-        lambda turn, earlier: (
-            dataclasses.replace(turn, mode='plain') if turn.capability == 'summarize' and turn.mode == 'tool' else turn
-        ),
-        ((Turn(), Turn(mode='tool', capability='summarize')),),
-        'A summary the model was sent is not stored when a later request in the same run summarizes it away.',
-    ),
 ]
 
 
@@ -724,6 +714,8 @@ FIXED_FINDINGS: dict[str, tuple[tuple[Turn, ...], ...]] = {
     'message-appended-before-run-is-lost': ((Turn(), Turn(hook='append_before_run')),),
     # A message a `before_model_request` hook added with `ctx.messages.append(...)` wasn't in `result.conversation`
     # when a capability trimmed it from the history in a later request.
+    # A summary the model was sent wasn't stored when a later request in the same run summarized it away.
+    'superseded-summary-is-lost': ((Turn(), Turn(mode='tool', capability='summarize')),),
     'message-appended-in-a-trimmed-run-is-lost': (
         (Turn(mode='tool', capability='trim', keep=1, hook='append_before_model_request'),),
     ),
