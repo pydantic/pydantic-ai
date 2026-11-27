@@ -365,8 +365,6 @@ include = [
     ".github/scripts/test_agentic_workflow_guard.py",
     ".github/scripts/weekly_ce_audit.py",
     ".github/scripts/test_weekly_ce_audit.py",
-    ".github/scripts/agent_spend_report.py",
-    ".github/scripts/test_agent_spend_report.py",
     ".github/scripts/test_docs_navigation_workflow.py",
     ".github/scripts/test_protect_github_dir.py",
     ".github/scripts/test_pr_guard.py",
@@ -482,7 +480,6 @@ quote-style = "single"
 ".github/scripts/test_triage_telemetry.py" = ["D"]
 ".github/scripts/test_feature_digest.py" = ["D"]
 ".github/scripts/test_agentic_workflow_guard.py" = ["D"]
-".github/scripts/test_agent_spend_report.py" = ["D"]
 ".github/scripts/test_docs_navigation_workflow.py" = ["D"]
 ".github/scripts/test_protect_github_dir.py" = ["D"]
 ".github/scripts/test_pr_guard.py" = ["D"]
