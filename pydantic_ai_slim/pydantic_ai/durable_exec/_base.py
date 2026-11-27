@@ -468,6 +468,37 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             f'{type(self).__name__}_request_model_scope', default=None
         )
 
+    def register_model(self, model_id: str, model: Model) -> None:
+        """Register a model instance under `model_id`, like an entry in `models=`.
+
+        Use this to make a model instance available to a durable agent after it was built, typically
+        a test model in test setup, so production code doesn't have to construct it:
+
+        ```python {test="skip" lint="skip"}
+        durability.register_model('test', FunctionModel(my_model_function))
+        with agent.override(model='test'):
+            ...
+        ```
+
+        The registration applies to every agent this capability is attached to, and it lives in this
+        process only: a worker in another process must register the same ID before it handles the run.
+        Registering an ID again replaces the earlier model.
+
+        Args:
+            model_id: The ID to select the model by, with `agent.run(model=...)` or `agent.override(model=...)`.
+                `'default'` is reserved for the agent's own model.
+            model: The model instance.
+        """
+        if model_id == 'default':
+            raise UserError("Model ID 'default' is reserved for the agent's primary model.")
+        # Bound copies share this dict with the capability they were copied from.
+        self._extra_models[model_id] = model
+
+    @property
+    def _registered_models(self) -> dict[str, Model]:
+        """The models bound at construction, plus any registered later with `register_model`."""
+        return {**self._models_by_id, **self._extra_models}
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         """Return the capability to use with the agent: the bound copy, with any `_companion_capabilities` outside it."""
         bound = self._bind_for_agent(agent)
@@ -899,12 +930,57 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _validate_runtime_capabilities(
         self, ctx: RunContext[AgentDepsT], capabilities: Sequence[AbstractCapability[AgentDepsT]]
     ) -> None:
-        """Reject capabilities added per-run inside a durable workflow or flow."""
+        """Reject per-run capabilities that need registering when the agent is built.
+
+        That's any capability contributing an executing toolset or `@durable_operation` methods, or choosing or
+        wrapping the model through `resolve_model_id`, `get_model` or `get_wrapper_model`.
+        """
         if not self.in_durable_context or not isinstance(
             self.get_durable_operation_backend(), RegisteredOperationBackend
         ):
             return
-        unsafe_capabilities = [capability for capability in capabilities if not capability._safe_at_runtime]
+
+        tool_config_key = self.engine_spec.tool_config_key
+
+        def is_non_executing(leaf: AbstractToolset[AgentDepsT]) -> bool:
+            # Default-deny: only leaves known not to execute tools in the workflow are allowed.
+            if not leaf._executes_tools:  # pyright: ignore[reportPrivateUsage]
+                return True
+            return (
+                isinstance(leaf, FunctionToolset)
+                and tool_config_key is not None
+                and bool(leaf.tools)
+                and all((tool.metadata or {}).get(tool_config_key) is False for tool in leaf.tools.values())
+            )
+
+        def contributes_executing_toolset(capability: AbstractCapability[AgentDepsT]) -> bool:
+            toolset = capability.get_toolset()
+            if toolset is None:
+                return False
+            if callable(toolset):
+                # A dynamic toolset's contents are not known until runtime.
+                return True
+            leaves: list[AbstractToolset[AgentDepsT]] = []
+            toolset.apply(leaves.append)
+            return not all(is_non_executing(leaf) for leaf in leaves)
+
+        def needs_registration(capability: AbstractCapability[AgentDepsT]) -> bool:
+            # Durable operations are only registered for capabilities bound at construction, and only the
+            # model ID crosses into the model request unit, so a per-run capability that chooses or wraps the
+            # model there would be bypassed.
+            return (
+                contributes_executing_toolset(capability)
+                or any(collect_capability_operations(leaf) for leaf in leaf_capabilities(capability))
+                or capability.has_resolve_model_id
+                or capability._can_supply_model
+                or capability._can_wrap_model
+            )
+
+        unsafe_capabilities = [
+            capability
+            for capability in capabilities
+            if not capability._safe_at_runtime and needs_registration(capability)
+        ]
         if not unsafe_capabilities:
             return
         names = ', '.join(sorted(type(capability).__name__ for capability in unsafe_capabilities))
@@ -913,8 +989,12 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             f'supported: {names}. {self.engine_name} registers durable {self.durable_unit_plural} when a '
             f'capability is bound to the agent, before the {self.durable_container_noun} starts. A capability '
             f'added per-run therefore has no registered durable {self.durable_unit_plural} for the toolsets it '
-            f'contributes or its own `@durable_operation` methods. Attach all capabilities at agent construction '
-            f'time so `{type(self).__name__}.for_agent()` can register their durable {self.durable_unit_plural}.'
+            f'contributes or its own `@durable_operation` methods. A per-run capability that chooses or wraps the '
+            f'model (`resolve_model_id`, `get_model` or `get_wrapper_model`) is refused too, because only the '
+            f'model ID reaches the model request {self.durable_unit_noun}, so it would be bypassed there. Only '
+            f'capabilities that add hooks, instructions or settings can be added per-run; attach the rest at agent '
+            f'construction time so `{type(self).__name__}.for_agent()` can register their durable '
+            f'{self.durable_unit_plural}.'
         )
 
     def _validate_override_capabilities(self, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> None:
@@ -2244,7 +2324,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         [`ResolveModelId`][pydantic_ai.capabilities.ResolveModelId] capability -- its
         position relative to this one doesn't matter for non-registry strings.
         """
-        return self._models_by_id.get(model_id)
+        return self._registered_models.get(model_id)
 
     def _model_id_for_request(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> str | None:
         """The cross-boundary identifier for this request's model.
@@ -2334,7 +2414,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         )
 
     def _registered_model_id(self, model: Model) -> tuple[bool, str | None]:
-        for model_id, registered in self._models_by_id.items():
+        for model_id, registered in self._registered_models.items():
             if registered is model:
                 return True, None if model_id == 'default' else model_id
         return False, None

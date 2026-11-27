@@ -20,6 +20,9 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
 
     capability: AbstractCapability[AgentDepsT]
 
+    # Packaging only: the toolset it wraps is judged on its own.
+    _executes_tools = False
+
     # The contributed toolset is the capability's code: a factory or hook in it that enqueues is held to the
     # capability's authority, as its tools are through the `capability_id` stamped on their definitions.
 

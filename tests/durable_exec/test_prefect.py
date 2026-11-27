@@ -4847,6 +4847,23 @@ async def test_prefect_durability_override_registered_model() -> None:
     assert await run_agent() == 'alt-response'
 
 
+async def test_prefect_durability_register_model_after_construction() -> None:
+    """A model registered with `register_model` after the agent was built can be selected by key or instance."""
+    durability = PrefectDurability()
+    agent = Agent(_durability_fn_model, name='durability_register_model_later', capabilities=[durability])
+    durability.register_model('test', _prefect_alt_model)
+
+    @flow
+    async def run_agent() -> tuple[str, str]:
+        with agent.override(model='test'):
+            by_key = await agent.run('hello')
+        with agent.override(model=_prefect_alt_model):
+            by_instance = await agent.run('hello')
+        return by_key.output, by_instance.output
+
+    assert await run_agent() == ('alt-response', 'alt-response')
+
+
 async def test_prefect_durability_unregistered_model_instance_errors() -> None:
     """An unregistered `Model` instance is rejected in the flow, before any task runs.
 

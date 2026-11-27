@@ -283,7 +283,7 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
     def _resolve_child_task_model(self, model_id: str | None) -> Model | None:
         """Resolve a child task's model from this worker's model registry."""
         registry_key = model_id or 'default'
-        return self._models_by_id.get(registry_key)
+        return self._registered_models.get(registry_key)
 
 
 def _resolve_tool_options(

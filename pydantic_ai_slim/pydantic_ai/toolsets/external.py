@@ -18,6 +18,8 @@ class ExternalToolset(AbstractToolset[AgentDepsT]):
     See [toolset docs](../toolsets.md#external-toolset) for more information.
     """
 
+    _executes_tools = False
+
     tool_defs: list[ToolDefinition]
     _id: str | None
 

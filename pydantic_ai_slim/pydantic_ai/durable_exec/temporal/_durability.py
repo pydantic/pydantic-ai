@@ -798,7 +798,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     async def _cancel_suspended_response_without_run_context(
         self, model_id: str | None, response: ModelResponse
     ) -> None:
-        model = self._models_by_id.get(model_id or 'default')
+        model = self._registered_models.get(model_id or 'default')
         owned = model is None
         if owned:
             assert model_id is not None

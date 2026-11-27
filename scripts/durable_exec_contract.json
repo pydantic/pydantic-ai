@@ -2510,6 +2510,28 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_capability.py::<module>"
       ]
     },
+    "AbstractCapability._can_supply_model": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.needs_registration"
+      ]
+    },
+    "AbstractCapability._can_wrap_model": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.needs_registration"
+      ]
+    },
     "AbstractCapability._cancellation_error_types": {
       "engines": [
         "durable_exec"
@@ -2808,6 +2830,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.get_serialization_name"
       ]
     },
+    "AbstractCapability.get_toolset": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.contributes_executing_toolset"
+      ]
+    },
     "AbstractCapability.get_wrapper_toolset": {
       "engines": [
         "dbos",
@@ -2819,6 +2852,17 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.get_wrapper_toolset",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability.get_wrapper_toolset"
+      ]
+    },
+    "AbstractCapability.has_resolve_model_id": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.needs_registration"
       ]
     },
     "AbstractCapability.has_wrap_run_event_stream": {
@@ -7071,6 +7115,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::TemporalWrapperToolset.__aexit__"
       ]
     },
+    "AbstractToolset._executes_tools": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.is_non_executing"
+      ]
+    },
     "AbstractToolset._explicit_id": {
       "engines": [
         "dbos",
@@ -7103,6 +7158,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._reject_runtime_toolsets",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.contributes_executing_toolset",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_runtime_toolsets.py::reject_unsupported_runtime_toolsets",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._bind_to_agent"
       ]
@@ -7512,6 +7568,7 @@
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities.is_non_executing",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::toolset_selects_child_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_runtime_toolsets.py::_all_tools_opt_out",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::holds_tool_instance_defaults",
