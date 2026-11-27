@@ -67,7 +67,7 @@ print(result.output)
 print(result.usage)
 """
 RunUsage(
-    cost=Decimal('0.00047625'),
+    cost=Decimal('0.0005325'),
     input_tokens=165,
     output_tokens=24,
     requests=3,
@@ -177,7 +177,7 @@ async def main():
         print(result.usage)  # (6)!
         """
         RunUsage(
-            cost=Decimal('0.00054750'),
+            cost=Decimal('0.0006750'),
             input_tokens=220,
             output_tokens=32,
             requests=4,

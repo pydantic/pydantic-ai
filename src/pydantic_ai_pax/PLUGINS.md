@@ -14,11 +14,6 @@ Pax groups its shell implementation into `cli/`, `config/`, `runtime/`,
 continue importing `PluginHost` from `pydantic_ai_pax.plugins` and `Command`
 from `pydantic_ai_pax.commands`.
 
-The package was `pydantic-clai2`. Plugins that import `pydantic_clai2.plugins` or
-`pydantic_clai2.commands` load only while the `pydantic-clai2` package is installed,
-which aliases them with a `DeprecationWarning` that `pax` does not show. Under
-`pydantic-ai-pax` alone, change those imports to `pydantic_ai_pax`.
-
 ## Startup
 
 `pax --help` parses arguments without loading the agent or plugins. Interactive
@@ -127,7 +122,7 @@ are rejected; configure the final endpoint URL.
 ### Where servers are stored
 
 `/mcp install` and `/mcp edit` write `mcp.json` in the Pax config folder
-(`~/.config/pydantic-clai2/`, or under `$XDG_CONFIG_HOME`). The file is created
+(`~/.config/pydantic-ai-pax/`, or under `$XDG_CONFIG_HOME`). The file is created
 readable only by you. Do not put secrets in it: write `$VAR` or `${VAR}` in an
 `env` or `headers` value and Pax fills it from its own environment when it
 connects, so the file holds only the reference; a server whose variable is
@@ -310,7 +305,7 @@ Pydantic AI device-flow implementation until its release.
 Login prints a code and `https://github.com/login/device`, then starts polling.
 Open the link on this or another device and approve only your own session's code.
 Pax does not launch a browser, so a text browser cannot block login or take over
-an SSH terminal. Ctrl-C stops polling; GitHub controls expiry. There is no localhost callback.
+an SSH terminal. Ctrl+C stops polling; GitHub controls expiry. There is no localhost callback.
 GitHub authorization does not establish Copilot access: login and the menu query
 your account's catalog and keep only picker-enabled `/chat/completions` models.
 The shared model menu includes details and `Ctrl+S` settings. Subscription and
@@ -431,8 +426,8 @@ Other approval prompts are not tracked. The file is removed when
 Pax exits; AoE removes the directory when it stops the session.
 
 **Conversation.** The current conversation ID goes to `session_id` beside the status
-file, and to `$XDG_STATE_HOME/pydantic-clai2/aoe/<id>` (default
-`~/.local/state/pydantic-clai2/aoe/<id>`, mode 0600). When AoE restarts the session,
+file, and to `$XDG_STATE_HOME/pydantic-ai-pax/aoe/<id>` (default
+`~/.local/state/pydantic-ai-pax/aoe/<id>`, mode 0600). When AoE restarts the session,
 Pax starts empty, so the plugin resumes the conversation recorded there and shows its
 history, as `/resume ID` does; `--resume`,
 `--continue` when it finds a session, `--session-id`, and `--fork-session` take precedence
@@ -501,7 +496,7 @@ the table under the `hooks` key of its `.clai/settings.json`:
       {"tools": ["write_file", "edit_file"], "command": ["uv", "run", "ruff", "format", "--", "{path}"]}
     ],
     "turn_end": [
-      {"command": ["notify-send", "clai2", "turn finished"]}
+      {"command": ["notify-send", "pax", "turn finished"]}
     ]
   }
 }
@@ -621,8 +616,8 @@ or a pasted secret, so with `include_content: false`, the default, these records
 failures, keep only the exception's type in their `exception` event, as agent spans do.
 
 Credentials are read from `LOGFIRE_TOKEN` or the SDK's `logfire_credentials.json`
-in `$XDG_CONFIG_HOME/pydantic-clai2/logfire/`, defaulting to
-`~/.config/pydantic-clai2/logfire/`. SDK configuration is read only from that user
+in `$XDG_CONFIG_HOME/pydantic-ai-pax/logfire/`, defaulting to
+`~/.config/pydantic-ai-pax/logfire/`. SDK configuration is read only from that user
 directory too. Repository-local configuration/credentials and the SDK's
 `LOGFIRE_CONFIG_DIR`/`LOGFIRE_CREDENTIALS_DIR` overrides are ignored. Relative
 `XDG_CONFIG_HOME` values fall back to `~/.config`. A checkout cannot select the
@@ -958,7 +953,7 @@ type. Enter uses the address; Esc goes back to the list, and Esc there cancels
 without changing anything.
 
 Whichever Logfire you last chose in either plugin is remembered, in
-`~/.config/pydantic-clai2/logfire/destination.json` (or under `$XDG_CONFIG_HOME`),
+`~/.config/pydantic-ai-pax/logfire/destination.json` (or under `$XDG_CONFIG_HOME`),
 so the other starts from it: the picker highlights it. Opening this plugin's menu
 in the terminal before any of its settings were saved also switches it to that
 Logfire, and says so, when it is Logfire US or EU; any other Logfire is only
@@ -1078,7 +1073,7 @@ startup files. Use a separate OS identity or sandbox for untrusted agent work.
 Three ways to install one:
 
 1. Drop a `.py` file (or a package folder) into
-   `$XDG_CONFIG_HOME/pydantic-clai2/plugins/` (default `~/.config/pydantic-clai2/plugins/`).
+   `$XDG_CONFIG_HOME/pydantic-ai-pax/plugins/` (default `~/.config/pydantic-ai-pax/plugins/`).
    Its name is the file name without `.py`. Pax creates the folder at startup, so it
    is there to copy into after the first run.
 2. Point Pax at anything importable, from inside Pax:
@@ -1184,7 +1179,7 @@ settings using the former import paths are redirected to the new modules.
 | `compaction` | `pydantic_ai_pax.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `refinement` | `pydantic_ai_pax.builtin_plugins.refinement` | `{}` | `/refine`: the model reviews and revises its last answer |
 | `hooks` | `pydantic_ai_pax.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
-| `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; see [Sandboxes](docs/reference.md#sandboxes-sandbox) |
+| `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; `/computer-use` lets the model use its desktop; see [Sandboxes](docs/reference.md#sandboxes-sandbox) and [Computer use](docs/reference.md#computer-use-computer-use) |
 | `slack` (off until enabled) | `pydantic_ai_pax.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
@@ -1325,9 +1320,11 @@ folders once when it loads, in `prepare`, for the `/skill-name` commands and the
 startup notices, and harness reads them again at the start of every turn for the
 model's catalog. With a plugin's capability function in the run, the run's
 workspace is chosen after `Skills` reads its catalog, so `coder` reads the
-catalog from the project directory. A `/skill-name` command reads them again
-when it runs, so it sends the current `SKILL.md`, and fails with a message when
-the skill is gone.
+catalog from the project directory. In an untrusted folder, those skills are
+then offered through `list_skills` and `load_skill`, which read the project
+directory too, even when the function supplies a sandbox. A `/skill-name`
+command reads them again when it runs, so it sends the current `SKILL.md`, and
+fails with a message when the skill is gone.
 Only skills with `user_invocable` (no `user-invocable: false`) get a command;
 harness leaves skills with `disable-model-invocation: true` out of the model's
 catalog. Frontmatter fields harness ignores, such as `allowed-tools`, belong to
@@ -1450,31 +1447,32 @@ visible. The question is pinned with its choices, so output streamed meanwhile (
 delegated task's, say) lands above it instead of between it and the picker. Up/Down or Tab/Shift+Tab moves the highlight; Enter or an option's number selects it.
 For multi-select questions, Enter or a number toggles that choice; select `Done`
 to submit at least one choice. The title says `question 2 of 3` when there are
-several. Esc or Ctrl-C declines the whole request and lets the model continue.
+several. Esc or Ctrl+C declines the whole request and lets the model continue.
 The plugin's `render` replaces the tool's argument dump with a header that lists
 the question headers. The picker uses `host.full_screen()` only to flush streaming output and suspend
 the editor's input reader. It keeps the live panel on screen. The draft
 is restored on exit, and the question and your picks are printed to the transcript afterwards.
-Drag over the question, its header, or an option to select text; releasing copies it
-to the clipboard without choosing an answer. Transcript text remains selectable too.
+Drag over the question, its header, or an option, or double- or triple-click one, to
+select text; releasing copies it to the clipboard without choosing an answer. Transcript
+text remains selectable too.
 `/plugins disable ask_user` takes the tool away, and a session without a terminal, such as
 `pax --web` or piped output, never gets it. While the [`web` plugin](#web-this-session-in-your-browser)
 is loaded, it asks the questions instead, in the browser and this picker at once.
 
 The same picker asks about the calls [`/permissions`](docs/reference.md#permissions) holds: the plugin also binds
-`runtime/permissions.py`'s `approval_handler`, which puts each held call to the answerer as a question with
-`Approve`, `Approve for this session`, and `Deny`; a typed answer denies the call with it as the reason. The held
-command is printed in full above the picker first, since the picker cuts its question to the rows it has
-(`TerminalAnswerer.ask_approval`); a replacement approver should show it in full too. A
-replacement for this plugin that should answer approvals binds `approval_handler` with its own approver; without
-one, held calls are denied.
+`runtime/permissions.py`'s `approval_handler`, an `ApprovalHandler` (a core `HandleDeferredToolCalls`) whose handler
+is harness `approval_ask`, which puts each held call to the answerer as a question with `Approve`, `Approve for this
+session`, and `Deny`; a typed answer denies the call with it as the reason. The held command is printed in full above the
+picker first, since the picker cuts its question to the rows it has (`TerminalAnswerer.ask_approval`); a
+replacement approver should show it in full too. A replacement for this plugin that should answer approvals binds
+`approval_handler` with its own approver; without one, held calls are denied.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
 multi-select questions. With `Other` highlighted, start typing; you do not need
 to press Enter first, and number keys type digits there instead of picking
 choices. Enter submits nonblank text. Esc returns to the choices
-and keeps your draft; Ctrl-C declines the whole request. Backspace and arrow keys
+and keeps your draft; Ctrl+C declines the whole request. Backspace and arrow keys
 edit the text. Multiline paste is inserted as text and waits for Enter; it does
 not submit an answer or select choices. The conversation stays visible while you type. Custom answers
 appear in the transcript and reach the model as a one-item list under the question's header.
@@ -1826,11 +1824,11 @@ A session in a workspace runs on the model any new session starts with. Settings
 Pax with a `model` option still load; the option is ignored.
 
 A local path is checked out from that repository. A URL is cloned once into
-`$XDG_STATE_HOME/pydantic-clai2/workspaces/clones/` and fetched again for each new workspace, with
+`$XDG_STATE_HOME/pydantic-ai-pax/workspaces/clones/` and fetched again for each new workspace, with
 your own Git credentials; a REF names `origin`'s branch first. The new branch tracks nothing, so the
 first push names its remote branch.
 
-**The registry.** Each workspace has a folder in `$XDG_STATE_HOME/pydantic-clai2/workspaces/registry/`
+**The registry.** Each workspace has a folder in `$XDG_STATE_HOME/pydantic-ai-pax/workspaces/registry/`
 (`~/.local/state/...` by default), readable by you alone, holding `workspace.json`: kind,
 repository, ref, branch, folder, creation time, teardown, and `conversation`, the saved session the
 orchestrator runs there, if any. Every Pax reads the same folders, so a workspace made in one
@@ -1910,7 +1908,7 @@ shows to the orchestrator.
 Problems (an unknown workspace, a session that cannot be followed) come back as `Error: ...` lines
 rather than failing the run.
 
-**Its conversation** is one file, `$XDG_STATE_HOME/pydantic-clai2/orchestrator.json`, readable by you
+**Its conversation** is one file, `$XDG_STATE_HOME/pydantic-ai-pax/orchestrator.json`, readable by you
 alone, in Pydantic AI's message-history JSON. It survives a reload and a restart and never shows
 among the saved sessions or in `/resume`. Every Pax with the web UI has the same chat: each turn
 starts from the file as it is then, which an open page catches up to, and saves it when it ends,
@@ -2528,7 +2526,7 @@ Backspace edits the search, and Up and Down move between matches. Enter ends the
 search and keeps the matches, so the keys above act on them; `/` resumes the
 search. Esc clears the search, or the matches Enter kept, including when nothing
 matches; with no filter, Esc closes. Changes apply immediately; there is no
-pending save step, so Enter on the **Save & close** row, `q`, Esc, and Ctrl-C just
+pending save step, so Enter on the **Save & close** row, `q`, Esc, and Ctrl+C just
 close.
 
 Turning a plugin on with Enter or Space opens its settings menu straight away when it
@@ -2636,7 +2634,7 @@ JSON can express works here; an option that takes a Python object, like
 `client`, needs the file form below. Ask the agent something that needs the web on the next prompt and it has
 the tools. `/plugins disable exa` takes them away again.
 
-The same thing as a plugin file, `~/.config/pydantic-clai2/plugins/search.py`,
+The same thing as a plugin file, `~/.config/pydantic-ai-pax/plugins/search.py`,
 which is the shape to start from when you want more than one capability, or a
 `/command`, or a hook alongside it:
 
@@ -2694,7 +2692,7 @@ contributes nothing:
 | `get_capabilities()` | capabilities (or per-run capability functions) added to every agent run |
 | `get_commands()` | `/commands` |
 | `render(event)` | a drawing for a stream event, or `None` for the default |
-| `get_status_segments()` | text in the main footer's configurable `plugins` group |
+| `get_status_segments()` | text or links in the main footer's configurable `plugins` group |
 | `get_spinners()` | working animations offered by `/spinner` |
 | `get_model_providers()` | `PREFIX:NAME` models Pax can run |
 | `get_side_panels()` | pages the web UI shows beside the conversation |
@@ -2750,7 +2748,7 @@ the text the command returned, which the shell printed (empty when it returned n
 menu closed without changes, or a silent one-line no-op such as `API key unchanged.`; what the
 command printed itself, such as the history `/resume` replays, is not in it), and `error` the exception it failed with, which the shell showed
 instead, including a `/plugins` command refused while delegated tasks run. A command cancelled
-with Esc or Ctrl-C fires nothing; a finished one fires after Esc stops reaching it, so a slow
+with Esc or Ctrl+C fires nothing; a finished one fires after Esc stops reaching it, so a slow
 handler cannot cancel it. Use it to show command results somewhere other than
 the terminal; the shell has already printed them.
 
@@ -2788,7 +2786,7 @@ receiving the event, with a `PydanticAIDeprecationWarning` when its class is def
 event names still import with the same warning. Pax hides warnings, so you see it in your tests,
 or when you run `pax` with `PYTHONWARNINGS=default`. Rename them; the old names will be removed.
 
-Ctrl-C during an agent run keeps the prompt and captured partial messages in
+Ctrl+C during an agent run keeps the prompt and captured partial messages in
 conversation history for the next turn. Cancellation still reaches the running
 tools for cleanup; it does not undo completed side effects or retry the run.
 Retained failed turns and restored interrupted sessions are marked interrupted so
@@ -2951,7 +2949,7 @@ something else.
 A command can start a turn with `self.host.submit_prompt(text)`: the text runs
 as the next prompt once the command returns, ahead of anything queued in the
 editor, and goes through `on_turn_start` like typed input, without being echoed.
-Cancelling the command, with Ctrl-C or Esc, discards the prompt. Call it only from a command handler, and not from a `during_turn` command opened
+Cancelling the command, with Ctrl+C or Esc, discards the prompt. Call it only from a command handler, and not from a `during_turn` command opened
 over a running turn: anywhere else it raises `RuntimeError`.
 It is always a prompt, even when it starts with `/` or `!`. The built-in skill
 commands use it to send a skill's instructions:
@@ -3021,7 +3019,7 @@ prompt the keyboard does:
   A process-scoped host resolves both services in the session being handled.
 - `self.host.interrupt()` cancels the running turn or command as Esc does, and returns
   `False` when nothing was running. A menu open over the cancelled turn or command closes with
-  it, as it does for Ctrl-C; a headless `-p` run is not cancelled.
+  it, as it does for Ctrl+C; a headless `-p` run is not cancelled.
 - `await self.host.complete(text)` returns what Tab offers for `text`: termflow `Completion`s
   for command names (with their descriptions), their arguments, and `@` paths. As in the
   editor, they are computed in a worker thread, at most 100 of them, and none when a completer
@@ -3189,13 +3187,13 @@ without starting another turn, interrupting the current response, or cancelling
 tools. Each press sends one message. Slash commands, `!` shell
 commands, and exit signals are never steered: such a draft, or any draft the run
 does not accept, is taken as Enter would take it, and such a queued message stays
-queued and is not skipped over. When idle, Enter starts a turn. Shift-Enter inserts
-a newline when the terminal distinguishes it from Enter. Ctrl-J inserts a newline
+queued and is not skipped over. When idle, Enter starts a turn. Shift+Enter inserts
+a newline when the terminal distinguishes it from Enter. Ctrl+J inserts a newline
 on terminals that do not, including GNOME Terminal/VTE on Ubuntu; on Windows it
-steers, since terminals there send Ctrl+Enter as Ctrl-J. xterm and Kitty
+steers, since terminals there send Ctrl+Enter as Ctrl+J. xterm and Kitty
 keyboard reporting is enabled only while the editor owns input and released for
 menus and on exit.
-Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl-W,
+Option+Backspace (Alt+Backspace) deletes the word before the cursor, like Ctrl+W,
 including trailing whitespace. Spaces, tabs, and newlines separate words. Text
 after the cursor is preserved. Your terminal must send Option as Alt/Meta for
 this shortcut; legacy and modified-key encodings are supported.
@@ -3220,7 +3218,8 @@ background task, and is hidden while a full-screen interface owns the terminal.
 The editor and transcript share a Termflow live cell buffer on the alternate
 screen. Only changed cells paint. PageUp/PageDown and mouse-wheel input scroll
 output without changing the draft. New output does not move a scrolled view.
-A mouse drag selects painted cells, and releasing it copies them to the clipboard.
+A mouse drag selects painted cells, a double-click a word, and a triple-click a line, and
+releasing the button copies them to the clipboard, with no line break where the panel wrapped a line.
 On exit, the retained transcript prints into native terminal scrollback.
 Resize, theme changes, and returning from a menu repaint from the transcript.
 Assistant Markdown renders again at the new width and theme once its part
@@ -3671,7 +3670,8 @@ changes, or other tool side effects. It never replays tools or fires turn hooks.
 
 ### Add to the status row: `get_status_segments()`
 
-Each segment is a function that takes no arguments and returns a short string.
+Each segment is a function that takes no arguments and returns a short string,
+or a `StatusLink` to show a link.
 All plugin fragments form the `plugins` group in `display.footer_fields`, in
 registration order. The default layout places it after `activity`. Users can
 hide or move the group without unloading plugins; individual fragments do not
@@ -3703,6 +3703,24 @@ cost, working directory, and other optional fields, and before the model; see th
 text only; the colours in the row belong to Pax. A fragment that raises shows
 its error name in the row instead, so one broken plugin cannot take the footer
 down.
+
+Return `StatusLink(text=..., url=...)` from `pydantic_ai_pax.ui.rendering.status`
+to show a link. The row shows the text followed by `↗`, and a click on it opens
+the `http` or `https` URL in your browser. Other places that show the row, such
+as the line prompt, show only the text. The built-in `sandbox` plugin uses one
+for `watch live ↗` while computer use is on.
+
+```python
+from collections.abc import Sequence
+
+from pydantic_ai_pax.plugins import Plugin
+from pydantic_ai_pax.ui.rendering.status import StatusLink, StatusSegment
+
+
+class Docs(Plugin):
+    def get_status_segments(self) -> Sequence[StatusSegment]:
+        return (lambda: StatusLink(text='docs', url='https://pydantic.dev/docs/ai/'),)
+```
 
 ### Show a page beside the conversation: `get_side_panels()`
 
@@ -3900,7 +3918,7 @@ async def sign_in(host: PluginHost, authorization_url: str) -> str:
 
 The prompt and the typed answer are pinned under the transcript, the way
 `ask_user` shows its questions, so the URL stays on screen above them. It returns
-the answer when the user presses Enter, and `None` on Esc or Ctrl-C. Pasting
+the answer when the user presses Enter, and `None` on Esc or Ctrl+C. Pasting
 works, and pasted line breaks are dropped. Pass `hidden=True` to show how many
 characters were typed instead of the text, for an answer that carries a secret
 such as an authorization code. Cancelling the task that awaits it, because the
@@ -4145,9 +4163,9 @@ A `LiveSession` is one live session:
 | `wait_for_user(reason)` | mark a user wait, such as an approval dialog, until you call the idempotent function it returns; pair the call with `finally` so cancellation cannot leave a stale wait |
 | `setting(key)` | a Pax setting's value in it, as its `host.setting` reads it, with its own `model` and `run.*` |
 | `queued` | how many inputs wait for its running turn or command to end |
-| `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt |
-| `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run or was removed, and `ValueError` for blank text |
-| `remove_queued(input_id)` | drop a waiting input; raises `LookupError` once it has run or was removed |
+| `queue` | those inputs, oldest first, each a `QueuedInput` with an `id` (stable while it waits, also when the terminal starts or stops showing the session) and its `text`; the same queue the terminal lists above its prompt. An input the terminal is editing (recalled with Up) keeps its place in the list but does not run until the edit ends, so the run takes the inputs around it; if nothing else is queued when the session goes idle, it leaves the queue and becomes the terminal's unsent draft |
+| `edit_queued(input_id, text)` | rewrite a waiting input in place, as Enter on a recalled one at the prompt does; raises `LookupError` once it has run, was removed, or became the terminal's draft, and `ValueError` for blank text |
+| `remove_queued(input_id)` | drop a waiting input; raises `LookupError` once it has run or was removed. Removing one the terminal is editing ends the edit and leaves the edited text in the terminal's input, unsent |
 | `steer(text)` | send `text` to its running turn now, as steering at the prompt does; its model reads it at its next request. `False` when nothing takes it: no turn runs, or it is a `/command` or `!` shell line |
 | `watchers` | how many `watch()` calls have not stopped yet |
 | `watch()` | count a watcher, such as a browser showing it, until you call the function it returns; a watched session is never closed for being idle |
@@ -4225,7 +4243,7 @@ A `vllm` model retries each failed request up to 5 times, with exponential backo
 
 ## openrouter connection
 
-Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. Pax exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach Pax (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl-C cancels it. You can revoke the generated key on OpenRouter.
+Open `/model add`, choose `openrouter`, then choose **Sign in with browser** or **Enter API key**. Browser sign-in opens OpenRouter's [PKCE authorization flow](https://openrouter.ai/docs/use-cases/oauth-pkce) and receives an authorization code on a temporary loopback listener. Pax exchanges the code for a user-controlled API key over HTTPS. If the browser cannot reach Pax (for example over SSH), paste the final callback URL or authorization code into the terminal. If no browser opens, open the printed authorization URL manually. Login times out after five minutes; Ctrl+C cancels it. You can revoke the generated key on OpenRouter.
 
 Manual entry still accepts a key from https://openrouter.ai/keys in a masked prompt. After either method, select a model from the live catalog. Pax validates the key with `/api/v1/key` before fetching `/api/v1/models`. Cancelling before model selection leaves the saved connection unchanged.
 
@@ -4241,12 +4259,12 @@ into `/keys` or replace a plugin's saved-key picker.
 Open `/keys` to browse and manage saved API keys in a full-screen menu.
 Use A to add, Enter to replace a value, R to rename, and D to delete with
 confirmation. Values are masked and are not shown in previews. Changes save
-immediately; Esc or Ctrl-C closes the menu. Errors appear inside the menu.
+immediately; Esc or Ctrl+C closes the menu. Errors appear inside the menu.
 
 The compatibility command `/set api_key` prompts for a name and masked API key. Names are trimmed
 and uppercased automatically, so `my_vllm_key` becomes `MY_VLLM_KEY`. Use letters,
 numbers, and underscores, starting with a letter or underscore. Saving an existing
-name asks before replacing it. Ctrl-C or Ctrl-D cancels without saving. Do not put
+name asks before replacing it. Ctrl+C or Ctrl+D cancels without saving. Do not put
 the secret on the command line.
 
 Consumers store a key's name, not its value, and look it up each time they
@@ -4322,7 +4340,7 @@ controls are never replayed as conversation text.
 `/theme` without arguments opens a searchable picker with a sample conversation,
 including Markdown, thinking, tool output, code, warnings, errors, and the input
 area. Browsing previews colours without applying them; Enter confirms, and Esc
-or Ctrl-C cancels. Choices are `default` and `termflow.themes.PALETTES`.
+or Ctrl+C cancels. Choices are `default` and `termflow.themes.PALETTES`.
 `default` preserves Pax's existing appearance without changing terminal colours
 on startup or exit; on a light terminal background, which Pax asks the terminal for
 at startup, it uses darker shades that reach WCAG AA contrast on white, cream and light grey. `/theme default` restores it after a palette selection.
@@ -4364,7 +4382,7 @@ from the model's next request, even in a running turn. Space cycles fields with
 multiple declared choices in order and wraps to the first; an unset or unlisted
 value starts at the first choice. Action and submenu rows, free-text fields, and
 single-choice fields do not cycle. `r` resets a field. This field list is not
-searchable. Esc, Ctrl-C, or **Save & close** goes back. Enter opens a picker for
+searchable. Esc, Ctrl+C, or **Save & close** goes back. Enter opens a picker for
 fixed choices; numeric fields accept typed values, and empty input resets.
 
 The built-in model catalog and `/set model` completions include
@@ -4532,7 +4550,7 @@ case-insensitive and includes text instructions in multimodal prompts.
 ## Image input
 
 Clipboard and image-path paste are part of the shell's prompt editor, not a plugin
-API. Ctrl-V or Alt-V attaches clipboard images; bracketed paste of existing image
+API. Ctrl+V or Alt+V attaches clipboard images; bracketed paste of existing image
 paths attaches local files. See [Pasting images](docs/reference.md#pasting-images) for
 platform requirements and limits.
 

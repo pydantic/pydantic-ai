@@ -29,6 +29,7 @@ with try_import() as imports_successful:
     )
     from pydantic_ai.providers.azure import AzureProvider
     from pydantic_ai.providers.openai import OpenAIProvider
+    from pydantic_ai.providers.openai_codex import OpenAICodexProvider
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='openai not installed'),
@@ -123,9 +124,24 @@ REASONING_CASES = [
     ReasoningCase(model='gpt-5.3-codex', can_be_disabled=True),
     ReasoningCase(model='gpt-5.3-mini', can_be_disabled=True),
     # gpt-5.4 family: opt-in reasoning, and accepts `reasoning.context='all_turns'`
-    ReasoningCase(model='gpt-5.4', can_be_disabled=True, supports_context=True),
-    ReasoningCase(model='gpt-5.4-mini', can_be_disabled=True, supports_context=True),
-    ReasoningCase(model='gpt-5.4-nano', can_be_disabled=True, supports_context=True),
+    ReasoningCase(
+        model='gpt-5.4',
+        can_be_disabled=True,
+        supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-5.4-mini',
+        can_be_disabled=True,
+        supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
+    ),
+    ReasoningCase(
+        model='gpt-5.4-nano',
+        can_be_disabled=True,
+        supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
+    ),
     # -pro and gpt-5.1 codex variants: always reason, no `effort='none'`
     ReasoningCase(model='gpt-5.1-codex', enabled_by_default=True),
     ReasoningCase(model='gpt-5.1-codex-max', enabled_by_default=True),
@@ -182,6 +198,7 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
         supports_max_reasoning_effort=True,
         supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
     ),
     ReasoningCase(
         model='gpt-5.6-terra',
@@ -191,6 +208,7 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
         supports_max_reasoning_effort=True,
         supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
     ),
     ReasoningCase(
         model='gpt-5.6-luna',
@@ -200,6 +218,7 @@ REASONING_CASES = [
         supports_minimal_reasoning_effort=False,
         supports_max_reasoning_effort=True,
         supports_context=True,
+        chat_function_tools_require_reasoning_off=True,
     ),
     # gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra: reason by default with no `effort='none'`;
     # carry over `reasoning.mode` and `reasoning.context='all_turns'` from GPT-5.6.
@@ -308,7 +327,7 @@ def test_reasoning_matrix(case: ReasoningCase):
     assert profile.get('thinking_always_enabled', False) is (case.enabled_by_default and not case.can_be_disabled)
     assert profile.get('openai_reasoning_efforts') == (None if case.efforts is None else frozenset(case.efforts))
 
-    # OpenAI-only, verified live on the GPT-6 families; gateways reuse the shared profile unverified.
+    # OpenAI-only, verified live on the GPT-5.4, GPT-5.6 and GPT-6 families; gateways reuse the shared profile unverified.
     assert profile.get('openai_chat_function_tools_require_reasoning_off', False) is False
     assert (
         provider_profile.get('openai_chat_function_tools_require_reasoning_off', False)
@@ -323,18 +342,103 @@ def test_openai_compatible_endpoints_fall_back_from_max_effort():
     assert profile.get('openai_responses_supports_max_reasoning_effort', False) is False
 
 
+@pytest.mark.parametrize('model_name', ['gpt-5-search-api', 'gpt-5-search-api-2025-10-14'])
+def test_search_api_has_no_reasoning_effort_only_on_openai_provider(model_name: str):
+    """OpenAI's API rejects any `reasoning_effort` on these models, so `OpenAIProvider` pins no accepted effort.
+
+    Reasoning stays always on, which keeps sampling parameters dropped, as the model rejects `temperature` too. The
+    shared profile keeps the `'gpt-5'` efforts, as the hosts that reuse it aren't verified.
+    """
+    provider_profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get('openai_reasoning_efforts') == frozenset()
+    assert provider_profile.get('thinking_always_enabled') is True
+    shared_profile = openai_model_profile(model_name)
+    assert isinstance(shared_profile, dict)
+    assert shared_profile.get('openai_reasoning_efforts') == frozenset(('minimal', 'low', 'medium', 'high'))
+
+
+@pytest.mark.parametrize(
+    ('model_name', 'delegates'),
+    [
+        ('gpt-6.1-terra', True),
+        ('gpt-5.5', True),
+        ('gpt-4o', True),
+        ('gpt-oss-120b', False),
+        ('o3', False),
+        ('claude-opus-5-5', False),
+    ],
+)
+def test_delegates_unprompted(model_name: str, delegates: bool):
+    """Only OpenAI's GPT models delegate unprompted, not gpt-oss or other models served through the OpenAI API.
+
+    The flags behind `Coder`'s `'max'` guidance go to the same models.
+    """
+    profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(profile, dict)
+    assert profile.get('delegates_unprompted', False) is delegates
+    assert profile.get('reinterprets_malformed_inputs', False) is delegates
+    assert profile.get('omits_handoff_evidence', False) is delegates
+    assert profile.get('ignores_stated_runtime_constraints', False) is delegates
+
+
+@pytest.mark.parametrize(
+    'key', ['openai_chat_streaming_repeats_usage_totals', 'openai_chat_completion_tokens_omit_reasoning']
+)
 @pytest.mark.parametrize(
     'model_name,expected',
     [('gemini-3.1-flash-lite', True), ('google/gemini-3.1-flash-lite', False), ('gpt-5-mini', False)],
 )
-def test_cumulative_stream_usage_only_on_openai_provider_gemini_names(model_name: str, expected: bool):
-    """The shared profile stays off, as the hosts that reuse it aren't verified to repeat running totals."""
+def test_gemini_usage_flags_only_on_openai_provider_gemini_names(key: str, model_name: str, expected: bool):
+    """The shared profile stays off, as the hosts that reuse it aren't verified to report usage the way Gemini does."""
     provider_profile = OpenAIProvider.model_profile(model_name)
     assert isinstance(provider_profile, dict)
-    assert provider_profile.get('openai_chat_streaming_repeats_usage_totals', False) is expected
+    assert provider_profile.get(key, False) is expected
     shared_profile = openai_model_profile(model_name)
     assert isinstance(shared_profile, dict)
-    assert shared_profile.get('openai_chat_streaming_repeats_usage_totals', False) is False
+    assert shared_profile.get(key, False) is False
+
+
+@pytest.mark.parametrize(
+    'model_name,expected',
+    [
+        # OpenAI's API rejects `minimal` with a 400 (verified live on both APIs, 2026-11).
+        ('gpt-5.1', False),
+        ('gpt-5.1-2025-11-13', False),
+        ('gpt-5.2', False),
+        ('gpt-5.3-codex', False),
+        ('gpt-5.4', False),
+        ('gpt-5.4-mini', False),
+        ('gpt-5.4-nano', False),
+        ('gpt-5.5', False),
+        ('gpt-5.5-2026-04-23', False),
+        # Covered by the prefix only: no key reaches them.
+        ('gpt-5.3-codex-spark', False),
+        ('gpt-5.5-cyber-preview', False),
+        # The original GPT-5 family accepts `minimal`.
+        ('gpt-5', True),
+        ('gpt-5-mini', True),
+        ('gpt-5-nano', True),
+    ],
+)
+def test_minimal_reasoning_effort_off_only_on_openai_provider_gpt_5_1_to_5_5(model_name: str, expected: bool):
+    """The shared profile stays on, as OpenRouter accepts `minimal` for these models (verified live, 2026-11).
+
+    `OpenAICodexProvider` keeps it on too: the Codex backend is unverified, and its dialect profile restates the
+    shared one over `OpenAIProvider`'s.
+
+    Not a VCR test: the claim is the resolved flag per provider and model id, which no single recorded request
+    exposes. `test_openai_responses_gpt_5_4_minimal_thinking_uses_low_effort` records the request it changes.
+    """
+    provider_profile = OpenAIProvider.model_profile(model_name)
+    assert isinstance(provider_profile, dict)
+    assert provider_profile.get('openai_supports_minimal_reasoning_effort') is expected
+    shared_profile = openai_model_profile(model_name)
+    assert isinstance(shared_profile, dict)
+    assert shared_profile.get('openai_supports_minimal_reasoning_effort') is True
+    codex_profile = OpenAICodexProvider.model_profile(model_name)
+    assert isinstance(codex_profile, dict)
+    assert codex_profile.get('openai_supports_minimal_reasoning_effort') is True
 
 
 class TestEncryptedReasoningContent:

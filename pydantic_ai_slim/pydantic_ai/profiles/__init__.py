@@ -25,6 +25,7 @@ __all__ = [
     'ModelProfile',
     'ModelProfileSpec',
     'ToolAdditionMode',
+    'CompactionInstructionsMode',
     'ToolDeferralMode',
     'DEFAULT_PROFILE',
     'DEFAULT_PROMPTED_OUTPUT_TEMPLATE',
@@ -38,6 +39,8 @@ __all__ = [
 
 ToolDeferralMode: TypeAlias = Literal['standalone', 'with_tool_search']
 ToolAdditionMode: TypeAlias = Literal['by_reference', 'with_definitions']
+CompactionInstructionsMode: TypeAlias = Literal['replaces_prompt', 'system_prompt']
+"""How a model's on-demand compaction takes instructions; see [`ModelProfile.compaction_instructions`][pydantic_ai.profiles.ModelProfile.compaction_instructions]."""
 
 
 DEFAULT_PROMPTED_OUTPUT_TEMPLATE = dedent(
@@ -71,6 +74,9 @@ class ModelDeprecation:
 
     replacement: str | None = None
     """The model the provider recommends instead, or `None` if it names none."""
+
+    rerouted_to: str | None = None
+    """The model the provider answers this model's requests with from `retirement_date`, or `None` if they fail then."""
 
 
 class ModelProfile(TypedDict, total=False):
@@ -463,6 +469,60 @@ class ModelProfile(TypedDict, total=False):
     Anthropic `system` entry, for one — which has no message-level existence to insert before.
     """
 
+    delegates_unprompted: bool
+    """Whether the model hands work to sub-agents the user didn't ask for. Default: `False`.
+
+    A sub-agent starts from a fresh context and explores the task again, so unrequested delegation multiplies tool
+    calls and cost. Instructions that tell a model not to delegate unasked can be sent only to the models with this
+    key, by reading it from the profile of the model handling the request: see
+    [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness `Coder` does.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series. Evidence: in a Terminal-Bench
+    ablation of `Coder`'s instructions (24 tasks, one trial each, November 2026), GPT-6.1 Terra without its instruction
+    against unrequested delegation delegated in all 24 tasks (524 `delegate_task` calls, against none with it), making
+    about 9 times as many tool calls at about 5.5 times the cost. Claude Sonnet 5.5 didn't delegate with or without it.
+    """
+
+    reinterprets_malformed_inputs: bool
+    """Whether the model explains away inputs that look inconsistent instead of checking whether the task classifies
+    them (for example as malformed or rejected). Default: `False`.
+
+    Instructions that tell a model to look for such a rule before assuming it misread can be sent only to the models
+    with this key: see [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI
+    Harness `Coder` does, at `'max'` autonomy.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series, together with
+    `omits_handoff_evidence` and `ignores_stated_runtime_constraints`: the three were measured only together. Evidence:
+    on Harness-Bench SWE81 with GPT-6.2 Sol at `'max'` autonomy, one run each (November 2026), `Coder` with the three
+    instructions scored 53.2 against 51.0 without them (measured with the classify sentence in place of the shared
+    misread check; both are sent here), within that benchmark's single-run noise of about 5.6 points. So the evidence is
+    weak, and the instructions are sent only at `'max'`, where nobody reviews the result before it's used.
+    """
+
+    omits_handoff_evidence: bool
+    """Whether the model's notes or handoffs leave out the evidence a reviewer needs, such as the verification
+    commands it ran and their results. Default: `False`.
+
+    Instructions that ask a model for a structured handoff can be sent only to the models with this key: see
+    [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness `Coder` does, at
+    `'max'` autonomy.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series, together with
+    `reinterprets_malformed_inputs`: see its docstring for the evidence.
+    """
+
+    ignores_stated_runtime_constraints: bool
+    """Whether the model ignores constraints a task states on where or how its code will run, such as a restricted
+    interpreter or a specific Python version, when choosing language features. Default: `False`.
+
+    Instructions that tell a model to find out what's allowed before writing code can be sent only to the models with
+    this key: see [Instructions for specific models](../agent.md#model-specific-instructions). Pydantic AI Harness
+    `Coder` does, at `'max'` autonomy.
+
+    Set by `openai_model_profile` for OpenAI's GPT models, not gpt-oss or the o-series, together with
+    `reinterprets_malformed_inputs`: see its docstring for the evidence.
+    """
+
     ignore_streamed_leading_whitespace: bool
     """Whether to ignore leading whitespace when streaming a response. Default: `False`.
 
@@ -483,6 +543,24 @@ class ModelProfile(TypedDict, total=False):
     Set it explicitly for custom or local models, e.g. `profile={'context_window': 128_000}`.
     """
 
+    supports_compaction_on_demand: bool
+    """Whether the model can compact a conversation when asked, with [`Model.compact_messages`][pydantic_ai.models.Model.compact_messages]. Default: `False`.
+
+    [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction] compacts only for a model with it. It's set for the
+    OpenAI Responses API on OpenAI and Azure OpenAI, and for the Claude models Anthropic's Messages API compacts
+    on demand: see Anthropic's [on-demand compaction docs](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand)
+    for the models.
+    """
+
+    compaction_instructions: CompactionInstructionsMode | None
+    """How the model's on-demand compaction takes instructions, such as a focus for the summary. Default: `None` (it takes none).
+
+    - `'replaces_prompt'`: the instructions replace the provider's summarization prompt, so a focus is sent inside
+      a full summarization prompt. Anthropic works this way.
+    - `'system_prompt'`: the instructions are the system prompt of the compaction request, in place of the agent's,
+      so the request no longer starts with the prefix the provider cached for the conversation. OpenAI works this way.
+    """
+
     deprecation: ModelDeprecation | None
     """The provider's deprecation of this model on the API the model class sends requests to. Default: `None`.
 
@@ -490,8 +568,11 @@ class ModelProfile(TypedDict, total=False):
     Set by [`AnthropicProvider`][pydantic_ai.providers.anthropic.AnthropicProvider] and
     [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] from the providers' deprecation pages, except
     where the model is served by another platform with a schedule of its own: the Amazon Bedrock and Google Cloud
-    Vertex AI clients of `AnthropicModel`, the Azure client of the OpenAI models, and the Codex backend. Set it to
-    `None` to stop the warning for one model, or to a `ModelDeprecation` of your own for a model you serve elsewhere.
+    Vertex AI clients of `AnthropicModel`, the Azure client of the OpenAI models, and the Codex backend. Set by
+    [`GoogleModel`][pydantic_ai.models.google.GoogleModel] and
+    [`GoogleInteractionsModel`][pydantic_ai.models.google_interactions.GoogleInteractionsModel] from the Gemini API's or
+    Google Cloud's deprecation page, whichever its client reaches. Set it to `None` to stop the warning for one model, or to a `ModelDeprecation` of
+    your own for a model you serve elsewhere.
     See [Deprecated models](../models/overview.md#deprecated-models).
     """
 
@@ -582,6 +663,7 @@ _LEGACY_PROVIDER_PROFILE_KEYS: dict[str, str] = {
     'openai_supports_forced_tool_choice_with_thinking': 'supports_forced_tool_choice_with_thinking',
     'openrouter_supports_forced_tool_choice_with_thinking': 'supports_forced_tool_choice_with_thinking',
     'openai_reasoning_enabled_by_default': 'thinking_enabled_by_default',
+    'anthropic_supports_on_demand_compaction': 'supports_compaction_on_demand',
     'openai_responses_tool_call_ids_are_response_scoped': 'tool_call_ids_are_response_scoped',
 }
 """Provider-prefixed profile keys that moved to `ModelProfile`, mapped to their current spelling."""
@@ -669,6 +751,8 @@ DEFAULT_PROFILE: ModelProfile = {
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     'context_window': None,
+    'supports_compaction_on_demand': False,
+    'compaction_instructions': None,
     'tool_call_id_length': None,
     'tool_call_ids_are_response_scoped': False,
     'tool_deferral_mode': None,

@@ -33,7 +33,15 @@ from pydantic_ai.capabilities import (
     WindowsWorkspace,
     WrapperCapability,
 )
-from pydantic_ai.messages import BinaryContent, ModelMessage, ModelRequest, ModelResponse, UserContent, UserPromptPart
+from pydantic_ai.messages import (
+    Authority,
+    BinaryContent,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    UserContent,
+    UserPromptPart,
+)
 from pydantic_ai.models import Model, ModelRequestContext, ModelResolutionContext, infer_model
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.output import OutputSpec
@@ -50,9 +58,9 @@ from pydantic_ai_harness.step_persistence import (
     ToolEffectRecord,
 )
 from pydantic_ai_harness.step_persistence.conversations import (
-    ConversationConflict,
     ConversationSummary,
-    SqliteConversationStore,
+    SessionConflict,
+    SqliteSessionStore,
     ensure_inactive,
 )
 from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks
@@ -63,6 +71,7 @@ from pydantic_ai_pax.runtime.project_identity import ProjectIdentity, git_checko
 from pydantic_ai_pax.runtime.project_instructions import ProjectInstructions
 from pydantic_ai_pax.runtime.repl_state import ReplStates
 from pydantic_ai_pax.runtime.task_prompts import TASK_PROMPT, TaskPrompt
+from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust
 from pydantic_ai_pax.ui import telemetry
 
 DepsT = TypeVar('DepsT')
@@ -86,6 +95,22 @@ def session_context(session_id: str) -> Generator[None]:
         yield
     finally:
         _CURRENT_SESSION_ID.reset(token)
+
+
+_FOLDER_AUTHORITY: ContextVar[tuple[str, Authority] | None] = ContextVar('pax_folder_authority', default=None)
+"""The running session's folder (`Session.workspace`) and the `authority` its `LocalWorkspace` gives its files."""
+
+
+async def folder_authority(directory: str | Path) -> Authority:
+    """The `authority` the running session gives the files in `directory`, when `directory` is the session's folder.
+
+    `'operator'` for any other directory, a subfolder included, and outside a session's run.
+    """
+    if (folder := _FOLDER_AUTHORITY.get()) is None:
+        return 'operator'
+    session_folder, authority = folder
+    resolved = await to_thread.run_sync(Path(directory).resolve)
+    return authority if str(resolved) == session_folder else 'operator'
 
 
 class SessionStepStore(SqliteStepStore):
@@ -124,7 +149,7 @@ async def _unless_locked(
         logging.getLogger(__name__).info('Skipped saving a %s: %s', kind, exc)
 
 
-def step_store(conversations: SqliteConversationStore) -> SessionStepStore:
+def step_store(conversations: SqliteSessionStore) -> SessionStepStore:
     """Where runs over `conversations`, delegated tasks' included, capture their steps."""
     return SessionStepStore(database=conversations.database, max_snapshots_per_run=8)
 
@@ -444,13 +469,17 @@ def _command_env() -> dict[str, str]:
 
 
 def local_workspace(
-    configured: Sequence[AgentCapability[DepsT]], directory: str | Path, messages: Sequence[ModelMessage] = ()
+    configured: Sequence[AgentCapability[DepsT]],
+    directory: str | Path,
+    messages: Sequence[ModelMessage] = (),
+    *,
+    authority: Authority = 'operator',
 ) -> AgentCapability[DepsT] | None:
     """The workspace at `directory` that Pax adds beside `configured`; `None` when it adds none.
 
-    That is a `LocalWorkspace`, or a `WindowsWorkspace` on Windows. None is added when a capability loaded
-    up front supplies the workspace of a run continuing `messages`, such as a sandbox. When only a capability
-    function might, the local one defers to it.
+    That is a `LocalWorkspace`, or a `WindowsWorkspace` on Windows, whose files have `authority`. None is
+    added when a capability loaded up front supplies the workspace of a run continuing `messages`, such as a
+    sandbox. When only a capability function might, the local one defers to it.
     """
     if _supplies_workspace(configured, include_dynamic=False, messages=messages):
         return None
@@ -461,9 +490,9 @@ def local_workspace(
     )
     if _supplies_workspace(configured):
         # No id: a function's `LocalWorkspace` shares the default id and would replace this whole.
-        fallback = fallback_type(directory, env=_command_env(), id=None)
+        fallback = fallback_type(directory, env=_command_env(), id=None, authority=authority)
         return DynamicCapability[DepsT](lambda ctx: fallback)
-    return local(directory, env=_command_env())
+    return local(directory, env=_command_env(), authority=authority)
 
 
 def interrupted_history(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
@@ -489,11 +518,11 @@ def fork_summary(source: ConversationSummary) -> ConversationSummary:
     )
 
 
-def busy_conflict(summary: ConversationSummary) -> ConversationConflict | None:
+def busy_conflict(summary: ConversationSummary) -> SessionConflict | None:
     """Why `summary` cannot be continued here, when a live process runs it; `None` when none does."""
     try:
         ensure_inactive(summary)
-    except ConversationConflict as conflict:
+    except SessionConflict as conflict:
         return conflict
     return None
 
@@ -518,11 +547,11 @@ class Continuation:
 
     conversation_id: str
     """The one asked for, or the existing fork of it that `busy` sends the resume to."""
-    busy: ConversationConflict | None = None
+    busy: SessionConflict | None = None
     """Why the one asked for cannot be continued here, when `conversation_id` is an existing fork of it."""
 
 
-async def continuing_fork(conversations: SqliteConversationStore, source: ConversationSummary) -> Continuation | None:
+async def continuing_fork(conversations: SqliteSessionStore, source: ConversationSummary) -> Continuation | None:
     """When a live process runs `source`, the newest copy Pax made to continue it that no other process runs.
 
     Only those copies record `forked_from`; a fork the user asked for is theirs to open. `None` when nothing
@@ -628,7 +657,7 @@ class Session(Generic[DepsT, OutputT]):
         plugins: Sequence[AgentCapability[DepsT]] = (),
         message_history: Sequence[ModelMessage] = (),
         usage_limits: UsageLimits | None = None,
-        conversations: SqliteConversationStore | None = None,
+        conversations: SqliteSessionStore | None = None,
         workspace: Path | None = None,
         on_stream_event: Callable[[AgentStreamEvent], Awaitable[None]] | None = None,
         summary: ConversationSummary | None = None,
@@ -669,6 +698,13 @@ class Session(Generic[DepsT, OutputT]):
 
         A stock agent rebuilt for its plugins binds them too, so delegated tasks get them; otherwise each run
         gets them. Either way they are read on each request, so changing them does not rebuild the agent."""
+        self.trust: WorkspaceTrust | None = None
+        """Whether you trust `workspace`, which sets the `authority` of the `LocalWorkspace` Pax adds to each run.
+
+        `None` gives the folder's files `'operator'` authority, for a host that decides that itself.
+        """
+        self.resolve_trust: Callable[[Path], Awaitable[WorkspaceTrust]] | None = None
+        """Looks up the process-shared `WorkspaceTrust` when the session moves to another directory."""
         self.project_instructions: Callable[[], ProjectInstructions[DepsT] | None] = lambda: None
         """The project file's `instructions` you have not approved, added to each run as marked user-channel data."""
         self.resolve_model: ModelNameResolver = lambda name: name
@@ -876,7 +912,7 @@ class Session(Generic[DepsT, OutputT]):
         allow_other_workspace: bool,
         record: bool,
         unarchive: bool,
-        busy: ConversationConflict | None = None,
+        busy: SessionConflict | None = None,
     ) -> str:
         """Restore `conversation_id`, or a new fork of it when a live process runs it.
 
@@ -1071,7 +1107,7 @@ class Session(Generic[DepsT, OutputT]):
         cell = MontyCell(code=code)
         self._running = True
         try:
-            with session_context(self.summary.id):
+            with session_context(self.summary.id), self._folder_authority():
                 _, capabilities = self._bind(await self._models())
                 self._add_local_workspace(capabilities)
                 await self.agent.run(
@@ -1100,7 +1136,7 @@ class Session(Generic[DepsT, OutputT]):
         if self.delegations is None:
             raise RuntimeError('This session delegates no tasks.')
         script = TaskPrompt(agent_name=agent_name, task_id=task_id, text=text)
-        with session_context(self.summary.id), self.delegations.bind():
+        with session_context(self.summary.id), self._folder_authority(), self.delegations.bind():
             run_model, capabilities = self._bind(await self._models())
             capabilities.append(script)
             self._add_local_workspace(capabilities)
@@ -1119,10 +1155,24 @@ class Session(Generic[DepsT, OutputT]):
         if script.refused is not None:
             raise ValueError(script.refused)
 
+    @contextmanager
+    def _folder_authority(self) -> Generator[None]:
+        """Keep the folder and level that `_add_local_workspace` sets for `folder_authority` to one run."""
+        token = _FOLDER_AUTHORITY.set(_FOLDER_AUTHORITY.get())
+        try:
+            yield
+        finally:
+            _FOLDER_AUTHORITY.reset(token)
+
     def _add_local_workspace(self, capabilities: list[AgentCapability[DepsT]]) -> bool:
-        """Add Pax's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did."""
+        """Add Pax's `LocalWorkspace` to a run's `capabilities` unless a configured one supplies it; whether it did.
+
+        It reads `trust` once, for that workspace and for the run's `folder_authority`, inside `_folder_authority`.
+        """
         configured = [*(agent_capabilities(self.agent) or ()), *self.plugins]
-        if (local := local_workspace(configured, self.workspace, self._messages)) is None:
+        authority: Authority = 'operator' if self.trust is None else self.trust.authority
+        _FOLDER_AUTHORITY.set((self.workspace, authority))
+        if (local := local_workspace(configured, self.workspace, self._messages, authority=authority)) is None:
             return False
         capabilities.append(local)
         return True
@@ -1171,7 +1221,7 @@ class Session(Generic[DepsT, OutputT]):
         submitted = [ModelRequest(parts=[UserPromptPart(content)])] if content is not None else []
         self._running = True
         self._accepting_steering = True
-        with session_context(self.summary.id):
+        with session_context(self.summary.id), self._folder_authority():
             try:
                 previous = self._messages
                 run_id = str(uuid4())

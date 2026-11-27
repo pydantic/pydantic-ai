@@ -18,7 +18,7 @@ import re
 import subprocess
 import sys
 import warnings
-from collections.abc import Callable, Generator
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
@@ -68,6 +68,7 @@ from pydantic_ai.toolsets._instruction_collection import (
     make_contribution,
 )
 from pydantic_ai.usage import RunUsage
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 from .conftest import IsStr, try_import
@@ -90,6 +91,8 @@ with try_import() as imports_successful:
     from fastmcp.exceptions import McpError, ToolError
     from fastmcp.prompts import Message
     from fastmcp.server.dependencies import get_http_request
+    from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+    from fastmcp.tools import Tool as FastMCPTool
 
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
@@ -98,6 +101,8 @@ with try_import() as imports_successful:
 
     from pydantic_ai import _mcp, mcp as mcp_module
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
+
+    from .mcp_server import parameterized_prompt
 
     Annotations = mcp_types.Annotations
     AudioContent = mcp_types.AudioContent
@@ -600,10 +605,10 @@ def _register_prompts(server: FastMCP[None]) -> None:
         """A simple prompt template."""
         return 'This is a simple prompt'
 
-    @server.prompt()
-    def parameterized_prompt(name: str, topic: str) -> str:
-        """A prompt template with parameters."""
-        return f"Hello {name}, let's talk about {topic}!"
+    # Defined in `tests/mcp_server.py`, which doesn't postpone annotations: before 4.2.6, FastMCP
+    # reads a postponed `str` annotation as the string `'str'` and appends a JSON-schema hint to the
+    # argument's description (https://github.com/PrefectHQ/fastmcp/issues/5318).
+    server.prompt(parameterized_prompt)
 
     @server.prompt()
     def annotated_text_prompt() -> list[Message]:
@@ -787,6 +792,61 @@ class TestMCPToolsetIntegration:
             assert {'echo', 'add', 'boom'} <= set(tools_first)
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
+
+    async def test_tools_list_changed_during_list_tools_is_not_lost(self):
+        """A tools `list_changed` notification that arrives while `tools/list` is in flight isn't lost.
+
+        The response was produced before the change, so caching it would keep the old tool list until the
+        next notification. The in-flight caller still gets that response, and the next `list_tools()` fetches
+        the changed list.
+        """
+        server: FastMCP[None] = FastMCP('list_changed_server')
+        list_produced = anyio.Event()
+        release_list = anyio.Event()
+
+        class HoldListTools(Middleware):
+            async def on_list_tools(
+                self,
+                context: MiddlewareContext[mcp_types.ListToolsRequest],
+                call_next: CallNext[mcp_types.ListToolsRequest, Sequence[FastMCPTool]],
+            ) -> Sequence[FastMCPTool]:
+                tools = await call_next(context)
+                # Hold only the first listing: the server also lists its tools to handle the tool call below.
+                if not list_produced.is_set():
+                    list_produced.set()
+                    await release_list.wait()
+                return tools
+
+        server.add_middleware(HoldListTools())
+
+        async def added_tool() -> None:
+            """Added while the first listing is in flight."""
+
+        @server.tool()
+        async def add_tool(ctx: Context) -> str:
+            server.add_tool(added_tool)
+            await ctx.send_notification(mcp_types.ToolListChangedNotification())
+            return 'done'
+
+        toolset = MCPToolset(server)
+        in_flight: list[list[str]] = []
+
+        async def list_tools_in_flight() -> None:
+            in_flight.append([tool.name for tool in await toolset.list_tools()])
+
+        async with toolset:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(list_tools_in_flight)
+                try:
+                    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                        await list_produced.wait()
+                    assert await toolset.direct_call_tool('add_tool', {}) == 'done'
+                finally:
+                    # Unblock the held listing even when the test fails, so the task group can drain.
+                    release_list.set()
+            assert in_flight == [['add_tool']]
+
+            assert [tool.name for tool in await toolset.list_tools()] == ['add_tool', 'added_tool']
 
     async def test_get_tools_hides_app_only_tools(self, run_context: RunContext):
         """MCP Apps (SEP-1865) tools whose `_meta.ui.visibility` leaves out `"model"` are hidden from the model."""
@@ -1674,20 +1734,8 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
                     name='parameterized_prompt',
                     description='A prompt template with parameters.',
                     arguments=[
-                        PromptArgument(
-                            name='name',
-                            # FastMCP generates this text and has reworded it across releases; pin only
-                            # that the argument's JSON schema is conveyed.
-                            description=IsStr(regex=r'.*\{"type":"string"\}.*'),
-                            required=True,
-                        ),
-                        PromptArgument(
-                            name='topic',
-                            # FastMCP generates this text and has reworded it across releases; pin only
-                            # that the argument's JSON schema is conveyed.
-                            description=IsStr(regex=r'.*\{"type":"string"\}.*'),
-                            required=True,
-                        ),
+                        PromptArgument(name='name', description='Who to greet.', required=True),
+                        PromptArgument(name='topic', description='What to talk about.', required=True),
                     ],
                     metadata={'fastmcp': {'tags': []}},
                 ),

@@ -509,11 +509,13 @@ async def test_run_context_serialization_is_exhaustive() -> None:
         'capabilities',  # live capability objects; `active_capability_ids` crosses as a snapshot instead
         'root_capability',  # live capability chain, reattached from the worker's agent on load
         'pending_messages',  # live run queue; replaced by an `EnqueueGuard` on load
+        '_compaction_requests',  # live run state; `request_compaction` raises inside a child task
         'messages',  # full history would ride in every child task payload
         'prompt',  # multi-modal content would ride in every child task payload
         'validation_context',  # arbitrary user object; rebuilt from the worker's agent on load
         'model_settings',  # only set for model requests, which receive it as their own parameter
         '_mcp_tool_defs_cache',  # run-local cache read and written workflow-side
+        '_appended_messages',  # run-local record of the history, kept workflow-side
         '_event_stream_buffer',  # live run event buffer; child task events cross as recorded effects
         '_pending_immediate_dispatches',  # live workflow-side event deduplication state
         '_event_stream_replacements',  # live workflow-side legacy-replacement state
@@ -524,6 +526,7 @@ async def test_run_context_serialization_is_exhaustive() -> None:
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker's agent
         'workspace',  # live facade; only its ref crosses, as `workspace_ref`
         '_run_held_toolsets',  # a child task may run in another process, so it enters its own toolsets
+        '_output_submitter',  # live view of the run's output pipeline; a child task can't submit the output
         '_dispatched_tool_name',  # names a tool in the live `tool_manager`, which a child task doesn't have
     }
     carried_only_when_set = {

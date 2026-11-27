@@ -59,6 +59,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelRequest,
     ModelResponse,
+    ModelResponseOrigin,
     ModelResponseStreamEvent,
 )
 from pydantic_ai.models import (
@@ -83,6 +84,7 @@ from pydantic_ai.workspaces import Workspace
 from pydantic_ai.workspaces.workspace import workspace_layers
 
 from .. import _usage_attribution
+from .._run_context import durable_unit_scope, in_durable_unit
 from ..models.wrapper import serving_wrapper_scope
 from ._capability_operation import (
     CapabilityBoundOperation,
@@ -127,8 +129,6 @@ from ._operation_backend import (
     BoundDurableOperation,
     DurableOperationBackend,
     RegisteredOperationBackend,
-    durable_unit_scope,
-    in_durable_unit,
 )
 from ._runtime_toolsets import (
     cancellation_token_unsupported_error,
@@ -340,6 +340,20 @@ def _as_capability(value: object, capability: AbstractCapability[Any]) -> object
     if isinstance(value, RunContext):
         return replace(cast(RunContext[Any], value), _capability=capability)
     return value
+
+
+def _project_request_context(args: tuple[Any, ...], kwargs: dict[str, Any]) -> tuple[tuple[Any, ...], dict[str, Any]]:
+    """Replace a model request context among the arguments with its projection, which can cross a durable boundary."""
+    request_context = next(
+        (value for value in (*args, *kwargs.values()) if isinstance(value, ModelRequestContext)), None
+    )
+    if request_context is None:
+        return args, kwargs
+    projection = ModelRequestContextProjection.from_context(request_context)
+    return (
+        tuple(projection if value is request_context else value for value in args),
+        {key: projection if value is request_context else value for key, value in kwargs.items()},
+    )
 
 
 def _operation_capability_id(capability: AbstractCapability[Any]) -> str | None:
@@ -781,13 +795,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             kwargs = {key: _as_capability(value, capability) for key, value in kwargs.items()}
             return await bind_declaration_body(declaration, capability)(*args, **kwargs)
 
-        request_context = next(
-            (value for value in (*args, *kwargs.values()) if isinstance(value, ModelRequestContext)), None
-        )
-        if request_context is not None:
-            projection = ModelRequestContextProjection.from_context(request_context)
-            args = tuple(projection if value is request_context else value for value in args)
-            kwargs = {key: projection if value is request_context else value for key, value in kwargs.items()}
+        args, kwargs = _project_request_context(args, kwargs)
         arguments = bind_arguments(declaration, ctx=ctx, args=args, kwargs=kwargs)
         model = ctx.model
         if not isinstance(model, Model):
@@ -1003,6 +1011,15 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     @abstractmethod
     def in_durable_context(self) -> bool:
         """Whether execution is currently inside this engine's durable container (workflow or flow)."""
+
+    @property
+    def in_durable_unit(self) -> bool:
+        """Whether execution is currently inside a unit whose result this engine records, like a step or task.
+
+        Engines whose units the user can also create around a tool, like a DBOS step or Prefect task,
+        check for those too.
+        """
+        return in_durable_unit()
 
     def _register_toolsets(self, agent: AbstractAgent[AgentDepsT, Any]) -> None:
         """Wrap the agent's leaf toolsets in engine wrappers and index them by toolset `id`."""
@@ -1813,6 +1830,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     model_settings=request.model_settings,
                     model_request_parameters=request.model_request_parameters,
                     run_context=ctx,
+                    attempt=request.attempt,
                 )
             )
 
@@ -1824,6 +1842,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     model_settings=request.model_settings,
                     model_request_parameters=request.model_request_parameters,
                     run_context=ctx,
+                    attempt=request.attempt,
                 )
             )
 
@@ -1966,11 +1985,23 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         streamed: StreamedResponse | None = None
         produced_output = False
 
+        run_id = params.run_context.run_id
+        origin = (
+            None
+            if run_id is None
+            else ModelResponseOrigin(
+                run_id=run_id,
+                run_step=params.run_context.run_step,
+                attempt=params.attempt,
+                execution_attempt=self.get_durable_operation_backend().execution_attempt(),
+            )
+        )
+
         async def events(stream: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
             nonlocal produced_output
             async for event in stream:
                 produced_output = True
-                yield event
+                yield event if origin is None else replace(event, origin=origin)
 
         try:
             async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (

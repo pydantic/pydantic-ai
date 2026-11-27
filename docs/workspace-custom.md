@@ -126,9 +126,15 @@ Pydantic AI shows it to the model by level:
 To do the same in your own capability, send the text in a
 [capability part](capabilities/custom.md#capability-parts) whose source is
 [`await WorkspaceSource.from_workspace(workspace, path)`][pydantic_ai.messages.WorkspaceSource.from_workspace].
+Pass `label=` to show the model a shorter path, such as a file name without a private directory: the authority still
+comes from `path`.
 
 - What a tool returns, such as a file `read_file` read, is tool output whatever the authority.
-- Built-in capabilities that load workspace files into instructions check `authority` as they adopt it.
+- Built-in capabilities that load workspace files into instructions check `authority` as they adopt it. In
+  Pydantic AI Harness, [`RepoContext`](harness/repo-context.md#trust) sends instruction files below `'operator'`
+  as something other than instructions, [`Memory`](harness/memory.md) attributes a snapshot read from such a file
+  to its author, [`Skills`](harness/skills.md) offers such skills through `list_skills` instead of the catalog, and
+  [`SubAgents`](harness/subagents.md) skips such disk definitions.
 - Harness workspaces such as [`E2BSandbox`](harness/e2b-sandbox.md),
   [`DockerContainer`](harness/docker-container.md) and [`SSHWorkspace`](harness/ssh-workspace.md) take the
   same `authority` and `path_authority`. Their paths are on the sandbox, container or host, so `~` isn't
@@ -168,6 +174,12 @@ agent = Agent(
 - A file outside the working directory is at `'none'`, unless a `path_authority` entry contains it.
 - A symlinked file gets the lower of the levels where its path is written and where it leads.
 - Paths also match ignoring case, keeping the lower level, so `Vendor/` can't escape a lower `vendor/`.
+
+[`lowest_authority_under(workspace, directory)`][pydantic_ai.workspaces.lowest_authority_under] gives the lowest
+level of any path at or under a directory, for a capability that reads a whole directory at one level, such as a
+delegate rooted there. It's the directory's own level, lowered by every `path_authority` entry at or under it. Links
+under the directory that no entry names aren't followed, so name a linked tree in `path_authority`, or don't rely on
+this for one.
 
 ## Writing a backend
 

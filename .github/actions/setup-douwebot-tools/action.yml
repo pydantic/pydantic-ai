@@ -18,8 +18,12 @@ runs:
         echo "image=${ImageOS}-${ImageVersion}" >> "$GITHUB_OUTPUT"
         echo "python=$(python3 -c 'import sys; print(".".join(map(str, sys.version_info[:3])))')" >> "$GITHUB_OUTPUT"
 
+    # A pull request run searches its own `refs/pull/<number>/merge` cache scope first, and the PR's
+    # own `CI` run can write there. These tools run beside provider keys, so restore only on `main`,
+    # whose scope only `main` runs write.
     - name: Restore fallback tools
       id: restore
+      if: github.ref == 'refs/heads/main'
       uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9 # v6.1.0
       with:
         path: ${{ runner.temp }}/douwebot-tools
@@ -41,7 +45,6 @@ runs:
         npm install --prefix "$tools/opencode" @opencode/cli@2.2.5
         python3 -m pip install --quiet --target "$tools/python" 'pydantic==2.13.4'
 
-    # A pull_request_target run can restore the default-branch cache but cannot populate it.
     # Save only on push, before a reviewer processes any PR content.
     - name: Save fallback tools
       if: inputs.save-cache == 'true' && github.event_name == 'push' && steps.restore.outputs.cache-hit != 'true'

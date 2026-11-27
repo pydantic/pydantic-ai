@@ -45,7 +45,7 @@ from pydantic_ai.durable_exec import (
     capability_operation_result_type,
     revalidate_function_call,
 )
-from pydantic_ai.durable_exec._toolset import opts_out_of_durable_unit
+from pydantic_ai.durable_exec._toolset import dump_json_function_args, opts_out_of_durable_unit
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -83,6 +83,7 @@ __all__ = (
     'WorkspaceCallParams',
     'WorkspaceCallResult',
     'capability_operation_result_type',
+    'dump_json_function_args',
     'dump_json_object',
     'dump_operation_params',
     'function_tool_original_name',
@@ -373,7 +374,7 @@ class RenderRunContext(DurableRunContext[AgentDepsT]):
     async def emit(self, event: CapabilityEventT, /) -> CapabilityEventT: ...
 
     async def emit(self, event: CustomEvent | CapabilityEvent, /) -> CustomEvent | CapabilityEvent:
-        from ._protocol import RenderProtocolError, current_effect_recorder
+        from ._protocol import UnsupportedInChildTaskError, current_effect_recorder
 
         recorder = current_effect_recorder()
         if recorder is None:  # pragma: no cover - reconstructed context belongs to operation_task
@@ -383,9 +384,11 @@ class RenderRunContext(DurableRunContext[AgentDepsT]):
         capability_id = recorder.event_capability_id
         if isinstance(event, CapabilityEvent):
             if event.event_dispatch == 'immediate':
-                raise RenderProtocolError(
-                    'Immediate capability events are unsupported inside a Render child task because '
-                    'their listener decision must be available before the operation continues.'
+                raise UnsupportedInChildTaskError(
+                    f'Emitting the immediate capability event {type(event).__name__!r} is not supported inside a '
+                    'Render child task, as its listeners run in the parent task run and must decide before the tool '
+                    "continues. Keep the tool in the parent task run with `metadata={'render_workflows': False}` "
+                    'or by returning `False` for it from `resolve_tool_options`.'
                 )
             if event.capability_id is None:
                 if capability_id is None:

@@ -36,8 +36,9 @@ def _is_deprecation_shim(package: Path) -> bool:
 # Packages that are supporting infrastructure rather than capabilities, kept out of the README
 # capability tables per review. `media` exports the content-addressed stores Step Persistence
 # uses; its docs page and README are framed as Step Persistence supporting infrastructure, not
-# as a capability (https://github.com/pydantic/pydantic-ai-harness/issues/625).
-_NOT_A_CAPABILITY = frozenset({'media'})
+# as a capability (https://github.com/pydantic/pydantic-ai-harness/issues/625). `conversation_store` exports
+# backends of core's `ConversationStore`, documented the same way.
+_NOT_A_CAPABILITY = frozenset({'conversation_store', 'media'})
 
 
 def _capability_packages() -> list[Path]:
@@ -97,14 +98,15 @@ def test_capability_linked_from_top_readme(package: Path) -> None:
 # ACP is the one page that stays experimental.
 
 _DOCS_DIR = _ROOT / '../../docs/harness'
-# `media.md` documents Step Persistence's storage plumbing (see `_NOT_A_CAPABILITY` above),
+# `media.md` and `conversation-store.md` document storage plumbing (see `_NOT_A_CAPABILITY` above),
 # `gh-aw.md` walks through the gh-aw engine definition under `gh-aw/`, and `integrations.md` is the overview of the
 # integration capabilities, so the capability-page checks do not apply
 # to them. `AGENTS.md` (and its `CLAUDE.md` link) holds the directory's agent instructions.
 _NON_CAPABILITY_PAGES = {
     'AGENTS.md',
     'CLAUDE.md',
-    'clai2.md',
+    'conversation-store.md',
+    'pax.md',
     'examples.md',
     'gh-aw.md',
     'index.md',
@@ -159,6 +161,7 @@ _CAPABILITY_PAGE_META = {
     'skills.md': ('skills', 'Skills'),
     'filesystem.md': ('file_system', 'FileSystem'),
     'shell.md': ('shell', 'Shell'),
+    'announce-working-directory.md': ('announce_working_directory', 'Announce Working Directory'),
     'smart-search.md': ('smart_search', 'Smart Search'),
     'managed-prompt.md': ('logfire', 'Managed Prompt'),
     'memory.md': ('memory', 'Memory'),
@@ -572,17 +575,18 @@ def test_problem_to_capability_rows_match_across_surfaces() -> None:
     assert readme == docs
 
 
-_PACKAGES_HEADING = '## Pydantic AI, the Harness, and Pax'
+_PACKAGES_HEADING = '## Pydantic AI, the harness SDK, `Coder`, and Pax'
 _PACKAGES_SURFACES = ('../../docs/harness/index.md', 'README.md', '../pydantic_ai_pax/README.md')
 
 
 @pytest.mark.parametrize('surface', _PACKAGES_SURFACES[1:])
 def test_package_comparison_matches_across_surfaces(surface: str) -> None:
-    """The Harness docs index and the Harness and Pax READMEs compare the three packages the same way."""
+    """The Harness docs index and the Harness and Pax READMEs draw the same four-way distinction."""
     canonical = _without_link_targets(_section_table_rows(_PACKAGES_SURFACES[0], _PACKAGES_HEADING))
     assert [row.split(' | ', 1)[0] for row in canonical[1:]] == [
         '| [Pydantic AI] (`pydantic-ai`)',
         '| [Pydantic AI Harness] (`pydantic-ai-harness`)',
+        '| [`Coder`]',
         '| [Pax] (`pydantic-ai-pax`)',
     ]
     assert _without_link_targets(_section_table_rows(surface, _PACKAGES_HEADING)) == canonical

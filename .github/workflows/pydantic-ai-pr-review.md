@@ -45,8 +45,8 @@ on:
   # It gates the actor, not the code — a collaborator can still open a PR from a
   # fork, which `eligibility` rejects separately. gh-aw's own `workflow_run` guard
   # is no help there either: it asserts the triggering run belongs to this repo,
-  # true of a fork PR, whose CI run the base repo owns. Forks are reviewed on
-  # demand via the `douwebot` label path in bots.yml.
+  # true of a fork PR, whose CI run the base repo owns. No workflow reviews a
+  # fork PR: a maintainer recreates it as a same-repository PR.
   roles: [admin, maintainer, write]
   bots: [pydantic-docs]
 # CI Review handles arbitrary PR branch names. Eligibility verifies the triggering
@@ -214,11 +214,11 @@ pre-agent-steps:
   # review `main`. Under the other triggers it checks out the PR branch, which can
   # have moved past the head `eligibility` resolved.
   #
-  # The steps after this one run workspace scripts over contributor-authored code,
-  # which is safe only because of the collaborator + same-repo gates above. gh-aw
-  # does not backstop that under `workflow_run`: its "Restore agent config folders
-  # from base branch" step is gated on *its* checkout having succeeded, so it never
-  # runs there, and nothing restores `AGENTS.md`, `agent_docs/` or `scripts/` from base.
+  # The steps after this one work on contributor-authored code, which is safe only
+  # because of the collaborator + same-repo gates above. gh-aw does not backstop
+  # that under `workflow_run`: its "Restore agent config folders from base branch"
+  # step is gated on *its* checkout having succeeded, so it never runs there, and
+  # nothing restores `AGENTS.md` or `agent_docs/` from base.
   #
   # Fetched by commit, not by head branch: a PR merged in the minutes between
   # `eligibility` and this step has its branch deleted, and the branch fetch then
@@ -239,14 +239,11 @@ pre-agent-steps:
   # The agent reads these files instead of calling the GitHub API at run time.
   # Non-fatal: missing context just reduces signal.
   #
-  # The script lives at scripts/ (NOT .github/scripts/) because gh-aw's
-  # "Save/Restore agent config folders from base branch" step snapshots and
-  # restores `.github/` (and other managed agent-config folders) from the
-  # BASE branch — making any new file added under those folders unreliable
-  # for steps that run after the restore. `scripts/` is outside that set,
-  # matching where the legacy reviewer's gather-review-context.sh already
-  # lives. The script is a fork of scripts/gather-review-context.sh — see
-  # the TODO at the top of the fork.
+  # The workspace holds the PR head, so this runs the default branch's copy of the
+  # script, as "Privileged pull request workflows run only on same-repository
+  # branches" in `AGENTS.md` requires. A PR's change to the script takes effect once
+  # it merges. The script is a fork of scripts/gather-review-context.sh — see the
+  # TODO at the top of the fork.
   - name: Gather PR review context
     env:
       GH_TOKEN: ${{ github.token }}
@@ -254,12 +251,16 @@ pre-agent-steps:
       REPO: ${{ github.repository }}
     run: |
       set -uo pipefail
-      script=scripts/gather-pydantic-ai-review-context.sh
-      if [ -x "$script" ]; then
+      path=scripts/gather-pydantic-ai-review-context.sh
+      script="$RUNNER_TEMP/gather-pydantic-ai-review-context.sh"
+      # Without `ref`, the contents API serves the default branch.
+      # The script runs itself again as `"$0"`, so it needs the execute bit.
+      if gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}" > "$script" \
+        && chmod +x "$script"; then
         "$script" "$PR_NUMBER" "$REPO" \
-          || echo "::warning::${script} failed; reviewer will run with less context"
+          || echo "::warning::${path} failed; reviewer will run with less context"
       else
-        echo "::warning::${script} not present; reviewer will run with less context"
+        echo "::warning::could not fetch ${path} from the default branch; reviewer will run with less context"
       fi
 
 jobs:
@@ -303,6 +304,8 @@ jobs:
           LABEL_NAME: ${{ github.event.label.name }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           AW_CONTEXT: ${{ github.event.inputs.aw_context }}
           # Must match gh-aw's GH_AW_CALLER_WORKFLOW_ID for this workflow.
           REVIEW_CALL_ID: "${{ github.repository }}/pydantic-ai-pr-review"
@@ -313,8 +316,8 @@ jobs:
           # reviewer is responsible for. Left empty — and the step below then
           # no-ops — for the skips where a marker would claim a reviewer that was
           # never going to run: a CI run that is not a PR run or did not pass, a
-          # review or label that is not a request, and a fork, which `douwebot`
-          # covers instead. A fork head is not unmarkable (it resolves in this
+          # review or label that is not a request, and a fork, which no workflow
+          # reviews. A fork head is not unmarkable (it resolves in this
           # repository through `refs/pull/<n>/head`, so the check run would post
           # and show); it is deliberately unmarked.
           MARKER_SHA=''
@@ -422,8 +425,8 @@ jobs:
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isDraft')" = 'false' ] || skip "PR #${PR_NUMBER} is a draft"
           # The checkout step fetches the head commit from this repository, where a
           # fork head is reachable too, and runs workspace scripts over it with
-          # repository secrets in scope; forks go through the `douwebot` label path
-          # instead.
+          # repository secrets in scope. No workflow reviews a fork PR: a maintainer
+          # recreates it as a same-repository PR.
           [ "$(printf '%s' "$PR_JSON" | jq -r '.isCrossRepository')" = 'false' ] \
             || skip "PR #${PR_NUMBER} is from a fork"
 
@@ -431,6 +434,13 @@ jobs:
           # about the PR's current head — set only past the fork gate, so a request
           # on a fork PR skips as silently as the `workflow_run` path does.
           [ -n "$MARKER_SHA" ] || MARKER_SHA="$HEAD_SHA"
+
+          # --- Default-branch base ---------------------------------------------
+          # An approval or label requests a review only on a PR into the default branch.
+          if [ "$EVENT_NAME" = 'pull_request_review' ] || [ "$EVENT_NAME" = 'pull_request' ]; then
+            [ -n "$EVENT_BASE_REF" ] && [ "$EVENT_BASE_REF" = "$DEFAULT_BRANCH" ] \
+              || skip "PR #${PR_NUMBER} is based on ${EVENT_BASE_REF}, not ${DEFAULT_BRANCH}"
+          fi
 
           # --- Current-head authority ----------------------------------------
           # The PR moved on while CI was running: reviewing the CI run's head would
@@ -549,6 +559,8 @@ jobs:
       - name: Check out the prompt resolver action and default prompt
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd # v6.0.2
         with:
+          # Without `ref:`, a pull request event checks out the PR's merge commit.
+          ref: ${{ github.event.repository.default_branch }}
           persist-credentials: false
           sparse-checkout: |
             .github/actions/fetch-dynamic-prompt

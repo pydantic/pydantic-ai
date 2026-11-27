@@ -10,12 +10,20 @@ from pydantic_ai import Agent
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_ai_pax.app import create_stock_agent
 from pydantic_ai_pax.cli import cli, headless
 from pydantic_ai_pax.config import PluginSettings, Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
+from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust, undecided_notice
+
+
+def untrusted_notice(store: SettingsStore) -> str:
+    """What a headless run in the current directory prints on stderr while you never decided whether to trust it."""
+    notice = undecided_notice(WorkspaceTrust.saved(store, Path.cwd()))
+    assert notice is not None
+    return notice + '\n'
 
 
 @pytest.mark.parametrize('supplied', [False, True])
@@ -58,7 +66,7 @@ async def test_answer_resume_and_no_ask_user(
         )
         == 0
     )
-    saved = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    saved = SqliteSessionStore(database=tmp_path / 'sessions.db')
     entries = await saved.listing()
     assert len(entries) == 1
     first = await saved.get(conversation_id=entries[0].id)
@@ -81,7 +89,7 @@ async def test_answer_resume_and_no_ask_user(
     captured = capsys.readouterr()
     assert model.custom_output_text is not None
     assert captured.out == (model.custom_output_text + '\n') * 2
-    assert captured.err == ''
+    assert captured.err == untrusted_notice(store) * 2
 
 
 @pytest.mark.parametrize(
@@ -126,7 +134,7 @@ async def test_failure_is_nonzero_and_silent_stdout(
     )
     captured = capsys.readouterr()
     assert captured.out == ''
-    assert captured.err == f'{error}\n'
+    assert captured.err == f'{untrusted_notice(store)}{error}\n'
 
 
 async def test_missing_model(tmp_path: Path) -> None:
@@ -225,7 +233,7 @@ async def test_cancel_saves_history_and_closes_plugins(
                 await started.wait()
             tasks.cancel_scope.cancel()
     assert log.read_text() == 'cancelled:error'
-    saved = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    saved = SqliteSessionStore(database=tmp_path / 'sessions.db')
     entries = await saved.listing()
     assert entries[0].outcome == 'cancelled'
     assert capsys.readouterr().out == ''

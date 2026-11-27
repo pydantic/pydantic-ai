@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from collections.abc import AsyncIterable, Awaitable, Callable, Sequence
+from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
@@ -30,7 +30,9 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector
 from pydantic_ai_harness._combine import one_per_id
-from pydantic_ai_harness._monty_exec import build_remote_pool, session_os_policy
+
+# From `_monty_exec`, whose guarded import names the `code-mode` extra when `pydantic-monty` is missing.
+from pydantic_ai_harness._monty_exec import ExternalModule, build_remote_pool, session_os_policy
 from pydantic_ai_harness._monty_turns import MontyTurn, TurnRequest, redacted_error_type, run_monty_turn
 from pydantic_ai_harness._warn import renamed_duration_limit
 from pydantic_ai_harness.code_mode._eager import EagerCodeModeToolset
@@ -47,6 +49,7 @@ from pydantic_ai_harness.code_mode._toolset import (
     CodeModeResourceLimits,
     CodeModeToolset,
     as_os_handler,
+    check_external_modules,
     in_durable_execution,
     monty_sandbox_from_url,
 )
@@ -107,7 +110,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     ```
 
     By default, sandboxed code cannot touch the host -- no filesystem, environment
-    variables, or clock. Three parameters open it up:
+    variables, or clock. Four parameters open it up:
 
     - `mount` shares specific host directories: reach for it when the agent reads or
       writes real files.
@@ -116,6 +119,8 @@ class CodeMode(AbstractCapability[AgentDepsT]):
       control.
     - `os_policy` sets the sandbox's own clock and time zone (or sleep and random-seed
       policies), merged over the defaults that route them to `os_access`.
+    - `external_modules` lets sandboxed code import modules whose functions run on the
+      host: reach for it when the agent needs a library Monty can't run, such as DuckDB.
 
     The built-in `OSAccess` has an isolated filesystem and environment but uses the
     host clock by default; custom OS handlers can expose other host resources.
@@ -191,6 +196,25 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     the defaults (or fixed values) there.
     """
 
+    external_modules: Mapping[str, ExternalModule] | None = None
+    """Host modules sandboxed code can import, keyed by module name.
+
+    Monty runs only its own subset of Python, so a library such as DuckDB can't be imported in the
+    sandbox. A `pydantic_monty.ExternalModule` stands in for it: `import duckdb` binds the module,
+    and each call to one of its functions pauses the sandbox and runs that function on the host.
+
+    Every module and submodule needs `stubs`: the `run_code` description shows them to the model,
+    and Monty's type checker reads them. A name Monty bundles, such as `math`, is rejected. A sync
+    function runs in a worker thread (inline inside a Temporal workflow) and an async one
+    on the event loop, concurrently with other async calls, like tools. An exception a function
+    raises is raised at its call site in the sandbox. Calls into modules are not tool calls: they
+    don't count toward `max_tool_calls` and don't appear in the message history.
+
+    Inside a durable run, module functions run in the workflow, as `os_access` does, and run again
+    when it replays, so they must return the same values each time. Give the agent a tool for work
+    that has side effects or reads changing data: tools run as durable steps.
+    """
+
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None
     """Sandbox execution limits.
 
@@ -198,6 +222,17 @@ class CodeMode(AbstractCapability[AgentDepsT]):
     snippet: no single `run_code` snippet runs longer than it, and it is not a run-wide budget.
     `'unlimited'` removes the time and memory caps, but Monty's finite suspension budget still
     applies. Set `max_suspensions` to bound cumulative host interactions across consecutive snippets.
+    """
+
+    allow_final_output: bool = False
+    """Let sandboxed code submit the agent run's final output, so the model doesn't have to copy a computed value into its output.
+
+    The sandbox gets one function per output type, named and typed like the output tools listed in
+    [`RunContext.output_tools`][pydantic_ai.tools.RunContext.output_tools], in every output mode. A call
+    submits through [`RunContext.submit_output`][pydantic_ai.tools.RunContext.submit_output] and stops the code: an
+    accepted output ends the run once the `run_code` call returns, and a rejected one answers `run_code` with the
+    validation errors and uses up an output retry, keeping the REPL's variables so the model can fix the value
+    and call again.
     """
 
     eager: bool = False
@@ -305,6 +340,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeMode')
         self.monty_sandbox_url = None
         self.resource_limits = renamed_duration_limit(self.resource_limits, 'CodeMode')
+        check_external_modules(self.external_modules or {})
         if isinstance(self.speculate, str) and self.speculate != 'declared':
             raise UserError(
                 f"`speculate` accepts a list of tool names or the string 'declared', not {self.speculate!r}. "
@@ -326,6 +362,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         speculate: Sequence[str] | Literal['declared'] | None = None,
         monty_sandbox: str | None = None,
         dynamic_catalog: bool = True,
+        allow_final_output: bool = False,
         **kwargs: Any,
     ) -> CodeMode[Any]:
         """Build from an agent spec, naming the fields a spec can express.
@@ -349,6 +386,7 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             speculate=speculate,
             monty_sandbox=monty_sandbox,
             dynamic_catalog=dynamic_catalog,
+            allow_final_output=allow_final_output,
             **kwargs,
         )
 
@@ -396,8 +434,10 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                 os_access=self.os_access,
                 mount=self.mount,
                 os_policy=self.os_policy,
+                external_modules=self.external_modules,
                 monty_sandbox=self.monty_sandbox,
                 repl_store=self.repl_store,
+                allow_final_output=self.allow_final_output,
                 capability=self,
                 speculation=self._speculation,
             )
@@ -411,8 +451,10 @@ class CodeMode(AbstractCapability[AgentDepsT]):
             os_access=self.os_access,
             mount=self.mount,
             os_policy=self.os_policy,
+            external_modules=self.external_modules,
             monty_sandbox=self.monty_sandbox,
             repl_store=self.repl_store,
+            allow_final_output=self.allow_final_output,
             capability=self,
             speculation=self._speculation,
         )
@@ -428,7 +470,11 @@ class CodeMode(AbstractCapability[AgentDepsT]):
         try:
             async with await build_remote_pool(self.monty_sandbox, request.limits) as pool:
                 return await run_monty_turn(
-                    pool, request, os_policy=session_os_policy(self.os_policy), mount=self.mount
+                    pool,
+                    request,
+                    os_policy=session_os_policy(self.os_policy),
+                    mount=self.mount,
+                    external_modules=self.external_modules,
                 )
         except Exception as error:
             # Temporal records an activity's failure, cause included, in workflow history, and a pool

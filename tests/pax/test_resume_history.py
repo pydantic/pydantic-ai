@@ -28,14 +28,16 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_ai_pax import chat
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.ui.prompt.prompt_surface import LEAVE, PromptSurface
+from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.history import render_history, turn_starts
 from pydantic_ai_pax.ui.rendering.rendering import StreamRenderer
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 
 def turn(index: int) -> list[ModelMessage]:
@@ -132,7 +134,7 @@ def saved_prior(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Session[None
     return Session(
         Agent(TestModel(call_tools=[], custom_output_text='saved answer')),
         deps=None,
-        conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
+        conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'),
         workspace=tmp_path,
     )
 
@@ -171,6 +173,46 @@ async def test_resume_replaces_the_live_panel_with_the_restored_conversation(
     assert printed.index('> saved turn') < printed.index('Resumed') < printed.index('Goodbye.')
 
 
+async def test_resumed_and_typed_prompts_carry_the_palette_tint(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Under a palette, prompts restored by `/resume` and prompts typed after it share its tint."""
+    monkeypatch.setenv('COLORTERM', 'truecolor')
+    prior = saved_prior(tmp_path, monkeypatch)
+    await prior.prompt('saved turn')
+    surfaces: list[PromptSurface] = []
+
+    class Surface(PromptSurface):
+        def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
+            surfaces.append(self)
+            super().paint(rows, select_pinned=select_pinned)
+
+    monkeypatch.setattr('pydantic_ai_pax.ui.prompt.live_prompt.PromptSurface', Surface)
+    with (
+        create_pipe_input() as pipe,
+        create_app_session(input=pipe, output=DummyOutput()),
+        anyio.fail_after(READINESS_WAIT_TIMEOUT),
+    ):
+        pipe.send_text(f'/resume {prior.summary.id}\r/exit\r')
+        await chat(
+            Agent(TestModel(call_tools=[], custom_output_text='fresh answer')),
+            deps=None,
+            # Truecolour, matching `COLORTERM` above.
+            console=Console(file=io.StringIO(), force_terminal=True, color_system='truecolor', width=80, height=24),
+            store=SettingsStore(tmp_path / 'settings.db'),
+            settings=Settings(model=None, session_namer=False, theme='tokyo_night'),
+        )
+    # Framed under the palette, as the transcript repaints lines in the theme selected when it draws them.
+    with theme.use(lambda: 'tokyo_night'):
+        rows = [Text.from_ansi(row) for row in surfaces[0].transcript.frame(width=200, height=200).rows]
+    prompts = [row for row in rows if row.plain.startswith('> ')]
+    assert [row.plain for row in prompts] == ['> saved turn', '> /exit']
+    for row in prompts:
+        background = row.get_style_at_offset(Console(), 2).bgcolor
+        assert background is not None and background.triplet is not None
+        assert background.triplet.hex == '#2e303f'
+
+
 async def test_startup_resume_shows_history_below_the_startup_output(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -207,7 +249,7 @@ async def test_resumed_tool_calls_replay_in_the_chosen_tool_call_style(
     prior = Session(
         Agent(TestModel(custom_output_text='saved answer'), tools=[ping, pong]),
         deps=None,
-        conversations=SqliteConversationStore(database=tmp_path / 'sessions.db'),
+        conversations=SqliteSessionStore(database=tmp_path / 'sessions.db'),
         workspace=tmp_path,
     )
     await prior.prompt('earlier turn')

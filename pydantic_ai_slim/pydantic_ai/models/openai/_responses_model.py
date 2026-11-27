@@ -71,6 +71,7 @@ from ...computer_use import COMPUTER_KIND
 from ...durable_exec._operation_backend import in_durable_unit
 from ...exceptions import (
     ModelConnectionError,
+    ModelEmptyResponseError,
     SuspendedResponseExpired,
     UnsupportedSettingWarning,
     UserError,
@@ -467,6 +468,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return str(self.client.base_url)
 
     @property
+    def _rewrite_instructions_outside_prefix(self) -> bool:
+        # With this flag, dynamic rewrite-mode instructions stay in the top-level field, which the model reads after
+        # `input`.
+        return self.profile.get('openai_responses_stable_instructions_as_input', False)
+
+    @property
     def batch_max_requests(self) -> int | None:
         # A batch runs each request without streaming, which an endpoint that only streams can't serve.
         if not self.profile.get('openai_supports_batch_api', False) or self.profile.get(
@@ -744,7 +751,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Turn off defaults that haven't been checked live on this provider.
 
-        Azure clients and the gateway lose the Batch API and Responses WebSockets. Azure clients and every provider
+        Azure clients and the gateway lose the Batch API and Responses WebSockets, and the gateway loses on-demand
+        compaction. Azure clients and every provider
         class except `OpenAIProvider` and `BedrockMantleProvider` lose the native `ComputerTool`. The check is on the
         provider class, so the gateway's OpenAI route and `OpenAIProvider(base_url=...)` keep the tool.
 
@@ -758,6 +766,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if is_azure(self._provider.client, self._provider.name) or is_gateway_provider(self._provider):
             # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
             profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
+        if is_gateway_provider(self._provider):
+            # The gateway doesn't serve the `/responses/compact` endpoint (probed live).
+            profile = merge_profile(profile, OpenAIModelProfile(supports_compaction_on_demand=False))
         # An Azure-named custom provider may advertise socket support with an ordinary OpenAI client.
         is_azure_client = isinstance(self._provider.client, AsyncAzureOpenAI)
         if is_azure_client or is_gateway_provider(self._provider):
@@ -1439,7 +1450,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
             # Covered by the Codex forced-stream path, which drains empty streams through here.
-            raise UnexpectedModelBehavior('Streamed response ended without content or tool calls')
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
         if isinstance(first_chunk, responses.ResponseErrorEvent):
             # Raise while the stream is being opened, so `FallbackModel` can still fall back on it.
             raise response_error(self.model_name, first_chunk.code, first_chunk.message, in_stream=True)

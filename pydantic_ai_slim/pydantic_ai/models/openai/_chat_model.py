@@ -38,7 +38,7 @@ from openai.types.chat.completion_create_params import (
 from openai.types.shared import ReasoningEffort
 from pydantic import JsonValue, ValidationError
 
-from ... import UnexpectedModelBehavior, _utils, usage
+from ... import _utils, usage
 from ..._file_input import KNOWN_DOCUMENT_MEDIA_TYPES, TEXT_DOCUMENT_MEDIA_TYPES
 from ..._http import to_httpx2_timeout
 from ..._output import DEFAULT_OUTPUT_TOOL_NAME
@@ -51,7 +51,7 @@ from ..._utils import (
     now_utc as _now_utc,
     number_to_datetime,
 )
-from ...exceptions import ModelRequestRejectedError, UserError
+from ...exceptions import ModelEmptyResponseError, ModelInvalidResponseError, ModelRequestRejectedError, UserError
 from ...messages import (
     AudioUrl,
     BinaryContent,
@@ -138,7 +138,7 @@ from ._reasoning import (
     resolve_openai_thinking_effort,
     supports_reasoning_effort_none,
 )
-from ._response_fields import map_usage
+from ._response_fields import add_reasoning_tokens_omitted_from_completion_tokens, map_usage
 from ._settings import (
     OpenAIChatModelSettings,
     drop_unsupported_params,
@@ -335,14 +335,17 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return super()._no_batch_api_message()
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Leave the `'12h'` cache retention out of `supported_cache_retentions`, before the user's `profile=` applies.
+        """Turn off what Chat Completions doesn't serve, before the user's `profile=` applies.
 
-        Chat Completions rejects `prompt_cache_options.ttl='12h'` with a 400 (verified live on every GPT-5.6, GPT-6,
-        GPT-6.1 and GPT-6.2 model), while the Responses API on the same models accepts it, and the providers declare their
-        tiers per model rather than per API.
+        `supports_compaction_on_demand` is off: `OpenAIProvider` sets it for the Responses API's compaction endpoint,
+        Chat Completions has none, and `OpenAIChatModel` doesn't implement `compact_messages`. The `'12h'` cache
+        retention is left out of `supported_cache_retentions`: Chat Completions rejects `prompt_cache_options.ttl='12h'`
+        with a 400 (verified live on every GPT-5.6, GPT-6, GPT-6.1 and GPT-6.2 model), while the Responses API on the same
+        models accepts it, and the providers declare their tiers per model rather than per API.
 
         `deprecation` is dropped for an Azure OpenAI client, as Azure retires models on its own schedule.
         """
+        profile = merge_profile(profile, ModelProfile(supports_compaction_on_demand=False))
         if 'deprecation' in profile and is_azure(self._provider.client, self._provider.name):
             profile = merge_profile(profile, ModelProfile(deprecation=None))
         retentions = profile.get('supported_cache_retentions', ())
@@ -673,6 +676,16 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         """
         return map_provider_details(response.choices[0])
 
+    def _first_choice(self, response: chat.ChatCompletion) -> chat_completion.Choice:
+        """The completion's first choice, or a `ModelEmptyResponseError` if it has none."""
+        if not response.choices:
+            raise ModelEmptyResponseError(
+                self.model_name,
+                f'Empty response from {self.system} chat completions endpoint: no choices',
+                body=response.model_dump(warnings=False),
+            )
+        return response.choices[0]
+
     def _unmapped_provider_details(
         self, response: chat.ChatCompletion, content_parts: list[object], *, include: bool
     ) -> dict[str, Any]:
@@ -703,8 +716,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         # * if the endpoint returns plain text, the return type is a string
         # Thus we validate it fully here.
         if not isinstance(response, chat.ChatCompletion):
-            raise UnexpectedModelBehavior(
-                f'Invalid response from {self.system} chat completions endpoint, expected JSON data'
+            raise ModelInvalidResponseError(
+                self.model_name,
+                f'Invalid response from {self.system} chat completions endpoint, expected JSON data',
+                body=response,
             )
 
         timestamp = _now_utc()
@@ -720,9 +735,15 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         try:
             response = self._validate_completion(response)
         except ValidationError as e:
-            raise UnexpectedModelBehavior(f'Invalid response from {self.system} chat completions endpoint: {e}') from e
+            raise ModelInvalidResponseError(
+                self.model_name,
+                f'Invalid response from {self.system} chat completions endpoint: {e}',
+                # The completion as the SDK built it, without validating it, after the `created` and `finish_reason`
+                # fill-ins above.
+                body=response.model_dump(warnings=False),
+            ) from e
 
-        choice = response.choices[0]
+        choice = self._first_choice(response)
         finish_reason = self._map_finish_reason(choice.finish_reason)
         if missing_finish_reason:
             # Restore the missing value after validation, so it's not reported as the provider's.
@@ -884,9 +905,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         with map_api_errors(self.model_name, self._provider.model_id_namespace), map_decode_errors(self.model_name):
             first_chunk = await peekable_response.peek()
         if isinstance(first_chunk, _utils.Unset):
-            raise UnexpectedModelBehavior(  # pragma: no cover
-                'Streamed response ended without content or tool calls'
-            )
+            raise ModelEmptyResponseError(self.model_name, 'Streamed response ended without content or tool calls')
 
         # When using Azure OpenAI and a content filter is enabled, the first chunk will contain a `''` model name,
         # so we set it from a later chunk in `OpenAIChatStreamedResponse`.
@@ -914,7 +933,10 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         return OpenAIStreamedResponse
 
     def _map_usage(self, response: chat.ChatCompletion) -> usage.RequestUsage:
-        return map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+        request_usage = map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+        if self.profile.get('openai_chat_completion_tokens_omit_reasoning', False):
+            add_reasoning_tokens_omitted_from_completion_tokens(request_usage, response.usage)
+        return request_usage
 
     def _get_tool_choice(
         self,
