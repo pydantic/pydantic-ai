@@ -1,0 +1,5 @@
+{
+  "against": "v2.76.0",
+  "reason": "`TRANSIENT_MODEL_ERRORS`, `RetryOnModelErrors`' default `retry_on`, adds `ModelEmptyResponseError`, so it retries an empty response the provider ended with `finish_reason='error'` and a raised empty response, both often transient, as decided on #12059 (https://github.com/pydantic/pydantic-ai/issues/12059#issuecomment-6584752558). `RetryOnModelErrors` is opt-in and recent; passing the previous four errors as `retry_on` restores the previous default.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14543"
+}

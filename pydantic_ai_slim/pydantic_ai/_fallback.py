@@ -33,6 +33,7 @@ from .exceptions import (
     FallbackExceptionGroup,
     IncompleteToolCall,
     ModelAPIError,
+    ModelEmptyResponseError,
     OutputTokenLimitExceeded,
     UnsupportedSettingWarning,
     UserError,
@@ -43,6 +44,8 @@ from .messages import (
     ModelRequestAttempt,
     ModelResponse,
     ModelResponseStreamEvent,
+    TextPart,
+    ThinkingPart,
 )
 from .models._request_timeout import stream_under_deadline
 
@@ -57,6 +60,7 @@ __all__ = (
     'ResponseHandler',
     'FallbackOn',
     'FallbackPredicates',
+    'has_no_actionable_output',
     'SpecModelError',
     'spec_list',
     'spec_error_types',
@@ -209,6 +213,17 @@ def _exception_types_to_handler(exception_types: tuple[type[Exception], ...]) ->
     return handler
 
 
+def has_no_actionable_output(response: ModelResponse) -> bool:
+    """Whether `response` has nothing the agent can act on: no parts, or only thinking and empty text.
+
+    Unless the agent ends the run first, as for a refusal, it sends such a response the retry prompt, or, when the
+    output type allows `None`, accepts it as `None`.
+    """
+    # An empty `TextPart` carries no text output: adapters keep such parts (e.g. when a gateway returns a text item
+    # with `text: null`) so their IDs round-trip.
+    return all(isinstance(p, ThinkingPart) or (isinstance(p, TextPart) and not p.content) for p in response.parts)
+
+
 @dataclass
 class FallbackPredicates:
     """The parsed `fallback_on` predicates, split by what they inspect."""
@@ -231,6 +246,15 @@ class FallbackPredicates:
     otherwise the run's output, and the rare response with complete output, such as tool calls that all parse, that
     still reached the limit. Streamed responses skip it without a warning, like refusals.
     """
+    empty_error_response: bool = False
+    """Whether the predicates name `ModelEmptyResponseError`, so an empty response the provider ended with an error matches.
+
+    That's a response with `finish_reason='error'` and no actionable output, such as Gemini's `MALFORMED_FUNCTION_CALL`
+    or Bedrock's `malformed_model_output`, which the agent would otherwise send the retry prompt, or, when the output
+    type allows `None`, accept as `None`. A response with text doesn't match: that's the output. Streamed responses
+    skip it without a warning, like refusals.
+    """
+
     unsupported_setting: bool = False
     """Whether `fallback_on` names `UnsupportedSettingWarning`, so a model that would ignore a setting the request
     relies on is moved on from.
@@ -285,10 +309,13 @@ class FallbackPredicates:
 
     def _add_exception_type(self, exception_type: type[Exception], *, param: str, judges_settings: bool) -> None:
         self.exception_handlers.append(_exception_types_to_handler((exception_type,)))
-        # Only the class itself and its subclasses: `UnexpectedModelBehavior` or `Exception` doesn't name refusals or
-        # cut-off responses. `IncompleteToolCall` names only a cut-off tool call, not every cut-off response.
+        # Only the class itself and its subclasses: `UnexpectedModelBehavior`, `ModelAPIError` or `Exception` doesn't
+        # name refusals, cut-off or empty responses. `IncompleteToolCall` names only a cut-off tool call, not every
+        # cut-off response.
         if issubclass(exception_type, ContentFilterError):
             self.content_filter = True
+        elif issubclass(exception_type, ModelEmptyResponseError):
+            self.empty_error_response = True
         elif issubclass(exception_type, OutputTokenLimitExceeded) and not issubclass(
             exception_type, IncompleteToolCall
         ):
@@ -321,6 +348,7 @@ class FallbackPredicates:
         if isinstance(value, ModelResponse) and (
             (self.content_filter and value.finish_reason == 'content_filter')
             or (self.output_token_limit and value.finish_reason == 'length')
+            or (self.empty_error_response and value.finish_reason == 'error' and has_no_actionable_output(value))
         ):
             return True
         handlers = self.exception_handlers if isinstance(value, Exception) else self.response_handlers

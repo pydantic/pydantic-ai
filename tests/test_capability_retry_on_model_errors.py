@@ -33,6 +33,7 @@ from pydantic_ai.exceptions import (
     ModelAuthenticationError,
     ModelConnectionError,
     ModelContextWindowExceededError,
+    ModelEmptyResponseError,
     ModelHTTPError,
     ModelNotFoundError,
     ModelOverloadedError,
@@ -167,6 +168,7 @@ async def test_one_attempt_never_retries():
         _http_error(ModelServerError, 'primary', status_code=502),
         ModelConnectionError('primary', 'connection reset', phase='read'),
         ModelTimeoutError('primary', 'read timed out'),
+        ModelEmptyResponseError('primary', 'Streamed response ended without content or tool calls'),
     ],
     ids=lambda error: type(error).__name__,
 )
@@ -819,6 +821,45 @@ async def test_retry_on_output_token_limit_exceeded_retries_a_cut_off_response()
         result = await agent.run('x')
     assert result.output == 'hello'
     assert [(a.outcome, a.kind) for a in result.response.failed_attempts or []] == snapshot([('rejected', 'retry')])
+
+
+def _ends_with_error_once(answered: list[str]) -> FunctionModel:
+    """A model whose provider ends its first response with an error and no output, and which then answers."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        answered.append('primary')
+        if len(answered) == 1:
+            return ModelResponse(parts=[], finish_reason='error')
+        return ModelResponse(parts=[TextPart('hello')])
+
+    return FunctionModel(respond, model_name='primary')
+
+
+async def test_retries_an_empty_error_response_by_default():
+    """`ModelEmptyResponseError` in the default `retry_on` stands for an empty response the provider ended with an error.
+
+    It's retried on the same model with backoff, instead of getting the agent's retry prompt.
+    """
+    answered: list[str] = []
+    agent = Agent(_ends_with_error_once(answered), capabilities=[RetryOnModelErrors()])
+    with _recorded_sleeps() as delays:
+        result = await agent.run('x')
+    assert result.output == 'hello'
+    assert answered == ['primary', 'primary']
+    assert [(a.outcome, a.kind) for a in result.response.failed_attempts or []] == snapshot([('rejected', 'retry')])
+    assert len(delays) == 1
+    assert 0.5 <= delays[0] <= 1
+    # Retried within the request step, so the model never saw a retry prompt.
+    assert len(result.all_messages()) == 2
+
+
+async def test_an_empty_error_response_gets_the_retry_prompt_when_not_named():
+    answered: list[str] = []
+    agent = Agent(_ends_with_error_once(answered), capabilities=[RetryOnModelErrors(retry_on=ModelServerError)])
+    with _recorded_sleeps() as delays:
+        result = await agent.run('x')
+    assert (result.output, answered, delays) == ('hello', ['primary', 'primary'], [])
+    assert len(result.all_messages()) == 4
 
 
 # --- Streaming ---

@@ -19,6 +19,7 @@ from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import (
     ContentFilterError,
     ModelAPIError,
+    ModelEmptyResponseError,
     OutputTokenLimitExceeded,
     RetryModelRequest,
     UnsupportedSettingWarning,
@@ -119,7 +120,12 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
     def __init__(
         self,
         *models: Model | KnownModelName | str,
-        fallback_on: FallbackOn = (ModelAPIError, ContentFilterError, OutputTokenLimitExceeded),
+        fallback_on: FallbackOn = (
+            ModelAPIError,
+            ModelEmptyResponseError,
+            ContentFilterError,
+            OutputTokenLimitExceeded,
+        ),
         sticky: bool = False,
     ):
         """Initialize the fallback capability.
@@ -128,13 +134,18 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             models: The models to attempt after the one selected for the request step. When the
                 agent has no model of its own, the first of these is used for the first attempt.
             fallback_on: Conditions that trigger fallback to the next model. Defaults to
-                `(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)`: any API error, any refusal, meaning a
-                response with `finish_reason='content_filter'`, with or without partial text, and any response the
-                output token limit cut off, meaning one with `finish_reason='length'`.
+                `(ModelAPIError, ModelEmptyResponseError, ContentFilterError, OutputTokenLimitExceeded)`: any API
+                error, any empty response the provider ended with an error, meaning one with `finish_reason='error'`
+                and no text or tool call, any refusal, meaning a response with `finish_reason='content_filter'`, with
+                or without partial text, and any response the output token limit cut off, meaning one with
+                `finish_reason='length'`.
                 [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError] and
                 [`OutputTokenLimitExceeded`][pydantic_ai.exceptions.OutputTokenLimitExceeded] are only raised after a
-                response is accepted, so in `fallback_on` they stand for that response. Leave
-                `ContentFilterError` out to accept refusals instead: an empty one ends the run with
+                response is accepted, so in `fallback_on` they stand for that response, and
+                [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] also stands for an empty
+                `finish_reason='error'` response, which the agent would otherwise send the retry prompt, or, when the
+                output type allows `None`, accept as `None`. Leave `ContentFilterError` out to accept refusals
+                instead: an empty one ends the run with
                 `ContentFilterError`, and one with text is the output. Leave `OutputTokenLimitExceeded` out to accept
                 cut-off responses, as when `max_tokens` is a deliberate cap: cut-off text is then the output. Naming
                 [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] moves on from a model
@@ -154,7 +165,8 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
                 already reached the consumer by the time it could be judged, so it's accepted as
                 is, with a `UserWarning`. A stream that fails to open, or whose provider reports
                 an error before its first event, still falls back. A streamed refusal or cut-off response is
-                accepted too, without a warning: a stream's finish reason is only known once it was streamed.
+                accepted too, as is an empty `finish_reason='error'` one, without a warning: a stream's finish
+                reason is only known once it was streamed.
             sticky: Whether a conversation that fell back keeps using the candidate that answered,
                 instead of starting each request step from the model selected for it. The agent records
                 the model that answered as the response's `model_id`, and the attempts that failed before
@@ -173,7 +185,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         self._predicates = FallbackPredicates.parse(
             fallback_on,
             owner='ModelFallback',
-            default='(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)',
+            default='(ModelAPIError, ModelEmptyResponseError, ContentFilterError, OutputTokenLimitExceeded)',
             judges_settings=True,
         )
         self._supplies_model = False
@@ -379,6 +391,7 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
         *,
         fallback_on: _SpecFallbackError | Sequence[_SpecFallbackError] = (
             'ModelAPIError',
+            'ModelEmptyResponseError',
             'ContentFilterError',
             'OutputTokenLimitExceeded',
         ),

@@ -337,7 +337,7 @@ raise that as a model error too, before the agent sees the response, so it's han
 
 | Exception | Raised when |
 |---|---|
-| [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] | The provider sent no response, e.g. a stream that ended before its first event, or a completion without choices. Often a transient glitch, so sending the request again may help. [`RetryOnModelErrors`](../capabilities/retry-on-model-errors.md) doesn't retry it by default; pass `retry_on=(*TRANSIENT_MODEL_ERRORS, ModelEmptyResponseError)` to include it. |
+| [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] | The provider sent no response, e.g. a stream that ended before its first event, or a completion without choices. Often a transient glitch, so sending the request again may help, which [`RetryOnModelErrors`](../capabilities/retry-on-model-errors.md) does by default. In `fallback_on` and `retry_on`, it also stands for an [empty response the provider ended with an error](../capabilities/model-fallback.md#empty-error-responses). |
 | [`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError] | The response couldn't be read, e.g. a completion that doesn't match the API's schema. Sending the same request again often gets the same response. |
 
 Both are also an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], which these responses used
@@ -525,7 +525,10 @@ accept a request, credentials or model name the first one rejected, and a model 
 accept an input that overflowed another model's. It also includes a response the model couldn't use, a
 [`ModelEmptyResponseError`][pydantic_ai.exceptions.ModelEmptyResponseError] or
 [`ModelInvalidResponseError`][pydantic_ai.exceptions.ModelInvalidResponseError]. To fall back only on some of them, pass those categories
-as `fallback_on`, e.g. `fallback_on=(ModelRateLimitError, ModelUnavailableError, ModelServerError)`.
+as `fallback_on`, e.g. `fallback_on=(ModelRateLimitError, ModelUnavailableError, ModelServerError)`. To also fall
+back on an [empty response the provider ended with an error](../capabilities/model-fallback.md#empty-error-responses),
+which the agent otherwise sends a retry prompt or, when the output type allows `None`, accepts as `None`, name `ModelEmptyResponseError`:
+`fallback_on=(ModelAPIError, ModelEmptyResponseError)`.
 
 This behavior is controlled by the `fallback_on` parameter (see
 [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel]), which accepts exception types,

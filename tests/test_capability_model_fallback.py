@@ -59,6 +59,7 @@ from pydantic_ai.capabilities import (
     ModelFallback,
     NativeTool,
     ResolveModelId,
+    RetryOnModelErrors,
     SelectModel,
     WrapModelRequestHandler,
     WrapperCapability,
@@ -91,7 +92,14 @@ from pydantic_ai.models import (
 )
 from pydantic_ai.models.batch import BatchRequest, EncodedBatchRequest
 from pydantic_ai.models.fallback import FallbackModel, FallbackOn
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import (
+    AgentInfo,
+    DeltaThinkingCalls,
+    DeltaThinkingPart,
+    DeltaToolCall,
+    DeltaToolCalls,
+    FunctionModel,
+)
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
@@ -2831,6 +2839,212 @@ async def test_spec_falls_back_on_refusals_by_default_and_can_opt_out():
     assert (await agent.run('x')).output == 'backup answered'
 
 
+# --- Empty error responses ---
+
+
+def _ends_with_error(name: str, calls: list[str], parts: Sequence[ModelResponsePart] = ()) -> FunctionModel:
+    """A model whose provider ends its first response with an error, as Gemini's `MALFORMED_FUNCTION_CALL` does.
+
+    It answers the request after that, so the retry prompt the agent sends without a fallback recovers.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append(name)
+        if calls.count(name) == 1:
+            return ModelResponse(
+                parts=list(parts), finish_reason='error', usage=RequestUsage(input_tokens=10, output_tokens=2)
+            )
+        return ModelResponse(parts=[TextPart(f'{name} answered')])
+
+    return FunctionModel(respond, model_name=name)
+
+
+@pytest.mark.parametrize(
+    'parts',
+    [
+        pytest.param([], id='no-parts'),
+        pytest.param([TextPart('')], id='empty-text'),
+        pytest.param([_messages.ThinkingPart('Let me call the tool.')], id='thinking-only'),
+    ],
+)
+async def test_falls_back_on_an_empty_error_response_by_default(parts: list[ModelResponsePart]):
+    """An empty response the provider ended with an error falls back to the next model, instead of the retry prompt."""
+    calls: list[str] = []
+    agent = Agent(_ends_with_error('primary', calls, parts), capabilities=[ModelFallback(_answering('backup', calls))])
+    result = await agent.run('x')
+    assert result.output == 'backup answered'
+    assert calls == ['primary', 'backup']
+    assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [('primary', 'rejected')]
+    # The rejected response was billed.
+    assert result.usage.input_tokens == 10 + 51
+
+
+async def test_a_chain_of_empty_error_responses_raises_instead_of_the_retry_prompt():
+    """When every model returns an empty error response, the run raises, where without the fallback it re-prompts.
+
+    `RetryOnModelErrors` resends the request to each model before falling back, so with it the resent request recovers.
+    Leaving `ModelEmptyResponseError` out of `fallback_on` keeps the retry prompt itself.
+    """
+    calls: list[str] = []
+    agent = Agent(_ends_with_error('primary', calls), capabilities=[ModelFallback(_ends_with_error('backup', calls))])
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x')
+    assert [repr(error) for error in exc_info.value.exceptions] == snapshot(
+        ["ResponseRejected('2 model response(s) rejected by fallback_on handler')"]
+    )
+    assert calls == ['primary', 'backup']
+
+    calls.clear()
+    slept: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        slept.append(delay)
+
+    agent = Agent(
+        _ends_with_error('primary', calls),
+        capabilities=[ModelFallback(_ends_with_error('backup', calls)), RetryOnModelErrors()],
+    )
+    with Agent.using_sleep(record_sleep):
+        result = await agent.run('x')
+    assert result.output == 'primary answered'
+    assert calls == ['primary', 'primary']
+
+    calls.clear()
+    agent = Agent(
+        _ends_with_error('primary', calls),
+        capabilities=[ModelFallback(_ends_with_error('backup', calls), fallback_on=(ModelAPIError,))],
+    )
+    result = await agent.run('x')
+    assert result.output == 'primary answered'
+    assert calls == ['primary', 'primary']
+    retry_request = result.all_messages()[2]
+    assert isinstance(retry_request, ModelRequest)
+    assert [type(part) for part in retry_request.parts] == [_messages.RetryFeedbackPart]
+
+
+async def test_an_error_response_with_text_is_the_output():
+    """A response the provider ended with an error but that has text is the run's output, as without `ModelFallback`."""
+    calls: list[str] = []
+    agent = Agent(
+        _ends_with_error('primary', calls, [TextPart('partial answer')]),
+        capabilities=[ModelFallback(_answering('backup', calls))],
+    )
+    assert (await agent.run('x')).output == 'partial answer'
+    assert calls == ['primary']
+
+
+async def test_a_plain_agent_sends_an_empty_error_response_the_retry_prompt():
+    """Without a fallback, the agent keeps sending an empty error response the retry prompt, which often recovers."""
+    calls: list[str] = []
+    result = await Agent(_ends_with_error('primary', calls)).run('x')
+    assert result.output == 'primary answered'
+    assert calls == ['primary', 'primary']
+
+
+async def test_an_empty_error_response_falls_back_when_the_output_type_allows_none():
+    """With an output type that allows `None`, a plain agent accepts an empty error response as `None`.
+
+    `ModelFallback` falls back from it all the same, as it's a failure the provider reported, not a model with nothing
+    to say. The responses are scripted with `FunctionModel`, not recorded, as providers don't end a response with
+    `finish_reason='error'` on demand.
+    """
+    calls: list[str] = []
+    result = await Agent(_ends_with_error('primary', calls), output_type=str | None).run('x')
+    assert result.output is None
+    assert calls == ['primary']
+
+    calls.clear()
+    agent = Agent(
+        _ends_with_error('primary', calls),
+        output_type=str | None,
+        capabilities=[ModelFallback(_answering('backup', calls))],
+    )
+    result = await agent.run('x')
+    assert result.output == 'backup answered'
+    assert calls == ['primary', 'backup']
+
+
+async def test_only_model_empty_response_error_names_empty_error_responses():
+    """A supertype of `ModelEmptyResponseError`, like `ModelAPIError`, doesn't name empty error responses."""
+    calls: list[str] = []
+    agent = Agent(
+        _ends_with_error('primary', calls),
+        capabilities=[ModelFallback(_answering('backup', calls), fallback_on=(ModelAPIError,))],
+    )
+    assert (await agent.run('x')).output == 'primary answered'
+    assert calls == ['primary', 'primary']
+
+
+async def test_fallback_model_does_not_fall_back_on_empty_error_responses_by_default():
+    """`FallbackModel` keeps its `(ModelAPIError,)` default, so the agent sends the retry prompt as before."""
+    calls: list[str] = []
+    result = await Agent(FallbackModel(_ends_with_error('primary', calls), _answering('backup', calls))).run('x')
+    assert result.output == 'primary answered'
+    assert calls == ['primary', 'primary']
+
+
+async def test_fallback_model_falls_back_on_empty_error_responses_when_named():
+    calls: list[str] = []
+    model = FallbackModel(
+        _ends_with_error('primary', calls),
+        _answering('backup', calls),
+        fallback_on=(ModelAPIError, ModelEmptyResponseError),
+    )
+    result = await Agent(model).run('x')
+    assert result.output == 'backup answered'
+    assert calls == ['primary', 'backup']
+
+
+async def test_spec_falls_back_on_empty_error_responses_by_default():
+    calls: list[str] = []
+    models = {'primary': _ends_with_error('primary', calls), 'backup': _answering('backup', calls)}
+    resolve = ResolveModelId(lambda ctx, model_id: models.get(model_id))
+    agent = Agent.from_spec({'capabilities': [{'ModelFallback': ['backup']}]}, model='primary', capabilities=[resolve])
+    assert (await agent.run('x')).output == 'backup answered'
+    assert calls == ['primary', 'backup']
+
+
+class _StreamEndsWithError(WrapperModel):
+    """Ends the wrapped model's streamed responses with `finish_reason='error'`, as a provider can."""
+
+    @asynccontextmanager
+    async def request_stream(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+        run_context: RunContext[Any] | None = None,
+    ) -> AsyncGenerator[StreamedResponse]:
+        async with super().request_stream(messages, model_settings, model_request_parameters, run_context) as stream:
+            stream.finish_reason = 'error'
+            yield stream
+
+
+async def test_a_streamed_empty_error_response_is_not_fallen_back_from():
+    """A stream's finish reason is only known once it was streamed, so an empty error response gets the retry prompt.
+
+    There's no warning, as for a streamed refusal: there's no response handler to warn about.
+    """
+    calls: list[str] = []
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaThinkingCalls]:
+        calls.append('primary')
+        if len(calls) == 1:
+            yield {0: DeltaThinkingPart(content='Let me call the tool.')}
+        else:
+            yield 'primary answered'
+
+    agent = Agent(
+        _StreamEndsWithError(FunctionModel(stream_function=stream, model_name='primary')),
+        capabilities=[ModelFallback(_answering('backup', calls))],
+    )
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        async with agent.run_stream('x') as result:
+            assert await result.get_output() == 'primary answered'
+    assert calls == ['primary', 'primary']
+
+
 async def test_sticky_stays_on_the_model_that_answered_a_refusal():
     """A refusal that fell back makes the conversation sticky, like any other fallback."""
     calls: list[str] = []
@@ -2851,8 +3065,8 @@ async def test_sticky_stays_on_the_model_that_answered_a_refusal():
         pytest.param(
             lambda: ModelFallback(FunctionModel(success), fallback_on=[]),
             '`ModelFallback` created with an empty `fallback_on`: all exceptions will propagate and all responses '
-            'will be accepted. Use `fallback_on=(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded)` for the '
-            'default behavior.',
+            'will be accepted. Use `fallback_on=(ModelAPIError, ModelEmptyResponseError, ContentFilterError, '
+            'OutputTokenLimitExceeded)` for the default behavior.',
             id='ModelFallback',
         ),
         pytest.param(
