@@ -254,8 +254,10 @@ pre-agent-steps:
       path=scripts/gather-pydantic-ai-review-context.sh
       script="$RUNNER_TEMP/gather-pydantic-ai-review-context.sh"
       # Without `ref`, the contents API serves the default branch.
-      if gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}" > "$script"; then
-        bash "$script" "$PR_NUMBER" "$REPO" \
+      # The script runs itself again as `"$0"`, so it needs the execute bit.
+      if gh api -H 'Accept: application/vnd.github.raw+json' "repos/${REPO}/contents/${path}" > "$script" \
+        && chmod +x "$script"; then
+        "$script" "$PR_NUMBER" "$REPO" \
           || echo "::warning::${path} failed; reviewer will run with less context"
       else
         echo "::warning::could not fetch ${path} from the default branch; reviewer will run with less context"

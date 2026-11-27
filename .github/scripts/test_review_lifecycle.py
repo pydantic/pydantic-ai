@@ -339,7 +339,11 @@ def test_compiled_review_context_runs_the_default_branch_script(tmp_path: Path, 
         RUNNER_TEMP=str(tmp_path / 'runner'),
         RAN=str(tmp_path / 'ran'),
         PR_NUMBER='123',
-        CONTEXT_SCRIPT='echo "default $*" > "$RAN"',
+        # Runs itself again as `"$0"`, as `--partition-files` does in the real script.
+        CONTEXT_SCRIPT=(
+            '#!/usr/bin/env bash\nset -euo pipefail\n'
+            'if [ "${1:-}" = again ]; then shift; echo "default $*" > "$RAN"; else "$0" again "$@"; fi'
+        ),
         FAIL_ENDPOINT=endpoint if not fetched else 'none',
     )
 
