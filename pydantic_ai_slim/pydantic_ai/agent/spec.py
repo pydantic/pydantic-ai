@@ -2,17 +2,19 @@
 
 from __future__ import annotations
 
+import warnings
 from collections.abc import Callable, Mapping, Sequence
+from contextlib import suppress
 from contextvars import ContextVar
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Union, cast
 
-from pydantic import BaseModel, Field, model_serializer
-from pydantic_core import from_json, to_json
+from pydantic import BaseModel, Field, PydanticUserError, TypeAdapter, model_serializer
+from pydantic_core import PydanticOmit, SchemaError, from_json, to_json
 from pydantic_core.core_schema import SerializationInfo, SerializerFunctionWrapHandler
 
 from pydantic_ai._agent_graph import EndStrategy
-from pydantic_ai._spec import CapabilitySpec, build_registry, build_schema_types
+from pydantic_ai._spec import CapabilitySpec, UnresolvedHints, build_registry, build_schema_types
 from pydantic_ai._utils import get_function_type_hints, is_str_dict
 from pydantic_ai.agent.abstract import AgentRetries
 from pydantic_ai.exceptions import UserError
@@ -339,23 +341,59 @@ def load_capability_from_nested_spec(spec: CapabilitySpec | dict[str, Any] | str
 
 def _build_capability_schema_types(registry: Mapping[str, type[Any]]) -> list[Any]:
     """Build a list of schema types for capabilities from a registry."""
-
-    def _get_schema_target(cls: type[Any]) -> Any:
-        # When from_spec is not overridden, it delegates to cls(*args, **kwargs).
-        # Use __init__ directly so build_schema_types sees the actual parameter types.
-        # Fall back to from_spec if __init__ hints can't be resolved (e.g. TYPE_CHECKING imports).
-        if 'from_spec' not in cls.__dict__:
-            try:
-                get_function_type_hints(cls.__init__)
-                return cls.__init__
-            except (NameError, TypeError, AttributeError):
-                pass
-        return cls.from_spec
-
     return build_schema_types(
         registry,
-        get_schema_target=_get_schema_target,
+        get_schema_target=_capability_schema_target,
+        on_unresolved_hints=lambda hints: warnings.warn(
+            f'Capability {hints.name!r}: {hints.describe("agent spec schema")}. Override `from_spec` with the '
+            f'parameters a spec can set, or import those types at runtime in {hints.module_list}.',
+            UserWarning,
+        ),
     )
+
+
+def _capability_schema_target(cls: type[Any]) -> Any:
+    """The callable whose parameters the agent spec schema publishes for `cls`."""
+    from pydantic_ai.capabilities.abstract import AbstractCapability
+
+    if 'from_spec' in cls.__dict__:
+        return cls.from_spec
+    # When from_spec is not overridden, it delegates to cls(*args, **kwargs).
+    # Use __init__ directly so build_schema_types sees the actual parameter types.
+    with suppress(NameError, TypeError, AttributeError):
+        get_function_type_hints(cls.__init__)
+        return cls.__init__
+    # build_schema_types resolves the hints one parameter at a time, so a hint that doesn't resolve (e.g. a
+    # TYPE_CHECKING import) leaves only its own parameter unannotated. Fall back to from_spec if a superclass
+    # overrides it or the spec forms can't be built from the hints that resolve.
+    if cls.from_spec.__func__ is AbstractCapability.from_spec.__func__ and _init_spec_forms_build(cls):
+        return cls.__init__
+    return cls.from_spec
+
+
+def _init_spec_forms_build(cls: type[Any]) -> bool:
+    """Whether `cls.__init__` has spec forms that can be built from the type hints that resolve, warning if not."""
+    unresolved: list[UnresolvedHints] = []
+    try:
+        schema_types = build_schema_types(
+            {cls.__name__: cls}, get_schema_target=lambda _: cls.__init__, on_unresolved_hints=unresolved.append
+        )
+        for schema_type in schema_types:
+            TypeAdapter(schema_type).json_schema()
+    # What `TypeAdapter` raises for a type with no core or JSON schema, as `_spec._type_accepts_object` expects.
+    except (SchemaError, PydanticUserError, PydanticOmit) as e:
+        reason = f'the schema for its parameters could not be built ({type(e).__name__})'
+    else:
+        if schema_types:
+            return True
+        reason = 'a required parameter takes a type with no JSON form'
+    reason += ''.join(f', and {hints.cause}' for hints in unresolved)
+    warnings.warn(
+        f'Capability {cls.get_serialization_name()!r}: the agent spec schema publishes only its name, because '
+        f'{reason}. Override `from_spec` with the parameters a spec can set.',
+        UserWarning,
+    )
+    return False
 
 
 def _replace_capability_spec_refs(schema: dict[str, Any], cap_items_schema: dict[str, Any]) -> None:

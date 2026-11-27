@@ -2,7 +2,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass, field
-from typing import Annotated, Any, ClassVar, Literal, Protocol, Self
+from typing import TYPE_CHECKING, Annotated, Any, ClassVar, Literal, Protocol, Self
 
 import pytest
 from inline_snapshot import snapshot
@@ -13,13 +13,16 @@ from typing_extensions import TypeAliasType
 from pydantic_ai import Agent
 from pydantic_ai._spec import NamedSpec, build_registry, build_schema_types, load_from_registry
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata
+from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, SetToolMetadata
 from pydantic_ai.tools import AgentDepsT
 
 from .conftest import try_import
 
 with try_import() as jsonschema_imports_successful:
     from jsonschema.validators import validator_for
+
+if TYPE_CHECKING:
+    from decimal import Decimal
 
 
 class TestNamedSpec:
@@ -641,6 +644,276 @@ class TestBuildSchemaTypes:
         assert list(validator_for(schema)(schema).iter_errors(short_form_object))
         with pytest.raises(ValueError, match="unexpected keyword argument 'a'"):
             Agent.from_spec(short_form_object, custom_capability_types=[WeightsWithFlag])
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    def test_type_checking_only_optional_hint_capability_schema(self):
+        """An optional parameter whose hint resolves only under `TYPE_CHECKING` is left out with a warning; the others stay.
+
+        Not a VCR test: schema generation and `Agent.from_spec` run before any model request.
+        """
+
+        @dataclass
+        class PricedLabel(AbstractCapability[None]):
+            label: str
+            limit: int = 3
+            rate: 'Decimal | None' = None
+
+        with pytest.warns(UserWarning) as record:
+            schema = AgentSpec.model_json_schema_with_capabilities([PricedLabel])
+        assert [str(warning.message) for warning in record] == snapshot(
+            [
+                "Capability 'PricedLabel': the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined), so the agent spec schema leaves out `rate`. Override `from_spec` with the parameters a spec can set, or import those types at runtime in `tests.test_spec`."
+            ]
+        )
+        assert schema['$defs']['spec_params_PricedLabel'] == snapshot(
+            {
+                'additionalProperties': False,
+                'properties': {
+                    'label': {'title': 'Label', 'type': 'string'},
+                    'limit': {'title': 'Limit', 'type': 'integer'},
+                    'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                    'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                },
+                'required': ['label'],
+                'title': 'spec_params_PricedLabel',
+                'type': 'object',
+            }
+        )
+        validator = validator_for(schema)(schema)
+        entries: list[JsonValue] = [{'PricedLabel': 'x'}, {'PricedLabel': {'label': 'x', 'limit': 2}}]
+        for entry in entries:
+            spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [entry]}
+            assert list(validator.iter_errors(spec)) == []
+            capabilities = Agent.from_spec(spec, custom_capability_types=[PricedLabel]).root_capability.capabilities
+            assert [c.label for c in capabilities if isinstance(c, PricedLabel)] == ['x']
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    def test_type_checking_only_required_hint_capability_schema(self):
+        """A required parameter whose hint resolves only under `TYPE_CHECKING` accepts any value, with a warning.
+
+        Not a VCR test: schema generation and `Agent.from_spec` run before any model request.
+        """
+
+        @dataclass
+        class Priced(AbstractCapability[None]):
+            rate: 'Decimal'
+            limit: int = 3
+
+        with pytest.warns(UserWarning) as record:
+            schema = AgentSpec.model_json_schema_with_capabilities([Priced])
+        assert [str(warning.message) for warning in record] == snapshot(
+            [
+                "Capability 'Priced': the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined), so the agent spec schema accepts any value for `rate`. Override `from_spec` with the parameters a spec can set, or import those types at runtime in `tests.test_spec`."
+            ]
+        )
+        assert schema['$defs']['spec_params_Priced'] == snapshot(
+            {
+                'additionalProperties': False,
+                'properties': {
+                    'limit': {'title': 'Limit', 'type': 'integer'},
+                    'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                    'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    'rate': {'title': 'Rate'},
+                },
+                'required': ['rate'],
+                'title': 'spec_params_Priced',
+                'type': 'object',
+            }
+        )
+        validator = validator_for(schema)(schema)
+        name_only = {'model': 'test', 'capabilities': ['Priced']}
+        assert list(validator.iter_errors(name_only))
+        entries: list[JsonValue] = [{'Priced': 1.5}, {'Priced': {'rate': 1.5, 'limit': 2}}]
+        for entry in entries:
+            spec: dict[str, JsonValue] = {'model': 'test', 'capabilities': [entry]}
+            assert list(validator.iter_errors(spec)) == []
+            capabilities = Agent.from_spec(spec, custom_capability_types=[Priced]).root_capability.capabilities
+            assert [c.rate for c in capabilities if isinstance(c, Priced)] == [1.5]
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    def test_type_checking_only_hint_schema_error_capability_schema(self):
+        """A class whose schema can't be built from the hints that resolve publishes its name alone, with a warning.
+
+        Not a VCR test: schema generation and `Agent.from_spec` run before any model request.
+        """
+
+        class Session(Protocol):
+            id: str
+
+        @dataclass
+        class PricedSession(AbstractCapability[None]):
+            session: Session | None = None
+            rate: 'Decimal | None' = None
+
+        with pytest.warns(UserWarning) as record:
+            schema = AgentSpec.model_json_schema_with_capabilities([PricedSession])
+        assert [str(warning.message) for warning in record] == snapshot(
+            [
+                "Capability 'PricedSession': the agent spec schema publishes only its name, because the schema for its parameters could not be built (SchemaError), and the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined). Override `from_spec` with the parameters a spec can set."
+            ]
+        )
+        assert [key for key in schema['$defs'] if key.endswith('_PricedSession')] == []
+        name_only = {'model': 'test', 'capabilities': ['PricedSession']}
+        assert list(validator_for(schema)(schema).iter_errors(name_only)) == []
+        capabilities = Agent.from_spec(name_only, custom_capability_types=[PricedSession]).root_capability.capabilities
+        assert [c for c in capabilities if isinstance(c, PricedSession)] == [PricedSession()]
+
+    def test_type_checking_only_hint_from_spec_schema(self):
+        """A `from_spec` parameter whose hint resolves only under `TYPE_CHECKING` is left out with a warning."""
+
+        @dataclass
+        class PricedFromSpec(AbstractCapability[None]):
+            limit: int = 3
+
+            @classmethod
+            def from_spec(cls, limit: int = 3, rate: 'Decimal | None' = None) -> Self:
+                return cls(limit=limit)  # pragma: no cover
+
+        with pytest.warns(UserWarning) as record:
+            schema = AgentSpec.model_json_schema_with_capabilities([PricedFromSpec])
+        assert [str(warning.message) for warning in record] == snapshot(
+            [
+                "Capability 'PricedFromSpec': the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined), so the agent spec schema leaves out `rate`. Override `from_spec` with the parameters a spec can set, or import those types at runtime in `tests.test_spec`."
+            ]
+        )
+        assert {key: schema['$defs'][key] for key in schema['$defs'] if key.endswith('_PricedFromSpec')} == snapshot(
+            {
+                'short_spec_PricedFromSpec': {
+                    'additionalProperties': False,
+                    'properties': {'PricedFromSpec': {'title': 'Pricedfromspec', 'type': 'integer'}},
+                    'required': ['PricedFromSpec'],
+                    'title': 'short_spec_PricedFromSpec',
+                    'type': 'object',
+                }
+            }
+        )
+
+    def test_type_checking_only_hint_var_keyword_capability_schema(self):
+        """An `__init__` taking `**kwargs` also resolves its hints one parameter at a time, and never reports `kwargs`."""
+
+        @dataclass(init=False)
+        class PricedKwargs(AbstractCapability[None]):
+            limit: int = 3
+
+            def __init__(self, limit: int = 3, rate: 'Decimal | None' = None, **kwargs: 'Decimal') -> None:
+                self.limit = limit  # pragma: no cover
+
+        with pytest.warns(UserWarning) as record:
+            schema = AgentSpec.model_json_schema_with_capabilities([PricedKwargs])
+        assert [str(warning.message) for warning in record] == snapshot(
+            [
+                "Capability 'PricedKwargs': the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined), so the agent spec schema leaves out `rate`. Override `from_spec` with the parameters a spec can set, or import those types at runtime in `tests.test_spec`."
+            ]
+        )
+        assert {key: schema['$defs'][key] for key in schema['$defs'] if key.endswith('_PricedKwargs')} == snapshot(
+            {
+                'short_spec_PricedKwargs': {
+                    'additionalProperties': False,
+                    'properties': {'PricedKwargs': {'title': 'Pricedkwargs', 'type': 'integer'}},
+                    'required': ['PricedKwargs'],
+                    'title': 'short_spec_PricedKwargs',
+                    'type': 'object',
+                }
+            }
+        )
+
+    @pytest.mark.skipif(not jsonschema_imports_successful(), reason='jsonschema not installed')
+    def test_type_checking_only_hint_unloadable_capability_schema(self):
+        """A class left with no spec form keeps its name-only entry, with a warning, as when none of its hints resolved.
+
+        Not a VCR test: schema generation runs before any model request.
+        """
+
+        @dataclass
+        class PricedHook(AbstractCapability[None]):
+            hook: Callable[[], None]
+            rate: 'Decimal | None' = None
+
+        with pytest.warns(UserWarning) as record:
+            schema = AgentSpec.model_json_schema_with_capabilities([PricedHook])
+        assert [str(warning.message) for warning in record] == snapshot(
+            [
+                "Capability 'PricedHook': the agent spec schema publishes only its name, because a required parameter takes a type with no JSON form, and the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined). Override `from_spec` with the parameters a spec can set."
+            ]
+        )
+        name_only = {'model': 'test', 'capabilities': ['PricedHook']}
+        assert list(validator_for(schema)(schema).iter_errors(name_only)) == []
+
+    def test_inherited_field_hints_resolve_in_declaring_module(self):
+        """A field inherited from a class in another module resolves in that module, as `typing.get_type_hints` does.
+
+        Not a VCR test: schema generation runs before any model request.
+        """
+
+        @dataclass
+        class LabeledWorkspace(LocalWorkspace[None]):
+            label: str = 'x'
+
+        schema = AgentSpec.model_json_schema_with_capabilities([LabeledWorkspace])
+        assert schema['$defs']['spec_params_LabeledWorkspace'] == snapshot(
+            {
+                'additionalProperties': False,
+                'properties': {
+                    'working_dir': {
+                        'anyOf': [{'type': 'string'}, {'format': 'path', 'type': 'string'}],
+                        'title': 'Working Dir',
+                    },
+                    'label': {'title': 'Label', 'type': 'string'},
+                    'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                    'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                    'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                    'read_only': {'title': 'Read Only', 'type': 'boolean'},
+                    'authority': {'enum': ['operator', 'user', 'none'], 'title': 'Authority', 'type': 'string'},
+                    'path_authority': {
+                        'anyOf': [
+                            {
+                                'additionalProperties': {'enum': ['operator', 'user', 'none'], 'type': 'string'},
+                                'type': 'object',
+                            },
+                            {'type': 'null'},
+                        ],
+                        'title': 'Path Authority',
+                    },
+                    'env': {
+                        'anyOf': [{'additionalProperties': {'type': 'string'}, 'type': 'object'}, {'type': 'null'}],
+                        'title': 'Env',
+                    },
+                },
+                'required': ['working_dir'],
+                'title': 'spec_params_LabeledWorkspace',
+                'type': 'object',
+            }
+        )
+
+    def test_type_checking_only_hint_inherited_from_spec_schema(self):
+        """A class whose `__init__` hints don't all resolve keeps the schema of the `from_spec` override it inherits."""
+
+        @dataclass
+        class Limited(AbstractCapability[None]):
+            limit: int = 3
+
+            @classmethod
+            def from_spec(cls, limit: int = 3) -> Self:
+                return cls(limit=limit)  # pragma: no cover
+
+        @dataclass
+        class PricedLimited(Limited):
+            rate: 'Decimal | None' = None
+
+        schema = AgentSpec.model_json_schema_with_capabilities([PricedLimited])
+        assert {key: schema['$defs'][key] for key in schema['$defs'] if key.endswith('_PricedLimited')} == snapshot(
+            {
+                'short_spec_PricedLimited': {
+                    'additionalProperties': False,
+                    'properties': {'PricedLimited': {'title': 'Pricedlimited', 'type': 'integer'}},
+                    'required': ['PricedLimited'],
+                    'title': 'short_spec_PricedLimited',
+                    'type': 'object',
+                }
+            }
+        )
 
     def test_no_params_class(self):
         class NoParams:

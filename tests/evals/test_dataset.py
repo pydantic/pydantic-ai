@@ -10,7 +10,7 @@ from dataclasses import dataclass, field
 from datetime import timedelta
 from functools import partial, wraps
 from pathlib import Path
-from typing import Any, Literal
+from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 import anyio
 import pytest
@@ -24,6 +24,9 @@ from .._inline_snapshot import snapshot
 from ..clock_utils import LONG_TIMEOUT, Clock
 from ..conftest import IsStr, try_import
 from .utils import render_table
+
+if TYPE_CHECKING:
+    from decimal import Decimal
 
 with try_import() as imports_successful:
     from rich.table import Table
@@ -1878,6 +1881,101 @@ def test_add_invalid_evaluator():
     with pytest.raises(ValueError) as exc_info:
         dataset.model_json_schema_with_evaluators((SimpleEvaluator,))
     assert str(exc_info.value).startswith('All custom evaluator classes must be decorated with `@dataclass`')
+
+
+def test_evaluator_schema_with_type_checking_only_hint():
+    """A parameter whose hint resolves only under `TYPE_CHECKING` is left out of the schema with a warning.
+
+    Schema generation makes no model request, so there is nothing to record.
+    """
+
+    @dataclass
+    class PricedEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        threshold: int = 1
+        rate: Decimal | None = None
+
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> bool:  # pragma: no cover
+            return True
+
+    with pytest.warns(UserWarning) as record:
+        schema = Dataset[TaskInput, TaskOutput, TaskMetadata].model_json_schema_with_evaluators([PricedEvaluator])
+    assert [str(warning.message) for warning in record] == snapshot(
+        [
+            "Evaluator 'PricedEvaluator': the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined), so the `Dataset` schema leaves out `rate`. Import those types at runtime in `tests.evals.test_dataset`."
+        ]
+    )
+    assert {key: schema['$defs'][key] for key in schema['$defs'] if key.endswith('_PricedEvaluator')} == snapshot(
+        {
+            'short_spec_PricedEvaluator': {
+                'additionalProperties': False,
+                'properties': {'PricedEvaluator': {'title': 'Pricedevaluator', 'type': 'integer'}},
+                'required': ['PricedEvaluator'],
+                'title': 'short_spec_PricedEvaluator',
+                'type': 'object',
+            }
+        }
+    )
+
+
+def test_evaluator_schema_with_type_checking_only_hint_and_var_keyword_init():
+    """An evaluator whose `__init__` takes `**kwargs` resolves its fields' hints one at a time too, and skips a `ClassVar`.
+
+    Schema generation makes no model request, so there is nothing to record.
+    """
+
+    @dataclass(init=False)
+    class PricedKwargsEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        kind: ClassVar[Decimal | None] = None
+        threshold: int = 1
+        rate: Decimal | None = None
+
+        def __init__(self, **kwargs: Any) -> None: ...  # pragma: no cover
+
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> bool:  # pragma: no cover
+            return True
+
+    with pytest.warns(UserWarning) as record:
+        schema = Dataset[TaskInput, TaskOutput, TaskMetadata].model_json_schema_with_evaluators([PricedKwargsEvaluator])
+    assert [str(warning.message) for warning in record] == snapshot(
+        [
+            "Evaluator 'PricedKwargsEvaluator': the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined), so the `Dataset` schema leaves out `rate`. Import those types at runtime in `tests.evals.test_dataset`."
+        ]
+    )
+    assert {key: schema['$defs'][key] for key in schema['$defs'] if key.endswith('_PricedKwargsEvaluator')} == snapshot(
+        {
+            'short_spec_PricedKwargsEvaluator': {
+                'additionalProperties': False,
+                'properties': {'PricedKwargsEvaluator': {'title': 'Pricedkwargsevaluator', 'type': 'integer'}},
+                'required': ['PricedKwargsEvaluator'],
+                'title': 'short_spec_PricedKwargsEvaluator',
+                'type': 'object',
+            }
+        }
+    )
+
+
+def test_evaluator_schema_with_type_checking_only_hint_and_no_spec_form():
+    """An evaluator left with no spec form by a required `Callable` still warns about the hints that didn't resolve.
+
+    Schema generation makes no model request, so there is nothing to record.
+    """
+
+    @dataclass
+    class PricedHookEvaluator(Evaluator[TaskInput, TaskOutput, TaskMetadata]):
+        hook: Callable[[], None]
+        rate: Decimal | None = None
+
+        def evaluate(self, ctx: EvaluatorContext[TaskInput, TaskOutput, TaskMetadata]) -> bool:  # pragma: no cover
+            return True
+
+    with pytest.warns(UserWarning) as record:
+        schema = Dataset[TaskInput, TaskOutput, TaskMetadata].model_json_schema_with_evaluators([PricedHookEvaluator])
+    assert [str(warning.message) for warning in record] == snapshot(
+        [
+            "Evaluator 'PricedHookEvaluator': the type hints of `rate` could not be resolved (NameError: name 'Decimal' is not defined), so the `Dataset` schema leaves out `rate`. Import those types at runtime in `tests.evals.test_dataset`."
+        ]
+    )
+    assert [key for key in schema['$defs'] if key.endswith('_PricedHookEvaluator')] == []
 
 
 def test_import_generate_dataset():
