@@ -41,7 +41,7 @@ UV_LINES = ['Resolved 3 packages', 'Installed 3 packages']
 
 
 def _use(monkeypatch: pytest.MonkeyPatch, updates: Updates) -> None:
-    def build(*, channel: object) -> Updates:
+    def build(*, channel: object, current: object) -> Updates:
         return updates
 
     monkeypatch.setattr(session_runtime, 'Updates', build)

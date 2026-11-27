@@ -127,8 +127,8 @@ def installed() -> Installed:
 def running() -> Installed:
     """The build this process runs, read once: another process's `uv tool install` can replace the files later.
 
-    Each web UI session builds its own `Updates`, so reading `installed()` there would take a newer install's
-    metadata for the code still in memory.
+    Each web UI session builds its own shell and `Updates`, so reading `installed()` there would take a newer
+    install's metadata for the code still in memory.
     """
     return installed()
 
@@ -433,7 +433,7 @@ class Updates:
     """The footer's update notice, the update menu's status, and the `/update` install, for the channel the settings name."""
 
     channel: Callable[[], UpdateChannel]
-    current: Installed = field(default_factory=running)
+    current: Installed = field(default_factory=installed)
     fetch: Callable[[UpdateChannel], str] = latest
     spawn: Callable[[Callable[[], None]], None] = _in_thread
     """Runs the background check; tests run it inline."""

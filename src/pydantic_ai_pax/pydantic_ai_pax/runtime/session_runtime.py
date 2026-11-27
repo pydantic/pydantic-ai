@@ -35,7 +35,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_ai_harness.sub_agents import DelegationTask, TaskQuestionAskedEvent
 from pydantic_ai_pax.cli.command_context import CommandContext, CommandProvider
 from pydantic_ai_pax.cli.effort import effort_command, effort_completions
-from pydantic_ai_pax.cli.self_update import Relaunch, Updates, WebHandoff
+from pydantic_ai_pax.cli.self_update import Relaunch, Updates, WebHandoff, running
 from pydantic_ai_pax.cli.shell_passthrough import (
     HELP as SHELL_HELP,
     run_shell_command,
@@ -519,7 +519,7 @@ def create_shell(
         )
     )
     commands.register(Command(name='exit', description='Quit Pax', handler=lambda _: 'Goodbye.'))
-    updates = Updates(channel=lambda: context.settings.update_channel)
+    updates = Updates(channel=lambda: context.settings.update_channel, current=running())
 
     commands.register(
         Command(

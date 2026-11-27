@@ -653,7 +653,7 @@ def test_about_shows_how_an_install_in_the_launch_session_ended(
         gates['home'] = Gate(portal, 'home')
         return {'home': gates['home'].agent()}
 
-    def failing(*, channel: object) -> Updates:
+    def failing(*, channel: object, current: object) -> Updates:
         return _updates(['stable'], codes=[1, 1], lines=['Resolving'])[0]
 
     monkeypatch.setattr(session_runtime, 'Updates', failing)

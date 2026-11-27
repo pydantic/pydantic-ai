@@ -573,26 +573,41 @@ async def test_command_refuses_once_another_process_replaced_the_install() -> No
     assert len(installs) == 1
 
 
-async def test_a_later_shell_compares_against_the_build_this_process_runs(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The web UI builds `Updates` per session: one built after another process replaced the install still knows
-    the build in memory, so its `/update` refuses instead of importing the new files' modules.
+async def test_a_later_shell_compares_against_the_build_this_process_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The web UI builds a shell per session: one built after another process replaced the install still gets the
+    build in memory as `current`, so its `/update` refuses instead of importing the new files' modules.
     """
     old, new = Installed(version='0.52.0', tool=True), Installed(version='0.53.0', tool=True)
     on_disk = old
     monkeypatch.setattr(self_update, 'installed', lambda: on_disk)
+    built: list[Installed] = []
+
+    def build(*, channel: Callable[[], UpdateChannel], current: Installed) -> Updates:
+        built.append(current)
+        return _updates(['stable'])[0]
+
+    monkeypatch.setattr(session_runtime, 'Updates', build)
+
+    async def shell() -> None:
+        inputs(monkeypatch, ['/exit'])
+        await chat(
+            Agent(TestModel()),
+            deps=None,
+            settings=Settings(model='test'),
+            console=Console(file=StringIO()),
+            store=SettingsStore(tmp_path / 'config.db'),
+        )
+
     self_update.running.cache_clear()
     try:
-        first = Updates(channel=lambda: 'stable', on_disk=lambda: on_disk)
+        await shell()
         on_disk = new
-        later = Updates(
-            channel=lambda: 'stable',
-            on_disk=lambda: on_disk,
-            fetch=lambda channel: pytest.fail('a replaced install checks nothing'),
-        )
+        await shell()
     finally:
         self_update.running.cache_clear()
-    assert first.current == later.current == old
-    assert (await later.command([])).startswith('Not updating: another process installed Pax 0.53.0 in place of')
+    assert built == [old, old]
 
 
 def test_hold_environment_only_in_a_writable_uv_tool_environment(tmp_path: Path) -> None:
@@ -755,7 +770,7 @@ async def _relaunch_after(
     if updates is None:
         updates, _ = _updates(['main'])
 
-    def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
+    def build(*, channel: Callable[[], UpdateChannel], current: Installed) -> Updates:
         return updates
 
     monkeypatch.setattr(session_runtime, 'Updates', build)
@@ -845,7 +860,7 @@ async def test_update_after_another_process_replaced_the_install_imports_nothing
     updates, ran = _updates(['main'])
     updates.on_disk = lambda: Installed(version='0.53.0', tool=True)
 
-    def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
+    def build(*, channel: Callable[[], UpdateChannel], current: Installed) -> Updates:
         return updates
 
     monkeypatch.setattr(session_runtime, 'Updates', build)
@@ -1017,7 +1032,7 @@ async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.
     updates, ran = _updates(['stable'], executable=None)
     channels: list[UpdateChannel] = []
 
-    def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
+    def build(*, channel: Callable[[], UpdateChannel], current: Installed) -> Updates:
         channels.append(channel())
         return updates
 
@@ -1183,7 +1198,7 @@ async def test_bare_update_opens_the_menu_and_installs_once_it_closes(
     """In the terminal, bare `/update` shows the menu; its Update action closes it and installs at once."""
     updates, ran = _updates(['stable'], executable=None)
 
-    def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
+    def build(*, channel: Callable[[], UpdateChannel], current: Installed) -> Updates:
         return updates
 
     monkeypatch.setattr(session_runtime, 'Updates', build)
