@@ -346,7 +346,10 @@ class _NoDurability(AbstractCapability[None]):
     not (temporal_imports() and aws_lambda_imports()), reason='temporalio or the AWS durable SDK not installed'
 )
 async def test_an_unexpected_error_propagates() -> None:
-    """An error that isn't the engine's refusal fails the test instead of becoming the observed outcome; its runs raise before any request, so none to record."""
+    """An error that isn't the engine's refusal fails the test instead of becoming the observed outcome.
+
+    Its runs raise before any request, so there's none to record.
+    """
 
     async def run(agent: Agent[None, str], gate: _Gate) -> str:
         raise RuntimeError('unrelated')

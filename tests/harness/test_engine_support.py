@@ -245,7 +245,7 @@ def test_the_suites_run_every_run_context_scenario() -> None:
     It reads test tables, docs or source, with no provider exchange to record, so it isn't a VCR test.
     """
     run_context = {scenario for scenario in SCENARIOS if scenario.startswith('RunContext.')}
-    assert run_context <= set(SCENARIO_RUNS)
+    assert run_context == set(SCENARIO_RUNS)
 
 
 def test_the_compatibility_page_is_current(capsys: pytest.CaptureFixture[str]) -> None:

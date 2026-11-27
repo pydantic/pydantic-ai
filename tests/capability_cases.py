@@ -217,7 +217,10 @@ class Calls:
     that runs them one per response marks the run `moves_cache_prefix` with it."""
     launches_python: str | None = None
     """Why running the calls launches a Python interpreter, such as a kernel process: a suite that runs them marks
-    the test `subprocess` with it, as `conditional`, since a durable engine may refuse the case before it launches."""
+    the test `subprocess` with it, as `conditional`, since a durable engine may refuse the case before it launches.
+
+    Every contract the case runs under gets the same conditional mark, the non-durable ones included, so the
+    stale-marker check doesn't judge any of them."""
 
 
 @dataclass(frozen=True)
