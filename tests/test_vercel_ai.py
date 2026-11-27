@@ -137,7 +137,7 @@ with try_import() as starlette_import_successful:
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
-    from pydantic_ai.ui import DEFAULT_ALLOWED_CONTENT_TYPES
+    from pydantic_ai.ui import DEFAULT_ALLOWED_CONTENT_TYPES, NativeEvent
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
     from pydantic_ai.ui.vercel_ai._utils import (
         dump_provider_metadata,
@@ -3916,6 +3916,121 @@ async def test_run_stream_error_closes_open_tool_call():
             'finish-step',
             'finish',
             '[DONE]',
+        ]
+    )
+
+
+async def _encode_restarted_part(events: AsyncIterator[NativeEvent]) -> list[dict[str, Any]]:
+    event_stream = VercelAIEventStream[None, str]()
+    return [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(events))
+        if '[DONE]' not in event
+    ]
+
+
+async def test_restarted_part_ends_open_text():
+    """A republished `PartStartEvent` emits `text-end` for the open text part before the new `text-start`. #11734
+
+    A retried durable activity republishes the model events it already published, so the client sees the first
+    attempt's partial part as its own, ended part, followed by the retry's full part.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo'))
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo, world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello, world'))
+
+    chunks = await _encode_restarted_part(event_generator())
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (first_id := IsSameStr())},
+            {'type': 'text-delta', 'delta': 'Hel', 'id': first_id},
+            {'type': 'text-delta', 'delta': 'lo', 'id': first_id},
+            {'type': 'text-end', 'id': first_id},
+            {'type': 'text-start', 'id': (second_id := IsSameStr())},
+            {'type': 'text-delta', 'delta': 'Hel', 'id': second_id},
+            {'type': 'text-delta', 'delta': 'lo, world', 'id': second_id},
+            {'type': 'text-end', 'id': second_id},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    )
+    assert len({c['id'] for c in chunks if 'id' in c}) == 2
+
+
+async def test_restarted_part_ends_open_thinking():
+    """A republished `PartStartEvent` emits `reasoning-end` for the open thinking part before the new one. #11734"""
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo'))
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo, world'))
+        yield PartEndEvent(index=0, part=ThinkingPart(content='Hello, world'))
+
+    chunks = await _encode_restarted_part(event_generator())
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'reasoning-start', 'id': (first_id := IsSameStr())},
+            {'type': 'reasoning-delta', 'id': first_id, 'delta': 'Hel'},
+            {'type': 'reasoning-delta', 'id': first_id, 'delta': 'lo'},
+            {'type': 'reasoning-end', 'id': first_id},
+            {'type': 'reasoning-start', 'id': (second_id := IsSameStr())},
+            {'type': 'reasoning-delta', 'id': second_id, 'delta': 'Hel'},
+            {'type': 'reasoning-delta', 'id': second_id, 'delta': 'lo, world'},
+            {'type': 'reasoning-end', 'id': second_id},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    )
+    assert len({c['id'] for c in chunks if 'id' in c}) == 2
+
+
+async def test_restarted_part_ends_open_tool_call():
+    """A republished `PartStartEvent` for a tool call restarts its input stream. #11734"""
+
+    def call_part(args: str) -> ToolCallPart:
+        return ToolCallPart(tool_name='get_time', args=args, tool_call_id='call_0')
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=call_part('{"tz": '))
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"U'))
+        yield PartStartEvent(index=0, part=call_part('{"tz": '))
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}'))
+        yield PartEndEvent(index=0, part=call_part('{"tz": "UTC"}'))
+        yield FunctionToolCallEvent(part=call_part('{"tz": "UTC"}'), args_valid=True)
+        yield FunctionToolResultEvent(part=ToolReturnPart(tool_name='get_time', tool_call_id='call_0', content='12:00'))
+
+    chunks = await _encode_restarted_part(event_generator())
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'get_time'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"tz": '},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '"U'},
+            {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'get_time'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"tz": '},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '"UTC"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call_0',
+                'toolName': 'get_time',
+                'input': {'tz': 'UTC'},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'call_0', 'output': '12:00'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
         ]
     )
 
