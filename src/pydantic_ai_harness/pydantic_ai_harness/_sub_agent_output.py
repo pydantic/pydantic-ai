@@ -62,6 +62,8 @@ class ServingModelRecorder(AbstractCapability[Any]):
     request from a batch shared with other runs. The names of that request's output tools are recorded too.
     """
 
+    _telemetry_internal = True
+
     # It only observes the request, so it can be added to a sub-agent run under durable execution too.
     _safe_at_runtime: ClassVar[bool] = True
 

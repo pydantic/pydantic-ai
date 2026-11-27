@@ -47,6 +47,7 @@ from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from ._merge import merge_capability_fields
 from ._on_event import collect_on_event_methods, marked_listens_to
+from ._resolutions import record_resolution
 
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
@@ -316,6 +317,15 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
     Internal, in-tree only. An id-less instance of a class that sets this to `False` binds no durable
     operations, so the class must reject its own id-less runs inside a durable workflow or flow.
+    """
+
+    _telemetry_internal: ClassVar[bool] = False
+    """Whether this is framework plumbing that the agent run span's `pydantic_ai.capabilities` leaves out.
+
+    Internal, in-tree only. A private class that doesn't set it is recorded under the public class it
+    extends when it has an `id`, and otherwise rolls up into the configured capability it's a piece of,
+    so only set it on a capability the run adds for its own bookkeeping, which the user never configured
+    and would only mistake for one of their own.
     """
 
     _safe_at_runtime: ClassVar[bool] = False
@@ -675,11 +685,12 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         through `dataclasses.replace`, or one of another class, would otherwise drop it and raise the authority back.
         """
         ceiling = self._effective_authority
-        if resolved is self or resolved._effective_authority == _lower_authority(
+        if resolved is not self and resolved._effective_authority != _lower_authority(
             resolved._effective_authority, ceiling
         ):
-            return resolved
-        return resolved.with_authority(ceiling)
+            resolved = resolved.with_authority(ceiling)
+        record_resolution(self, resolved)
+        return resolved
 
     async def _for_run_keeping_authority(self, ctx: RunContext[AgentDepsT]) -> AbstractCapability[AgentDepsT]:
         """`for_run`, keeping the authority `with_authority` lowered this instance to.
@@ -1974,6 +1985,8 @@ def _combine_duplicate_capabilities(  # pyright: ignore[reportUnusedFunction]
     replacements: dict[int, list[AbstractCapability[AgentDepsT] | None]] = {}
     for capability_id, duplicates in duplicate_groups.items():
         combined_duplicate = _resolve_duplicates(capability_id, duplicates)
+        for duplicate in duplicates:
+            record_resolution(duplicate.capability, combined_duplicate)
         replacements.update(
             {id(duplicate.capability): [None] * occurrence_counts[id(duplicate.capability)] for duplicate in duplicates}
         )

@@ -413,6 +413,11 @@ class RunContext(Generic[RunContextAgentDepsT]):
     _run_capabilities_by_id: dict[str, AbstractCapability[Any]] | None = field(default=None, repr=False)
     """Per-run capability instances used for durable recovery, for internal use only."""
 
+    _capability_resolutions: Mapping[int, tuple[AbstractCapability[Any], AbstractCapability[Any]]] = field(
+        default_factory=lambda: {}, repr=False
+    )
+    """What binding and `for_run` replaced each configured capability with, for the agent run span; internal only."""
+
     _output_submitter: OutputSubmitter | None = field(default=None, repr=False)
     """Private implementation detail — not part of the public API; do not read or write.
 

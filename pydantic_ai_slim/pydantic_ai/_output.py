@@ -1669,6 +1669,8 @@ class TextFunctionOutputProcessor(TextOutputProcessor[OutputDataT]):
 class OutputToolset(AbstractToolset[AgentDepsT]):
     """A toolset that contains output tools for agent output types."""
 
+    _telemetry_internal = True
+
     _tool_defs: list[ToolDefinition]
     """The tool definitions for the output tools in this toolset."""
     processors: dict[str, ObjectOutputProcessor[Any]]

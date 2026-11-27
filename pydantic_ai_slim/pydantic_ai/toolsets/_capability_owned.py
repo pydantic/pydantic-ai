@@ -18,6 +18,8 @@ if TYPE_CHECKING:
 class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
     """Binds a contributed toolset to the capability that owns it."""
 
+    _telemetry_internal = True
+
     capability: AbstractCapability[AgentDepsT]
 
     # The contributed toolset is the capability's code: a factory or hook in it that enqueues is held to the

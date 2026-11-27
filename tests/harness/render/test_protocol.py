@@ -523,6 +523,7 @@ async def test_run_context_serialization_is_exhaustive() -> None:
         '_cancellation',  # live controller holding an asyncio task reference
         '_durable_operations',  # workflow-side callables; worker dispatch is pre-registered
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker's agent
+        '_capability_resolutions',  # what binding and `for_run` replaced, read only by the run span in the host
         'workspace',  # live facade; only its ref crosses, as `workspace_ref`
         '_run_held_toolsets',  # a child task may run in another process, so it enters its own toolsets
         '_output_submitter',  # live view of the run's output pipeline; a child task can't submit the output

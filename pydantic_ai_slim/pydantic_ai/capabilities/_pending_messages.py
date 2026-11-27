@@ -43,6 +43,8 @@ class PendingMessageDrainCapability(AbstractCapability[Any]):
     hook has had a chance to redirect an apparent [`End`][pydantic_graph.End].
     """
 
+    _telemetry_internal = True
+
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 

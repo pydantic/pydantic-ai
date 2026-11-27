@@ -22,6 +22,9 @@ from pydantic_ai._instrumentation import (
     RUN_ID_BAGGAGE_KEY,
     InstrumentationNames,
     MessageJsonCache,
+    ToolsetRecord,
+    add_toolset_records,
+    capability_records,
     get_agent_run_baggage_attributes,
     get_instructions,
     has_stale_message_json,
@@ -32,6 +35,7 @@ from pydantic_ai._instrumentation import (
     open_model_request_span,
     record_exception as _record_exception,
     record_uncaught_errors as _record_uncaught_errors,
+    recorded_capability_ids,
     redact_binary_content,
     root_conversation_attributes,
     safe_to_json,
@@ -183,6 +187,15 @@ class Instrumentation(AbstractCapability[Any]):
     """Last formatted instructions sent to the model, or `UNSET` before the first request."""
     _variable_instructions: bool = field(default=False, repr=False, init=False)
     """Whether agent-level instructions varied across requests in this run."""
+    _active_capability_ids: set[str] = field(default_factory=set[str], repr=False, init=False)
+    """Ids of the capabilities active on any of this run's model requests."""
+    _toolset_records: dict[str, list[ToolsetRecord]] = field(
+        default_factory=dict[str, list[ToolsetRecord]], repr=False, init=False
+    )
+    """The distinct leaf toolsets resolved for this run's model requests, by class, in the order they first appeared.
+
+    Collected per request rather than once, because a `DynamicToolset` can resolve differently per step.
+    """
 
     _: KW_ONLY
 
@@ -418,6 +431,17 @@ class Instrumentation(AbstractCapability[Any]):
                 )
             ).decode(),
             **settings.system_instructions_attributes(last_instructions),
+            'pydantic_ai.capabilities': safe_to_json(
+                capability_records(
+                    ctx.capabilities,
+                    ctx.root_capability,
+                    self._active_capability_ids | ctx.active_capability_ids,
+                    mcp_url_ids,
+                    ctx._capability_resolutions,  # pyright: ignore[reportPrivateUsage]
+                    include_content=settings.include_content,
+                )
+            ).decode(),
+            'pydantic_ai.toolsets': safe_to_json(self._toolset_records).decode(),
         }
 
         if new_message_index > 0:
@@ -444,6 +468,8 @@ class Instrumentation(AbstractCapability[Any]):
                     'type': 'object',
                     'properties': {
                         **{k: {'type': 'array'} if isinstance(v, str) else {} for k, v in attrs.items()},
+                        'pydantic_ai.capabilities': {'type': 'object'},
+                        'pydantic_ai.toolsets': {'type': 'object'},
                         'final_result': {'type': 'object'},
                     },
                 }
@@ -476,6 +502,7 @@ class Instrumentation(AbstractCapability[Any]):
             message_json_cache=self._message_json_cache,
             defer_request_attributes=True,
         ) as (finish, _):
+            self._record_step_composition(ctx, request_context)
             captured_response: ModelResponse | None = None
             captured_time_to_first_chunk: float | None = None
 
@@ -518,6 +545,25 @@ class Instrumentation(AbstractCapability[Any]):
                 track_request(prepared_request_context)
                 self._record_cache_health(request_context, response, segments)
                 return response
+
+    def _record_step_composition(self, ctx: RunContext[Any], request_context: ModelRequestContext) -> None:
+        """Note this step's active capabilities on its model request span, and its toolsets for the run span."""
+        include_content = self.settings.include_content
+        toolset = ctx.tool_manager.toolset if ctx.tool_manager is not None else None
+        # The ids the graph derived for this request's parameters, so per-step and run-end attributes share one source.
+        url_ids = model_request_telemetry_url_ids(request_context.model_request_parameters)
+        active_ids = ctx.active_capability_ids
+        self._active_capability_ids |= active_ids
+        # An agent run always has a tool manager by its first model request; the type allows a run context without one.
+        if toolset is not None:  # pragma: no branch
+            add_toolset_records(self._toolset_records, toolset, url_ids, include_content=include_content)
+        span = get_current_span()
+        if span.is_recording():
+            recorded = recorded_capability_ids(ctx.capabilities, url_ids, include_content=include_content)
+            span.set_attribute(
+                'pydantic_ai.active_capabilities',
+                [capability_id for capability_id in recorded if capability_id in active_ids],
+            )
 
     def _record_cache_health(
         self, request_context: ModelRequestContext, response: ModelResponse, segments: list[ModelResponse]

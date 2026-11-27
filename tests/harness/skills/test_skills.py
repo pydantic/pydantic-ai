@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import inspect
+import json
 import os
 import re
 import shutil
@@ -300,6 +301,46 @@ class TestSkills:
 
         # The directory tells the model where `references/guide.md` is; reading it is up to the model's tools.
         assert run.loaded == _loaded(tmp_path.resolve() / 'skills', 'portable', 'Follow the portable workflow.')
+
+    async def test_agent_run_span_records_each_skill_and_whether_it_was_loaded(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'skills', 'review')
+        _write_skill(tmp_path / 'skills', 'deploy')
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        agent: Agent[None, str] = Agent(_model(_Run(), 'review'), capabilities=[Skills('skills')])
+        agent.instrument = InstrumentationSettings(tracer_provider=provider, include_content=False)
+
+        await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))
+
+        (run_span,) = [span for span in exporter.get_finished_spans() if span.name.startswith('invoke_agent')]
+        # Each skill is a deferred capability with the skill's name as its id, which is recorded without content.
+        assert json.loads(str((run_span.attributes or {})['pydantic_ai.capabilities'])) == snapshot(
+            {
+                'pydantic_ai.capabilities.Instrumentation': [
+                    {'id': 'instrumentation', 'defer_loading': False, 'active': True}
+                ],
+                'pydantic_ai.capabilities.ToolSearch': [{'id': 'tool_search', 'defer_loading': False, 'active': True}],
+                'pydantic_ai_harness.skills.Skills': [
+                    {
+                        'id': 'skills',
+                        'defer_loading': False,
+                        'active': True,
+                        'members': {
+                            'pydantic_ai.capabilities.AbstractCapability': [
+                                {'id': 'deploy', 'defer_loading': True, 'active': False},
+                                {'id': 'review', 'defer_loading': True, 'active': True},
+                            ]
+                        },
+                    }
+                ],
+            }
+        )
+        assert [
+            span.attributes['pydantic_ai.active_capabilities']
+            for span in exporter.get_finished_spans()
+            if span.name.startswith('chat ') and span.attributes
+        ] == snapshot([('instrumentation', 'tool_search'), ('instrumentation', 'tool_search', 'review')])
 
     @pytest.mark.parametrize(
         ('suffix', 'spec_text'),

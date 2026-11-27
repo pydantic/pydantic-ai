@@ -72,6 +72,8 @@ async def _render_deferred_capability_catalog(
 class DeferredCapabilityLoader(AbstractCapability[AgentDepsT]):
     """Internal capability that installs deferred capability catalog and loading support."""
 
+    _telemetry_internal = True
+
     _step: tuple[str | None, int] | None = field(default=None, init=False, repr=False)
     _catalog: list[DeferredCapabilityEntry] = field(
         default_factory=list[DeferredCapabilityEntry], init=False, repr=False

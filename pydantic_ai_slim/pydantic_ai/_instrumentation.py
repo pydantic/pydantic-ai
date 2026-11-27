@@ -3,7 +3,7 @@ from __future__ import annotations
 import itertools
 import json
 import sys
-from collections.abc import Callable, Generator, Iterable, Mapping, Sequence
+from collections.abc import Callable, Generator, Iterable, Mapping, Sequence, Set
 from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
@@ -18,6 +18,7 @@ from opentelemetry.trace import INVALID_SPAN, Span, SpanKind, Status, StatusCode
 from opentelemetry.util.types import AttributeValue
 from pydantic import ConfigDict, PydanticUserError, TypeAdapter
 from pydantic_core import PydanticSerializationError, to_json
+from typing_extensions import TypedDict
 
 from pydantic_graph._utils import get_traceparent
 
@@ -558,6 +559,326 @@ def model_request_parameters_attributes(
         if serialized is None:
             return {}
     return {'model_request_parameters': safe_to_json(serialized).decode()}
+
+
+_PUBLIC_PACKAGES = frozenset({'pydantic_ai', 'pydantic_ai_harness'})
+
+
+# Bounded, as user classes can be created dynamically (per request or tenant) and a cache entry keeps its class alive.
+@lru_cache(maxsize=1024)
+def public_class_path(cls: type[AbstractCapability[Any]] | type[AbstractToolset[Any]]) -> str:
+    """The import path of the nearest Pydantic AI or Harness class in `cls`'s MRO, for run composition attributes.
+
+    A user-defined class records as the framework class it extends, so a trace says what kind of
+    capability or toolset ran without exporting the name of the user's own class. The path is the
+    one the class is exported under rather than its defining module, so moving a class between
+    private modules doesn't change it: `pydantic_ai.capabilities.ToolSearch`, not
+    `pydantic_ai.capabilities._tool_search.ToolSearch`. A subpackage export is preferred over a
+    top-level one so core classes read consistently, falling back to the top-level package.
+    """
+    bases = [
+        base
+        for base in cls.__mro__
+        if base.__module__.partition('.')[0] in _PUBLIC_PACKAGES and not base.__name__.startswith('_')
+    ]
+    for base in bases:
+        name = base.__name__
+        parts = base.__module__.split('.')
+        prefixes = ['.'.join(parts[:depth]) for depth in range(2, len(parts) + 1)]
+        # Read the module's namespace directly: `getattr` would run a deprecation shim's `__getattr__`.
+        for prefix in [*itertools.takewhile(lambda p: not p.rpartition('.')[2].startswith('_'), prefixes), parts[0]]:
+            if (module := sys.modules.get(prefix)) is not None and vars(module).get(name) is base:
+                return f'{prefix}.{name}'
+    # No exporting module is loaded, as in a Temporal sandbox with lazy module passthrough disabled:
+    # record the nearest framework class under its defining module rather than fail the run.
+    return f'{bases[0].__module__}.{bases[0].__qualname__}'
+
+
+class _ComponentRecord(TypedDict, total=False):
+    """What a toolset or capability record holds: its id, and its class when that isn't a public one."""
+
+    id: str
+    user_class: str
+
+
+class ToolsetRecord(_ComponentRecord, total=False):
+    """A toolset in the `pydantic_ai.toolsets` agent run span attribute, listed under its class."""
+
+
+class CapabilityRecord(_ComponentRecord, total=False):
+    """A capability in the `pydantic_ai.capabilities` agent run span attribute, listed under its class."""
+
+    defer_loading: bool
+    active: bool
+    members: dict[str, list[CapabilityRecord]]
+    """For a bundle of capabilities, like Harness `Coder`: the capabilities it's made of, by class."""
+
+
+def _component_record(
+    cls: type[AbstractCapability[Any]] | type[AbstractToolset[Any]], component_id: str | None, *, include_content: bool
+) -> _ComponentRecord:
+    record: _ComponentRecord = {}
+    if component_id is not None:
+        record['id'] = component_id
+    if include_content and cls.__module__.partition('.')[0] not in _PUBLIC_PACKAGES:
+        record['user_class'] = f'{cls.__module__}.{cls.__qualname__}'
+    return record
+
+
+def _is_framework_internal(cls: type[AbstractCapability[Any]] | type[AbstractToolset[Any]]) -> bool:
+    """Whether `cls` is Pydantic AI or Harness plumbing, like the agent's own function and output toolsets, so isn't worth recording.
+
+    Recording it under the public class it extends would put it alongside the user's own instances of that class.
+    A private class without the marker, like the one Harness `Skills` registers per skill, is recorded under the
+    public class it extends instead.
+    """
+    return cls._telemetry_internal  # pyright: ignore[reportPrivateUsage]
+
+
+def _recorded_classes(
+    capabilities: Mapping[str, AbstractCapability[Any]],
+) -> dict[str, type[AbstractCapability[Any]]]:
+    """The class each of a run's recorded capabilities is recorded as, by the id it's registered under.
+
+    A capability a factory resolved to is registered as the wrapper that stands in for it, so it's
+    recorded as the class the factory returned. When that capability registers its own members, the
+    members are recorded instead of the wrapper. An unnamed piece of a framework capability isn't recorded:
+    see `_is_unnamed_piece`.
+    """
+    from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
+
+    registered = {id(capability) for capability in capabilities.values()}
+    classes: dict[str, type[AbstractCapability[Any]]] = {}
+    for capability_id, capability in capabilities.items():
+        if isinstance(capability, ResolvedDynamicCapability):
+            members: list[AbstractCapability[Any]] = []
+            capability.wrapped.apply(members.append)
+            if any(id(member) in registered for member in members):
+                continue
+            cls: type[AbstractCapability[Any]] = type(capability.wrapped)
+        else:
+            cls = type(capability)
+        if not _is_framework_internal(cls) and not _is_unnamed_piece(capability, cls):
+            classes[capability_id] = cls
+    return classes
+
+
+def _is_unnamed_piece(capability: AbstractCapability[Any], cls: type[AbstractCapability[Any]]) -> bool:
+    """Whether `capability` is an unnamed piece of a Pydantic AI or Harness capability, like several of Harness `Coder`'s.
+
+    Its class is private and it has no chosen id, so its record would only say "a capability" under an id the run
+    assigned. It rolls up into the record of the capability the user configured, whose `active` it counts towards.
+    """
+    return (
+        capability.id is None and cls.__module__.partition('.')[0] in _PUBLIC_PACKAGES and cls.__name__.startswith('_')
+    )
+
+
+def recorded_capability_ids(
+    capabilities: Mapping[str, AbstractCapability[Any]], url_ids: Set[str], *, include_content: bool
+) -> list[str]:
+    """The ids of a run's capabilities that a trace may record, in registration order.
+
+    An id derived from an MCP server URL is never recorded. One the framework assigned is recorded
+    only with `include_content`, as it is built from the class name, which may be the user's own.
+    """
+    return [
+        capability_id
+        for capability_id in _recorded_classes(capabilities)
+        if _records_id(capabilities, capability_id, url_ids, include_content=include_content)
+    ]
+
+
+def _records_id(
+    capabilities: Mapping[str, AbstractCapability[Any]],
+    capability_id: str,
+    url_ids: Set[str],
+    *,
+    include_content: bool,
+) -> bool:
+    """Whether a trace may record the id a capability is registered under; see `recorded_capability_ids`."""
+    return capability_id not in url_ids and (include_content or capabilities[capability_id].id is not None)
+
+
+def _is_bundle(capability: AbstractCapability[Any]) -> bool:
+    """Whether `capability` is a bundle of capabilities the user configured as one, like Harness `Coder`.
+
+    That is a `CombinedCapability` subclass of Pydantic AI, Harness or the user's own. The plain
+    `CombinedCapability` the agent and its capability lists are held in isn't one, and nor is a private
+    framework subclass, which the framework builds rather than the user.
+    """
+    from pydantic_ai.capabilities.combined import CombinedCapability
+
+    cls = type(capability)
+    if not isinstance(capability, CombinedCapability) or cls is CombinedCapability or _is_framework_internal(cls):
+        return False
+    return not (cls.__module__.partition('.')[0] in _PUBLIC_PACKAGES and cls.__name__.startswith('_'))
+
+
+_CapabilityResolutions: TypeAlias = Mapping[int, tuple['AbstractCapability[Any]', 'AbstractCapability[Any]']]
+"""What binding and `for_run` replaced each configured capability with, by its `id()`; see `capabilities._resolutions`."""
+
+
+@dataclass
+class _CapabilityRecorder:
+    """Builds a run's `pydantic_ai.capabilities` records; see `capability_records`."""
+
+    capabilities: Mapping[str, AbstractCapability[Any]]
+    active_ids: Set[str]
+    url_ids: Set[str]
+    resolutions: _CapabilityResolutions
+    include_content: bool
+
+    def __post_init__(self) -> None:
+        self.classes = _recorded_classes(self.capabilities)
+        self.ids_by_capability = {
+            id(capability): capability_id for capability_id, capability in self.capabilities.items()
+        }
+        self.owners: dict[int, tuple[AbstractCapability[Any], ...]] = {}
+        """By a run capability's `id()`, the configured capabilities it's recorded under, outermost first."""
+        self.resolving: set[int] = set()
+        """The `id()`s of the replaced capabilities `walk` is inside the replacements of."""
+        self.owner_records: dict[int, CapabilityRecord] = {}
+        self.owner_members: dict[int, dict[str, list[CapabilityRecord]]] = {}
+
+    def walk(self, capability: AbstractCapability[Any], owners: tuple[AbstractCapability[Any], ...] = ()) -> None:
+        """Note which configured capabilities each run capability `capability` was configured as belongs to."""
+        from pydantic_ai.capabilities._dynamic import DynamicCapability
+        from pydantic_ai.capabilities._resolutions import resolution_chain
+        from pydantic_ai.capabilities.combined import CombinedCapability, is_deferred_group
+        from pydantic_ai.capabilities.wrapper import WrapperCapability
+
+        if id(capability) in self.resolving:
+            # Its replacement holds it, as Harness `FileSystem`'s holds it beside the `AnnounceWorkingDirectory` it
+            # brings along: it's registered itself, so its own entry is the record holding the rest.
+            self.owners.setdefault(id(capability), owners)
+            return
+        chain = resolution_chain(capability, self.resolutions)
+        resolved = chain[-1]
+        # Its `for_run` replaced it with another kind of capability, like Harness `Skills` with one per skill, so the
+        # configured capability is the record and holds what it became. A factory stands for what it returns instead.
+        replaced = type(resolved) is not type(capability) and not isinstance(
+            capability, CombinedCapability | WrapperCapability | DynamicCapability
+        )
+        links = {id(link) for link in chain[:-1]} if replaced else set[int]()
+        if replaced:
+            owners = (*owners, capability)
+        self.resolving |= links
+        try:
+            if isinstance(resolved, CombinedCapability):
+                if _is_bundle(resolved) or is_deferred_group(resolved):
+                    owners = (*owners, resolved)
+                    # A deferred group is registered itself, so its own entry is its record.
+                    self.owners.setdefault(id(resolved), owners)
+                # As configured: flattening merged a bundle's children into its container and lost the bundle.
+                for child in resolved._configured:  # pyright: ignore[reportPrivateUsage]
+                    self.walk(child, owners)
+            else:
+                self.owners.setdefault(id(resolved), owners)
+                if isinstance(resolved, WrapperCapability):
+                    self.walk(resolved.wrapped, owners)
+        finally:
+            self.resolving -= links
+
+    def leaf(self, capability_id: str, cls: type[AbstractCapability[Any]]) -> CapabilityRecord:
+        recorded = _records_id(self.capabilities, capability_id, self.url_ids, include_content=self.include_content)
+        record = _component_record(cls, capability_id if recorded else None, include_content=self.include_content)
+        return {
+            **record,
+            'defer_loading': self.capabilities[capability_id].defer_loading is True,
+            'active': capability_id in self.active_ids,
+        }
+
+    def owner(self, owner: AbstractCapability[Any]) -> CapabilityRecord:
+        """The record of a configured capability that holds others, before its members are added to it."""
+        if (own_id := self.ids_by_capability.get(id(owner))) is not None:
+            return self.leaf(own_id, type(owner))
+        owner_id = owner.id if owner.id is not None and owner.id not in self.url_ids else None
+        return {
+            **_component_record(type(owner), owner_id, include_content=self.include_content),
+            'defer_loading': owner.defer_loading is True,
+            'active': False,
+        }
+
+    def members_of(
+        self, owners: Sequence[AbstractCapability[Any]], capability_id: str, records: dict[str, list[CapabilityRecord]]
+    ) -> dict[str, list[CapabilityRecord]]:
+        """Where `capability_id`'s record goes: the members of the innermost of `owners`, whose records it adds."""
+        target = records
+        for owner in owners:
+            if (members := self.owner_members.get(id(owner))) is None:
+                record = self.owner_records[id(owner)] = self.owner(owner)
+                record['members'] = members = self.owner_members[id(owner)] = {}
+                target.setdefault(public_class_path(type(owner)), []).append(record)
+            if capability_id in self.active_ids and id(owner) not in self.ids_by_capability:
+                self.owner_records[id(owner)]['active'] = True
+            target = members
+        return target
+
+    def records(self) -> dict[str, list[CapabilityRecord]]:
+        records: dict[str, list[CapabilityRecord]] = {}
+        for capability_id, capability in self.capabilities.items():
+            owners = self.owners.get(id(capability), ())
+            target = self.members_of(owners, capability_id, records)
+            # One that holds others, such as a deferred group, is registered itself: its record is the owner's.
+            if (not owners or owners[-1] is not capability) and (cls := self.classes.get(capability_id)) is not None:
+                target.setdefault(public_class_path(cls), []).append(self.leaf(capability_id, cls))
+        # One whose pieces all rolled up, or merged into another's, holds nothing worth listing.
+        for owner_key, members in self.owner_members.items():
+            if not members:
+                del self.owner_records[owner_key]['members']
+        return records
+
+
+def capability_records(
+    capabilities: Mapping[str, AbstractCapability[Any]],
+    root: AbstractCapability[Any] | None,
+    active_ids: Set[str],
+    url_ids: Set[str],
+    resolutions: _CapabilityResolutions,
+    *,
+    include_content: bool,
+) -> dict[str, list[CapabilityRecord]]:
+    """The capabilities configured for a run, by class, for the agent run span.
+
+    Keyed by class so that a backend can index which classes a run used by key alone. A capability that holds
+    others is recorded as the capability the user configured, with what it holds in its `members`: a bundle like
+    Harness `Coder`, a deferred group, and a capability whose `for_run` replaced it with others, like Harness
+    `Skills`. Each is recorded where the first capability it holds was registered, and is active when one of
+    those is. Computed from `root`'s tree as configured when the span ends, so a run pays for it only when traced.
+    """
+    recorder = _CapabilityRecorder(capabilities, active_ids, url_ids, resolutions, include_content)
+    if root is not None:
+        recorder.walk(root)
+    return recorder.records()
+
+
+def add_toolset_records(
+    records: dict[str, list[ToolsetRecord]],
+    toolset: AbstractToolset[Any],
+    url_ids: Set[str],
+    *,
+    include_content: bool,
+) -> None:
+    """Add the leaf toolsets of a resolved toolset tree not yet in `records`, by class, for the agent run span.
+
+    Records are distinct rather than one per instance, so a factory that builds an equal toolset on
+    every step adds it once. Ids follow the same rules as capability ids: never one derived from an
+    MCP server URL, and one the toolset derived for itself only with `include_content`.
+    """
+
+    def add(leaf: AbstractToolset[Any]) -> None:
+        if _is_framework_internal(type(leaf)):
+            return
+        toolset_id = leaf.id
+        if toolset_id in url_ids or not (include_content or leaf._explicit_id is not None):  # pyright: ignore[reportPrivateUsage]
+            toolset_id = None
+        record = _component_record(type(leaf), toolset_id, include_content=include_content)
+        class_records = records.setdefault(public_class_path(type(leaf)), [])
+        if record not in class_records:
+            class_records.append(record)
+
+    toolset.apply(add)
 
 
 def mcp_telemetry_url_ids(

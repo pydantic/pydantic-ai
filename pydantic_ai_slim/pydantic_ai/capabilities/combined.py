@@ -90,10 +90,16 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     # `capabilities` keeps the given order: no order of whole branches matches the interleaved
     # dispatch order, and rebuilding from a re-sorted one would change how ties sort.
     _dispatch: Sequence[AbstractCapability[AgentDepsT]] = field(init=False, repr=False)
+    # The children as configured, before flattening merged nested containers in. Flattening loses a
+    # `CombinedCapability` subclass the user configured as one, like Harness `Coder`, so the agent run span reads
+    # this to record it. Set once and carried unchanged by `_rebound`: the span maps each configured child to what
+    # binding and `for_run` replaced it with (see `_resolutions`), so nothing is rebuilt on the run path.
+    _configured: Sequence[AbstractCapability[AgentDepsT]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.id is not None:
             validate_instruction_id_segment(self.id, kind='Capability id')
+        self._configured = list(self.capabilities)
         instruction_sources: list[AbstractCapability[AgentDepsT]] = []
         for capability in self.capabilities:
             if (
@@ -307,7 +313,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         is set on every child as well as on the container.
         """
         lowered = super().with_authority(authority)
-        return lowered._rebound([child.with_authority(authority) for child in self.capabilities])
+        children = [child.with_authority(authority) for child in self.capabilities]
+        result = lowered._rebound(children)
+        result._configured = _configured_view(self._configured, dict(zip(map(id, self.capabilities), children)))
+        return result
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
         new_caps = [capability._keep_authority(capability.for_agent(agent)) for capability in self.capabilities]
@@ -1124,6 +1133,25 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 break
             remaining = remaining_or_none
         return accumulated if any_handled else None
+
+
+def _configured_view(
+    configured: Sequence[AbstractCapability[AgentDepsT]],
+    replaced: Mapping[int, AbstractCapability[AgentDepsT]],
+) -> list[AbstractCapability[AgentDepsT]]:
+    """`configured` with each flattened child swapped for its replacement in `replaced`, nested containers included.
+
+    A nested container's copy holds the replacements as its configured children, for the agent run span to read.
+    """
+    view: list[AbstractCapability[AgentDepsT]] = []
+    for capability in configured:
+        if isinstance(capability, CombinedCapability) and id(capability) not in replaced:
+            copied = replace_no_init(capability)
+            copied._configured = _configured_view(capability._configured, replaced)  # pyright: ignore[reportPrivateUsage]
+            view.append(copied)
+        else:
+            view.append(replaced.get(id(capability), capability))
+    return view
 
 
 def _take_decision(

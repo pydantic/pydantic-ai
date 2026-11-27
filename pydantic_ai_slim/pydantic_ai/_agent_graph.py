@@ -1206,6 +1206,11 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     Shared by reference and mutated in place, for the same reason as `durable_operations`.
     """
 
+    capability_resolutions: Mapping[int, tuple[AbstractCapability[Any], AbstractCapability[Any]]] = dataclasses.field(
+        default_factory=lambda: {}, repr=False
+    )
+    """What binding and `for_run` replaced each configured capability with, for the agent run span."""
+
     output_submissions: dict[str, _output.OutputSubmission] = dataclasses.field(
         default_factory=dict[str, _output.OutputSubmission], repr=False
     )
@@ -5253,6 +5258,7 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _cancellation=ctx.deps.cancellation,
         _durable_operations=ctx.deps.durable_operations,
         _run_capabilities_by_id=ctx.deps.run_capabilities_by_id,
+        _capability_resolutions=ctx.deps.capability_resolutions,
         _event_stream_buffer=ctx.state.event_stream_buffer,
         _pending_immediate_dispatches=ctx.deps.pending_immediate_dispatches,
         _event_stream_replacements=ctx.deps.event_stream_replacements,

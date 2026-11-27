@@ -101,6 +101,7 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import collect_leaves, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
+from ..capabilities._resolutions import recording_resolutions
 from ..capabilities.abstract import (
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
     _declares_default_id,  # pyright: ignore[reportPrivateUsage]
@@ -930,11 +931,14 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # `self.toolsets`). The flip side is that `innermost` capabilities can't
         # contribute toolsets of their own.
         _reject_second_of_a_kind([self._root_capability])
-        self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=False)
-        cap_toolset = self._root_capability.get_toolset()
-        if cap_toolset is not None:
-            self._cap_toolsets = [cap_toolset]
-        self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=True)
+        # What binding replaced each configured capability with, seeding each run's record for its agent run span.
+        self._capability_resolutions: dict[int, tuple[AbstractCapability[Any], AbstractCapability[Any]]] = {}
+        with recording_resolutions(self._capability_resolutions):
+            self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=False)
+            cap_toolset = self._root_capability.get_toolset()
+            if cap_toolset is not None:
+                self._cap_toolsets = [cap_toolset]
+            self._root_capability = bind_capabilities_tier(self._root_capability, self, innermost=True)
 
         if model is not None and not defer_model_check and not self._root_capability.has_resolve_model_id:
             self._model = models.infer_model(model)
@@ -1775,7 +1779,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if resolved is not None and resolved.capability is not None:
             extra_capabilities.append(resolved.capability)
         extra_capabilities.extend(wrap_capability_funcs(capabilities))
-        extra_capabilities = self._bind_run_capabilities(extra_capabilities)
+        # Binding and `for_run` replacements, so the agent run span can record the capabilities as configured.
+        capability_resolutions = dict(self._capability_resolutions)
+        with recording_resolutions(capability_resolutions):
+            extra_capabilities = self._bind_run_capabilities(extra_capabilities)
         model_layers: list[AbstractCapability[AgentDepsT]] = [base_capability, *extra_capabilities]
         bootstrap_capability: AbstractCapability[AgentDepsT]
         if len(model_layers) > 1:
@@ -2073,14 +2080,15 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         # instrumentation-settings resolution above, the deferred loader (`inject_deferred_loader=True`),
         # the output toolset below, and the layered `get_model_settings` closure. Keep those in sync
         # with the realtime call site.
-        resolved_caps = await self._resolve_run_capabilities(
-            initial_ctx,
-            base_capability=base_capability,
-            extra_capabilities=extra_capabilities,
-            instrumentation_cap=instrumentation_cap,
-            inject_deferred_loader=True,
-            base_is_override=base_is_override,
-        )
+        with recording_resolutions(capability_resolutions):
+            resolved_caps = await self._resolve_run_capabilities(
+                initial_ctx,
+                base_capability=base_capability,
+                extra_capabilities=extra_capabilities,
+                instrumentation_cap=instrumentation_cap,
+                inject_deferred_loader=True,
+                base_is_override=base_is_override,
+            )
         run_capability = resolved_caps.run_capability
         # Read back off the resolved tree, which also sees an `Instrumentation` that only a `for_run`
         # contributed, so every later step's `RunContext` describes what the run's spans use.
@@ -2324,6 +2332,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             carried_workspace_ref=None if workspace == 'new' else historical_workspace_ref,
             durable_operations=durable_operations,
             run_capabilities_by_id=run_capabilities_by_id,
+            capability_resolutions=capability_resolutions,
             native_tools=cap_native_tools,
             tool_manager=tool_manager,
             display_banner=display_banner,
@@ -5895,6 +5904,8 @@ def _capabilities_from_spec(
 
 @dataclasses.dataclass(init=False)
 class _AgentFunctionToolset(FunctionToolset[AgentDepsT]):
+    _telemetry_internal = True
+
     output_schema: _output.OutputSchema[Any]
 
     def __init__(

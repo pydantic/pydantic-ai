@@ -346,6 +346,68 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_names=False))
 ```
 
+### Capabilities and toolsets
+
+Agent run spans record what the run was made of: `pydantic_ai.capabilities` lists the [capabilities](capabilities/overview.md) configured for the run, including whatever a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] resolved to, and `pydantic_ai.toolsets` the [toolsets](toolsets.md) its model requests used, including whatever a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] resolved to on each step. Both are keyed by the class, so a query can find the runs that used one without unpacking the list:
+
+```json
+{
+  "pydantic_ai.capabilities.Thinking": [{"id": "thinking", "defer_loading": false, "active": true}],
+  "pydantic_ai.capabilities.Capability": [
+    {"id": "billing", "defer_loading": true, "active": true},
+    {"id": "support", "defer_loading": true, "active": false}
+  ],
+  "pydantic_ai.capabilities.AbstractCapability": [
+    {"id": "<billing_guard:3f9a12>", "user_class": "my_app.capabilities.BillingGuard", "defer_loading": false, "active": true}
+  ]
+}
+```
+
+Each entry is a capability you configured. One that holds others records them in its `members`, keyed the same way, rather than beside it, so each capability is listed once:
+
+- A bundle of capabilities you configure as one, a [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] subclass such as Pydantic AI Harness's [`Coder`](harness/coder.md) or one of your own. A bundle inside another is one of its members. A plain `CombinedCapability`, which only groups capabilities, isn't listed itself.
+- A capability whose [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] replaces it with others, such as Pydantic AI Harness's [`Skills`](harness/skills.md), which registers one capability per skill. When the replacement keeps the capability itself, as `FileSystem` keeps itself beside the `AnnounceWorkingDirectory` it brings along, its own entry holds the rest.
+- A [deferred](capabilities/on-demand.md) group of capabilities, which the model loads as one.
+
+A `Coder` run records, trimmed:
+
+```json
+{
+  "pydantic_ai_harness.coder.Coder": [
+    {
+      "defer_loading": false,
+      "active": true,
+      "members": {
+        "pydantic_ai.capabilities.AbstractCapability": [{"id": "coder_instructions", "defer_loading": false, "active": true}],
+        "pydantic_ai_harness.file_system.FileSystem": [
+          {
+            "id": "<file_system:9c41d0>",
+            "defer_loading": false,
+            "active": true,
+            "members": {
+              "pydantic_ai_harness.announce_working_directory.AnnounceWorkingDirectory": [
+                {"id": "announce_working_directory", "defer_loading": false, "active": true}
+              ]
+            }
+          }
+        ],
+        "pydantic_ai_harness.shell.Shell": [{"id": "<shell:2be7f3>", "defer_loading": false, "active": true}],
+        "pydantic_ai_harness.sub_agents.SubAgents": [{"id": "sub_agents", "defer_loading": false, "active": true}]
+      }
+    }
+  ],
+  "pydantic_ai.capabilities.LocalWorkspace": [{"id": "local_workspace", "defer_loading": false, "active": true}]
+}
+```
+
+An entry holding others is active when any of them was, unless it's registered itself, as a deferred group is, and its `id` is the one you gave it, if any. The unnamed pieces Pydantic AI and Pydantic AI Harness build a capability from, of private classes and with no `id`, aren't listed: they count towards the entry of the capability you configured, and are left out of `pydantic_ai.active_capabilities` too.
+
+Tools registered on the agent itself (with `tools=` or [`@agent.tool`][pydantic_ai.agent.Agent.tool]) and output tools aren't listed, as the framework owns the toolsets that hold them; their tools are on the model request spans' tool definitions. Neither are the capabilities the framework adds to a run for its own bookkeeping. Toolsets that record identically are listed once, however many steps used them: that includes separate toolsets of one class with no recorded id, so the list's length isn't a toolset count. Under [durable execution](durable_execution/overview.md), a `DynamicToolset` is listed as `pydantic_ai.toolsets.DynamicToolset` rather than as the toolsets it resolves to, since the engine resolves it outside the run's own toolset tree.
+
+`active` says whether the capability was in force on any of the run's model requests or was loaded by the end of the run, which tells a [deferred capability](capabilities/on-demand.md) the model loaded from one it was offered and never loaded. Each model request span also lists the ids of the capabilities active on that step in `pydantic_ai.active_capabilities`.
+
+The key is the Pydantic AI or [Pydantic AI Harness](harness/index.md) class the capability or toolset is, or extends, under the path it's imported from. A class of your own is listed under the class it extends, with its own module-qualified name in `user_class`. That name, and an id the run assigned to a capability without one (which is built from the class name), are only recorded when [`include_content`](#excluding-prompts-and-completions) is enabled; an `id` you chose is always recorded. An id derived from an MCP server's URL is never recorded, since a URL can carry credentials.
+
 ### Configuring data format
 
 Pydantic AI follows the [OpenTelemetry Semantic Conventions for Generative AI systems](https://opentelemetry.io/docs/specs/semconv/gen-ai/), specifically version 1.37.0 of the conventions. The instrumentation format can be configured using the `version` parameter of [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings].
@@ -463,7 +525,7 @@ Agent.instrument_all(instrumentation_settings)
 
 For privacy and security reasons, you may want to monitor your agent's behavior and performance without exposing sensitive user data or proprietary prompts in your observability platform. Pydantic AI allows you to exclude the actual content from telemetry while preserving the structural information needed for debugging and monitoring.
 
-When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content. Exceptions recorded on agent run, model request, model request attempt and tool spans keep only their type, since their message and stack trace can quote that content. It doesn't apply to [run metadata](agent.md#run-metadata), spans of your own, or request and response bodies captured by [`instrument_httpx(capture_all=True)`](#monitoring-http-requests).
+When `include_content=False` is set, Pydantic AI will exclude sensitive content from telemetry, including user prompts and model completions, tool call arguments and responses, and any other message content. Exceptions recorded on agent run, model request, model request attempt and tool spans keep only their type, since their message and stack trace can quote that content. It also leaves out the class names and run-assigned ids of [capabilities and toolsets of your own](#capabilities-and-toolsets). It doesn't apply to [run metadata](agent.md#run-metadata), spans of your own, or request and response bodies captured by [`instrument_httpx(capture_all=True)`](#monitoring-http-requests).
 
 ```python {title="excluding_sensitive_content.py"}
 from pydantic_ai import Agent

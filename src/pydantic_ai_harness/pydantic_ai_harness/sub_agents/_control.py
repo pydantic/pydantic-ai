@@ -294,6 +294,8 @@ def default_factory(spec: DynamicAgentSpec) -> AbstractAgent[object, str]:
 class TaskLink(AbstractCapability[Any], ABC):
     """Joins a sub-agent's run to its delegating run: an `ask_parent` tool, and stopping when asked to."""
 
+    _telemetry_internal = True
+
     def __init__(self, *, can_ask: bool) -> None:
         self.can_ask = can_ask
         self._asking = anyio.Lock()

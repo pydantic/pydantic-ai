@@ -555,6 +555,19 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field"
       ]
     },
+    "RunContext._capability_resolutions": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field"
+      ]
+    },
     "RunContext._deferred_capability_ids": {
       "engines": [
         "durable_exec"
@@ -2625,6 +2638,20 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._validate_runtime_capabilities",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::RejectWorkspaceInContainer._safe_at_runtime"
+      ]
+    },
+    "AbstractCapability._telemetry_internal": {
+      "engines": [
+        "durable_exec",
+        "temporal"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::RejectWorkspaceInContainer._telemetry_internal",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::WorkspaceEnsurer._telemetry_internal",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::_TerminalEventPublisher._telemetry_internal"
       ]
     },
     "AbstractCapability._validate_override_capabilities": {

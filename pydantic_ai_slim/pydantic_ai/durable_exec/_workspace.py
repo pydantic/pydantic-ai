@@ -412,6 +412,8 @@ class WorkspaceEnsurer(AbstractCapability[AgentDepsT]):
     capability's `wrap_run` would run `ensure` itself through the lazy fallback.
     """
 
+    _telemetry_internal = True
+
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 
@@ -424,6 +426,8 @@ class WorkspaceEnsurer(AbstractCapability[AgentDepsT]):
 
 class RejectWorkspaceInContainer(AbstractCapability[AgentDepsT]):
     """Refuse a workspace inside the container for the deprecated wrapper agents, which cannot make it durable."""
+
+    _telemetry_internal = True
 
     _safe_at_runtime = True
 
