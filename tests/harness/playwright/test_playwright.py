@@ -37,6 +37,7 @@ from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.abstract import CapabilityOrdering
+from pydantic_ai.durable_exec import DurableRunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn, ToolReturnPart
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -4001,6 +4002,20 @@ class TestBrowserEvents:
         assert event.name == 'browser.console'
         assert event.attributes is not None
         assert event.attributes['browser.event.message'] == 'error: boom'
+
+    async def test_a_durable_call_that_did_not_carry_the_tracer_traces_on_the_session(self) -> None:
+        # Reading an uncarried `tracer` raises, so the operation takes the session's tracer instead of failing.
+        page = _FakePage()
+        session = self._session(page)
+        tracer, exporter = _recording_tracer()
+        session.tracer = tracer
+        toolset = _toolset(page, session=session)
+        token = toolset_module._calling_ctx.set(DurableRunContext[None](deps=None))  # pyright: ignore[reportPrivateUsage]
+        try:
+            await toolset.get_text()
+        finally:
+            toolset_module._calling_ctx.reset(token)  # pyright: ignore[reportPrivateUsage]
+        assert [span.name for span in exporter.get_finished_spans()] == ['browser get_text']
 
     async def test_network_event_attributes_follow_otel_conventions(self) -> None:
         page = _FakePage()

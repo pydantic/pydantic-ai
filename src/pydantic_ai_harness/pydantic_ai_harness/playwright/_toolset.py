@@ -726,10 +726,15 @@ tracer and content setting from here at call time.
 def _traced_calling_ctx() -> RunContext[Any] | None:
     """The calling tool call's `ctx` when its run is traced, else `None`."""
     ctx = _calling_ctx.get()
-    # A context rebuilt in a durable unit that didn't carry the tracer raises on reading it: untraced.
-    if ctx is None or 'tracer' not in ctx.__dataclass_fields__ or isinstance(ctx.tracer, NoOpTracer):
+    if ctx is None:
         return None
-    return ctx
+    try:
+        # A context rebuilt in a durable unit that didn't carry the tracer raises on reading it: untraced.
+        # One that didn't carry `trace_include_content` reads it as `False`, so that read needs no guard.
+        tracer = ctx.tracer
+    except UserError:
+        return None
+    return None if isinstance(tracer, NoOpTracer) else ctx
 
 
 _ABORTED_FAILURE = 'net::ERR_FAILED'

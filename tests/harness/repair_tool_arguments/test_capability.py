@@ -2,7 +2,6 @@ import importlib
 import sys
 from collections.abc import AsyncIterator, Callable
 from pathlib import Path
-from typing import Any
 
 import json_repair
 import pytest
@@ -38,13 +37,8 @@ def model_for(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse])
     return FunctionModel(respond, stream_function=stream)
 
 
-def _repair_attributes(span: dict[str, Any]) -> dict[str, Any]:
-    """The attributes `RepairToolArguments` sets on its span, without the ones core adds to every span."""
-    return {
-        key: value
-        for key, value in span['attributes'].items()
-        if key.startswith(('gen_ai.tool.', 'repair_tool_arguments.'))
-    }
+REPAIR_ATTRIBUTES = ('gen_ai.tool.', 'repair_tool_arguments.')
+"""Prefixes of the attributes `RepairToolArguments` sets on its span; core adds others to every span."""
 
 
 @pytest.fixture(params=['standalone', 'coder'])
@@ -185,7 +179,10 @@ class TestRepairToolArguments:
         await agent.run('Echo')
         assert received == ['secret']
         spans = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'repair_tool_arguments']
-        assert [_repair_attributes(span) for span in spans] == (
+        assert [
+            {key: value for key, value in span['attributes'].items() if key.startswith(REPAIR_ATTRIBUTES)}
+            for span in spans
+        ] == (
             [{'gen_ai.tool.name': 'echo', 'gen_ai.tool.call.id': 'call-1', 'repair_tool_arguments.outcome': 'repaired'}]
             if isinstance(arguments, str) and arguments.endswith(',}')
             else []
@@ -214,9 +211,10 @@ class TestRepairToolArguments:
 
         await agent.run('Echo')
         spans = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'repair_tool_arguments']
-        assert [_repair_attributes(span) for span in spans] == [
-            {'gen_ai.tool.name': 'echo', 'gen_ai.tool.call.id': 'call-1', 'repair_tool_arguments.outcome': 'failed'}
-        ]
+        assert [
+            {key: value for key, value in span['attributes'].items() if key.startswith(REPAIR_ATTRIBUTES)}
+            for span in spans
+        ] == [{'gen_ai.tool.name': 'echo', 'gen_ai.tool.call.id': 'call-1', 'repair_tool_arguments.outcome': 'failed'}]
 
     @pytest.mark.parametrize(
         ('stream', 'item_id'),
