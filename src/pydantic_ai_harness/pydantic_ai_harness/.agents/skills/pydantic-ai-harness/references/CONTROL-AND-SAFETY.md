@@ -429,6 +429,9 @@ matching its `tools` selector, `args` globs, and shell `command` words. `'deny'`
 whatever the order. A compound command runs by rule only if an allow rule matches every simple command in it, while
 an ask or deny rule matching any one decides it. An allow skips `'read-only'`'s blanket ask but not `ask_commands`.
 A denied call returns a `ToolReturnPart` with `outcome='denied'`, even when it was approved.
+`parse_permission_rules({'allow': ['Bash(git status:*)'], 'deny': ['Bash(rm -rf)']})` builds rules from
+Claude Code-style strings: `Bash(cmd:*)` is a `command` rule, `tool(glob)` globs `path`, `tool(arg=glob)` a named
+argument. `Bash(cmd)` without `:*` raises in `'allow'`, and Claude Code tool names such as `Edit` raise.
 
 ```python {test="skip"}
 from pydantic_ai import Agent

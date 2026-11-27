@@ -137,6 +137,35 @@ An allow rule trusts everything after its words, so allowing `find` also allows 
 
 In an agent spec, `rules` is a list of mappings of these fields (`PermissionRuleSpec`), with `tools` limited to the serializable forms.
 
+### Rules as strings
+
+`parse_permission_rules` builds rules from strings by verdict, in the style of Claude Code's permission rules, for settings files that people write by hand:
+
+```python
+from pydantic_ai_harness.permissions import Permissions, parse_permission_rules
+
+permissions = Permissions(
+    'read-only',
+    rules=parse_permission_rules(
+        {
+            'allow': ['Bash(git status:*)', 'write_file(docs/*)'],
+            'ask': ['Bash(git push)', 'deploy(env=prod*)'],
+            'deny': ['Bash(rm -rf)'],
+        }
+    ),
+)
+```
+
+- `Bash(git push:*)` (or `Shell(...)`) is `command='git push'`, and so is Claude Code's `Bash(git push *)`. `Bash` alone, or `Bash(*)`, matches every shell command. A `*` anywhere else in a command raises `UserError`, since a command rule matches words, not wildcards.
+- `Bash(git push)`, without `:*`, is the same rule in `'ask'` and `'deny'`. In `'allow'` it raises `UserError`: Claude Code reads it as that exact command, while a command rule allows every command starting with its words, so the string must say `:*`.
+- `write_file` is every call to that tool, `write_file(docs/*)` globs its `path` argument, and `deploy(env=prod*)` globs a named one. A pattern without a name always globs `path`, so it matches nothing on a tool without a `path` argument: write `web_fetch(url=https://example.com/*)`, not `web_fetch(https://example.com/*)`. A `*` matches across `/` here, so `docs/*` and `docs/**` mean the same thing. Spaces around `=` are dropped, and a named argument's glob, such as `url=http://localhost:*`, matches as written. A leading `./` on a `path` glob is dropped, and so is a leading `**/` in `'ask'` and `'deny'`, which match the end of a longer path anyway: `**/.env` would otherwise miss the top-level `.env`. In `'ask'` and `'deny'`, a `path` glob of only `./`, such as `list_directory(./)`, is `**`; in `'allow'` it raises `UserError`, since `**` would allow every path, not only the working directory. Any other `path` glob ending in `/` raises `UserError`: in Claude Code it names a directory and everything under it, which no one glob matches here without also matching a sibling such as `secrets-old`. Write `secrets/**` for what is under the directory, and add `secrets` to cover the directory itself. A `path` glob starting with `/` or `~` raises `UserError`: Claude Code reads those against the project or home folder, while a relative glob here already matches the end of a longer path.
+- A key other than `allow`, `ask` or `deny`, or anything but a list of strings under one, such as a single string, raises `UserError`.
+- A wildcard in a tool name, such as `mcp__github__*`, raises `UserError`, and so does Claude Code's rule for a whole MCP server, such as `mcp__github`: a rule names each tool in full, as the agent sees it.
+- Claude Code's own tool names (`Read`, `Edit`, `MultiEdit`, `Write`, `Glob`, `Grep`, `WebFetch`, `WebSearch`) raise `UserError` naming the tool to use instead, such as `edit_file`, since a rule naming them would match nothing.
+- A `path` pattern ending in `:*` on any name but `Bash` or `Shell`, such as `docs(x:*)`, raises `UserError` too: as a `path` glob it would match nothing. So does a `path` pattern on a shell tool's lowercase name, such as `bash(rm -rf)` or `run_command(rm -rf)`, whose calls have no `path`: write `Bash(rm -rf)`.
+
+`parse_permission_rule(rule, verdict)` parses one string.
+
 ## Changing the mode during a run
 
 `mode` can be a function of the run context. It is read on every call, so an application can switch modes while a run is going, and the run's next call follows the new mode:

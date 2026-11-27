@@ -14,7 +14,13 @@ from pydantic_ai_harness.permissions._capability import (
     denial_message,
     permission_requests,
 )
-from pydantic_ai_harness.permissions._rules import PermissionRule, PermissionRuleSpec, PermissionVerdict
+from pydantic_ai_harness.permissions._rules import (
+    PermissionRule,
+    PermissionRuleSpec,
+    PermissionVerdict,
+    parse_permission_rule,
+    parse_permission_rules,
+)
 
 __all__ = (
     'DEFAULT_ASK_COMMANDS',
@@ -31,5 +37,7 @@ __all__ = (
     'approval_ask',
     'ask_permissions',
     'denial_message',
+    'parse_permission_rule',
+    'parse_permission_rules',
     'permission_requests',
 )
