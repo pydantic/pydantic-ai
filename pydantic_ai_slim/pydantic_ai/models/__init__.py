@@ -5766,10 +5766,11 @@ def _with_fitted_attachment_call_id(part: ModelRequestPart, replacements: Mappin
 
     So the lookalike note names the call as the wire does. Any other part is returned as is. Only a call on the wire has a fitted ID: a nested one, such as a Code Mode call's, keeps the stored one it's known by.
     """
-    if not isinstance(part, _ToolContentPart):
-        return part
-    source = part.source
-    if not isinstance(source, ToolResultSource) or source.tool_call_id is None:
+    if (
+        not isinstance(part, _ToolContentPart)
+        or not isinstance(source := part.source, ToolResultSource)
+        or source.tool_call_id is None
+    ):
         return part
     replacement = replacements.get(source.tool_call_id, source.tool_call_id)
     if replacement == source.tool_call_id:
