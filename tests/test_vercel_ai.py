@@ -3939,6 +3939,22 @@ async def _error_closeout_events(*parts: ToolCallPart) -> list[Any]:
     ]
 
 
+async def test_run_stream_error_closeout_of_redacted_call_warns_a_client_holding_the_history():
+    """The `tool-input-error` closeout that sends a `'redacted'` call's placeholder warns, as the base closeout does.
+
+    A unit test of the stream: `ui_visibility` is set by a capability, not by a model, and no recording errors
+    mid-stream, so the events are built by hand.
+    """
+    part = ToolCallPart('lookup_order', {'order_id': 'o_1'}, tool_call_id='call_1', ui_visibility='redacted')
+    event_stream = VercelAIEventStream[None, Any](sdk_version=6)
+    # As an adapter run with client-held history sets it.
+    event_stream._warns_on_hidden_tools = True  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.warns(UserWarning, match="`manage_message_history='server'`") as record:
+        [_ async for _ in event_stream.encode_stream(event_stream.transform_stream(_error_while_streaming(part)))]
+    assert len(record) == 1
+
+
 async def test_run_stream_error_closeout_of_redacted_call_sends_the_placeholder():
     """A `'redacted'` call cut off by a run error is closed with `tool-input-error`, and the placeholder as its error text.
 

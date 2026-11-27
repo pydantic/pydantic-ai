@@ -222,7 +222,11 @@ class VercelAIEventStream(UIEventStream[RequestData, BaseChunk, AgentDepsT, Outp
                 outcome='failed',
             )
             visibility = return_ui_visibility(closeout, self._call_ui_visibilities, self.default_ui_visibility)
-            if (client_closeout := client_tool_return(closeout, visibility)) is not None:
+            client_closeout = client_tool_return(closeout, visibility)
+            if client_closeout is not closeout:
+                # As the base class's closeout does: the client holding the history is warned once.
+                self._closeout_hid_tools = True
+            if client_closeout is not None:
                 yield self._tool_input_error_chunk(part, client_closeout)
         self._streamed_call_parts.clear()
 
