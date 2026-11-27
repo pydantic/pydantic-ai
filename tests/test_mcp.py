@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gc
 import itertools
 import json
 import os
@@ -18,6 +19,7 @@ import re
 import subprocess
 import sys
 import warnings
+import weakref
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
@@ -783,6 +785,33 @@ class TestMCPToolsetIntegration:
             pass
         with pytest.raises(ValueError, match='called more times than'):
             await toolset.__aexit__(None, None, None)
+
+    @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+    async def test_stdio_server_stops_once_agent_and_toolset_are_dropped(self):
+        """A stdio connection outlives `async with agent` while the toolset is held, and ends once the toolset is dropped.
+
+        FastMCP's `StdioTransport` keeps its server running between connections and stops it from its finalizer,
+        so the connection task that outlives the exit must not keep the toolset, and with it the transport, alive.
+        """
+        tasks_before = asyncio.all_tasks()
+        toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+        # A name skips the agent's name inference, which reads this frame's `f_locals`. Before Python 3.13, that
+        # read leaves a snapshot of the locals on the frame, which would still hold `toolset` after the `del` below.
+        agent = Agent(TestModel(call_tools=[]), name='stdio_agent', toolsets=[toolset])
+        async with agent:
+            await agent.run('Hello')
+
+        # The connection tasks own the server process. They're still pending, so the next run can reuse the server.
+        connection_tasks = asyncio.all_tasks() - tasks_before
+        assert connection_tasks
+
+        toolset_ref = weakref.ref(toolset)
+        del agent, toolset
+        gc.collect()
+        assert toolset_ref() is None
+        # The transport's finalizer stops the server, and the connection tasks end once the process has exited.
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await asyncio.wait(connection_tasks)
 
     async def test_get_tools_caches_and_lists(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server, include_instructions=True)
@@ -2042,6 +2071,34 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
 
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=user_handler)
+        notification = wrap_server_notification(
+            mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
+        )
+        await handler(notification)
+        assert seen == [notification]
+
+    async def test_message_handler_forwards_to_user_handler_after_toolset_is_collected(
+        self, fastmcp_server: FastMCP[None]
+    ):
+        """The handler holds the toolset weakly and keeps forwarding messages once it is collected.
+
+        A unit test: a connection only outlives its toolset over stdio, where a notification arriving after the
+        toolset is collected can't be triggered on demand.
+        """
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
+
+        seen: list[Any] = []
+
+        async def user_handler(message: Any) -> None:
+            seen.append(message)
+
+        toolset = MCPToolset(fastmcp_server)
+        handler = _build_message_handler(toolset, user_handler=user_handler)
+        toolset_ref = weakref.ref(toolset)
+        del toolset
+        gc.collect()
+        assert toolset_ref() is None
+
         notification = wrap_server_notification(
             mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
         )
