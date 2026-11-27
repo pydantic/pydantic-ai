@@ -132,10 +132,16 @@ Need model thinking/reasoning?
         ├── Yes → Use WebFetch() (native only; add local=True for other models)
         └── Need MCP servers?
             ├── Yes → Use MCP()
-            └── Need lifecycle hooks only?
-                ├── Yes → Use Hooks()
-                └── Need to filter/modify tool defs per step?
-                    └── Yes → Use PrepareTools()
+            └── Need to pick the model per run or step?
+                ├── Yes → Use SelectModel(selector)
+                └── Many tools, only a few needed per run?
+                    ├── Yes → Mark them defer_loading=True (ToolSearch is added automatically)
+                    └── Answer approvals or deferred tool calls inside the run?
+                        ├── Yes → Use HandleDeferredToolCalls(handler)
+                        └── Need lifecycle hooks only?
+                            ├── Yes → Use Hooks()
+                            └── Need to filter/modify tool defs per step?
+                                └── Yes → Use PrepareTools()
 ```
 
 ### Choosing a Testing Approach
@@ -230,6 +236,19 @@ To let the users of an open-source or local app run it on their own ChatGPT plan
 | `RetryOnModelErrors` | Retries the same model on rate limits, overloaded or unavailable models, 5xx and connection errors, with backoff | Yes |
 | `Caching` | Prompt caching across providers; several providers cache nothing without it | Yes |
 | `BatchModelRequests` | Sends model requests through the OpenAI, Anthropic or Gemini batch API at batch prices; runs started together share batches | Yes |
+| `SelectModel` | Chooses the model per run or step from deps, prompt, history, usage or the current step | No |
+| `ResolveModelId` | Turns application-specific model IDs into `Model` instances, e.g. per tenant from deps | No |
+| `HandleDeferredToolCalls` | Resolves deferred tool calls (approvals, external tools, `CallDeferred`) inside the run with a handler, instead of ending it with `DeferredToolRequests` | No |
+| `ToolSearch` | Lets the model discover tools marked `defer_loading=True` (native search where supported, a local `search_tools` tool elsewhere); added automatically when such tools exist | Yes |
+| `ReinjectSystemPrompt` | Puts the agent's configured `system_prompt` back at the head of the first request when the history has none; `replace_existing=True` replaces the history's system prompts (for untrusted histories) | Yes |
+| `ProcessEventStream` | Forwards the run's stream of agent events to a handler; `agent.run()` then streams automatically | No |
+| `UseThreadExecutor` | Runs sync tools and other sync callbacks in a custom `Executor`, e.g. a bounded pool in a long-running server | No |
+| `IncludeToolReturnSchemas` | Sends tool return-type schemas to the model, natively where supported, otherwise in the tool description | Yes |
+| `SetToolMetadata` | Merges metadata onto selected tools for other capabilities or custom logic to read | Yes |
+| `Instrumentation` | OpenTelemetry spans for the run, each model request and each tool call | Yes |
+| `XSearch` | Search over X posts; native on xAI models only, so on other models set `fallback_subagent_model` to an xAI model | Yes |
+| `NativeCompaction` | Compacts history on request with the serving model's own compaction API | Yes |
+| `OpenAICompaction` / `AnthropicCompaction` | Provider-side compaction when the provider's threshold is crossed (from `pydantic_ai.models.openai` / `.anthropic`) | No |
 
 ### When to Use Each Agent Method
 
