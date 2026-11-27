@@ -85,10 +85,7 @@ async def test_workspace_free_temporal_delegate() -> None:
         models={'test': ModelOption(TestModel(custom_output_text='worker'))},
     )
     result = await toolset.delegate_task(
-        TemporalRunContext[object](deps=None, tool_name='delegate_task'),
-        'worker',
-        'hello',
-        model='test',
+        TemporalRunContext[object](deps=None, tool_name='delegate_task'), 'worker', 'hello', model='test'
     )
     assert result == 'worker'
 
