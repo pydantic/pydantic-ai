@@ -23,6 +23,7 @@ from ._output import (
     OutputValidator,
     OutputValidatorFunc,
     TextOutputSchema,
+    are_tool_call_args_cut_off,
     incomplete_tool_call_message,
     is_incomplete_json,
     output_pipeline_scope,
@@ -44,6 +45,7 @@ from .usage import RunUsage, UsageLimits
 from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
+    from ._agent_graph import GraphAgentState
     from ._appended_messages import AppendedMessages
     from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
@@ -137,11 +139,13 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
 
         Yields `ModelResponse` snapshots — `state='incomplete'` while streaming is in flight,
         followed by one final `state='complete'` snapshot (or `'interrupted'` if `cancel()` was
-        called). If the underlying response already has accumulated content when this is called,
-        a pre-stream yield surfaces it before iteration begins.
+        called, or `'incomplete'` if the model detected that the stream ended before the provider's
+        terminal event). If the underlying response already has accumulated content when this is
+        called, a pre-stream yield surfaces it before iteration begins.
         """
         msg = self.response
-        if msg.state == 'incomplete':
+        # A stream that ended before the provider's terminal event stays `'incomplete'`, and the final yield has it.
+        if msg.state == 'incomplete' and not self._model_stream_finished:
             for part in msg.parts:
                 if part.has_content():
                     yield msg
@@ -151,7 +155,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             async for _items in group_iter:
                 yield self.response  # state='incomplete' during streaming
 
-        yield self.response  # final state='complete' (or 'interrupted')
+        yield self.response  # final state='complete' (or 'interrupted', or 'incomplete' if cut off)
 
     async def stream_text(self, *, delta: bool = False, debounce_by: float | None = 0.1) -> AsyncIterator[str]:
         """Stream the text result as an async iterable.
@@ -322,7 +326,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                         f'Invalid response, unable to find tool call for {output_tool_name!r}'
                     )
                 return await self._validate_tool_output(
-                    tool_call, cut_off=message.finish_reason == 'length', allow_partial=allow_partial
+                    tool_call,
+                    # As in `CallToolsNode`, only the tool call the response ended on can have been cut off.
+                    cut_off=message.finish_reason == 'length' and message.parts[-1] is tool_call,
+                    allow_partial=allow_partial,
                 )
             elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
                 if not self._output_schema.allows_deferred_tools:
@@ -378,7 +385,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             )
         except ValidationError as e:
             # Say that the token limit cut the arguments off, as `CallToolsNode` does, rather than only that they're invalid.
-            if cut_off and not allow_partial and is_incomplete_json(e):
+            if cut_off and not allow_partial and are_tool_call_args_cut_off(tool_call):
                 raise exceptions.IncompleteToolCall(incomplete_tool_call_message(self._max_tokens_getter())) from e
             raise
 
@@ -638,12 +645,15 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     _run_result: AgentRunResult[OutputDataT] | None = None
 
-    _full_history_from: tuple[AppendedMessages, int] | None = None
-    """The run's record of its messages, and where the messages this result adds to its copy of the history start.
+    _settled_from: tuple[GraphAgentState, int] | None = None
+    """The run's state, and where the messages this result adds to its copy of the history start.
 
-    Set when the stream's own response ends the run, so the settled result's conversation can keep the full history
-    when a capability dropped or rewrote messages, as the run's would.
+    Set when the stream's own response ends the run, so the settled result keeps what the run's would: what saving the
+    conversation it was given needs, and the full history when a capability dropped or rewrote messages.
     """
+
+    _settled: AgentRunResult[OutputDataT] | None = field(default=None, init=False)
+    """The settled result `result` built, so saving it to a store updates the one every later `result` returns."""
 
     is_complete: bool = field(default=False, init=False)
     """Whether the stream has all been received.
@@ -717,7 +727,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         from ._agent_graph import GraphAgentState
         from .run import AgentRunResult
 
-        if (run_result := self._run_result) is not None:
+        if (run_result := self._run_result or self._settled) is not None:
             return run_result
         elif self._stream_response is not None:
             if not self.is_complete:
@@ -731,31 +741,33 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     'until it stopped are still available from `all_messages()`.'
                 )
             output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
+            state, start = self._settled_from or (GraphAgentState(), 0)
             result = AgentRunResult(
                 output=output,
                 _output_tool_name=output_tool_name,
-                _state=GraphAgentState(
+                _state=replace(
+                    state,
                     message_history=self._all_messages,
                     usage=self.usage,
                     run_id=self.run_id,
                     conversation_id=self.conversation_id,
                     metadata=self.metadata,
-                    appended_messages=self._settled_full_history(),
+                    appended_messages=self._settled_full_history(state.appended_messages, start),
                 ),
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,
             )
             # As in AgentRun.result, this isn't a dataclass field because a live workspace can't be serialized.
             result.__dict__['_workspace'] = self.workspace
+            self._settled = result
             return result
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    def _settled_full_history(self) -> AppendedMessages:
+    def _settled_full_history(self, record: AppendedMessages, start: int) -> AppendedMessages:
         """The full history for the settled result of a run whose history a capability rewrote, or an empty record."""
         from ._appended_messages import AppendedMessages
 
-        record, start = self._full_history_from or (AppendedMessages(), 0)
         if not record.full or record.messages is None:
             return AppendedMessages()
         # The run kept its full history when it ended, with the streamed response, which the run commits itself, but
@@ -892,6 +904,8 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         Each yielded `ModelResponse` is the current state of the response: `response.state` is
         `'incomplete'` while streaming is in flight and `'complete'` (or `'interrupted'` if
         [`cancel()`][pydantic_ai.result.StreamedRunResult.cancel] was called) on the final yield.
+        It stays `'incomplete'` on the final yield if the model detected that the stream ended before the
+        provider's terminal event.
 
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.
@@ -1219,6 +1233,8 @@ class StreamedRunResultSync(Generic[AgentDepsT, OutputDataT]):
 
         Each yielded `ModelResponse` is the current state of the response: `response.state` is
         `'incomplete'` while streaming is in flight and `'complete'` on the final yield.
+        It stays `'incomplete'` on the final yield if the model detected that the stream ended before the
+        provider's terminal event.
 
         Args:
             debounce_by: by how much (if at all) to debounce/group the response chunks by. `None` means no debouncing.

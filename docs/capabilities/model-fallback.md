@@ -149,8 +149,60 @@ A few things to know about falling back on refusals:
 - **A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] doesn't fall back on refusals by default.** Pass it `fallback_on=(ModelAPIError, ContentFilterError)`.
 - **It happens per request.** When a model refuses partway through a run, only that request moves to the next model, with the run's message history so far. The responses the first model gave earlier in the run stay in the history. Anthropic recommends staying on the fallback model for the rest of the conversation, which [`sticky=True`](#staying-on-the-model-that-answered) does.
 - **Without a fallback, an empty refusal raises `ContentFilterError`.** It's an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], not a `ModelAPIError`, and so is a thinking-only refusal. Its message starts with `Content filter triggered.` and then names the reason: `Refusal: '...'` with the text from `provider_details['refusal']` for an OpenAI refusal, or `Finish reason: 'refusal'` for an Anthropic one, whose refusal text is then only in the error's `body`, the serialized response. [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] records a refused attempt as `rejected`, without its `provider_details`.
-- **A [streamed](#streaming) refusal isn't fallen back from.** It's only known once it has been streamed, so it's accepted, without a warning, and an empty one then raises `ContentFilterError`. To fall back there, catch it and run again with another model passed as `model=`.
+- **A [streamed](#streaming) refusal isn't fallen back from.** It's only known once it has been streamed, so it's accepted, without a warning, and an empty one then raises `ContentFilterError`. To fall back there, catch it and run again with another model, as [shown below](#catching-a-refusal).
 - **Some refusals are caused by the prompt.** Anthropic's `reasoning_extraction` refusals come from prompts or tool schemas that ask the model to put its reasoning in its output, which Anthropic says to change instead (see [Refusals on repeated prompts](../models/anthropic.md#refusals-on-repeated-prompts)). Falling back to another provider still works for them.
+
+### Catching a refusal yourself {#catching-a-refusal}
+
+Without `ModelFallback`, or on a streamed run, catch `ContentFilterError` and run again with another model. To keep the work the run had done, such as tool calls, wrap it in [`capture_run_messages`][pydantic_ai.capture_run_messages] and pass the captured messages as `message_history`, leaving out the last one, the refused response:
+
+```python {title="catch_content_filter_error.py"}
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    capture_run_messages,
+)
+from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def refuse(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(
+        parts=[],
+        finish_reason='content_filter',
+        provider_details={
+            'finish_reason': 'refusal',
+            'refusal_category': 'reasoning_extraction',
+        },
+    )
+
+
+def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('Here is the review.')])
+
+
+primary = FunctionModel(refuse, model_name='primary')
+backup = FunctionModel(answer, model_name='backup')
+agent = Agent(primary)
+
+def review(prompt: str) -> str:
+    with capture_run_messages() as messages:
+        try:
+            return agent.run_sync(prompt).output
+        except ContentFilterError:
+            pass
+    return agent.run_sync(message_history=messages[:-1], model=backup).output  # (1)!
+
+
+print(review('Review this transcript.'))
+#> Here is the review.
+```
+
+1. This run starts outside the `capture_run_messages` block, since within one block `messages` holds only the first run's messages. `messages[:-1]` leaves out the refused response.
+
+See [Recovering a failed run's messages](../agent.md#recovering-a-failed-run) for more.
 
 ## Falling back when the output is cut off {#token-limit}
 
