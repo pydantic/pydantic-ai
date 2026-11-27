@@ -98,20 +98,28 @@ def build_case(name: str, directory: Path) -> list[AbstractCapability[None]]:
 
 
 def journal_breaks(
-    recorded: Sequence[str], *, prefix: str, model_request: str, calls: int, expected: tuple[str, ...], engine: str
+    recorded: Sequence[str],
+    *,
+    prefix: str,
+    model_requests: tuple[str, ...],
+    calls: int,
+    expected: tuple[str, ...],
+    engine: str,
 ) -> list[str]:
     """How the durable units a run recorded differ from what its case's `durable_steps` lists for `engine`.
 
-    `recorded` holds the units' names, each starting with `prefix`. The run's own model requests are left out of
-    the comparison, but there must be one per call and one to answer.
+    `recorded` holds the units' names, each starting with `prefix`. The run's own model requests, under any of the
+    `model_requests` names, are left out of the comparison, but there must be one per call and one to answer: a
+    case whose capability listens for events streams them, under the streamed request's name.
     """
     units = [unit.removeprefix(prefix) for unit in recorded]
-    requests = units.count(model_request)
-    journaled = tuple(unit for unit in units if unit != model_request)
+    requests = sum(unit in model_requests for unit in units)
+    journaled = tuple(unit for unit in units if unit not in model_requests)
+    names = '/'.join(f'`{name}`' for name in model_requests)
     counted = (
         []
         if requests == calls + 1
-        else [f'the run recorded {requests} `{model_request}` units, not one per call and one to answer']
+        else [f'the run recorded {requests} {names} units, not one per call and one to answer']
     )
     drifted = (
         []

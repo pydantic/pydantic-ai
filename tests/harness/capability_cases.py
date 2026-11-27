@@ -37,7 +37,7 @@ from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, RawToolArgs
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.tools import ToolDefinition, ToolSelector
 from pydantic_ai_harness import (
     Advisor,
     AnnounceWorkingDirectory,
@@ -49,6 +49,7 @@ from pydantic_ai_harness import (
     CapabilityCreation,
     ClampOversizedMessages,
     ClearToolResults,
+    CodeMode,
     Coder,
     CompactOnRequest,
     ComputerUse,
@@ -108,6 +109,7 @@ from pydantic_ai_harness.logfire_mcp import LogfireMCP
 from pydantic_ai_harness.memory import InMemoryMemoryStore
 from pydantic_ai_harness.notion import Notion
 from pydantic_ai_harness.peers import InMemoryPeerNetwork, Peers
+from pydantic_ai_harness.permissions import PermissionRule, Permissions
 from pydantic_ai_harness.planning import SqlitePlanStore
 from pydantic_ai_harness.pydantic_ai_docs import PydanticAIDocs
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
@@ -196,9 +198,24 @@ def _workspace(build: Callable[[], AbstractCapability[None]]) -> Fixture:
     return lambda tmp_path: [build(), LocalWorkspace(tmp_path)]
 
 
+def _coder_repo(tmp_path: Path) -> list[AbstractCapability[None]]:
+    """`Coder` in a repo of its own: its `.git` ends the walk up for the repo root, which would otherwise make a
+    workspace call per parent directory, so the units its calls record depend on how deep the directory is."""
+    (tmp_path / '.git').mkdir()
+    return [Coder(), LocalWorkspace(tmp_path)]
+
+
 def _repo_context(tmp_path: Path) -> list[AbstractCapability[None]]:
     (tmp_path / 'AGENTS.md').write_text('Keep answers short.\n')
     return [RepoContext(), FileSystem(), LocalWorkspace(tmp_path)]
+
+
+def _nested_repo_context(tmp_path: Path) -> list[AbstractCapability[None]]:
+    """`_repo_context`, over a repo with an instruction file nested in `src`."""
+    (tmp_path / 'src').mkdir()
+    (tmp_path / 'src' / 'AGENTS.md').write_text('Type every function.\n')
+    (tmp_path / 'src' / 'app.py').write_text('print("hi")\n')
+    return _repo_context(tmp_path)
 
 
 def _skills(tmp_path: Path) -> list[AbstractCapability[None]]:
@@ -212,6 +229,12 @@ def _lowered_skills(tmp_path: Path) -> list[AbstractCapability[None]]:
     # Below `'operator'`, so the skill is held back from the instructions and `list_skills` and `load_skill` offer it.
     capabilities = _skills(tmp_path)
     return [capabilities[0], LocalWorkspace(tmp_path, authority='none')]
+
+
+def _permissions(tmp_path: Path) -> list[AbstractCapability[None]]:
+    """`Permissions` in `'auto'` mode, with a rule that denies `git push`, over a file system and a shell."""
+    rules = [PermissionRule[None]('deny', command='git push', reason='Pushing is for people.')]
+    return [Permissions('auto', rules=rules), FileSystem(), Shell(), LocalWorkspace(tmp_path)]
 
 
 def _read_file_key(call: ToolCallPart) -> str | None:
@@ -286,12 +309,12 @@ def _kubernetes_sandbox() -> KubernetesSandbox:
     return KubernetesSandbox(warm_pool='python-pool')
 
 
-def _ipython_code_mode() -> AbstractCapability[None]:
+def _ipython_code_mode(tools: ToolSelector[None] = ()) -> AbstractCapability[None]:
     # Imported here, so collecting the suites never imports `jupyter_client`. The test has already skipped
     # when it isn't installed (the case's `requires`).
     from pydantic_ai_harness.ipython_code_mode import IPythonCodeMode
 
-    return IPythonCodeMode(tools=[])
+    return IPythonCodeMode(tools=tools)
 
 
 def _browser_use(_: Path) -> AbstractCapability[None]:
@@ -664,7 +687,17 @@ CASES: dict[str, CapabilityCase] = {
             'one set of dispatcher tools per agent; `tools` is how one instance picks what it bridges',
             lambda: (ToolBridge[None](max_results=3), ToolBridge[None](max_results=5)),
             _check_tool_bridge,
-        )
+        ),
+        # The model finds `echo` behind the bridge, reads its schema, and calls it.
+        calls=Calls(
+            (
+                ('tool_search', {'queries': ['echo']}),
+                ('tool_describe', {'name': 'echo'}),
+                ('tool_call', {'name': 'echo', 'args_json': '{"text": "hi"}'}),
+            ),
+            with_echo(ToolBridge),
+            durable_steps=ECHO_STEPS,
+        ),
     ),
     'SubAgents': CapabilityCase(
         Combines(
@@ -775,6 +808,20 @@ CASES: dict[str, CapabilityCase] = {
     'Coder': CapabilityCase(
         Anonymous('a packaged harness; composing two is composing their members'),
         build=_workspace(Coder),
+        calls=Calls(
+            (
+                ('write_file', {'path': 'notes.md', 'content': 'Sunny.\n'}),
+                ('edit_file', {'path': 'notes.md', 'old_text': 'Sunny.', 'new_text': 'Rainy.'}),
+                ('read_file', {'path': 'notes.md'}),
+            ),
+            _coder_repo,
+            durable_steps=DurableSteps(
+                streams=True,
+                dbos=_workspace_steps(35),
+                # `write_file` and `edit_file` run in the workflow, so their workspace calls are activities.
+                temporal=(*('capability__workspace__call',) * 28, 'toolset__file_system__call_tool'),
+            ),
+        ),
     ),
     'OpenSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='opensandbox'),
     'DockerContainer': CapabilityCase(Anonymous(_SANDBOX)),
@@ -882,7 +929,20 @@ CASES: dict[str, CapabilityCase] = {
         build=lambda _: ApprovalReviewer(TestModel(), question='Is this safe?'),
     ),
     'Permissions': CapabilityCase(
-        Anonymous('each mode holds the calls it asks about, so stacked ones ask when any of them would')
+        Anonymous('each mode holds the calls it asks about, so stacked ones ask when any of them would'),
+        # `'auto'` runs the write and the plain command, and the rule denies the push without running it.
+        calls=Calls(
+            (
+                ('write_file', {'path': 'notes.md', 'content': 'Sunny.\n'}),
+                ('run_command', {'command': 'echo hi'}),
+                ('run_command', {'command': 'git push'}),
+            ),
+            _permissions,
+            # `write_file` runs in the workflow, and the denied push never reaches its activity.
+            durable_steps=DurableSteps(
+                dbos=_workspace_steps(9), temporal=(*('capability__workspace__call',) * 8, 'toolset__shell__call_tool')
+            ),
+        ),
     ),
     'ManagedPrompt': CapabilityCase(
         Anonymous(
@@ -898,7 +958,22 @@ CASES: dict[str, CapabilityCase] = {
         build=_hosted(LogfireMCP),
         calls=_hosted_calls(LogfireMCP, 'logfire_search', 'logfire-mcp'),
     ),
-    'RepoContext': CapabilityCase(Anonymous('one per workspace root'), build=_repo_context),
+    'RepoContext': CapabilityCase(
+        Anonymous('one per workspace root'),
+        build=_repo_context,
+        # Reading a file in `src` also states the instruction file nested there. Its inventory tool steps aside
+        # for `read_file`, which the nested instructions need.
+        calls=Calls(
+            (('read_file', {'path': 'src/app.py'}),),
+            _nested_repo_context,
+            # Not a measure of #14492 (capability instruction ids under Temporal): the calls only read files.
+            durable_steps=DurableSteps(
+                streams=True,
+                dbos=_workspace_steps(21),
+                temporal=(*('capability__workspace__call',) * 10, 'toolset__file_system__call_tool'),
+            ),
+        ),
+    ),
     'ReportContextUsage': CapabilityCase(Anonymous('a passive observer; several callbacks compose')),
     'ReportRemainingBudget': CapabilityCase(
         Anonymous('only a hook; each reports the run limits and its own `SpendLimits`')
@@ -1198,7 +1273,14 @@ CASES: dict[str, CapabilityCase] = {
         Narrows(
             'one `run_code` tool per id; two that differ need their own ids and PrefixTools',
             lambda cls: (cls(max_retries=1), cls(max_retries=2)),
-        )
+        ),
+        # The program calls `echo` through the sandbox, which dispatches it to the host tool.
+        calls=Calls(
+            (('run_code', {'code': "await echo(text='hi')"}),),
+            with_echo(CodeMode),
+            # Runs non-eager, as every durable engine turns eager execution off, so #14498 isn't measured here.
+            durable_steps=ECHO_STEPS,
+        ),
     ),
     'IPythonCodeMode': CapabilityCase(
         Collides('`run_code` is reserved, so a second one is rejected by name'),
@@ -1206,6 +1288,11 @@ CASES: dict[str, CapabilityCase] = {
         # launching a kernel process for every provider.
         build=lambda _: _ipython_code_mode(),
         requires='jupyter_client',
+        calls=Calls(
+            (('run_code', {'code': "echo(text='hi')"}),),
+            with_echo(lambda: _ipython_code_mode('all')),
+            launches_python='its program runs in the IPython kernel process it launches',
+        ),
     ),
     'BrowserUse': CapabilityCase(
         Collides('its toolset registers its browser tools under fixed names'),

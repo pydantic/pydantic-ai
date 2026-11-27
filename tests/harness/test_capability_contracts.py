@@ -460,7 +460,7 @@ def test_a_drifted_journal_breaks_the_durable_contracts() -> None:
 
     def read(units: list[str]) -> list[str]:
         return journal_breaks(
-            units, prefix='a__', model_request='model.request', calls=1, expected=expected, engine='dbos'
+            units, prefix='a__', model_requests=('model.request',), calls=1, expected=expected, engine='dbos'
         )
 
     assert read(recorded) == []
@@ -481,4 +481,4 @@ def test_a_drifted_journal_breaks_the_durable_contracts() -> None:
 def test_pending_calls_backfill() -> None:
     """The cases whose `calls` are still to be written: a PR that writes one lowers the count, and none raises it."""
     pending = sorted(name for name, exempt in DECLARES_CALLS.exempt.items() if exempt.reason.startswith(PENDING_CALLS))
-    assert len(pending) == 15, pending
+    assert len(pending) == 10, pending
