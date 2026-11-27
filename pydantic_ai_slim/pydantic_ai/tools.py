@@ -307,8 +307,9 @@ def _warn_enum_source_unavailable(enum_cls: type[Enum]) -> None:
     _warned_enum_source_unavailable.add(enum_cls)
     warnings.warn(
         f'`{enum_cls.__qualname__}` mixes in `UseEnumMemberDocstrings`, but its source could not be read, so its '
-        'members are described to the model by their values alone. Define it with a `class` statement in a module '
-        'or notebook cell, or describe the options with `Choices`.',
+        'members are described to the model by their values alone. Define it with a `class` statement in a notebook '
+        'cell or in a module whose `.py` source is installed (not only its bytecode), or describe the options with '
+        '`Choices`.',
         EnumDocstringsUnavailableWarning,
     )
 
