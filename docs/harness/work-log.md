@@ -98,7 +98,7 @@ The value is trusted as given. UI adapters set it from client input, so in a mul
 
 | Store | Where the log is | Handle a reset notice shows |
 | --- | --- | --- |
-| `InMemoryWorkLogStore()` (default) | This process, until `discard(conversation_id)` or process exit | The conversation ID |
+| `InMemoryWorkLogStore()` (default) | This process, until `discard(conversation_id)` or process exit | None: the agent reaches the log only through the tools |
 | `FileWorkLogStore(directory)` | One JSONL file per conversation, `<directory>/<log>.jsonl`, on the machine running the agent | The file's absolute path |
 | `WorkspaceWorkLogStore(workspace=None)` | One file per entry under `.pydantic-ai-harness/work-log/<log>/` in the run's workspace | That directory, relative to the working directory |
 
@@ -108,7 +108,7 @@ The value is trusted as given. UI adapters set it from client input, so in a mul
 - **File.** The directory is created on the first write. The process reads a log's file once, the first time it touches that log, to learn which entries it already holds. A reset notice names the file's absolute path.
 - **Workspace.** The working directory's `.pydantic-ai-harness/` holds a `.gitignore`, so the entries stay out of version control, and the agent's own file and shell tools can open them. The `Workspace` protocol has no append, so each entry is its own file, named by its `seq` and its key's digest. A search tool that ignores `.gitignore` also finds the copies of files the agent read that the entries hold, as they were when read. The store keeps only file names and keys in memory: each search reads every entry file, which in a remote sandbox is one round trip per entry. A symlinked log directory or entry file raises `WorkspaceError`. A run with no workspace fails at its start; pass `workspace=` a backend, such as `LocalWorkspaceBackend('/var/work-logs')`, to keep logs in a workspace of their own instead.
 
-Each store numbers entries in memory under a lock per log, so it supports one writer process per log. Nothing prunes the file and workspace logs; delete them when you no longer need them.
+Each store numbers entries in memory, one append at a time per log, so it supports one writer process per log. Nothing prunes the file and workspace logs; delete them when you no longer need them.
 
 To keep the log elsewhere, implement `WorkLogStore`: `append(log_id, record)` returns the entry's `seq` and writes nothing when the log already holds `record['key']`; `read(log_id, start=1, stop=None)` returns entries with `start <= seq < stop`, in order; `locate(log_id)` returns the handle a reset notice names, or `None` when the agent can't open the log itself, synchronously and without I/O.
 
@@ -124,7 +124,7 @@ With `CodeMode(speculate=...)`, a call launched while the model is still writing
 
 ## Durable execution
 
-The log's writes and both tools run as durable operations of the capability's `id`, `'work_log'`: `append` for each recorded entry, and `search` and `read` for the tools. A replay reuses what was recorded. That records one operation per entry, so under Temporal each recorded tool call, reply or thought adds one event to the workflow history. An append made inside another durable unit runs inline in it, and the entry's key keeps a retried unit from writing twice.
+The log's writes and both tools run as durable operations of the capability's `id`, `'work_log'`: `append` for each recorded entry, and `search` and `read` for the tools. A replay reuses what was recorded. That records one operation per entry, so under Temporal each recorded tool call, reply or thought outside another durable unit runs as an activity of its own in the workflow history. An append made inside another durable unit runs inline in it, and the entry's key keeps a retried unit from writing twice.
 
 Keep the `id` fixed once a workflow is live. Under a durable engine a store operation can run in another process, so use `FileWorkLogStore` or `WorkspaceWorkLogStore` there rather than the in-memory default.
 

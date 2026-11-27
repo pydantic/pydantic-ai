@@ -657,7 +657,7 @@ The notice is a `ResetNoticePart`, a data
 the model on the user channel in a `<context_cleared>` frame, like a [receipt](#compaction-receipts)
 on the user channel, and a later compaction or summary doesn't take it for the user's words. Its
 typed fields `number`, `work_log` (the log's handle) and `kept_responses` are never sent to the
-model; find notices in history by the type. The default text tells the model that its earlier messages were cleared and the task is unchanged, what the reset kept, that the work log holds what was cleared, to look an earlier call up there before repeating it, using the tools that search and read the log (under the names the model sees, so a `PrefixTools` rename applies), to read only what its next step needs, and to read a file again before editing it, since a log entry can be out of date. That wording was measured live across providers; the docstring of `default_reset_notice` records the result. The handle is what the [store](../work_log/README.md#stores)'s `locate` returns: a file path or a workspace directory, and none for the in-memory store, whose log the agent can reach only through the tools.
+model; find notices in history by the type. The default text tells the model that its earlier messages were cleared and the task is unchanged, what the reset kept, that the work log holds what was cleared, to look an earlier call up there before repeating it, using the tools that search and read the log (under the names the model sees), to read only what its next step needs, and to read a file again before editing it, since a log entry can be out of date. That wording was measured live across providers; the docstring of `default_reset_notice` records the result. The handle is what the [store](../work_log/README.md#stores)'s `locate` returns: a file path or a workspace directory, and none for the in-memory store, whose log the agent can reach only through the tools.
 
 To write your own, pass `notice=`, a function from a `ResetNotice` to the text:
 
@@ -678,35 +678,29 @@ To write your own, pass `notice=`, a function from a `ResetNotice` to the text:
 returns text, a `CurrentStatePart`, or `None` or an empty string to add nothing. It reaches the model
 in a `<current_state>` frame. Text is recorded as the output of the `restate` callable (a `ToolResultSource` named after it), so text in it that looks like a frame gets a note naming its author, as command output such as `git status` should. Return `CurrentStatePart(content=..., source=OperatorSource())` for text your application wrote itself, or another source for text from elsewhere. It runs as the
 `restate` durable operation of the stable default `id='reset_compaction'`, so a replay reuses the
-recorded result. An exception it raises fails the request, as any hook error does; as a
-`TieredCompaction` tier on that tier's trigger, one of its `skip_on` errors skips the tier instead.
+recorded result. An exception it raises fails the request, as any hook error does; as a `TieredCompaction` tier, when `TieredCompaction` runs on its own trigger, one of its `skip_on` errors skips the tier instead.
 
-Each notice records its number, and the next reset counts on from the latest notice in the history,
+Each notice records its number, and the next reset counts on from the highest number in the history,
 so the count continues in a run resumed from saved history, such as a
 [`StepPersistence`](../step_persistence/) snapshot. The work log records the same number in each
-entry's `context`. `result.conversation` holds the cleared messages too: a run continued from it
-clears them again before its first request, so it sends what the last reset left, as a run continued
-from `result.all_messages()` does. The count starts over at `1` when the latest notice isn't in the history the run
-gets, such as a `ConversationStore.load(limit=...)` window that leaves it out, or history a UI
+entry's `context`. `result.conversation` holds the cleared messages too, so a run continued from it resets again on its first request, as the other strategies compact it again; pass `result.all_messages()` to carry the reset history and its cached prefix instead. The count starts over at `1` when no notice is in the history the run gets, such as a `ConversationStore.load(limit=...)` window that leaves it out, or history a UI
 client sends back, which carries no capability parts.
 
 **Triggers.** It takes the [triggers](#triggers) of `SlidingWindowCompaction`: `max_messages`,
 `max_tokens`, or `max_fraction` with `context_window` and `fallback_context_window`. Like
 `SlidingWindowCompaction`, it needs a trigger when it's registered on an agent, and a run raises a
 `UserError` at its start without one. As a strategy, in `TieredCompaction`, `FallbackCompaction`,
-`CompactOnRequest` or `compact_now`, it needs none: their calls to its `compact` always reset.
+`CompactOnRequest` or `compact_now`, it needs none: their calls to its `compact` reset whenever the history is longer than the kept tail.
 
 **Repeats.** After a reset it doesn't reset again until the model has added a response beyond what
 the reset kept. If the kept history alone is over the trigger, though, it resets after every new
 response. Set the trigger well above what `keep_messages` keeps, and add
 [`ToolOutputLimits`](../tool_output_limits/), which reduces a large result when the tool returns it,
-so one oversized result in the tail can't keep the history over the trigger.
+so one oversized tool result in the tail doesn't keep the history over the trigger. It leaves the work log's own results alone, and a `read_work_log` page can reach 50,000 characters, so keep the trigger above that too.
 
 **With other capabilities.**
 
-- Don't combine it with a strategy that drops or summarizes history (`SlidingWindowCompaction`,
-  `SummarizingCompaction`, `RelevanceCompaction`), on the agent or as a tier. The notice's request
-  holds no user turn, so such a strategy drops or summarizes the notice. In `TieredCompaction`, put
+- Don't combine it with `SlidingWindowCompaction` or `SummarizingCompaction`, on the agent or as a tier. The notice's request holds no user turn, so `SlidingWindowCompaction` drops the notice and `SummarizingCompaction` summarizes it. `RelevanceCompaction` keeps it, since it keeps every request before the first response as it was. In `TieredCompaction`, put
   it last, after passes that blank content in place such as `ClearToolResults`, so it runs only when
   they didn't free enough.
 - It orders itself ahead of [`Planning`](../planning/), so after a reset Planning records the
@@ -1060,7 +1054,7 @@ cardinality low:
 | `compaction.target_unreached` | bool | `TieredCompaction` only: `true` when every tier ran and the history is still estimated above the target. Absent otherwise |
 | `compaction.target_tokens` | int | With `compaction.target_unreached`: the resolved target |
 | `compaction.estimate` | int | With `compaction.target_unreached`: the estimate the stop decision used, anchored on provider-reported usage when there is any |
-| `compaction.reset.number` | int | `ResetCompaction` only: the reset's number in the conversation, this one included. Set when the reset ran, also when `TieredCompaction` then rejects its result as not smaller |
+| `compaction.reset.number` | int | `ResetCompaction` only: the reset's number in the conversation, this one included. Set when the reset ran, including when its `restate` then raised and `TieredCompaction` skipped the tier |
 
 Only `gen_ai.conversation.compacted` comes from the OpenTelemetry GenAI semantic convention; the
 rest are harness-specific. Token counts use the strategy's `tokenizer`, else the text estimate

@@ -153,7 +153,7 @@ application derive it on the server from the authenticated user, as for
 
 | Store | Where the log is | Handle a reset notice shows |
 | --- | --- | --- |
-| `InMemoryWorkLogStore()` (default) | This process, until `discard(conversation_id)` or process exit | The conversation ID |
+| `InMemoryWorkLogStore()` (default) | This process, until `discard(conversation_id)` or process exit | None: the agent reaches the log only through the tools |
 | `FileWorkLogStore(directory)` | One JSONL file per conversation, `<directory>/<log>.jsonl`, on the machine running the agent | The file's absolute path |
 | `WorkspaceWorkLogStore(workspace=None)` | One file per entry under `.pydantic-ai-harness/work-log/<log>/` in the run's workspace | That directory, relative to the working directory |
 
@@ -178,8 +178,7 @@ directory.
   backend, such as `LocalWorkspaceBackend('/var/work-logs')`, to keep logs in a workspace of their
   own instead.
 
-Each store numbers entries in memory under a lock per log, so it supports one writer process per
-log. Nothing prunes the file and workspace logs; delete them when you no longer need them.
+Each store numbers entries in memory, one append at a time per log, so it supports one writer process per log. Nothing prunes the file and workspace logs; delete them when you no longer need them.
 
 To keep the log elsewhere, implement `WorkLogStore`: `append(log_id, record)` returns the entry's
 `seq` and writes nothing when the log already holds `record['key']`;
@@ -210,8 +209,7 @@ reduces it: the conversation can hold a spill marker while the log keeps the who
 
 The log's writes and both tools run as durable operations of the capability's `id`,
 `'work_log'`: `append` for each recorded entry, and `search` and `read` for the tools. A replay
-reuses what was recorded. That records one operation per entry, so under Temporal each recorded
-tool call, reply or thought adds one event to the workflow history. An append made inside another
+reuses what was recorded. That records one operation per entry, so under Temporal each recorded tool call, reply or thought outside another durable unit runs as an activity of its own in the workflow history. An append made inside another
 durable unit runs inline in it, and the entry's key keeps a retried unit from writing twice.
 
 Keep the `id` fixed once a workflow is live. Under a durable engine a store operation can run in

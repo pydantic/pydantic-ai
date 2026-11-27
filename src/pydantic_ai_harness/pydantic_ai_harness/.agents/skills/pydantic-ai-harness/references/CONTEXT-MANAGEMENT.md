@@ -294,12 +294,13 @@ is the default.
 (`ToolResultSource`), and a `CurrentStatePart` keeps the source you give it. It runs as the `restate` durable operation, and
 an exception it raises fails the request. The span gets `compaction.reset.number`.
 
-Gotchas: put it last in `TieredCompaction` and don't combine it with `SlidingWindowCompaction`,
-`SummarizingCompaction` or `RelevanceCompaction`, which drop or summarize the notice. If the kept
-history alone is over the trigger it resets after every response, so add `ToolOutputLimits` and set
-the trigger well above what `keep_messages` keeps. A run continued from `result.conversation`
-clears what the last reset cleared again before its first request. The in-memory store shows no
-handle in the notice. It can't be loaded from an agent spec.
+Gotchas: put it last in `TieredCompaction` and don't combine it with `SlidingWindowCompaction` or
+`SummarizingCompaction`, which drop or summarize the notice; `RelevanceCompaction` keeps it. If the
+kept history alone is over the trigger it resets after every response, so add `ToolOutputLimits` and
+set the trigger well above what `keep_messages` keeps and above a 50,000-character `read_work_log`
+page. A run continued from `result.conversation` resets again on its first request; continue from
+`result.all_messages()` to keep the reset history. The in-memory store shows no handle in the
+notice. It can't be loaded from an agent spec.
 
 ```python
 from pydantic_ai import Agent

@@ -628,25 +628,23 @@ An entry shows things as they were when it was recorded. A file may have changed
         )
 
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
-    async def test_a_run_continued_from_the_whole_conversation_keeps_what_followed_the_reset(self) -> None:
-        """`result.conversation` holds what a reset cleared: the next run clears it again rather than resetting anew.
+    async def test_a_run_continued_from_the_whole_conversation_resets_again_and_counts_on(self) -> None:
+        """`result.conversation` keeps what each reset cleared, so the next run resets on its first request.
 
-        So its first request is the one a run continued from `result.all_messages()` sends.
+        Each reset leaves its notice among the messages it cleared, so the count follows the highest number and the
+        model gets one notice, the new one.
         """
         work_log = WorkLog[None]()
-        script = Script([_call(city, f'c{index}') for index, city in enumerate(('Paris', 'Rome', 'Milan', 'Oslo'))])
-        agent = _agent(script, ResetCompaction(work_log, max_messages=6), work_log=work_log)
-        first = await agent.run('Plan the trip.', conversation_id=_CONVERSATION)
-        assert len(first.conversation.messages) > len(first.all_messages())
+        script = Script([_call(f'city{index}', f'c{index}') for index in range(4)])
+        agent = _agent(script, ResetCompaction(work_log, max_messages=6, notice=_numbered), work_log=work_log)
 
-        script.seen.clear()
-        await agent.run('And Bergen?', conversation=first.conversation)
-        from_conversation = [_describe(part) for message in script.seen[0] for part in message.parts]
-        script.seen.clear()
-        await agent.run('And Bergen?', message_history=first.all_messages())
-        from_messages = [_describe(part) for message in script.seen[0] for part in message.parts]
+        result = await agent.run('Plan the trip.', conversation_id=_CONVERSATION)
+        for prompt in ('And Rome?', 'And Milan?'):
+            [(highest, _)] = _notices(result.all_messages())
+            script.seen.clear()
+            result = await agent.run(prompt, conversation=result.conversation)
 
-        assert from_conversation == from_messages
+            assert _seen_notices(script.seen[0]) == [f'Reset #{highest + 1}.']
 
     async def test_an_in_memory_log_shows_no_handle(self) -> None:
         """The conversation id can come from a client, and no tool takes it, so the notice leaves it out."""

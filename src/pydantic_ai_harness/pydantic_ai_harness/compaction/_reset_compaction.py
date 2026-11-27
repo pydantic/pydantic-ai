@@ -334,12 +334,7 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Reset when the history passes the trigger and the model has responded since the last reset."""
-        messages = without_cleared(list(ctx.messages))
-        if len(messages) < len(ctx.messages):
-            # A run continued from `result.conversation` gets back what the newest reset cleared: clear it again,
-            # leaving what that reset sent, rather than resetting anew and losing what followed it.
-            ctx.messages[:] = messages
-            request_context = replace(request_context, messages=messages)
+        messages: list[ModelMessage] = list(ctx.messages)
         request_ctx = context_for_request(ctx, request_context)
         token_trigger = resolve_token_trigger(
             self.max_tokens, self.max_fraction, request_ctx.model, self.fallback_context_window, self.context_window
@@ -387,32 +382,22 @@ def last_reset_notice(messages: Sequence[ModelMessage]) -> ResetNoticePart | Non
     return None
 
 
-def without_cleared(messages: list[ModelMessage]) -> list[ModelMessage]:
-    """*messages* without the ones between the first user request and the newest notice, which that reset cleared.
-
-    A history that came through the latest reset holds none: there the notice follows the first request. A run's
-    `result.conversation` keeps every message, so it holds the cleared ones there.
-    """
-    notice_at = next(
-        (
-            index
-            for index in range(len(messages) - 1, -1, -1)
-            if isinstance(message := messages[index], ModelRequest)
-            and any(isinstance(part, ResetNoticePart) for part in message.parts)
-        ),
-        None,
-    )
-    if notice_at is None:
-        return messages
-    first = find_first_user_message(messages)
-    kept = 0 if first is None else messages.index(first) + 1
-    return [*messages[:kept], *messages[notice_at:]] if kept < notice_at else messages
-
-
 def reset_count(messages: Sequence[ModelMessage]) -> int:
-    """How many times the conversation in *messages* has been cleared: the newest notice's number, or 0."""
-    notice = last_reset_notice(messages)
-    return 0 if notice is None else notice.number
+    """How many times the conversation in *messages* has been cleared: the highest notice number, or 0.
+
+    The highest rather than the last: `result.conversation` keeps each notice where the reset put it among the
+    messages it cleared, so the newest notice need not come last.
+    """
+    return max(
+        (
+            part.number
+            for message in messages
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ResetNoticePart)
+        ),
+        default=0,
+    )
 
 
 def without_reset_parts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
