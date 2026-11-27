@@ -566,8 +566,8 @@ async def test_messages_added_to_a_loaded_conversation_are_saved_with_the_parts_
     assert record is not None and record.branches == []
 
 
-async def test_unsaved_messages_the_run_merges_fall_back_to_comparing_with_the_stored_history() -> None:
-    """Without knowing which stored messages the changed unsaved ones follow, the save compares the whole history."""
+async def test_unsaved_messages_the_run_merges_are_saved_after_the_stored_ones() -> None:
+    """Unsaved requests the run merges into one to send it are still found after the stored messages, so the save appends."""
     store = InMemoryConversationStore()
     stored = await _stored_conversation(store, turns=2)
     loaded = await store.load(stored.conversation_id)
@@ -577,7 +577,7 @@ async def test_unsaved_messages_the_run_merges_fall_back_to_comparing_with_the_s
 
     result = await Agent(TestModel()).run(conversation=loaded)
     conversation = result.conversation
-    assert conversation.new_message_index is None
+    assert conversation.new_message_index == len(stored.messages)
     await store.save(conversation)
 
     reloaded = await store.load(stored.conversation_id)
