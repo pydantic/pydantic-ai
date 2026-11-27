@@ -59,7 +59,9 @@ Use `Choices({key: description})` when the model has to pick one of a set that o
 way — the records a search returned, the actions available on a screen. Each option carries its meaning into the
 schema, the output is validated against the keys, and it is a type, so the same value also works as a model field
 or a tool parameter — there, write `Annotated[str, Intent]` so type checkers see a `str`. For a set you know when you write the code, use a `Literal` or an `Enum` (with
-`UseEnumMemberDocstrings` for per-member descriptions), which give exhaustiveness checking.
+`UseEnumMemberDocstrings` for per-member descriptions), which give exhaustiveness checking. Keys can be whole
+numbers (all of them) for an `int` output; `Choices({0: ..., 1: ..., 2: ...})` with every level described is a
+rubric a decision model scores.
 
 ```python
 from pydantic_ai import Agent, Choices

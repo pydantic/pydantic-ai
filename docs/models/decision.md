@@ -337,7 +337,7 @@ Each field type is asked as one kind of question, and comes back as one kind of 
 | [`Choices(...)`][pydantic_ai.output.Choices] | pick one | the chosen option, or what it stands for | for options [known only at run time](#options-known-only-at-run-time), each with its meaning |
 | any pick-one in a union with `None` | pick one, or "None of these." | the option, or the field's default, or `None` | not for a rubric |
 | `float` with `ge=0` and an inclusive upper bound (`le=`) | the probability of yes | the probability, unrounded, in the field's own units | no confidence entry, since the probability is the answer |
-| an `IntEnum` of `0, 1, 2, …` with a description per level, from `UseEnumMemberDocstrings` | score against a rubric | the nearest level | at most the backend's `max_score_levels`; the unrounded position is in `provider_details['scores']` |
+| an `IntEnum` of `0, 1, 2, …` with a description per level, from `UseEnumMemberDocstrings`, or a `Choices` set of the same whole numbers | score against a rubric | the nearest level | at most the backend's `max_score_levels`; the unrounded position is in `provider_details['scores']` |
 | `list` of a `Literal` or `Enum` of strings | one yes or no per option | the options answered yes | word its question about one option; its confidence is the least sure option's |
 | `dict` from a `Literal` or `Enum` to `bool` | one yes or no per option | every option, with its answer | the same question as the `list` |
 | a nested model of these | its fields, asked as `outer.inner` | the model | each question carries the fields and models it sits in |
@@ -450,6 +450,8 @@ print(result.response.provider_details['probabilities'])
 ```
 
 `Choices()` returns a type, so the same set also works as a field of an output type or as a tool argument, in `Annotated` on the type of the value it gives back: `Annotated[str, Teams]`. An option can also stand for a value other than its own key, or for an action that runs when it is picked, as in [choosing from a set built at run time](#choose-from-a-set-built-at-run-time). [Choices known only at run time](../output.md#choices) covers the helper in full.
+
+The keys can be whole numbers instead of strings, and then the answer is the number. Whole numbers from 0 upwards with every level described are a [rubric](#what-each-field-type-does), scored the same as an `IntEnum` of described levels, so a rubric whose levels are only known at run time, or that is defined where its docstrings cannot be read, is `Choices({0: 'It can wait a few days.', 1: 'It should be handled today.', 2: 'Money is at risk until someone acts.'})`. Any other whole numbers are a pick-one.
 
 ## Routes: which thing to do
 

@@ -317,8 +317,20 @@ async def look() -> int:
 
 assert_type(Agent(output_type=Choices({'refund': 'Money back.', 'replace': 'A new one.'})).run_sync('x').output, str)
 assert_type(Agent(output_type=Choices(['yes', 'no'])).run_sync('x').output, str)
+assert_type(Agent(output_type=Choices({0: 'It can wait.', 1: 'Handle it today.'})).run_sync('x').output, int)
+assert_type(Agent(output_type=Choices([200, 404])).run_sync('x').output, int)
 assert_type(
     Agent(output_type=Choices({doc.id: Choice(doc.title, value=doc) for doc in docs})).run_sync('x').output, Doc
+)
+assert_type(Agent(output_type=Choices({0: Choice('The first.', value=docs[0])})).run_sync('x').output, Doc)
+# The same widening for whole-number keys, with the same mypy inference gap as the string-keyed case below.
+assert_type(  # type: ignore[assert-type]
+    Agent(
+        output_type=Choices({0: 'Say nothing.', 1: Choice('Cite it.', value=docs[0])})  # type: ignore[dict-item]
+    )
+    .run_sync('x')
+    .output,
+    int | Doc,
 )
 # A callable value is called, so the output is what the action returns, not the action itself.
 assert_type(

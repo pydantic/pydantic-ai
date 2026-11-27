@@ -575,7 +575,7 @@ class _ChoicesActions:
     keys_type: ClassVar[type[Any]]
     """The same set of keys with no values attached, which is what validates the model's pick."""
 
-    values: ClassVar[Mapping[str, Any]]
+    values: ClassVar[Mapping[str | int, Any]]
     """What each key stands for, resolved once the pick is final."""
 
     @staticmethod
@@ -594,7 +594,16 @@ def Choices(
 
 @overload
 def Choices(
-    choices: Mapping[str, Choice[T_co]], *, name: str | None = None, description: str | None = None
+    choices: Sequence[int] | Mapping[int, str], *, name: str | None = None, description: str | None = None
+) -> type[int]: ...
+
+
+@overload
+def Choices(
+    choices: Mapping[str, Choice[T_co]] | Mapping[int, Choice[T_co]],
+    *,
+    name: str | None = None,
+    description: str | None = None,
 ) -> type[T_co]: ...
 
 
@@ -604,8 +613,14 @@ def Choices(
 ) -> type[str | T_co]: ...
 
 
+@overload
 def Choices(
-    choices: Sequence[str] | Mapping[str, str | Choice[Any]],
+    choices: Mapping[int, str | Choice[T_co]], *, name: str | None = None, description: str | None = None
+) -> type[int | T_co]: ...
+
+
+def Choices(
+    choices: Sequence[str] | Sequence[int] | Mapping[str, str | Choice[Any]] | Mapping[int, str | Choice[Any]],
     *,
     name: str | None = None,
     description: str | None = None,
@@ -620,10 +635,15 @@ def Choices(
     Like [`StructuredDict`][pydantic_ai.output.StructuredDict] it returns a type, so it works as an
     `output_type`, as a field of a Pydantic model, and as a tool parameter.
 
+    The keys are strings, or whole numbers. Whole numbers from 0 upwards, each described, are the levels of a
+    rubric, which a [decision model](../models/decision.md#what-each-field-type-does) scores rather than picks
+    from, the same as an `IntEnum` with [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings]:
+    `Choices({0: 'It can wait.', 1: 'Handle it today.', 2: 'Money is at risk.'})`.
+
     Args:
         choices: The choices, as a sequence of keys, a mapping from key to its description, or a mapping from
             key to a [`Choice`][pydantic_ai.output.Choice] carrying both a description and what the key stands
-            for.
+            for. The keys are all strings or all whole numbers.
         name: Name of the output tool or structured output. Defaults to `'Choices'`.
         description: What the model is being asked to pick, e.g. `'Which action to take next.'`.
 
@@ -648,7 +668,7 @@ def Choices(
     ```
     """
     resolved = _resolve_choices(choices)
-    choice_values: dict[str, Any] = {
+    choice_values: dict[str | int, Any] = {
         key: choice.value if _utils.is_set(choice.value) else key for key, choice in resolved.items()
     }
     # The values are only worth resolving when at least one of them isn't the key itself.
@@ -697,24 +717,33 @@ def Choices(
     return _ChoicesWithActions
 
 
-def _resolve_choices(choices: Sequence[str] | Mapping[str, str | Choice[Any]]) -> dict[str, Choice[Any]]:
+def _resolve_choices(
+    choices: Sequence[str] | Sequence[int] | Mapping[str, str | Choice[Any]] | Mapping[int, str | Choice[Any]],
+) -> dict[str | int, Choice[Any]]:
     """Each of `choices` as a `Choice`, keyed by its key."""
     if isinstance(choices, str):
         raise exceptions.UserError('`Choices` takes a sequence or mapping of choices, not a single string.')
 
-    resolved: dict[str, Choice[Any]] = (
+    resolved: dict[str | int, Choice[Any]] = (
         {key: Choice(choice) if isinstance(choice, str) else choice for key, choice in choices.items()}
         if isinstance(choices, Mapping)
         else {key: Choice() for key in choices}
     )
     if not resolved:
         raise exceptions.UserError('`Choices` requires at least one choice.')
+    # `bool` is an `int` in Python, but `True` is not a whole number a model picks or scores.
+    if not (
+        all(isinstance(key, str) for key in resolved)
+        or all(isinstance(key, int) and not isinstance(key, bool) for key in resolved)
+    ):
+        raise exceptions.UserError(f'`Choices` keys are all strings or all whole numbers, but got {list(resolved)!r}.')
     return resolved
 
 
-def _choices_json_schema(choices: dict[str, Choice[Any]], description: str | None) -> JsonSchemaValue:
-    """The JSON schema of a string that is one of `choices`' keys, with what each key means where it says."""
+def _choices_json_schema(choices: dict[str | int, Choice[Any]], description: str | None) -> JsonSchemaValue:
+    """The JSON schema of a string or whole number that is one of `choices`' keys, with what each key means."""
     descriptions = {key: choice.description for key, choice in choices.items() if choice.description}
+    json_type = 'string' if all(isinstance(key, str) for key in choices) else 'integer'
     if descriptions:
         # The same `anyOf`-of-`const`s shape `GenerateToolJsonSchema.enum_schema` emits for an enum whose
         # members carry docstrings, so that "pick one of these, and here is what each means" has one shape on
@@ -725,9 +754,9 @@ def _choices_json_schema(choices: dict[str, Choice[Any]], description: str | Non
             if choice_description := descriptions.get(key):
                 option['description'] = choice_description
             options.append(option)
-        json_schema: JsonSchemaValue = {'type': 'string', 'anyOf': options}
+        json_schema: JsonSchemaValue = {'type': json_type, 'anyOf': options}
     else:
-        json_schema = {'type': 'string', 'enum': list(choices)}
+        json_schema = {'type': json_type, 'enum': list(choices)}
     if description:
         json_schema['description'] = description
     return json_schema
