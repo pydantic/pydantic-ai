@@ -16,6 +16,7 @@ from collections.abc import (
     Collection,
     Generator,
     Sequence,
+    Set as AbstractSet,
 )
 from contextlib import (
     AbstractAsyncContextManager,
@@ -140,6 +141,7 @@ from ..tools import (
     RunContext,
     SystemPromptFunc,
     Tool,
+    ToolCaller,
     ToolDefinition,
     ToolDenied,
     ToolFuncContext,
@@ -3143,6 +3145,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         durable: bool | None = None,
         ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
 
@@ -3168,6 +3171,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         durable: bool | None = None,
         ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
@@ -3193,6 +3197,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         durable: bool | None = None,
         ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
@@ -3265,6 +3270,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
+            allowed_callers: Who may call this tool: `{'direct'}` for only the model, `{'programmatic'}` for only code
+                the model wrote, such as in Code Mode, or both. Defaults to `None`, no constraint, so whatever runs code decides.
+                See [Who may call a tool](../tools-advanced.md#tool-callers) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
         """
@@ -3293,6 +3301,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 durable=durable,
                 ui_visibility=ui_visibility,
                 defer_loading=defer_loading,
+                allowed_callers=allowed_callers,
                 include_return_schema=include_return_schema,
             )
             return func_
@@ -3324,6 +3333,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         durable: bool | None = None,
         ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
 
@@ -3349,6 +3359,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         durable: bool | None = None,
         ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
@@ -3374,6 +3385,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         durable: bool | None = None,
         ui_visibility: _messages.ToolUIVisibility | None = None,
         defer_loading: bool = False,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
@@ -3447,6 +3459,9 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
+            allowed_callers: Who may call this tool: `{'direct'}` for only the model, `{'programmatic'}` for only code
+                the model wrote, such as in Code Mode, or both. Defaults to `None`, no constraint, so whatever runs code decides.
+                See [Who may call a tool](../tools-advanced.md#tool-callers) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
         """
@@ -3473,6 +3488,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 durable=durable,
                 ui_visibility=ui_visibility,
                 defer_loading=defer_loading,
+                allowed_callers=allowed_callers,
                 include_return_schema=include_return_schema,
             )
             return func_

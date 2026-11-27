@@ -1968,6 +1968,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if params.allow_image_output and not self.profile.get('supports_image_output', False):
             raise UserError('Image output is not supported by this model.')
 
+        _check_tools_have_callers(params.function_tools)
+
         # Check native tools, handle fallback swap, and resolve deferred-tool visibility. A deferred
         # tool has to get here on its own account: one gated by an on-demand capability belongs to no
         # native tool's corpus, so a run whose deferred tools are all capability-gated reaches this
@@ -4198,6 +4200,21 @@ def _customize_output_object(
         json_schema=json_schema,
         strict=schema_transformer.is_strict_compatible if output_object.strict is None else output_object.strict,
     )
+
+
+def _check_tools_have_callers(function_tools: Sequence[ToolDefinition]) -> None:
+    """Raise for a tool on the request that only code may call.
+
+    A capability that runs code, like the harness's `CodeMode`, takes such a tool off the model's tool list and makes
+    it callable from code. No model calls function tools from its own code execution yet, so one still here would
+    never be called.
+    """
+    if names := [t.name for t in function_tools if t.allowed_callers is not None and 'direct' not in t.allowed_callers]:
+        raise UserError(
+            f'Tools {names} only allow programmatic callers, but nothing on this agent calls tools from code. '
+            "Add a capability that does, such as the harness's `CodeMode`, or add `'direct'` to their "
+            '`allowed_callers`.'
+        )
 
 
 def _needs_tool_resolution(params: ModelRequestParameters) -> bool:

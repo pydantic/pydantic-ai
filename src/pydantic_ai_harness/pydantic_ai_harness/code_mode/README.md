@@ -131,10 +131,14 @@ CodeMode(tools=lambda ctx, td: td.name != 'dangerous_tool')
 CodeMode(tools={'code_mode': True})
 ```
 
-A tool whose [kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-callers) only the model may call
-(its `allowed_callers` leaves out `'programmatic'`) stays native, such as tool search, capability
-loading and the `computer` tool. Undiscovered deferred tools, `requires_approval=True` and external
-tools, native fallbacks, and other code-execution tools stay native too, including `Shell`'s `run_command` and `start_command` (so the model never quotes
+A tool's own [`allowed_callers`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-callers)
+wins over `tools`: `{'direct'}` keeps it a regular tool call, as for tool search, capability loading
+and the `computer` tool, `{'programmatic'}` puts it in `run_code` whatever the selector says, and
+`{'direct', 'programmatic'}` makes it both a regular tool and callable in `run_code`. Naming a
+`{'direct'}` tool in a list of tool names raises `UserError`. Code Mode writes `{'programmatic'}`
+onto each tool the selector puts in `run_code`. Undiscovered deferred tools, `requires_approval=True`
+and external tools, native fallbacks, and other code-execution tools stay native too (one whose
+`allowed_callers` includes `'programmatic'` raises `UserError`), including `Shell`'s `run_command` and `start_command` (so the model never quotes
 shell inside Python) and `CapabilityCreation`'s `author_capability` (its argument is a whole
 module); their other tools, such as `read_file`, are folded in. To fold a code-execution tool
 anyway, set `FOLD_INTO_CODE_MODE` (`'fold_into_code_mode'`, from `pydantic_ai_harness.code_mode`) to

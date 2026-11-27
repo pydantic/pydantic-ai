@@ -12,6 +12,7 @@ import gc
 import json
 import math
 import os
+import re
 import time
 from collections.abc import AsyncIterator, Iterator, Sequence
 from dataclasses import dataclass, replace
@@ -24,8 +25,8 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext, Tool, ToolKind, ToolReturn
-from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ToolSearch
+from pydantic_ai import Agent, RunContext, Tool, ToolDefinition, ToolReturn
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, Hooks, ToolSearch, ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
     BinaryImage,
@@ -37,7 +38,7 @@ from pydantic_ai.messages import (
     UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolCaller, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.usage import UsageLimits
 from tests._timeouts import READINESS_WAIT_TIMEOUT
@@ -106,6 +107,25 @@ def _scripted(*codes: str | dict[str, Any], seen: list[AgentInfo] | None = None)
         return ModelResponse(parts=[TextPart('done')])
 
     return FunctionModel(respond)
+
+
+def _select_nothing(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
+    return False
+
+
+def _caller_tools() -> list[Tool]:
+    """One tool for each `allowed_callers` value."""
+
+    def answer() -> str:
+        return 'answer'
+
+    callers_by_name: list[tuple[str, set[ToolCaller] | None]] = [
+        ('unconstrained', None),
+        ('model_only', {'direct'}),
+        ('code_only', {'programmatic'}),
+        ('any_caller', {'direct', 'programmatic'}),
+    ]
+    return [Tool(answer, name=name, allowed_callers=callers) for name, callers in callers_by_name]
 
 
 @dataclass
@@ -463,25 +483,92 @@ def book(*, trip: Trip, travellers: int) -> str:
         assert sorted(tool.name for tool in seen[0].function_tools) == ['outside', 'run_code']
         assert 'def inside()' in (seen[0].function_tools[-1].description or '')
 
-    async def test_a_kind_only_the_model_may_call_stays_native(self, kernel: IPythonKernel) -> None:
-        def inside() -> str:
-            return 'inside'  # pragma: no cover
+    async def test_allowed_callers_decide_where_a_tool_goes(self, kernel: IPythonKernel) -> None:
+        """A tool's `allowed_callers` wins over the selector, whether the selector matches it or not."""
+        for selector, direct, in_kernel in [
+            ('all', ['any_caller', 'model_only', 'run_code'], ['any_caller', 'code_only', 'unconstrained']),
+            (
+                _select_nothing,
+                ['any_caller', 'model_only', 'run_code', 'unconstrained'],
+                ['any_caller', 'code_only'],
+            ),
+        ]:
+            seen: list[AgentInfo] = []
+            agent = Agent(
+                _scripted(seen=seen),
+                capabilities=[IPythonCodeMode(kernel=kernel, tools=selector)],
+                tools=_caller_tools(),
+            )
+            await agent.run('Hi')
+            assert sorted(tool.name for tool in seen[0].function_tools) == direct
+            run_code = next(tool for tool in seen[0].function_tools if tool.name == 'run_code')
+            assert sorted(re.findall(r'def (\w+)\(', run_code.description or '')) == in_kernel
 
-        def look() -> str:
-            return 'screen'  # pragma: no cover
+    async def test_folded_tools_are_marked_as_called_from_code(self, kernel: IPythonKernel) -> None:
+        """A tool the selector puts in the kernel gets `allowed_callers={'programmatic'}` written onto it."""
+        seen: dict[str, frozenset[ToolCaller] | None] = {}
+        recorder = Hooks[Any]()
 
-        model_only = ToolKind('test_ipython_code_mode', 'model_only', allowed_callers={'direct'})
+        @recorder.on.before_tool_execute
+        async def record(
+            ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+        ) -> ValidatedToolArgs:
+            seen[tool_def.name] = tool_def.allowed_callers
+            return args
+
+        agent = Agent(
+            _scripted('unconstrained()\nany_caller()'),
+            capabilities=[IPythonCodeMode(kernel=kernel), recorder],
+            tools=_caller_tools(),
+        )
+        await agent.run('Hi')
+        assert seen == {
+            'run_code': None,
+            'unconstrained': frozenset({'programmatic'}),
+            'any_caller': frozenset({'direct', 'programmatic'}),
+        }
+
+    async def test_a_code_only_tool_stays_off_the_wire_until_revealed(self, kernel: IPythonKernel) -> None:
+        def forecast() -> str:
+            return 'sunny'  # pragma: no cover
+
         seen: list[AgentInfo] = []
         agent = Agent(
             _scripted(seen=seen),
-            capabilities=[IPythonCodeMode(kernel=kernel)],
-            tools=[Tool(inside), Tool(look, tool_kind=model_only)],
+            capabilities=[ToolSearch(), IPythonCodeMode(kernel=kernel)],
+            tools=[
+                Tool(forecast, defer_loading=True, allowed_callers={'programmatic'}),
+                Tool(forecast, name='both_forecast', defer_loading=True, allowed_callers={'direct', 'programmatic'}),
+            ],
         )
         await agent.run('Hi')
-        assert sorted(tool.name for tool in seen[0].function_tools) == ['look', 'run_code']
-        run_code = next(tool for tool in seen[0].function_tools if tool.name == 'run_code')
-        assert 'def inside()' in (run_code.description or '')
-        assert 'def look()' not in (run_code.description or '')
+        names = [tool.name for tool in seen[0].model_request_parameters.function_tools]
+        assert 'forecast' not in names
+        assert 'both_forecast' in names
+
+    async def test_naming_a_direct_only_tool_in_the_list_is_an_error(self, kernel: IPythonKernel) -> None:
+        agent = Agent(
+            _scripted(), capabilities=[IPythonCodeMode(kernel=kernel, tools=['model_only'])], tools=_caller_tools()
+        )
+        with pytest.raises(
+            UserError, match=r"`IPythonCodeMode\(tools=\.\.\.\)` names tool 'model_only', which only allows direct"
+        ):
+            await agent.run('Hi')
+
+    async def test_a_code_mode_rule_conflicting_with_allowed_callers_is_an_error(self, kernel: IPythonKernel) -> None:
+        def web_search(query: str) -> str:
+            return query  # pragma: no cover
+
+        async def as_fallback(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
+            return replace(tool_def, unless_native='web_search')
+
+        agent = Agent(
+            _scripted(),
+            capabilities=[IPythonCodeMode(kernel=kernel)],
+            tools=[Tool(web_search, prepare=as_fallback, allowed_callers={'programmatic'})],
+        )
+        with pytest.raises(UserError, match=r"Tool 'web_search' is a local fallback for the native 'web_search' tool"):
+            await agent.run('Hi')
 
     async def test_a_failed_tool_call_raises_in_the_kernel(self, kernel: IPythonKernel) -> None:
         def flaky() -> str:

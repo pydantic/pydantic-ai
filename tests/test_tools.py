@@ -42,7 +42,7 @@ from pydantic_ai import (
     UserError,
     UserPromptPart,
 )
-from pydantic_ai.capabilities import HandleDeferredToolCalls, IncludeToolReturnSchemas, PrepareTools
+from pydantic_ai.capabilities import Capability, HandleDeferredToolCalls, IncludeToolReturnSchemas, PrepareTools
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
@@ -64,6 +64,7 @@ from pydantic_ai.tools import (
     ToolDefinition,
     ToolDenied,
 )
+from pydantic_ai.toolsets._tool_search import ToolSearchToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
@@ -215,6 +216,7 @@ def test_docstring_google(docstring_format: Literal['google', 'auto']):
             'durable': None,
             'ui_visibility': None,
             'defer_loading': False,
+            'allowed_callers': None,
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
@@ -261,6 +263,7 @@ def test_docstring_sphinx(docstring_format: Literal['sphinx', 'auto']):
             'durable': None,
             'ui_visibility': None,
             'defer_loading': False,
+            'allowed_callers': None,
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
@@ -315,6 +318,7 @@ def test_docstring_numpy(docstring_format: Literal['numpy', 'auto']):
             'durable': None,
             'ui_visibility': None,
             'defer_loading': False,
+            'allowed_callers': None,
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
@@ -417,6 +421,7 @@ def test_google_style_with_returns():
             'durable': None,
             'ui_visibility': None,
             'defer_loading': False,
+            'allowed_callers': None,
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
@@ -469,6 +474,7 @@ def test_sphinx_style_with_returns():
             'durable': None,
             'ui_visibility': None,
             'defer_loading': False,
+            'allowed_callers': None,
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
@@ -527,6 +533,7 @@ def test_numpy_style_with_returns():
             'durable': None,
             'ui_visibility': None,
             'defer_loading': False,
+            'allowed_callers': None,
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
@@ -572,6 +579,7 @@ def test_only_returns_type():
             'durable': None,
             'ui_visibility': None,
             'defer_loading': False,
+            'allowed_callers': None,
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
@@ -609,6 +617,7 @@ def test_docstring_unknown():
             'durable': None,
             'ui_visibility': None,
             'defer_loading': False,
+            'allowed_callers': None,
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
@@ -664,6 +673,7 @@ def test_docstring_google_no_body(docstring_format: Literal['google', 'auto']):
             'durable': None,
             'ui_visibility': None,
             'defer_loading': False,
+            'allowed_callers': None,
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
@@ -743,6 +753,7 @@ def test_takes_just_model():
             'durable': None,
             'ui_visibility': None,
             'defer_loading': False,
+            'allowed_callers': None,
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
@@ -800,6 +811,7 @@ def test_takes_model_and_int():
             'durable': None,
             'ui_visibility': None,
             'defer_loading': False,
+            'allowed_callers': None,
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
@@ -1202,6 +1214,7 @@ def test_suppress_griffe_logging(caplog: LogCaptureFixture):
             'durable': None,
             'ui_visibility': None,
             'defer_loading': False,
+            'allowed_callers': None,
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
@@ -1374,6 +1387,7 @@ def test_json_schema_required_parameters():
                 'durable': None,
                 'ui_visibility': None,
                 'defer_loading': False,
+                'allowed_callers': None,
                 'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
@@ -1401,6 +1415,7 @@ def test_json_schema_required_parameters():
                 'durable': None,
                 'ui_visibility': None,
                 'defer_loading': False,
+                'allowed_callers': None,
                 'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
@@ -1499,6 +1514,7 @@ def test_schema_generator():
                 'durable': None,
                 'ui_visibility': None,
                 'defer_loading': False,
+                'allowed_callers': None,
                 'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
@@ -1525,6 +1541,7 @@ def test_schema_generator():
                 'durable': None,
                 'ui_visibility': None,
                 'defer_loading': False,
+                'allowed_callers': None,
                 'toolset_id': '<agent>',
                 'unless_native': None,
                 'with_native': None,
@@ -1574,6 +1591,7 @@ def test_tool_parameters_with_attribute_docstrings():
             'durable': None,
             'ui_visibility': None,
             'defer_loading': False,
+            'allowed_callers': None,
             'toolset_id': '<agent>',
             'unless_native': None,
             'with_native': None,
@@ -6658,3 +6676,101 @@ async def test_an_approved_call_that_asks_a_question_stays_pending_as_one() -> N
     assert isinstance(result.output, DeferredToolRequests)
     assert [call.tool_call_id for call in result.output.calls] == ['external', 'approval']
     assert result.output.kind('approval') == 'question'
+
+
+def test_allowed_callers_is_validated_and_read_as_a_frozenset() -> None:
+    """`allowed_callers` takes any set of callers and reads back as a `frozenset`; nothing or an unknown caller is an error."""
+
+    def answer() -> str:
+        return 'answer'  # pragma: no cover
+
+    assert ToolDefinition(name='t').allowed_callers is None
+    assert ToolDefinition(name='t', allowed_callers={'direct'}).allowed_callers == frozenset({'direct'})
+    assert type(ToolDefinition(name='t', allowed_callers={'direct'}).allowed_callers) is frozenset
+    assert Tool(answer, allowed_callers={'programmatic'}).tool_def.allowed_callers == frozenset({'programmatic'})
+    with pytest.raises(UserError, match=r"Tool 't' has empty `allowed_callers`, so nothing could call it"):
+        ToolDefinition(name='t', allowed_callers=set())
+    with pytest.raises(UserError, match=r"Tool 'answer' has empty `allowed_callers`"):
+        Tool(answer, allowed_callers=frozenset())
+    with pytest.raises(UserError, match=r"Tool 't' has unknown `allowed_callers` \['subagent'\]; a caller is one of"):
+        ToolDefinition(name='t', allowed_callers={'direct', 'subagent'})  # pyright: ignore[reportArgumentType]
+
+
+def test_allowed_callers_reaches_the_definition_from_every_decorator() -> None:
+    agent = Agent(TestModel())
+
+    @agent.tool(allowed_callers={'direct'})
+    def agent_tool(ctx: RunContext[object]) -> str:
+        return 'a'  # pragma: no cover
+
+    @agent.tool_plain(allowed_callers={'direct', 'programmatic'})
+    def agent_tool_plain() -> str:
+        return 'b'  # pragma: no cover
+
+    toolset = FunctionToolset[None]()
+
+    @toolset.tool(allowed_callers={'programmatic'})
+    def toolset_tool(ctx: RunContext[None]) -> str:
+        return 'c'  # pragma: no cover
+
+    @toolset.tool_plain(allowed_callers={'direct'})
+    def toolset_tool_plain() -> str:
+        return 'd'  # pragma: no cover
+
+    def added() -> str:
+        return 'e'  # pragma: no cover
+
+    toolset.add_function(added, allowed_callers={'direct'})
+    capability = Capability[None]()
+
+    @capability.tool(allowed_callers={'direct'})
+    def capability_tool(ctx: RunContext[None]) -> str:
+        return 'f'  # pragma: no cover
+
+    @capability.tool_plain(allowed_callers={'programmatic'})
+    def capability_tool_plain() -> str:
+        return 'g'  # pragma: no cover
+
+    tools = {
+        **agent._function_toolset.tools,
+        **toolset.tools,
+        **capability._function_toolset.tools,
+    }
+    assert {name: tool.tool_def.allowed_callers for name, tool in tools.items()} == {
+        'agent_tool': frozenset({'direct'}),
+        'agent_tool_plain': frozenset({'direct', 'programmatic'}),
+        'toolset_tool': frozenset({'programmatic'}),
+        'toolset_tool_plain': frozenset({'direct'}),
+        'added': frozenset({'direct'}),
+        'capability_tool': frozenset({'direct'}),
+        'capability_tool_plain': frozenset({'programmatic'}),
+    }
+
+
+def test_a_tool_only_code_may_call_needs_something_that_calls_it_from_code() -> None:
+    """Without a capability that runs code, a `{'programmatic'}` tool would vanish, so the request raises."""
+
+    def answer() -> str:
+        return 'answer'  # pragma: no cover
+
+    agent = Agent(TestModel(), tools=[Tool(answer, allowed_callers={'programmatic'})])
+    with pytest.raises(
+        UserError,
+        match=r"Tools \['answer'\] only allow programmatic callers, but nothing on this agent calls tools from code\.",
+    ):
+        agent.run_sync('Hi')
+
+    both = Agent(TestModel(call_tools=[]), tools=[Tool(answer, allowed_callers={'direct', 'programmatic'})])
+    assert both.run_sync('Hi').output == 'success (no tool calls)'
+
+
+async def test_the_tool_search_tool_is_direct_only() -> None:
+    def later() -> str:
+        return 'later'  # pragma: no cover
+
+    toolset = ToolSearchToolset(wrapped=FunctionToolset[None]([Tool(later, defer_loading=True)]))
+    tools = await toolset.get_tools(RunContext(deps=None, model=TestModel(), usage=RunUsage()))
+    assert {name: tool.tool_def.allowed_callers for name, tool in tools.items()} == {
+        'later': None,
+        'search_tools': frozenset({'direct'}),
+    }

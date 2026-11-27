@@ -14,7 +14,7 @@ import sys
 import threading
 import warnings as _warnings
 from collections.abc import AsyncIterator, Awaitable, Callable
-from dataclasses import replace as dc_replace
+from dataclasses import dataclass, field, replace as dc_replace
 from datetime import datetime
 from decimal import Decimal
 from pathlib import Path
@@ -46,11 +46,17 @@ from pydantic_ai import (
     RunContext,
     Tool,
     ToolDefinition,
-    ToolKind,
     capture_run_messages,
 )
 from pydantic_ai.agent.spec import AgentSpec
-from pydantic_ai.capabilities import AbstractCapability, Capability, Instrumentation, ToolSearch, Toolset
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    Instrumentation,
+    ToolSearch,
+    Toolset,
+    ValidatedToolArgs,
+)
 from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import ApprovalRequired as _ApprovalRequired, ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.messages import (
@@ -79,7 +85,7 @@ from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tool_manager import ParallelExecutionMode, ToolManager
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolDenied
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolApproved, ToolCaller, ToolDenied
 from pydantic_ai.toolsets._tool_search import (
     _SEARCH_TOOLS_NAME,  # pyright: ignore[reportPrivateUsage]
     ToolSearchToolset,
@@ -2007,7 +2013,7 @@ class TestCodeMode:
         assert tools['later'].tool_def.defer_loading is True
 
     async def test_framework_tool_kind_tool_not_sandboxed(self) -> None:
-        """Framework control tools with `tool_kind` stay native even when CodeMode wraps all user tools."""
+        """Framework control tools, built with `allowed_callers={'direct'}`, stay native when CodeMode wraps all tools."""
         td_loader = ToolDefinition(
             name='load_capability',
             description='Load a deferred capability.',
@@ -2018,6 +2024,7 @@ class TestCodeMode:
             },
             return_schema={'type': 'string'},
             tool_kind='capability-load',
+            allowed_callers={'direct'},
         )
         static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_loader])
         wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
@@ -2034,7 +2041,12 @@ class TestCodeMode:
 
     async def test_computer_tool_not_sandboxed(self) -> None:
         """`ComputerUse`'s `computer` tool stays native: the model itself has to see the screenshot it returns."""
-        td_computer = ToolDefinition(name='computer', description='Run actions on the screen.', tool_kind=COMPUTER_KIND)
+        td_computer = ToolDefinition(
+            name='computer',
+            description='Run actions on the screen.',
+            tool_kind=COMPUTER_KIND,
+            allowed_callers={'direct'},
+        )
         static = _StaticToolset([_make_address_tool_def('get_user', 'Get a user.', 'street'), td_computer])
         wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
@@ -2047,48 +2059,178 @@ class TestCodeMode:
         assert 'async def computer' not in description
         assert tools['computer'].tool_def.tool_kind == COMPUTER_KIND.id
 
-    async def test_a_kind_only_the_model_may_call_stays_native(self) -> None:
-        """A kind defined outside core keeps its tools out of `run_code` by leaving `'programmatic'` out of its callers."""
-        model_only = ToolKind('test_code_mode', 'model_only', allowed_callers={'direct'})
-        any_caller = ToolKind('test_code_mode', 'any_caller', allowed_callers={'direct', 'programmatic'})
-        static = _StaticToolset(
-            [
-                _make_address_tool_def('get_user', 'Get a user.', 'street'),
-                ToolDefinition(name='look', description='Look at the screen.', tool_kind=model_only),
-                ToolDefinition(
-                    name='fetch', description='Fetch a page.', return_schema={'type': 'string'}, tool_kind=any_caller
-                ),
-            ]
-        )
+    async def test_allowed_callers_when_the_selector_matches(self) -> None:
+        """With every tool selected, a tool's `allowed_callers` decides where it goes, and wins over the selector.
+
+        `None` folds into `run_code`, `{'direct'}` stays direct, `{'programmatic'}` folds in, and both is a direct
+        tool *and* callable in `run_code`.
+        """
+        static = _StaticToolset(_caller_tool_defs())
         wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
         tools = await wrapper.get_tools(build_run_context(None))
 
-        assert sorted(tools) == ['look', 'run_code']
+        assert sorted(tools) == ['any_caller', 'model_only', 'run_code']
+        assert tools['model_only'].tool_def.allowed_callers == {'direct'}
+        assert tools['any_caller'].tool_def.allowed_callers == {'direct', 'programmatic'}
         description = tools['run_code'].tool_def.description
         assert description is not None
-        assert 'async def get_user' in description
-        assert 'async def fetch' in description
-        assert 'async def look' not in description
+        assert 'async def unconstrained' in description
+        assert 'async def code_only' in description
+        assert 'async def any_caller' in description
+        assert 'async def model_only' not in description
 
-    async def test_a_tool_whose_kind_is_not_defined_is_sandboxed(self) -> None:
-        """A kind id with no `ToolKind` in this process, such as one from a stored definition, has no caller limit."""
-        td = ToolDefinition(
-            name='lookup',
-            description='Look up an item.',
-            return_schema={'type': 'string'},
-            tool_kind='test_code_mode.not_defined',
-        )
-        wrapper = CodeMode[object](dynamic_catalog=False).get_wrapper_toolset(_StaticToolset([td]))
+    async def test_allowed_callers_when_the_selector_does_not_match(self) -> None:
+        """A tool the selector leaves out stays direct, unless its `allowed_callers` puts it in `run_code`."""
+        static = _StaticToolset(_caller_tool_defs())
+        wrapper = CodeMode[object](tools=lambda ctx, td: False, dynamic_catalog=False).get_wrapper_toolset(static)
         assert isinstance(wrapper, CodeModeToolset)
 
         tools = await wrapper.get_tools(build_run_context(None))
 
-        assert sorted(tools) == ['run_code']
+        assert sorted(tools) == ['any_caller', 'model_only', 'run_code', 'unconstrained']
         description = tools['run_code'].tool_def.description
         assert description is not None
-        assert 'async def lookup' in description
+        assert 'async def code_only' in description
+        assert 'async def any_caller' in description
+        assert 'async def unconstrained' not in description
+        assert 'async def model_only' not in description
+
+    async def test_folded_tools_are_marked_as_called_from_code(self) -> None:
+        """A tool the selector folds into `run_code` gets `allowed_callers={'programmatic'}` written onto it."""
+        recorder = _RecordCallers()
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if not any(isinstance(m, ModelResponse) for m in messages):
+                code = 'await unconstrained()\nawait any_caller()'
+                return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model_fn),
+            tools=[
+                Tool(_answer, name='unconstrained'),
+                Tool(_answer, name='any_caller', allowed_callers={'direct', 'programmatic'}),
+            ],
+            capabilities=[CodeMode[object](), recorder],
+        )
+        await agent.run('Hi')
+
+        assert recorder.seen == {
+            'run_code': None,
+            'unconstrained': frozenset({'programmatic'}),
+            'any_caller': frozenset({'direct', 'programmatic'}),
+        }
+
+    async def test_naming_a_direct_only_tool_in_the_list_is_an_error(self) -> None:
+        static = _StaticToolset(_caller_tool_defs())
+        wrapper = CodeMode[object](tools=['unconstrained', 'model_only']).get_wrapper_toolset(static)
+        assert isinstance(wrapper, CodeModeToolset)
+
+        with pytest.raises(
+            UserError, match=r"`CodeMode\(tools=\.\.\.\)` names tool 'model_only', which only allows direct"
+        ):
+            await wrapper.get_tools(build_run_context(None))
+
+    async def test_a_code_mode_rule_conflicting_with_allowed_callers_is_an_error(self) -> None:
+        """A native fallback or a code-execution tool can't go in `run_code`, so it can't allow programmatic callers."""
+        fallback = ToolDefinition(name='web_search', unless_native='web_search', allowed_callers={'programmatic'})
+        runner = ToolDefinition(
+            name='run_workflow',
+            metadata={'code_arg_name': 'code'},
+            allowed_callers={'direct', 'programmatic'},
+        )
+        for tool_def, reason in [
+            (fallback, "is a local fallback for the native 'web_search' tool"),
+            (runner, 'runs code itself'),
+        ]:
+            wrapper = CodeMode[object]().get_wrapper_toolset(_StaticToolset([tool_def]))
+            assert isinstance(wrapper, CodeModeToolset)
+            with pytest.raises(UserError, match=rf"Tool '{tool_def.name}' {reason}, so it can't be called from code"):
+                await wrapper.get_tools(build_run_context(None))
+
+    async def test_a_code_only_tool_is_hidden_until_revealed_then_callable_in_run_code(self) -> None:
+        """A deferred `{'programmatic'}` tool is never a direct tool: it's off the wire until a search reveals it."""
+        seen_tools: list[set[str]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen_tools.append({td.name for td in info.model_request_parameters.function_tools})
+            step = sum(isinstance(m, ModelResponse) for m in messages)
+            if step == 0:
+                return ModelResponse(parts=[ToolCallPart(tool_name=_SEARCH_TOOLS_NAME, args={'queries': ['forecast']})])
+            if step == 1:
+                code = "await forecast(city='Paris')"
+                return ModelResponse(parts=[ToolCallPart(tool_name='run_code', args={'code': code})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model_fn),
+            tools=[
+                Tool(add),
+                Tool(_forecast, name='forecast', defer_loading=True, allowed_callers={'programmatic'}),
+                Tool(_forecast, name='both_forecast', defer_loading=True, allowed_callers={'direct', 'programmatic'}),
+            ],
+            capabilities=[ToolSearch[object](), CodeMode[object]()],
+        )
+        result = await agent.run('Weather in Paris?')
+
+        # The code-only tool is never on the wire; the one the model may call too is a direct tool throughout.
+        assert seen_tools == [{'both_forecast', _SEARCH_TOOLS_NAME, 'run_code'}] * 3
+        run_code_returns = [
+            part.content
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
+        ]
+        assert run_code_returns == ['Sunny in Paris.']
+
+    async def test_a_code_only_tool_is_not_declared_for_a_native_only_search(self) -> None:
+        """With only a native search, a deferred tool is declared for it, but never one only code may call."""
+        declared: list[list[str]] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            declared.append([t.name for t in info.model_request_parameters.function_tools])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[object, str] = Agent(
+            FunctionModel(model_fn),
+            tools=[
+                Tool(add),
+                Tool(_forecast, name='forecast', defer_loading=True),
+                Tool(_forecast, name='code_forecast', defer_loading=True, allowed_callers={'programmatic'}),
+            ],
+            capabilities=[ToolSearch[object](strategy='bm25'), CodeMode[object](dynamic_catalog=True)],
+        )
+        await agent.run('Weather in Paris?')
+
+        assert declared == [['forecast', 'run_code']]
+
+    async def test_a_revealed_tool_is_announced_by_its_allowed_callers(self) -> None:
+        """A search that finds a tool announces it when its `allowed_callers` puts it in `run_code`, whatever the selector."""
+        cap = CodeMode[object](tools=lambda ctx, td: False, dynamic_catalog=True)
+        tools = [
+            Tool(_forecast, name='weather', defer_loading=True, allowed_callers={'programmatic'}),
+            Tool(_forecast, name='radar', defer_loading=True, allowed_callers={'direct'}),
+        ]
+        ctx = await build_ctx(
+            None, CodeModeToolset(wrapped=FunctionToolset[object](tools), tool_selector=cap.tools, dynamic_catalog=True)
+        )
+        await cap.after_tool_execute(
+            ctx,
+            call=ToolCallPart(tool_name='search_tools', args={}, tool_call_id='c1'),
+            tool_def=_search_tool_def(),
+            args={},
+            result={'discovered_tools': [{'name': 'weather'}, {'name': 'radar'}]},
+        )
+
+        assert ctx.pending_messages is not None
+        [request] = ctx.pending_messages[0].messages
+        assert isinstance(request, ModelRequest)
+        [part] = request.parts
+        assert isinstance(part, DiscoveryAnnouncementPart)
+        assert part.tools == ('weather',)
 
     async def test_code_execution_tool_not_sandboxed(self) -> None:
         """A tool that is itself a code sandbox (carries `code_arg_name` metadata) stays native.
@@ -4144,7 +4286,11 @@ class TestToolSearchIntegration:
         tools = await ToolSearchToolset(wrapped=base).get_tools(build_run_context(None))
 
         real, fixture = tools[_SEARCH_TOOLS_NAME].tool_def, _search_tool_def()
-        assert (real.name, real.tool_kind) == (fixture.name, fixture.tool_kind)
+        assert (real.name, real.tool_kind, real.allowed_callers) == (
+            fixture.name,
+            fixture.tool_kind,
+            fixture.allowed_callers,
+        )
 
     def test_code_mode_ordering(self) -> None:
         """CodeMode declares ordering: outermost position, wraps ToolSearch."""
@@ -5345,6 +5491,40 @@ async def _discovery_ctx(*names: str) -> RunContext[object]:
     return await build_ctx(None, CodeModeToolset(wrapped=FunctionToolset[object](tools), dynamic_catalog=True))
 
 
+def _answer() -> str:
+    """Return an answer."""
+    return 'answer'
+
+
+def _caller_tool_defs() -> list[ToolDefinition]:
+    """One tool for each `allowed_callers` value, with return schemas so Code Mode doesn't warn."""
+    callers_by_name: list[tuple[str, set[ToolCaller] | None]] = [
+        ('unconstrained', None),
+        ('model_only', {'direct'}),
+        ('code_only', {'programmatic'}),
+        ('any_caller', {'direct', 'programmatic'}),
+    ]
+    return [
+        ToolDefinition(
+            name=name, description=f'The {name} tool.', return_schema={'type': 'string'}, allowed_callers=callers
+        )
+        for name, callers in callers_by_name
+    ]
+
+
+@dataclass
+class _RecordCallers(AbstractCapability[object]):
+    """Records the `allowed_callers` of each tool definition a call runs with."""
+
+    seen: dict[str, frozenset[ToolCaller] | None] = field(default_factory=dict[str, 'frozenset[ToolCaller] | None'])
+
+    async def before_tool_execute(
+        self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
+        self.seen[tool_def.name] = tool_def.allowed_callers
+        return args
+
+
 def _forecast(city: str) -> str:
     """Get the weather forecast for a city."""
     return f'Sunny in {city}.'
@@ -5725,8 +5905,8 @@ class TestCodeModeOSAccess:
 def _search_tool_def(description: str = 'Search for tools.', name: str = _SEARCH_TOOLS_NAME) -> ToolDefinition:
     """Create a ToolDefinition mimicking the search_tools tool from ToolSearchToolset.
 
-    Carries `tool_kind='tool-search'`, matching what pydantic-ai emits (since 1.95.0);
-    CodeMode routes it native off `tool_kind`, not its name.
+    Carries `tool_kind='tool-search'` and `allowed_callers={'direct'}`, matching what pydantic-ai emits;
+    CodeMode keeps it native off `allowed_callers` and finds it by `tool_kind`, not its name.
     `test_search_tool_def_fixture_matches_tool_search_toolset` fails if the real tool drifts from it.
     """
 
@@ -5735,6 +5915,7 @@ def _search_tool_def(description: str = 'Search for tools.', name: str = _SEARCH
         description=description,
         parameters_json_schema={'type': 'object', 'properties': {'keywords': {'type': 'string'}}},
         tool_kind='tool-search',
+        allowed_callers={'direct'},
     )
 
 

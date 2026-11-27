@@ -94,7 +94,7 @@ growth
 
 ## Selecting tools
 
-The `tools` field takes the same [`ToolSelector`](https://ai.pydantic.dev/api/tools/) as Code Mode: `'all'` (the default), a list of tool names, a `(ctx, tool_def)` predicate, or a metadata dictionary. Tools that don't match stay visible to the model as regular tool calls. Tools whose [kind](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-callers) only the model may call, such as `search_tools`, stay native whatever the selector says, as do tools that tool search hasn't revealed yet, native fallbacks, and other code-execution tools such as `Shell`'s `run_command`.
+The `tools` field takes the same [`ToolSelector`](https://ai.pydantic.dev/api/tools/) as Code Mode: `'all'` (the default), a list of tool names, a `(ctx, tool_def)` predicate, or a metadata dictionary. Tools that don't match stay visible to the model as regular tool calls. A tool's own [`allowed_callers`](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-callers) wins over the selector, as in Code Mode: `{'direct'}` keeps it a regular tool call, as for `search_tools`, `{'programmatic'}` puts it in the kernel only, and `{'direct', 'programmatic'}` makes it both. Tools that tool search hasn't revealed yet, native fallbacks, and other code-execution tools such as `Shell`'s `run_command` stay native too.
 
 ```python
 from pydantic_ai_harness import IPythonCodeMode

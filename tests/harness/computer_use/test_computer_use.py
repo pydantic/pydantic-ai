@@ -548,6 +548,8 @@ The `computer` tool shows and controls this computer's screen.
         await agent.run('Go on.', message_history=earlier_screen)
         (tool,) = seen
         assert (tool.name, tool.sequential, tool.tool_kind) == ('computer', True, COMPUTER_KIND.id)
+        # The model has to see the screenshot, so code, like `CodeMode`'s `run_code`, may not call it.
+        assert tool.allowed_callers == {'direct'}
         # The call's work on the screen is its own durable step with its own retry policy, so no engine wraps the
         # whole tool.
         assert tool.durable is False

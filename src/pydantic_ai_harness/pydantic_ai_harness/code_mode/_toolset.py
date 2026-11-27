@@ -53,8 +53,10 @@ except ImportError as _import_error:  # pragma: no cover
     ) from _import_error
 from pydantic_ai_harness._code_tools import (
     NestedCallOutcome,
-    can_be_sandboxed,
+    callers_set_by_tool,
+    check_selector_names,
     contains_multimodal,
+    mark_called_from_code,
     partition_callable_tools,
     record_nested_call,
     run_nested_call,
@@ -407,8 +409,8 @@ _TOOL_SEARCH_NATIVE_ID = 'tool_search'
 """The `with_native` value that marks a member of the native tool search's corpus (`ToolSearchTool.kind`)."""
 
 
-_Placement: TypeAlias = Literal['native', 'sandboxed', 'hidden']
-"""Where `CodeModeToolset.get_tools` puts a wrapped tool: on the wire, inside `run_code`, or nowhere yet."""
+_Placement: TypeAlias = Literal['native', 'sandboxed', 'both', 'hidden']
+"""Where `CodeModeToolset.get_tools` puts a wrapped tool: on the wire, inside `run_code`, both, or nowhere yet."""
 
 
 def _place_hidden_tools(placements: dict[str, _Placement], tools: Mapping[str, ToolsetTool[Any]]) -> set[str]:
@@ -434,9 +436,17 @@ def _place_hidden_tools(placements: dict[str, _Placement], tools: Mapping[str, T
         tool.tool_def.tool_kind == 'tool-search' and placements[name] == 'native' for name, tool in tools.items()
     )
     if not local_search:
-        placements.update({name: 'native' for name in corpus if placements[name] == 'hidden'})
+        # A tool only code may call is never declared to the model, so only a local search can find it.
+        placements.update(
+            {
+                name: 'native'
+                for name in corpus
+                if placements[name] == 'hidden'
+                and ((callers := tools[name].tool_def.allowed_callers) is None or 'direct' in callers)
+            }
+        )
         return set()
-    native = {name for name in corpus if placements[name] == 'native'}
+    native = {name for name in corpus if placements[name] in ('native', 'both')}
     sandboxes_corpus = any(placements[name] != 'native' for name in corpus)
     return native if sandboxes_corpus else set()
 
@@ -444,11 +454,17 @@ def _place_hidden_tools(placements: dict[str, _Placement], tools: Mapping[str, T
 def _split_by_placement(
     placements: Mapping[str, _Placement], tools: Mapping[str, ToolsetTool[AgentDepsT]], searched_locally: set[str]
 ) -> tuple[dict[str, ToolsetTool[AgentDepsT]], dict[str, ToolsetTool[AgentDepsT]]]:
-    """The sandboxed and the native tools, taking the `searched_locally` ones out of the native search's corpus."""
-    sandboxed = {name: tools[name] for name, where in placements.items() if where == 'sandboxed'}
+    """The sandboxed and the native tools, taking the `searched_locally` ones out of the native search's corpus.
+
+    A tool the selector sandboxes gets `allowed_callers={'programmatic'}` written onto its definition, as tool
+    search writes `defer_loading=True`, so whatever reads the definition later sees who calls it.
+    """
+    sandboxed = {
+        name: mark_called_from_code(tools[name]) for name, where in placements.items() if where in ('sandboxed', 'both')
+    }
     native = {
         name: replace(tool, tool_def=replace(tool.tool_def, with_native=None)) if name in searched_locally else tool
-        for name, tool in ((name, tools[name]) for name, where in placements.items() if where == 'native')
+        for name, tool in ((name, tools[name]) for name, where in placements.items() if where in ('native', 'both'))
     }
     return sandboxed, native
 
@@ -910,8 +926,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     Some tools always stay native rather than being sandboxed:
 
-    - Tools whose kind's `allowed_callers` leaves out `'programmatic'`, such as tool search, capability
-      loading and the `computer` tool.
+    - Tools whose `allowed_callers` leaves out `'programmatic'`, such as tool search, capability
+      loading and the `computer` tool. A tool's `allowed_callers` wins over `tool_selector` the other
+      way too: `{'programmatic'}` tools are always sandboxed, and `{'direct', 'programmatic'}` ones are
+      both sandboxed and native.
     - `defer_loading=True` tools, until tool search or capability loading reveals them.
     - `unless_native` tools, so `Model.prepare_request` can drop them when the
       provider supports the native tool.
@@ -1127,8 +1145,9 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         revealed = set(names) - current
         owners: dict[str, str] = {}
         for name, tool in run_code.wrapped_tools.items():
+            callers = callers_set_by_tool(tool.tool_def)
             if name in current or (
-                name in revealed and can_be_sandboxed(tool.tool_def) and await self._selects(ctx, tool.tool_def)
+                name in revealed and (callers[0] if callers is not None else await self._selects(ctx, tool.tool_def))
             ):
                 owners.setdefault(sanitize_tool_name(name), name)
         return {name: function for function, name in owners.items() if name in revealed}
@@ -1177,6 +1196,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             placements[name] = await self._place_tool(ctx, tool.tool_def)
         searched_locally = _place_hidden_tools(placements, wrapped_tools) if self.dynamic_catalog else set[str]()
         sandboxed_tools, native_tools = _split_by_placement(placements, wrapped_tools, searched_locally)
+        wrapped_tools = wrapped_tools | sandboxed_tools
 
         callable_defs, sanitized_to_original = self._partition_callable_tools(sandboxed_tools)
 
@@ -1277,8 +1297,17 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     async def _place_tool(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> _Placement:
         """Where `get_tools` puts one wrapped tool, before `_place_hidden_tools` settles the hidden ones."""
-        if not can_be_sandboxed(tool_def):
-            return 'native'
+        check_selector_names(self.tool_selector, tool_def, owner='CodeMode')
+        callers = callers_set_by_tool(tool_def)
+        if callers is not None:
+            from_code, direct = callers
+            if not from_code:
+                return 'native'
+            if not ctx.is_tool_available(tool_def):
+                # Not revealed yet: one the model may call too is a deferred direct tool until then, and one only
+                # code may call stays off the wire.
+                return 'native' if direct else 'hidden'
+            return 'both' if direct else 'sandboxed'
         if not ctx.is_tool_available(tool_def):
             # Use the run's public availability predicate so Tool Search and deferred
             # capability reveals share the same wire-side semantics. A hidden tool stays

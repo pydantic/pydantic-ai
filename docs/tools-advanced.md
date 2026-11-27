@@ -1123,6 +1123,54 @@ Change a single tool definition, and the whole prefix is re-created instead — 
 - To place explicit cache breakpoints on messages, use [`CachePoint`][pydantic_ai.messages.CachePoint] (honored by Anthropic, Bedrock, and OpenRouter). Anthropic's tool, system, and instruction caching settings are documented under [Anthropic prompt caching](models/anthropic.md#prompt-caching).
 - On providers that cache tool definitions at the front of the prefix — Anthropic, OpenAI, and xAI — editing a single tool's description invalidates the cached prefix. Google's *implicit* cache is prefix-based on a different layout (its `system_instruction` is a separate field ahead of the tool block), so a large stable system instruction can keep cache hits even when the tool list changes; an explicit [`CachedContent`](models/google.md) instead fixes the tools as an immutable part of the cache by construction.
 
+## Who may call a tool {#tool-callers}
+
+A tool's [`allowed_callers`][pydantic_ai.tools.ToolDefinition.allowed_callers] says who may call it, as a set of [`ToolCaller`][pydantic_ai.tools.ToolCaller] values, spelled like the `allowed_callers` field of OpenAI's and Anthropic's tool definitions:
+
+- `'direct'`: the model, in its response.
+- `'programmatic'`: code the model wrote, whether it runs in a local sandbox like [Code Mode](harness/code-mode.md) or in a provider's code execution.
+
+Set it with the `allowed_callers` argument of [`Tool`][pydantic_ai.tools.Tool], the tool decorators and [`FunctionToolset.add_function`][pydantic_ai.toolsets.FunctionToolset.add_function], or on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], for example from a [`prepare`](#tool-prepare) function to change it per run. Restrict a tool to `{'direct'}` when the model itself has to see its result, such as a screenshot, and to `{'programmatic'}` when it only makes sense inside code, such as a paginated listing code can loop over:
+
+```python {title="tool_callers.py"}
+from pydantic_ai_harness import CodeMode
+
+from pydantic_ai import Agent, BinaryImage
+
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode()])
+
+
+@agent.tool_plain(allowed_callers={'direct'})
+def take_screenshot() -> BinaryImage:
+    """Take a screenshot of the app."""
+    return BinaryImage(data=b'...', media_type='image/png')
+
+
+@agent.tool_plain(allowed_callers={'programmatic'})
+def list_orders(customer_id: int, page: int = 0) -> list[int]:
+    """List one page of a customer's order IDs."""
+    return []
+```
+
+It works like tool search's [`defer_loading`](#tool-search): the field is the tool's own constraint, and a capability's selector, such as Code Mode's `tools`, decides for the tools that leave it unset. The field always wins:
+
+| `allowed_callers` | Meaning | Code Mode's `tools` matches the tool | Code Mode's `tools` doesn't match it |
+|---|---|---|---|
+| `None` (the default) | No constraint, so the selector decides | Callable in `run_code`, not a direct tool | A direct tool |
+| `{'direct'}` | Only the model may call it | A direct tool; naming it in a list of tool names raises `UserError` | A direct tool |
+| `{'programmatic'}` | Only code may call it | Callable in `run_code`, never a direct tool | Callable in `run_code`, never a direct tool |
+| `{'direct', 'programmatic'}` | Both may call it | A direct tool, and callable in `run_code` | A direct tool, and callable in `run_code` |
+
+Code Mode writes `{'programmatic'}` onto the definition of each tool its selector puts in `run_code`, as tool search writes `defer_loading=True` onto each tool its selector defers, so hooks and capabilities that run later only need to read the field. [IPython Code Mode](harness/ipython-code-mode.md) does the same. A tool search hasn't revealed yet isn't offered to any caller; once it's revealed, its `allowed_callers` applies. One only code may call is never declared to the model, so only the local `search_tools` can find it.
+
+Pydantic AI's tool search tool (`search_tools`) and capability loader (`load_capability`), and the harness `ComputerUse`'s [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] tool, are built with `{'direct'}`: what they return is for the model, not for code.
+
+These raise [`UserError`][pydantic_ai.exceptions.UserError]:
+
+- An empty set, which would leave nothing able to call the tool, or a caller that isn't a `ToolCaller`, when the tool or its definition is created.
+- A tool only code may call, with nothing on the agent that calls tools from code, when a request is prepared. No model calls function tools from its own code execution yet, so such a tool needs Code Mode or IPython Code Mode; otherwise it would silently never be called.
+- In Code Mode and IPython Code Mode, when they build their tools: a list of tool names that names a `{'direct'}` tool, and a native fallback (a tool with [`unless_native`][pydantic_ai.tools.ToolDefinition.unless_native]) or a tool that runs code itself whose `allowed_callers` includes `'programmatic'`, since Code Mode keeps those direct. A callable, metadata or `'all'` selector skips a `{'direct'}` tool silently.
+
 ## Typed Tool Parts {#typed-tool-parts}
 
 A tool's name is chosen by whoever wrote or configured it, and can be renamed or prefixed (for example by [`PrefixTools`][pydantic_ai.capabilities.PrefixTools]), so code that needs to recognize a particular tool should not compare names. Instead, a tool can declare what it is with a [`ToolKind`][pydantic_ai.messages.ToolKind]. Its call and return parts carry the kind's [`id`][pydantic_ai.messages.ToolKind.id] as their [`tool_kind`][pydantic_ai.messages.BaseToolCallPart.tool_kind] and are promoted to typed subclasses of [`ToolCallPart`][pydantic_ai.messages.ToolCallPart] and [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart]. A hook or history processor can then match the tool with `isinstance`, whatever it is called. Core's tool search and deferred-capability tools work this way: [`ToolSearchCallPart`][pydantic_ai.messages.ToolSearchCallPart] and [`LoadCapabilityReturnPart`][pydantic_ai.messages.LoadCapabilityReturnPart] are examples.
@@ -1186,34 +1234,6 @@ A tool declares its kind with the `tool_kind` argument of [`Tool`][pydantic_ai.t
 A kind can also declare, with `metadata=`, the shape of the `metadata` its tool returns through [`ToolReturn`][pydantic_ai.messages.ToolReturn]. Metadata stays in the message history for your code and is never sent to the model. The typed return part then takes both shapes, as in `ToolReturnPart[LookupResult, LookupMetadata]`. Its [`typed_metadata`][pydantic_ai.messages.BaseToolReturnPart.typed_metadata] returns the validated metadata, or `None` if the metadata doesn't fit the shape. A result whose content fits is still promoted when its metadata is missing.
 
 A typed subclass may only add properties; adding a field of its own raises `UserError` when the class is defined. That restriction lets a part fall back to its base class without losing anything. A history recorded with a kind that the current process doesn't define (because the defining module isn't imported, or was removed) still loads: the part stays a plain `ToolCallPart` / `ToolReturnPart` that keeps its `tool_kind`, and becomes the typed part again wherever the kind is defined.
-
-### Who may call a tool {#tool-callers}
-
-A kind can say who may call its tools with `allowed_callers`, a set of [`ToolCaller`][pydantic_ai.messages.ToolCaller] values:
-
-- `'direct'`: the model, in its response.
-- `'programmatic'`: code the model wrote, whether it runs in a local sandbox or in a provider's code execution.
-
-The default, `None`, allows every caller. Restrict a kind to `{'direct'}` when the model itself has to see the tool's result, for example a screenshot, or when the tool drives the run rather than returning data. Core's tool search and capability loading kinds and the [`computer`][pydantic_ai.computer_use.COMPUTER_KIND] kind are defined this way. [Code Mode](harness/code-mode.md) and [IPython Code Mode](harness/ipython-code-mode.md) keep a tool whose kind leaves out `'programmatic'` out of the code they run, as a regular tool call.
-
-A [`ToolDefinition.tool_kind`][pydantic_ai.tools.ToolDefinition.tool_kind] stores only the kind's id. [`ToolKind.get`][pydantic_ai.messages.ToolKind.get] returns the kind defined with an id, or `None` when the module defining it isn't imported, in which case the tool has no caller restriction:
-
-```python {title="model_only_tool_kind.py"}
-from pydantic_ai import ToolKind
-
-screenshot = ToolKind('browser', 'screenshot', allowed_callers={'direct'})
-
-print(screenshot)
-#> ToolKind('browser', 'screenshot', allowed_callers={'direct'})
-print(ToolKind.get('browser.screenshot') is screenshot)
-#> True
-print(screenshot.allowed_callers)
-#> frozenset({'direct'})
-print(ToolKind.get('browser.unknown'))
-#> None
-```
-
-Defining a kind again with different `allowed_callers` raises `UserError`, as with different shapes. So does an empty set, which would leave nothing able to call the tool, or a caller that isn't a `ToolCaller`.
 
 ### Superseding a tool by kind {#unless-tool-kind}
 

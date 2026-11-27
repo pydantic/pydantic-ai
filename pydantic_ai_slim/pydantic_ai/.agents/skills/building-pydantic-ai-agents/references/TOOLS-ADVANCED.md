@@ -265,7 +265,6 @@ def check_stock(args: LookupArgs) -> LookupResult:
 - A run raises `UserError` for a kind that isn't defined, or when the tool's parameters don't fit `args` or its return type doesn't fit `content` (a required field missing or optional, or a mismatched JSON type). Type checkers check the return type already.
 - Call and return parts are promoted whenever a `ModelResponse` / `ModelRequest` is built, so hooks and history processors can use `isinstance(part, LookupCallPart)`.
 - A history whose kind isn't defined still loads, as base parts that keep their `tool_kind`.
-- `allowed_callers={'direct'}` on a kind means only the model may call its tools (`'programmatic'` is code the model wrote, as in harness `CodeMode`, which keeps such tools native). The default `None` allows every caller. `ToolKind.get(kind_id)` returns the kind defined with an id, or `None`.
 
 See [Typed tool parts](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#typed-tool-parts).
 
@@ -312,3 +311,24 @@ Good fit:
 - situations where loading all tool schemas would bloat context
 
 For bundle-level progressive disclosure of instructions plus tools, read [Capabilities on Demand](./ON-DEMAND-CAPABILITIES.md) instead.
+
+## Restrict Who May Call a Tool
+
+Set `allowed_callers` on `Tool`, the tool decorators, `FunctionToolset.add_function`, or `ToolDefinition` (e.g. from `prepare`) to say who may call a tool: `{'direct'}` (only the model, e.g. a tool returning a screenshot the model must see), `{'programmatic'}` (only code the model wrote, as in harness `CodeMode`), or both. `None`, the default, sets no constraint, so a selector such as `CodeMode(tools=...)` decides.
+
+```python
+from pydantic_ai import Agent
+
+agent = Agent('openai:gpt-5.2', name='callers_agent')
+
+
+@agent.tool_plain(allowed_callers={'direct'})
+def take_screenshot() -> str:
+    return 'screenshot'
+```
+
+- The field wins over `CodeMode(tools=...)`, like `defer_loading` over `ToolSearch(tools=...)`: `{'programmatic'}` tools are always in `run_code`, `{'direct', 'programmatic'}` tools are both a direct tool and callable in `run_code`, and `CodeMode` writes `{'programmatic'}` onto the tools its selector folds.
+- `search_tools`, `load_capability` and harness `ComputerUse`'s `computer` tool are `{'direct'}`.
+- `UserError` for: an empty set or unknown caller; a `{'programmatic'}` tool on an agent with nothing that calls tools from code (raised when the request is prepared); `CodeMode(tools=[...])` naming a `{'direct'}` tool; a native fallback or code-execution tool whose `allowed_callers` includes `'programmatic'`.
+
+See [Who may call a tool](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-callers).

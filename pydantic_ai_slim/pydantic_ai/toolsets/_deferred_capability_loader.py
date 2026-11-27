@@ -83,6 +83,8 @@ class DeferredCapabilityLoaderToolset(WrapperToolset[AgentDepsT]):
             description=LOAD_CAPABILITY_TOOL_DESCRIPTION,
             parameters_json_schema=_LOAD_CAPABILITY_SCHEMA,
             tool_kind=CAPABILITY_LOAD_KIND,
+            # The instructions and tools it loads are for the model, not for code.
+            allowed_callers={'direct'},
         )
 
         load_tool = ToolsetTool(

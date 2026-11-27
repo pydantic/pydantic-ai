@@ -60,11 +60,9 @@ DEFERRED_CAPABILITY_CATALOG_ID = 'deferred_capabilities'
 """The source key of the deferred capability catalog's instruction block, whose id is `capability:deferred_capabilities`."""
 
 CAPABILITY_LOAD_KIND = ToolKind._core(  # pyright: ignore[reportPrivateUsage]
-    'capability-load', args=LoadCapabilityArgs, content=LoadCapabilityReturn, allowed_callers={'direct'}
+    'capability-load', args=LoadCapabilityArgs, content=LoadCapabilityReturn
 )
-"""The kind of the `load_capability` tool.
-
-Only the model may call it: the capability's instructions and tools it loads are for the model, not for code."""
+"""The kind of the `load_capability` tool."""
 
 
 @dataclass(repr=False)

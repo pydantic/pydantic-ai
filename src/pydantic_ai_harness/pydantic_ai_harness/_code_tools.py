@@ -16,7 +16,6 @@ from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UsageLimitExc
 from pydantic_ai.function_signature import FunctionSignature, _to_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import (
     ToolCallPart,
-    ToolKind,
     ToolPartKind,
     ToolReturn,
     ToolReturnPart,
@@ -24,7 +23,7 @@ from pydantic_ai.messages import (
     is_multi_modal_content,
 )
 from pydantic_ai.tool_manager import ToolManager
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDenied
+from pydantic_ai.tools import AgentDepsT, RunContext, ToolCaller, ToolDenied, ToolSelector
 from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai_harness.guardrails._capability import input_guardrails_allow
 
@@ -43,24 +42,81 @@ cannot take over a tool that works today.
 """
 
 
+PROGRAMMATIC_ONLY: frozenset[ToolCaller] = frozenset({'programmatic'})
+"""The `allowed_callers` Code Mode writes onto a tool its selector folds into `run_code`, as tool search writes
+`defer_loading=True` onto a tool its selector defers."""
+
+
 def can_be_sandboxed(tool_def: ToolDefinition) -> bool:
     """Whether a tool may go inside `run_code` at all, whatever the selector says.
 
-    A tool whose kind's `allowed_callers` leaves out `'programmatic'` stays native, like tool search, capability
-    loading and the `computer` tool, which only the model may call; a kind that isn't defined in this process allows
-    every caller. A local fallback (`unless_native`) has to stay native so `Model.prepare_request` can drop it when
-    the provider supports the native tool; and a tool that is itself a code-execution sandbox (e.g. DynamicWorkflow's
-    `run_workflow`) is a peer of `run_code`, not something to fold inside it, unless its metadata sets
-    `FOLD_INTO_CODE_MODE`.
+    A tool whose `allowed_callers` leaves out `'programmatic'` stays native, like tool search, capability
+    loading and the `computer` tool, which only the model may call. Code Mode's own rules keep two more kinds of
+    tool native: a local fallback (`unless_native`) has to stay native so `Model.prepare_request` can drop it when
+    the provider supports the native tool, and a tool that is itself a code-execution sandbox (e.g.
+    DynamicWorkflow's `run_workflow`) is a peer of `run_code`, not something to fold inside it, unless its metadata
+    sets `FOLD_INTO_CODE_MODE`. Such a tool whose `allowed_callers` includes `'programmatic'` raises `UserError`.
     """
-    kind = ToolKind.get(tool_def.tool_kind) if tool_def.tool_kind is not None else None
-    allowed_callers = kind.allowed_callers if kind is not None else None
+    allowed_callers = tool_def.allowed_callers
     folds = bool(tool_def.metadata and tool_def.metadata.get(FOLD_INTO_CODE_MODE) is True)
-    return (
-        (allowed_callers is None or 'programmatic' in allowed_callers)
-        and not tool_def.unless_native
-        and (folds or not is_code_execution_tool(tool_def))
-    )
+    if tool_def.unless_native or (not folds and is_code_execution_tool(tool_def)):
+        if allowed_callers is not None and 'programmatic' in allowed_callers:
+            reason = (
+                f'is a local fallback for the native {tool_def.unless_native!r} tool'
+                if tool_def.unless_native
+                else 'runs code itself'
+            )
+            raise UserError(
+                f"Tool {tool_def.name!r} {reason}, so it can't be called from code, but its `allowed_callers` "
+                "includes `'programmatic'`."
+            )
+        return False
+    return allowed_callers is None or 'programmatic' in allowed_callers
+
+
+def callers_set_by_tool(tool_def: ToolDefinition) -> tuple[bool, bool] | None:
+    """Whether code and the model may call a tool, as `(from_code, direct)`, or `None` if the selector decides.
+
+    The tool's `allowed_callers` wins over the selector, as `defer_loading=True` wins over tool search's selector:
+    `{'programmatic'}` puts a tool in `run_code` only, and `{'direct', 'programmatic'}` puts it in `run_code` and
+    keeps it a direct tool too. A tool that can't be sandboxed (see `can_be_sandboxed`) stays a direct tool.
+    """
+    if not can_be_sandboxed(tool_def):
+        return False, True
+    allowed_callers = tool_def.allowed_callers
+    if allowed_callers is None:
+        return None
+    return True, 'direct' in allowed_callers
+
+
+def mark_called_from_code(tool: ToolsetTool[AgentDepsT]) -> ToolsetTool[AgentDepsT]:
+    """`tool`, with `allowed_callers={'programmatic'}` written onto its definition if it has no `allowed_callers`.
+
+    Called for each tool a selector puts in `run_code`, as tool search writes `defer_loading=True` onto a tool its
+    selector defers, so whatever reads the definition later sees who calls it.
+    """
+    if tool.tool_def.allowed_callers is not None:
+        return tool
+    return replace(tool, tool_def=replace(tool.tool_def, allowed_callers=PROGRAMMATIC_ONLY))
+
+
+def check_selector_names(selector: ToolSelector[Any], tool_def: ToolDefinition, *, owner: str) -> None:
+    """Raise when a list of tool names names a tool only the model may call.
+
+    A callable, metadata or `'all'` selector skips such a tool silently, as tool search's selector skips the
+    framework's tools.
+    """
+    allowed_callers = tool_def.allowed_callers
+    if allowed_callers is None or 'programmatic' in allowed_callers:
+        return
+    if selector == 'all' or callable(selector) or isinstance(selector, dict):
+        return
+    names = [selector] if isinstance(selector, str) else selector
+    if tool_def.name in names:
+        raise UserError(
+            f'`{owner}(tools=...)` names tool {tool_def.name!r}, which only allows direct callers, so code '
+            "can't call it. Remove it from the list."
+        )
 
 
 def is_code_execution_tool(tool_def: ToolDefinition) -> bool:
