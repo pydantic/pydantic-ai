@@ -32,7 +32,6 @@ try:
 except ImportError:  # pragma: no cover
     logfire_installed = False
 
-pytestmark = pytest.mark.anyio
 
 _WINDOW = 2_000
 """The summarizer's context window in these tests, far smaller than the histories they summarize."""
