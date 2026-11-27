@@ -379,8 +379,8 @@ class DelegationTasks:
         self._receivers: dict[
             tuple[str, str | None], list[Callable[[TaskOutputPart | TaskQuestionPart], str | None]]
         ] = {}
-        self._steering: dict[str, list[Callable[[str], str | None]]] = {}
-        self._unsteered: dict[str, list[str]] = {}
+        self._steering: dict[str, list[Callable[[ModelRequestPart], str | None]]] = {}
+        self._unsteered: dict[str, list[ModelRequestPart]] = {}
         self._queued: dict[str, tuple[str, int]] = {}
         self._save_locks: dict[str, anyio.Lock] = {}
         self._holding: set[str] = set()
@@ -903,23 +903,27 @@ class DelegationTasks:
             and record.parent_id == parent_id
         ]
 
-    def steer(self, task_id: str, text: str) -> bool:
-        """Send a running child a user message, which its run reads at its next model request.
+    def steer(self, task_id: str, text: str | ModelRequestPart) -> bool:
+        """Send a running child a message, which its run reads at its next model request.
+
+        Text is a user message, such as the user's own words from a UI. A part goes as it is, such as the
+        delegating agent's message that `message_task` sends for the delegating model.
 
         Returns `False` when the child is not running, so a caller can offer to resume it instead.
         A message sent before the child's run starts waits for it, and is dropped if the child is stopped
         first; one sent as its final response settles may arrive too late for it to read. Raises `ValueError` for blank text and `KeyError`
         for an unknown task.
         """
-        if not text.strip():
+        if isinstance(text, str) and not text.strip():
             raise ValueError('Steering text must not be empty')
         if self.records[task_id].status != 'running':
             return False
+        part = UserPromptPart(text) if isinstance(text, str) else text
         steering = self._steering.get(task_id)
         if steering is None:
-            self._unsteered.setdefault(task_id, []).append(text)
+            self._unsteered.setdefault(task_id, []).append(part)
         else:
-            steering[-1](text)
+            steering[-1](part)
         return True
 
     def history(self, task_id: str) -> list[ModelMessage]:
@@ -987,11 +991,11 @@ class DelegationTasks:
         conversation_id: str,
         parent_id: str | None,
         enqueue: Callable[[TaskOutputPart | TaskQuestionPart], str | None],
-        steer: Callable[[str], str | None] | None = None,
+        steer: Callable[[ModelRequestPart], str | None] | None = None,
     ) -> Generator[None]:
         """Keep a queue attached only for the lifetime of its owning run.
 
-        `steer` queues a user message on a child's own run, for `DelegationTasks.steer`.
+        `steer` queues a message on a child's own run, for `DelegationTasks.steer`.
         """
         key = (conversation_id, parent_id)
         # What this run queued, which it alone can still deliver.
@@ -1006,8 +1010,8 @@ class DelegationTasks:
         self._receivers.setdefault(key, []).append(receive)
         if steer is not None and parent_id is not None:
             self._steering.setdefault(parent_id, []).append(steer)
-            for text in self._unsteered.pop(parent_id, ()):
-                steer(text)
+            for part in self._unsteered.pop(parent_id, ()):
+                steer(part)
         self.queue_reports(conversation_id=conversation_id, parent_id=parent_id)
         try:
             yield
@@ -1215,7 +1219,7 @@ class DelegationReports(AbstractCapability[object]):
             parent_id=self.task_id,
             enqueue=lambda part: enqueue_while_open(ctx, part, priority=self.priority),
             # Like a report, steering a run that has read its last queued messages is dropped.
-            steer=lambda text: enqueue_while_open(ctx, UserPromptPart(text), priority='asap'),
+            steer=lambda part: enqueue_while_open(ctx, part, priority='asap'),
         ):
             return await handler()
 

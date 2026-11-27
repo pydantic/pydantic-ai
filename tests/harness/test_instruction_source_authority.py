@@ -5,8 +5,7 @@ Each source in `INSTRUCTION_SOURCES` gets a canary and runs at `'none'` and at `
 control that the case is wired, so a pass at `'none'` means the text was lowered, not that it never arrived. For
 `Memory`, which is data at every level, the control only shows the case is wired.
 
-A source that breaks the contract today is a strict xfail linked to its fix. `create_agent`'s turns into an XPASS when
-#12433 is fixed. The MCP cases also need their builds to pass `authority` into the toolset once #13117 gives it one.
+A source that breaks the contract today is a strict xfail linked to its fix. The MCP cases also need their builds to pass `authority` into the toolset once #13117 gives it one.
 
 This is its own module rather than part of `test_capability_contracts.py`: it starts an MCP server, so CI's FastMCP 3
 lane runs it, and that lane can't build every capability the contract suite does.
@@ -277,11 +276,7 @@ INSTRUCTION_SOURCES: dict[str, _InstructionSource] = {
             'Removing this needs the fix and `authority` passed into the toolset in `_mcp_tool_description`'
         ),
     ),
-    'sub_agents_create_agent': _InstructionSource(
-        _sub_agents,
-        _sub_agents_calls,
-        known_break='model-written instructions become the child agent system prompt (#12433)',
-    ),
+    'sub_agents_create_agent': _InstructionSource(_sub_agents, _sub_agents_calls),
 }
 
 

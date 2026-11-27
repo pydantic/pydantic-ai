@@ -12,11 +12,11 @@ task that inherits its parent's model gets the one it ran on before.
 from dataclasses import dataclass
 
 from pydantic_ai import RunContext, SkipModelRequest
-from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler
+from pydantic_ai.capabilities import AbstractCapability, WrapModelRequestHandler, on_event
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import ToolDefinition
-from pydantic_ai_harness.sub_agents import SubAgents
+from pydantic_ai_harness.sub_agents import SubAgents, TaskResumedEvent
 
 TASK_PROMPT = 'clai2_task_prompt'
 """Run metadata marking a run that prompts a task for the user, so observers can tell it from a turn."""
@@ -62,6 +62,12 @@ class TaskPrompt(AbstractCapability[object]):
         request = request_context.messages[-1]
         assert isinstance(request, ModelRequest)
         raise SkipModelRequest(self._respond(ctx, request))
+
+    @on_event(TaskResumedEvent)
+    async def _from_the_user(self, ctx: RunContext[object], event: TaskResumedEvent) -> None:
+        """The task reads the message as the user's, which it is, rather than as the delegating agent's."""
+        if event.task_id == self.task_id:
+            event.task_authority = 'user'
 
     def _respond(self, ctx: RunContext[object], request: ModelRequest) -> ModelResponse:
         for part in request.parts:

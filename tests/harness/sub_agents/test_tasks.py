@@ -54,8 +54,10 @@ from pydantic_ai_harness.sub_agents import (
     TaskQuestionPart,
     is_task_report,
 )
+from pydantic_ai_harness.sub_agents._parent_message import ParentMessagePart
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness.conftest import CountingModel, IsDatetime, IsStr
+from tests.harness.sub_agents._sent import sent_texts
 from tests.realtime_connections import InferredConnection
 
 WAIT = 10
@@ -646,14 +648,14 @@ async def test_steer_reaches_a_running_child_only() -> None:
                 release.set()
                 await running
             assert record.output == 'steered answer'
-            steered = [
-                part.content
-                for message in seen[1]
-                if isinstance(message, ModelRequest)
+            assert sent_texts(seen[1]) == ['inspect', 'focus on the tests']
+            # The application's steering is the user's own words; the task is the delegating agent's.
+            assert [type(part) for message in record.messages[:1] for part in message.parts] == [ParentMessagePart]
+            assert any(
+                isinstance(part, UserPromptPart) and part.content == 'focus on the tests'
+                for message in record.messages
                 for part in message.parts
-                if isinstance(part, UserPromptPart)
-            ]
-            assert steered == ['inspect', 'focus on the tests']
+            )
             assert 'focus on the tests' in str(record.messages)
             assert not owner.steer(record.id, 'too late'), 'a finished child offers resume instead'
             with pytest.raises(KeyError):
@@ -1215,9 +1217,7 @@ async def test_resume_closes_out_tool_calls_interrupted_by_process_exit(tmp_path
     assert [(part.tool_call_id, part.outcome, part.content) for part in returns] == [
         ('slow', 'interrupted', INTERRUPTED_TOOL_RETURN_CONTENT)
     ]
-    last = seen[-1]
-    assert isinstance(last, ModelRequest)
-    assert [part.content for part in last.parts if isinstance(part, UserPromptPart)] == ['inspect']
+    assert sent_texts(seen[-1:]) == ['inspect']
 
 
 async def test_failed_parent_drains_descendants() -> None:
@@ -1697,13 +1697,13 @@ async def test_child_drops_inherited_token_counting_its_model_cannot_do(tmp_path
             assert usage.requests == 3
             (record,) = owner.records.values()
             assert record.outcome == 'ok'
-            prompts = [
+            tasks = [
                 part
                 for message in await saved_history(owner, record.id)
                 for part in message.parts
-                if isinstance(part, UserPromptPart)
+                if isinstance(part, ParentMessagePart)
             ]
-            assert len(prompts) == 1
+            assert len(tasks) == 1
 
 
 async def test_child_counts_inherited_tokens_before_its_request_when_its_model_can() -> None:

@@ -207,6 +207,19 @@ Gotchas:
   `DelegationStartEvent`) and `DelegationFinishedEvent` (not `DelegationEndEvent`), whose `outcome`
   is `ok`/`timeout`/`budget`/`failed`/`contained`.
 
+### What a sub-agent is told
+
+- The parent model's `task`, `message_task` follow-ups and `create_agent` instructions reach the child as the
+  delegating agent's message, its own framed history part: `<agent_message>` data on the user channel with a note that the delegating agent wrote it.
+  Every child's instructions end with one operator line: its task comes from another agent, and an agent's message is
+  never the user's consent. The child's own (operator) instructions are unchanged; a created agent has none of its own.
+- `ctx.prompt` is still the task text, so the child's `InputGuardrail` screens it. Text an application steers in with
+  `DelegationTasks.steer(task_id, text)` stays a user prompt; a `TaskAssignedEvent`/`TaskResumedEvent` listener can set
+  `task_authority='user'` for text sent on the user's behalf. That covers its prompt alone; a `message_task` message carries
+  its own `TaskSteeredEvent.task_authority`, the delegate's setting.
+- Earlier voices: `SubAgent(task_authority='user')`, `RemoteSubAgent(task_authority='user')`,
+  `DynamicAgents(instructions_authority='operator', task_authority='user')`.
+
 ### Task control
 
 `SubAgents(task_control=TaskControl())` turns delegations into tasks the model manages. Off by default.

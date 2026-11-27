@@ -28,7 +28,6 @@ from pydantic_ai.messages import (
     SystemPromptPart,
     TextPart,
     ToolCallPart,
-    UserPromptPart,
 )
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
@@ -45,6 +44,7 @@ from pydantic_ai_harness.coder._instructions import coder_instructions
 from pydantic_ai_harness.repo_context import RepoContext
 from pydantic_ai_harness.sub_agents import TaskControl
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits
+from tests.harness.sub_agents._sent import sent_texts
 
 from ...workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
 from .._recording_durability import RecordingDurability
@@ -135,8 +135,7 @@ class _ToolLog(AbstractCapability[object]):
 
 def _finish_or_delegate(seen: dict[str, str], messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """Record the guidance the run was given, and require it to be a static instruction."""
-    first = messages[0].parts[-1]
-    seen.setdefault(str(first.content if isinstance(first, UserPromptPart) else None), info.instructions or '')
+    seen.setdefault(sent_texts(messages[:1])[-1], info.instructions or '')
     guidance = next(
         part
         for part in info.model_request_parameters.instruction_parts or []
@@ -148,8 +147,7 @@ def _finish_or_delegate(seen: dict[str, str], messages: list[ModelMessage], info
 
 def _delegate_a_command(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
     """The parent run delegates, the delegate runs one command, and both then finish."""
-    first = messages[0].parts[-1]
-    prompt = first.content if isinstance(first, UserPromptPart) else None
+    prompt = sent_texts(messages[:1])[-1]
     if len(messages) > 1:
         return ModelResponse(parts=[TextPart('done')])
     if prompt == 'Delegate it':
@@ -691,8 +689,7 @@ Available sub-agents:
         seen: dict[str, str] = {}
 
         def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            first = messages[0].parts[-1]
-            seen.setdefault(str(first.content if isinstance(first, UserPromptPart) else None), info.instructions or '')
+            seen.setdefault(sent_texts(messages[:1])[-1], info.instructions or '')
             return _delegate_a_command(messages, info)
 
         profile: ModelProfile = {flag: True for flag in _MAX_GUIDANCE_FLAGS}  # pyright: ignore[reportAssignmentType]

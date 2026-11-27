@@ -84,6 +84,7 @@ from pydantic_ai_harness.sub_agents._control import (
     TaskControl,
     TaskTelemetry,
     default_factory,
+    operator_factory,
     reporting_settlement,
     run_owned,
     run_remote,
@@ -117,6 +118,7 @@ from pydantic_ai_harness.sub_agents._events import (
     bounded_text,
 )
 from pydantic_ai_harness.sub_agents._models import ModelOption, validate_restriction
+from pydantic_ai_harness.sub_agents._parent_message import DelegatedTask, TaskAuthority, task_message
 from pydantic_ai_harness.sub_agents._tasks import (
     NOT_BACKGROUNDABLE,
     RESUME_DIRECTORY_MISMATCH,
@@ -325,10 +327,27 @@ class SubAgent(Generic[AgentDepsT]):
     output validation and can be text the child rejected, so leave this off for a child whose guardrails keep content
     from its parent."""
 
+    task_authority: TaskAuthority = dataclass_field(default='none', kw_only=True)
+    """How much authority the parent model's task and messages carry with the sub-agent.
+
+    `'none'`: each reaches it as the delegating agent's message, data with a note that the agent that delegated the task wrote
+    it, not the user or the application, so a claim in it such as "the user approved this" grants nothing. `'user'`:
+    each is a plain user prompt, which the sub-agent reads as its user's own words. Either way the sub-agent's
+    instructions say its task comes from another agent."""
+
     @property
     def resolved_name(self) -> str | None:
         """The delegate's name: `name` if set, else the agent's own `name`."""
         return self.name or self.agent.name
+
+
+@dataclass(frozen=True)
+class _CreatedSubAgent(SubAgent[AgentDepsT]):
+    """A sub-agent the model created with `create_agent`."""
+
+    instructions: str | None = dataclass_field(default=None, kw_only=True)
+    """The instructions the model wrote for it, delivered as the parent's message at the start of each conversation,
+    or `None` when its agent has them as its own (`DynamicAgents.instructions_authority='operator'`)."""
 
 
 @dataclass
@@ -341,10 +360,12 @@ class RecordedDelegation:
 
 
 RecordDelegation = Callable[
-    [RunContext[Any], str, str, str | None, DynamicAgentSpec | None, int, bool], Awaitable[RecordedDelegation]
+    [RunContext[Any], str, str, str | None, DynamicAgentSpec | None, int, bool, TaskAuthority | None],
+    Awaitable[RecordedDelegation],
 ]
 """Runs one delegation in a durable unit of its own: context, agent name, task, model key, created agent's spec, the
-delegating run's level in its delegation tree, and whether it is a task, under an owner's usage rules."""
+delegating run's level in its delegation tree, whether it is a task, under an owner's usage rules, and the authority
+its task carries when a listener set it, else `None` for the sub-agent's own."""
 
 
 @dataclass(frozen=True)
@@ -926,14 +947,22 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             )
 
     async def _delegate_recorded(
-        self, ctx: RunContext[AgentDepsT], agent_name: str, task: str, key: str | None, *, managed: bool = False
+        self,
+        ctx: RunContext[AgentDepsT],
+        agent_name: str,
+        task: str,
+        key: str | None,
+        *,
+        managed: bool = False,
+        task_authority: TaskAuthority | None = None,
     ) -> _Ended | None:
         """Run the delegation in a durable unit of its own if it gets one, else return `None`."""
         record = self._record_delegation
         if record is None or not ctx.in_durable_context or self._is_self(agent_name):
             return None
         created = self._created.get(ctx.run_id or '', {}).get(agent_name)
-        recorded = await record(ctx, agent_name, task, key, created[0] if created else None, _depth.get(), managed)
+        spec = created[0] if created else None
+        recorded = await record(ctx, agent_name, task, key, spec, _depth.get(), managed, task_authority)
         cause = ModelRetry(recorded.output) if recorded.retry else None
         return _Ended(outcome=recorded.outcome, output=recorded.output, cause=cause)
 
@@ -946,13 +975,16 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         spec: DynamicAgentSpec | None,
         level: int,
         managed: bool = False,
+        task_authority: TaskAuthority | None = None,
     ) -> RecordedDelegation:
         """Run a delegation inside the durable unit that records it, rebuilding a created agent from its spec.
 
-        A worker doesn't inherit the delegating run's context, so the run's `level`, and for a task its owner's usage
-        rules, are set again.
+        A worker doesn't inherit the delegating run's context, so the run's `level`, for a task its owner's usage
+        rules, and the task's authority a listener set, are set again.
         """
         sub_agent = self._agents[agent_name] if spec is None else self._build_created(spec)
+        if task_authority is not None:
+            sub_agent = replace(sub_agent, task_authority=task_authority)
         with delegation_level(level):
             ended = await self._run_delegation(
                 ctx, agent_name, sub_agent, task=task, key=key, workspace=ctx.workspace, managed=managed
@@ -1040,13 +1072,14 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if remote is not None:
             if model is not None:
                 raise ModelRetry(f"Sub-agent {agent_name!r} runs on its worker's model; omit `model`.")
-            resumable, can_ask = remote.resumable, remote.can_ask_questions
+            resumable, can_ask, task_authority = remote.resumable, remote.can_ask_questions, remote.task_authority
         else:
             sub_agent = self._resolve_agent(ctx, agent_name)
             key = self._resolve_model_key(agent_name, sub_agent, model)
             if (exhausted := self._call_budget_message(ctx, agent_name, sub_agent)) is not None:
                 return exhausted
             resumable, can_ask = _local_abilities(ctx, sub_agent)
+            task_authority = sub_agent.task_authority
         self._check_running_limit(ctx, owner, agent_name, conversation_id)
         task_id = resume or _new_task_id(ctx, owner)
         start_type = TaskAssignedEvent if previous is None else TaskResumedEvent
@@ -1065,6 +1098,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                     depth=_depth.get() + 1,
                     # The delegating model can only answer from the background.
                     can_ask_questions=can_ask and backgroundable,
+                    task_authority=task_authority,
                     forward_events=self._forward_events,
                     usage_limits=ctx.usage_limits,
                 ),
@@ -1178,13 +1212,17 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         workspace: Workspace,
     ) -> str:
         """Run a local task and report how it settled as task events."""
+        # A listener may have changed how much authority the task carries, such as for text the user sent.
+        sub_agent = replace(sub_agent, task_authority=start.task_authority)
         link = LocalTaskLink(
             owner=owner, record=record, can_ask=start.can_ask_questions, telemetry=self._telemetry(ctx)
         )
         await owner.publish(record, TaskStartedEvent(task_id=record.id, agent_name=record.agent_name))
         task_id, agent_name = record.id, record.agent_name
         async with reporting_settlement(owner, record):
-            ended = await self._delegate_recorded(ctx, agent_name, record.prompt, key, managed=True)
+            ended = await self._delegate_recorded(
+                ctx, agent_name, record.prompt, key, managed=True, task_authority=start.task_authority
+            )
             if ended is None:
                 ended = await self._run_delegation(
                     ctx,
@@ -1297,15 +1335,19 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             raise ModelRetry(f'Task {task_id} runs in a durable unit of its own, which messages cannot reach.')
         if record.status != 'running':
             return await self._resume_by_message(ctx, record, message)
-        event = await self._announce(
-            ctx, owner, record, TaskSteeredEvent(task_id=task_id, agent_name=record.agent_name, message=message)
+        remote = self._remote.get(record.agent_name)
+        # The delegate's own setting, never the start event's: a listener may have raised that for its prompt alone.
+        authority = (remote or self._resolve_agent(ctx, record.agent_name)).task_authority
+        steered = TaskSteeredEvent(
+            task_id=task_id, agent_name=record.agent_name, message=message, task_authority=authority
         )
+        event = await self._announce(ctx, owner, record, steered)
         if event.vetoed:
             return _vetoed_reply('The message was not sent', event)
-        if record.agent_name in self._remote:
+        if remote is not None:
             assert self._transport is not None
             await self._transport.send(event)
-        elif not owner.steer(task_id, event.message):
+        elif not owner.steer(task_id, task_message(event.message, event.task_authority)):
             return f'Task {task_id} finished before the message reached it.'
         return f'Message sent to task {task_id}.'
 
@@ -1444,7 +1486,11 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 self._telemetry(ctx).vetoed(event)
                 return _vetoed_reply('The sub-agent was not created', event)
             spec = DynamicAgentSpec(
-                name=name, description=event.description, instructions=event.instructions, model=model
+                name=name,
+                description=event.description,
+                instructions=event.instructions,
+                model=model,
+                instructions_authority=dynamic.instructions_authority,
             )
             created[name] = (spec, self._build_created(spec))
         finally:
@@ -1458,8 +1504,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         assert dynamic is not None, 'Agents are only created with `dynamic_agents` set.'
         # Without a model, it runs on the delegating run's: `()` allows no menu key either.
         models = () if spec.model is None else [spec.model]
-        return SubAgent(
-            (dynamic.factory or default_factory)(spec), name=spec.name, description=spec.description, models=models
+        operator = dynamic.instructions_authority == 'operator'
+        factory = dynamic.factory or (operator_factory if operator else default_factory)
+        return _CreatedSubAgent(
+            factory(spec),
+            name=spec.name,
+            description=spec.description,
+            models=models,
+            task_authority=dynamic.task_authority,
+            instructions=None if operator else spec.instructions,
         )
 
     async def _run_delegation(
@@ -1669,6 +1722,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         `resume` continues the child from its history with answers to the deferred calls it stopped on.
         """
         prompt, message_history, deferred_tool_results = _child_inputs(task, record, resume)
+        instructions: str | None = None
+        if isinstance(sub_agent, _CreatedSubAgent) and not message_history:
+            # The instructions the model wrote for an agent it created start each of its conversations.
+            instructions = sub_agent.instructions
+        delegated = DelegatedTask(prompt, task_authority=sub_agent.task_authority, instructions=instructions)
+        # First, so the capabilities after it see the task as the sub-agent reads it.
+        capabilities = [delegated, *capabilities]
         attempted = False
 
         async def start(limits: UsageLimits | None) -> AgentRunResult[Any]:

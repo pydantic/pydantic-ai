@@ -65,6 +65,7 @@ from pydantic_ai_pax.ui.prompt.live_prompt import LivePrompt
 from pydantic_ai_pax.ui.prompt.prompt_transcript import TranscriptBuffer
 from pydantic_ai_pax.ui.prompt.terminal import Terminal
 from pydantic_ai_pax.ui.rendering.history import turn_starts
+from tests.harness.sub_agents._sent import sent_texts
 from tests.pax.live_script import press
 from tests.pax.test_forks import Model as ForkModel, shell_for
 
@@ -117,7 +118,7 @@ async def test_stock_managed_specialists_and_general_purpose(tmp_path: Path, nam
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         request = messages[0]
         assert isinstance(request, ModelRequest)
-        prompt = next(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        prompt = sent_texts([request])[0]
         assert isinstance(prompt, str)
         if len(messages) == 1:
             prompts.append(prompt)
@@ -590,7 +591,7 @@ async def test_main_user_interrupt_marks_foreground_child_stopped(
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         request = messages[0]
         assert isinstance(request, ModelRequest)
-        prompt = next(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        prompt = sent_texts([request])[0]
         if prompt == 'child':
             signal.raise_signal(signal.SIGINT)
             await asyncio.Event().wait()
@@ -625,7 +626,7 @@ async def test_managed_code_mode_delegation_has_one_typed_row(tmp_path: Path) ->
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         request = messages[0]
         assert isinstance(request, ModelRequest)
-        prompt = next(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        prompt = sent_texts([request])[0]
         if prompt == 'parent' and len(messages) == 1:
             return ModelResponse(
                 parts=[ToolCallPart('run_code', {'code': 'await delegate_task(agent_name="self", task="child")'})]
@@ -696,7 +697,7 @@ async def test_background_completion_continues_parent_without_user_input(
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         request = messages[0]
         assert isinstance(request, ModelRequest)
-        first = next(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        first = sent_texts([request])[0]
         if first == 'child':
             child_started.set()
             await release.wait()
@@ -821,7 +822,7 @@ async def test_cancelling_a_turn_leaves_its_background_child_running(
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         request = messages[0]
         assert isinstance(request, ModelRequest)
-        first = next(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        first = sent_texts([request])[0]
         if first == 'child':
             child_started.set()
             await release.wait()
@@ -946,7 +947,7 @@ async def test_a_background_task_question_reaches_the_parent_which_answers_it(
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         first, last = messages[0], messages[-1]
         assert isinstance(first, ModelRequest) and isinstance(last, ModelRequest)
-        prompt = next(part.content for part in first.parts if isinstance(part, UserPromptPart))
+        prompt = sent_texts([first])[0]
         if prompt == 'child':
             if len(messages) == 1:
                 await release.wait()
@@ -1106,7 +1107,7 @@ async def test_a_question_asked_after_a_turns_last_read_starts_the_next_turn(
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         first, last = messages[0], messages[-1]
         assert isinstance(first, ModelRequest) and isinstance(last, ModelRequest)
-        prompt = next(part.content for part in first.parts if isinstance(part, UserPromptPart))
+        prompt = sent_texts([first])[0]
         if prompt == 'child':
             if len(messages) == 1:
                 await ending.wait()

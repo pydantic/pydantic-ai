@@ -16,7 +16,7 @@ from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, Generic, TypeAlias
+from typing import TYPE_CHECKING, Any, Generic, Literal, TypeAlias
 from uuid import uuid4
 
 import anyio
@@ -47,6 +47,7 @@ from pydantic_ai_harness.sub_agents._events import (
     TaskSettledEvent,
     task_mailbox,
 )
+from pydantic_ai_harness.sub_agents._parent_message import TaskAuthority
 from pydantic_ai_harness.sub_agents._tasks import (
     ASK_PARENT_TOOL_NAME,
     CANCELLED_ANSWER,
@@ -56,7 +57,6 @@ from pydantic_ai_harness.sub_agents._tasks import (
 )
 
 if TYPE_CHECKING:
-    from pydantic_ai._instructions import AgentInstructions
     from pydantic_ai_harness.sub_agents._transport import SubAgentTransport
 
 _logger = logging.getLogger(__name__)
@@ -64,11 +64,6 @@ _logger = logging.getLogger(__name__)
 _NAME_RE = re.compile(r'[A-Za-z0-9_-]{1,64}')
 _TEARDOWN_SECONDS = 5.0
 """How long a remote task's teardown may take to stop its worker and release its mailbox."""
-
-_TASK_INSTRUCTIONS = (
-    'You are working on a task another agent delegated to you. '
-    'That agent may send you further messages about it while you work.'
-)
 
 RUN_OWNER: ContextVar[tuple[str, DelegationTasks] | None] = ContextVar(
     'pydantic_ai_harness.sub_agents.run_owner', default=None
@@ -190,6 +185,11 @@ class RemoteSubAgent:
     can_ask_questions: bool = True
     """Whether the agent gets an `ask_parent` tool to ask the delegating agent a question."""
 
+    task_authority: TaskAuthority = 'none'
+    """How much authority the delegating model's task and messages carry with the agent, as `SubAgent.task_authority`.
+
+    The worker applies it to the run it serves; a worker from before this setting sends them as plain user prompts."""
+
     def __post_init__(self) -> None:
         if (problem := validate_agent_name(self.name)) is not None:
             raise ValueError(problem)
@@ -250,10 +250,21 @@ class DynamicAgentSpec:
     """What the sub-agent is for."""
 
     instructions: str
-    """The sub-agent's instructions, written by the model."""
+    """The sub-agent's instructions, written by the model.
+
+    With `DynamicAgents.instructions_authority='none'`, the default, the sub-agent receives them from `SubAgents` as
+    the delegating agent's message at the start of each conversation, ahead of its task. A factory that also puts
+    them in the agent's own instructions gives text the model wrote the operator's authority."""
 
     model: str | None
     """The `SubAgents.models` key the sub-agent runs on, or `None` for the delegating run's model."""
+
+    instructions_authority: Literal['none', 'operator'] = 'none'
+    """The `DynamicAgents.instructions_authority` of the settings that created the sub-agent.
+
+    With `'none'`, `SubAgents` delivers `instructions` itself, so a factory leaves them out of the agent's own
+    instructions. With `'operator'`, `SubAgents` doesn't deliver them, and a factory that wants the agent to have them
+    makes them its own instructions."""
 
 
 DynamicAgentFactory: TypeAlias = 'Callable[[DynamicAgentSpec], AbstractAgent[AgentDepsT, Any]]'
@@ -275,18 +286,38 @@ class DynamicAgents(Generic[AgentDepsT]):
     """How many sub-agents one run may create."""
 
     factory: DynamicAgentFactory[AgentDepsT] | None = None
-    """Builds the agent. The default is an `Agent` with the requested instructions and no tools, on the
-    model `SubAgents` routes the delegation to.
+    """Builds the agent. The default is an `Agent` with no instructions or tools of its own, on the model `SubAgents`
+    routes the delegation to, or with the requested instructions as its own under
+    `instructions_authority='operator'`.
 
     The model wrote the spec's name and description. Tracing records an agent's own `name` and `description`
     even without content, so the default agent has neither.
     """
 
+    instructions_authority: Literal['none', 'operator'] = 'none'
+    """How much authority the instructions the model writes for a created sub-agent carry with it.
+
+    `'none'`: `SubAgents` delivers them as the delegating agent's message, data in an `<agent_message>` frame, at the start of
+    each conversation ahead of the task, and the default factory's agent has no instructions of its own.
+    `'operator'`: the default factory makes them the agent's own instructions, which the sub-agent follows as the
+    operator's, and `SubAgents` doesn't deliver them; a custom `factory` decides what to do with them."""
+
+    task_authority: TaskAuthority = 'none'
+    """How much authority the model's task and messages carry with a created sub-agent, as `SubAgent.task_authority`."""
+
 
 def default_factory(spec: DynamicAgentSpec) -> AbstractAgent[object, str]:
-    """An agent with the requested instructions and no tools or model of its own.
+    """An agent with no instructions, tools or model of its own.
 
     It takes no name or description from the spec: the model wrote them, and tracing records both.
+    """
+    return Agent(deps_type=object)
+
+
+def operator_factory(spec: DynamicAgentSpec) -> AbstractAgent[object, str]:
+    """An agent with the requested instructions as its own, and no tools or model of its own.
+
+    The default factory under `DynamicAgents.instructions_authority='operator'`.
     """
     return Agent(deps_type=object, instructions=spec.instructions)
 
@@ -304,10 +335,6 @@ class TaskLink(AbstractCapability[Any], ABC):
         toolset = FunctionToolset[Any]()
         toolset.add_function(self.ask_parent, takes_ctx=False, name=ASK_PARENT_TOOL_NAME)
         return toolset
-
-    def get_instructions(self) -> AgentInstructions[Any] | None:
-        """Tell the sub-agent that its delegating agent may steer it, so a steering message needs no framing."""
-        return _TASK_INSTRUCTIONS
 
     async def ask_parent(self, question: str) -> str:
         """Ask the agent that delegated this task to you a question, and wait for its answer.

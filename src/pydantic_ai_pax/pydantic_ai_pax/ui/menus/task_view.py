@@ -35,6 +35,7 @@ from termflow.tui.terminal import terminal_size
 
 from pydantic_ai.messages import ModelMessage, TextPart, ToolCallPart, UserPromptPart
 from pydantic_ai_harness.sub_agents import DelegationTask
+from pydantic_ai_harness.sub_agents._parent_message import ParentMessagePart
 from pydantic_ai_pax.plugins import TaskInfo
 from pydantic_ai_pax.runtime.tasks import Tasks, task_tree
 from pydantic_ai_pax.ui.menus.menu_worker import run_worker, worker_stopping
@@ -118,11 +119,14 @@ def transcript_blocks(task: DelegationTask, messages: Sequence[ModelMessage] | N
     """
     parts = [part for message in (task.messages if messages is None else messages) for part in message.parts]
     blocks = [f'*Directory: {task.working_directory}*'] if task.working_directory is not None else []
-    if not any(isinstance(part, UserPromptPart) for part in parts):
+    if not any(isinstance(part, UserPromptPart | ParentMessagePart) for part in parts):
         blocks.append(_quote(task.prompt))
     for part in parts:
         if isinstance(part, UserPromptPart):
             blocks.append(_quote(prompt_text(part)))
+        elif isinstance(part, ParentMessagePart):
+            # What the delegating agent told it, which it read as that agent's rather than the user's.
+            blocks.append(_quote(part.content))
         elif isinstance(part, TextPart):
             blocks.append(part.content)
         elif isinstance(part, ToolCallPart):

@@ -30,13 +30,11 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     FunctionToolResultEvent,
     ModelMessage,
-    ModelRequest,
     ModelResponse,
     RetryFeedbackPart,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -74,6 +72,7 @@ from pydantic_ai_pax.runtime.speculative_mode import (
     speculative_capabilities,
 )
 from tests._timeouts import READINESS_WAIT_TIMEOUT
+from tests.harness.sub_agents._sent import sent_texts
 
 
 def streamed(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse]) -> FunctionModel:
@@ -173,11 +172,7 @@ async def test_stock_delegates_keep_speculative_plugins_and_workspace(tmp_path: 
         assert {tool.name for tool in info.function_tools} == {'run_code', 'write_file', 'edit_file', 'load_capability'}
         assert guidance('read-only').strip() in (info.instructions or '')
         if len(messages) == 1:
-            [request] = messages
-            assert isinstance(request, ModelRequest)
-            [part] = request.parts
-            assert isinstance(part, UserPromptPart) and isinstance(part.content, str)
-            prompt = part.content
+            [prompt] = sent_texts(messages)
             prompts.append(prompt)
             code = (
                 'await delegate_task(agent_name="self", task="child task")'

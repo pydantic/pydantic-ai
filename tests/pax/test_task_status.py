@@ -22,6 +22,7 @@ from pydantic_ai_pax.runtime.session_runtime import create_shell
 from pydantic_ai_pax.runtime.tasks import Tasks
 from pydantic_ai_pax.ui.rendering.status import Status
 from pydantic_ai_pax.ui.rendering.theme import INFO, MUTED
+from tests.harness.sub_agents._sent import sent_texts
 from tests.pax.test_tasks import task
 
 
@@ -105,7 +106,7 @@ async def test_foreground_delegation_takes_the_row_until_it_settles(tmp_path: Pa
     async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         request = messages[0]
         assert isinstance(request, ModelRequest)
-        prompt = next(part.content for part in request.parts if isinstance(part, UserPromptPart))
+        prompt = sent_texts([request])[0]
         if prompt == 'child':
             yield 'child '
             child_started.set()

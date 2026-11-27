@@ -20,7 +20,6 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.tools import RunContext, ToolDefinition, ToolDenied
@@ -34,6 +33,7 @@ from pydantic_ai_harness.sub_agents import (
     delegated_requests,
     delegated_results,
 )
+from tests.harness.sub_agents._sent import sent_texts
 
 from .._recording_durability import RecordingDurability
 from ..conftest import CountingModel
@@ -418,9 +418,7 @@ class TestSubAgentsForwardDeferredCalls:
     )
     async def test_prefixed_ids(self, tasks: tuple[str, str], collide: bool) -> None:
         def clash_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            prompt = next(part.content for part in messages[0].parts if isinstance(part, UserPromptPart))
-            assert isinstance(prompt, str)
-            return ModelResponse(parts=[ToolCallPart('dangerous', {}, tool_call_id=prompt)])
+            return ModelResponse(parts=[ToolCallPart('dangerous', {}, tool_call_id=sent_texts(messages)[0])])
 
         clash = Agent(FunctionModel(clash_fn), name='clash', output_type=[str, DeferredToolRequests])
 

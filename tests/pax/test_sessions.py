@@ -51,6 +51,7 @@ from pydantic_ai_pax.app import STOCK_PLUGINS, create_stock_agent
 from pydantic_ai_pax.plugins import PluginHost, load_plugin
 from pydantic_ai_pax.runtime.session import Session, SessionStepStore
 from pydantic_ai_pax.runtime.sessions import PersistencePlugin
+from tests.harness.sub_agents._sent import sent_texts
 from tests.pax.test_session_browser import repository
 
 
@@ -706,20 +707,18 @@ async def test_stock_agent_delegates_with_plugin_tools_instructions_and_guardrai
         assert 'Follow the plugin guardrail.' in (info.instructions or '')
         assert (info.instructions or '').count('Dynamic plugin instructions.') == 1
         assert {'delegate_task', 'plugin_tool', 'read_file'} <= {tool.name for tool in info.function_tools}
-        first = messages[0]
-        assert isinstance(first, ModelRequest)
-        [prompt] = first.parts
-        assert isinstance(prompt, UserPromptPart)
+        # The child reads its task as the delegating agent's message.
+        [prompt] = sent_texts(messages[:1])
         if len(messages) == 1:
-            if prompt.content == 'parent task':
+            if prompt == 'parent task':
                 return ModelResponse(
                     parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'child task'})]
                 )
-            assert prompt.content == 'child task'
+            assert prompt == 'child task'
             return ModelResponse(
                 parts=[ToolCallPart('plugin_tool', {}), ToolCallPart('read_file', {'path': 'note.txt'})]
             )
-        if prompt.content == 'child task':
+        if prompt == 'child task':
             returns = [
                 part
                 for message in messages
