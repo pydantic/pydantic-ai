@@ -396,8 +396,23 @@ _CLAUDE_CODE_TOOLS: dict[str, str] = {
     'WebFetch': '`web_fetch`',
 }
 """Claude Code tool names a rule string can't use, with the tools to name instead."""
-_RULE_STRING = re.compile(r'(?P<name>[^\s()]+)(?:\((?P<inner>.*)\))?', re.DOTALL)
-_ARG_GLOB = re.compile(r'(?P<arg>[A-Za-z_]\w*)=(?P<glob>.+)', re.DOTALL)
+
+
+def _split_rule(rule: str) -> tuple[str, str | None]:
+    """A rule string's tool name and the pattern in its `()`, if any; raises `UserError` when it is malformed.
+
+    Split by hand, not by regular expression: a rule string comes from a settings file, and backtracking on one
+    would take time quadratic in its length.
+    """
+    name, paren, rest = rule.strip().partition('(')
+    inner = rest[:-1] if paren and rest.endswith(')') else None
+    if (
+        not name
+        or any(char.isspace() or char == ')' for char in name)
+        or (paren and (inner is None or not inner.strip()))
+    ):
+        raise UserError(f'Permission rule {rule!r} must be a tool name, optionally followed by a pattern in `()`.')
+    return name, inner
 
 
 def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str | None = None) -> PermissionRule[Any]:
@@ -419,11 +434,7 @@ def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str 
     own tool names, such as `Read` or `Edit`, raise `UserError` naming the tool to use: no tool here has them, so
     a rule naming one would match nothing.
     """
-    match = _RULE_STRING.fullmatch(rule.strip())
-    inner = None if match is None else match['inner']
-    if match is None or (inner is not None and not inner.strip()):
-        raise UserError(f'Permission rule {rule!r} must be a tool name, optionally followed by a pattern in `()`.')
-    name = match['name']
+    name, inner = _split_rule(rule)
     if (instead := _CLAUDE_CODE_TOOLS.get(name)) is not None:
         raise UserError(f'Permission rule {rule!r} uses the Claude Code tool name {name!r}: name {instead} instead.')
     inner = None if inner is None else inner.strip()
@@ -442,8 +453,8 @@ def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str 
     if inner.endswith(':*'):
         # Otherwise it would be a `path` glob that a shell tool's call never matches, so a deny would refuse nothing.
         raise UserError(f'Permission rule {rule!r} uses `:*`, which only `Bash(...)` and `Shell(...)` take.')
-    arg = _ARG_GLOB.fullmatch(inner)
-    args = {'path': inner} if arg is None else {arg['arg']: arg['glob'].strip()}
+    arg, equals, glob = inner.partition('=')
+    args = {arg: glob.strip()} if equals and arg.isidentifier() and glob else {'path': inner}
     return PermissionRule(verdict, tools=[name], args=args, reason=reason)
 
 

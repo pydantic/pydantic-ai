@@ -110,7 +110,9 @@ class TestParsePermissionRule:
         with pytest.raises(UserError, match=rf"Claude Code tool name '{name}'"):
             parse_permission_rule(name, 'deny')
 
-    @pytest.mark.parametrize('rule', ['', '   ', 'write_file()', 'Bash(  )', 'write file', 'write_file(docs', '(x)'])
+    @pytest.mark.parametrize(
+        'rule', ['', '   ', 'write_file()', 'Bash(  )', 'write file', 'write_file(docs', '(x)', 'write_file)']
+    )
     def test_malformed_strings_raise(self, rule: str) -> None:
         with pytest.raises(UserError, match=re.escape(f'Permission rule {rule!r} must be a tool name')):
             parse_permission_rule(rule, 'deny')
@@ -119,6 +121,11 @@ class TestParsePermissionRule:
     def test_a_command_pattern_on_another_name_raises(self, rule: str) -> None:
         with pytest.raises(UserError, match=re.escape(f'Permission rule {rule!r} uses `:*`')):
             parse_permission_rule(rule, 'deny')
+
+    def test_text_before_an_equals_sign_that_is_no_argument_name_is_part_of_the_path(self) -> None:
+        assert parse_permission_rule('write_file(9=x)', 'deny') == PermissionRule(
+            'deny', tools=['write_file'], args={'path': '9=x'}
+        )
 
     def test_an_empty_command_raises(self) -> None:
         with pytest.raises(UserError, match='must be a shell command'):
