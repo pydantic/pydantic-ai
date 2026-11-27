@@ -3034,6 +3034,9 @@ def test_github_client_disables_redirects(monkeypatch: pytest.MonkeyPatch):
     assert monitor.NoRedirect().redirect_request(None, None, 302, '', None, 'https://evil.example') is None
 
 
+# The priority SLA tests run the real `GitHubClient` logic through `FakeClient`, not cassettes: this
+# script calls the GitHub API, and the cassette setup in `tests/` records provider calls, not
+# `.github/scripts`.
 SLA_NOW = dt.datetime(2026, 11, 26, 15, tzinfo=dt.UTC)
 SLA_BOT = {'login': 'github-actions[bot]', 'type': 'Bot'}
 
