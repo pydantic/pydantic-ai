@@ -12,7 +12,6 @@ from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
 from typing import TYPE_CHECKING, Any, Literal, Self, TypeAlias
-from urllib.parse import urlsplit
 
 from pydantic import TypeAdapter
 from pydantic_core import to_json, to_jsonable_python
@@ -65,8 +64,10 @@ from pydantic_ai_harness._code_tools import (
     signatures_and_conflicts,
 )
 from pydantic_ai_harness._monty_exec import (
+    TIME_LIMIT_MESSAGE,
     MontyExecutor,
     MontyRunState,
+    MontySandbox,
     MontyStoresNoSessions,
     MontyTurnFailed,
     MontyTurnUnavailable,
@@ -74,8 +75,11 @@ from pydantic_ai_harness._monty_exec import (
     Snapshot,
     TurnComplete,
     TurnFeed,
+    check_monty_sandbox,
     in_temporal_workflow,
     module_functions,
+    resolve_limits,
+    worker_failure_message,
 )
 from pydantic_ai_harness._monty_turns import MontyFailure, MontyTurn, TurnRequest, model_safe_result
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, renamed_duration_limit, warn_argument_renamed
@@ -106,10 +110,6 @@ CodeModeMount = MountDir | list[MountDir]
 _RETRY_VALUE_PREVIEW_CHARS = 120
 _RETRY_PREVIEW_ITEMS = 5
 _RETRY_SUMMARY_MAX_CHARS = 2000
-_TIME_LIMIT_MESSAGE = (
-    'The code ran longer than its time limit and was stopped, so the session was reset. '
-    'Re-run any imports, recreate any state you need, and make the code do less work per call.'
-)
 
 
 # One entry per limit `CodeModeResourceLimits` exposes, mapped to the wording Monty reports when
@@ -125,31 +125,12 @@ _SANDBOX_LIMIT_MARKERS = {
 }
 
 
-def _check_monty_sandbox_url(url: str) -> None:
-    """Reject URLs Monty's remote client cannot dial, before the first `run_code` call fails on them.
-
-    The error leaves the URL out, because it may carry credentials.
-    """
-    parts = urlsplit(url)
-    # Monty reads `ws://` and `wss://`, its schemes before 1.5, as `http://` and `https://`.
-    if parts.scheme not in ('http', 'https', 'ws', 'wss'):
-        raise UserError('`monty_sandbox` must be an `http://`, `https://`, `ws://`, or `wss://` URL.')
-    # The client calls one fixed gRPC method at the server root, so it rejects anything after the host.
-    if parts.path not in ('', '/') or '?' in url or '#' in url:
-        raise UserError(
-            '`monty_sandbox` must be the server root, such as `https://sandbox.example.com`, '
-            'without a path, query, or fragment.'
-        )
-
-
 _DURABLE_TURNS_PATCH = 'pydantic_ai_harness.code_mode.durable_turns'
 
 
 def monty_sandbox_from_url(
-    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None,
-    monty_sandbox_url: str | None,
-    owner: str,
-) -> str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None:
+    monty_sandbox: MontySandbox | None, monty_sandbox_url: str | None, owner: str
+) -> MontySandbox | None:
     """The `monty_sandbox` to use, moving the deprecated `monty_sandbox_url` into it."""
     if monty_sandbox_url is None:
         return monty_sandbox
@@ -362,41 +343,16 @@ class CodeModeResourceLimits(TypedDict, total=False):
 
 # Without the deprecated key, which `__post_init__` renames.
 _RESOURCE_LIMIT_KEYS = frozenset(CodeModeResourceLimits.__annotations__) - {'max_duration_secs'}
+_DEFAULT_RESOURCE_LIMITS: CodeModeResourceLimits = {
+    'max_duration_seconds': 30,
+    'max_memory': 256 * 1024 * 1024,
+    'max_suspensions': 1000,
+}
 
 
 def _resolve_resource_limits(limits: CodeModeResourceLimits | Literal['unlimited'] | None) -> ResourceLimits:
     """Merge caller overrides onto the `run_code` backstop."""
-    if limits == 'unlimited':
-        return {}
-    overrides: CodeModeResourceLimits = {} if limits is None else limits
-    unknown = set(overrides) - _RESOURCE_LIMIT_KEYS
-    if unknown:
-        raise UserError(
-            f'Unknown `resource_limits` key(s): {sorted(unknown)}. Valid keys are {sorted(_RESOURCE_LIMIT_KEYS)}.'
-        )
-    # Read as `object` so values from untyped code are checked rather than trusted.
-    max_duration_seconds: object = overrides.get('max_duration_seconds', 30)
-    max_memory: object = overrides.get('max_memory', 256 * 1024 * 1024)
-    max_suspensions: object = overrides.get('max_suspensions', 1000)
-    # Monty stores each limit as an unsigned 64-bit integer, or seconds for the duration; anything else fails
-    # every snippet. An explicit `None` for memory or duration keeps reaching Monty, which reads it as no limit.
-    if not (type(max_suspensions) is int and 1 <= max_suspensions < 2**64):
-        raise UserError('`max_suspensions` must be an integer of at least 1 and below 2**64')
-    if not (
-        max_duration_seconds is None
-        or (
-            (type(max_duration_seconds) is int or isinstance(max_duration_seconds, float))
-            and 0 < max_duration_seconds < 2.0**64
-        )
-    ):
-        raise UserError('`max_duration_seconds` must be a positive number of seconds below 2**64')
-    if not (max_memory is None or (type(max_memory) is int and 0 < max_memory < 2**64)):
-        raise UserError('`max_memory` must be a positive integer number of bytes below 2**64')
-    return {
-        'max_feed_duration_secs': max_duration_seconds,
-        'max_memory': max_memory,
-        'max_suspensions': max_suspensions,
-    }
+    return resolve_limits(limits, keys=_RESOURCE_LIMIT_KEYS, defaults=_DEFAULT_RESOURCE_LIMITS)
 
 
 class _RunCodeArgs(RunCodeArgs):
@@ -1125,20 +1081,11 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         _resolve_resource_limits(self.resource_limits)
         if self.max_tool_calls < 1:
             raise UserError('`max_tool_calls` must be at least 1')
-        sandbox = self.monty_sandbox
-        if isinstance(sandbox, str):
-            _check_monty_sandbox_url(sandbox)
-            run_state = MontyRunState(
-                monty_sandbox_url=sandbox, os_policy=self.os_policy, external_modules=self.external_modules
-            )
-        elif sandbox is None or callable(sandbox):
-            run_state = MontyRunState(
-                pool_factory=sandbox, os_policy=self.os_policy, external_modules=self.external_modules
-            )
-        else:
-            raise UserError('`monty_sandbox` takes a URL or a function that returns the pool, not the pool itself.')
+        check_monty_sandbox(self.monty_sandbox)
         await self.wrapped.__aenter__()
-        self._run_state = run_state
+        self._run_state = MontyRunState(
+            sandbox=self.monty_sandbox, os_policy=self.os_policy, external_modules=self.external_modules
+        )
         self._repl = (
             None
             if self.repl_store is None
@@ -1652,7 +1599,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     @staticmethod
     async def _reset_for_runtime_error(error: MontyFailure, run_state: MontyRunState) -> str:
         if _is_duration_exhausted(error):
-            advice = _TIME_LIMIT_MESSAGE
+            advice = TIME_LIMIT_MESSAGE
         elif 'MemoryError' in error.exception_types and (
             not error.has_traceback or _exhausted_sandbox_limit(error) == 'max_memory'
         ):
@@ -1670,26 +1617,6 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             return ''
         await run_state.reset()
         return f'\n\n{advice}'
-
-    @staticmethod
-    def _worker_failure_message(error: MontyFailure) -> str:
-        if error.kind == 'crashed':
-            return (
-                _TIME_LIMIT_MESSAGE
-                if error.timed_out
-                else 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'
-            )
-        if error.cause == 'turn_timeout':
-            return _TIME_LIMIT_MESSAGE
-        if error.cause in ('session_timeout', 'idle_timeout'):
-            return (
-                'The sandbox session ended; state is lost. Re-run any imports, recreate any state '
-                'you need, and continue in a fresh session.'
-            )
-        return (
-            'The sandbox connection was lost and the session was reset. Re-run any imports, '
-            'recreate any state you need, and try again.'
-        )
 
     async def _feed_failure_retry(
         self, error: BaseException, run_state: MontyRunState, execution: RunCodeExecution, *, fresh_repl: bool
@@ -1724,40 +1651,17 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 reset_advice = await self._reset_for_runtime_error(failure, run_state)
                 _raise_escaped_tool_failed(failure, execution, reset_advice=reset_advice)
                 return _runtime_failure_retry(failure, execution, reset_advice=reset_advice)
-            case 'crashed' | 'disconnected':
-                # The worker died mid-feed (e.g. the code exhausted its memory or hit the
-                # request timeout) and the REPL state died with it; the pool replaces the
-                # worker transparently. Reset so the retry starts from a fresh,
-                # type-checked session.
-                await run_state.reset()
-                _raise_run_ending_error(execution)
-                return ModelRetry(f'{self._worker_failure_message(failure)}{_started_calls_note(execution)}')
             case 'not_stored':
                 # Retrying soon would meet the same refusal, so the run fails with the reason.
                 await run_state.reset()
                 raise UserError(failure.display)
-            case 'other':
-                # The session may have been invalidated by a host-side binding or protocol failure.
-                # Make the reset visible so the model can rebuild state on its next attempt.
+            case 'crashed' | 'disconnected' | 'other' | 'panic':  # pragma: no branch
+                # The worker, its connection, or the host failed rather than the code, so the REPL state
+                # can't be trusted: reset, and the retry starts from a fresh, type-checked session.
                 await run_state.reset()
                 _raise_run_ending_error(execution)
-                error_text = (
-                    failure.type_name if self.monty_sandbox is not None else f'{failure.type_name}: {failure.display}'
-                )
-                return ModelRetry(
-                    'Code execution failed and the session was reset. Re-run any imports, recreate '
-                    f'any state you need, and try again.\n{capture.prepend_to(error_text)}{_started_calls_note(execution)}'
-                )
-            case 'panic':  # pragma: no branch
-                # Convert a sandbox panic to a retry rather than end the run.
-                # A panic aborts the VM mid-execution, so the REPL's accumulated state cannot
-                # be trusted; drop it so the retry starts from a fresh, type-checked session.
-                await run_state.reset()
-                _raise_run_ending_error(execution)
-                return ModelRetry(
-                    'The code aborted inside the sandbox and the session was reset. Revise the code and try again.'
-                    f'{_started_calls_note(execution)}'
-                )
+                message = worker_failure_message(failure, capture, remote=self.monty_sandbox is not None)
+                return ModelRetry(f'{message}{_started_calls_note(execution)}')
 
     def _dispatch_tool_call(
         self,
