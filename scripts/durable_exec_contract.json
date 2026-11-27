@@ -4509,6 +4509,7 @@
       ],
       "kinds": [
         "annotation_only",
+        "attribute_read",
         "import"
       ],
       "sites": [
@@ -4517,6 +4518,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_operation_backend.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_excluded_fields",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_durability.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::<module>",
@@ -4527,6 +4530,17 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_protocol.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_transports.py::<module>"
+      ]
+    },
+    "ModelResponse.pricing_provider": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_excluded_fields"
       ]
     },
     "ModelResponse.provider_name": {
