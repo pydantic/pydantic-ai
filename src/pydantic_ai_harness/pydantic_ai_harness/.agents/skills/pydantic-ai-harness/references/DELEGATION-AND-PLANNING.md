@@ -137,7 +137,9 @@ max_calls=None, on_failure=None, contain_errors=None, on_model_error=None)` sets
   order) from the run's workspace. TOML needs `name`, `description`, and `developer_instructions`;
   unknown keys, including sandbox or permission settings, skip the file with a warning. A run without
   a workspace skips it. A sequence of paths reads exactly those (and fails at run start without a workspace).
-  Pass `workspace=LocalWorkspaceBackend('/app')` to read definitions from elsewhere.
+  Pass `workspace=LocalWorkspaceBackend('/app')` to read definitions from elsewhere. A definition file below
+  `'operator'` workspace authority (`authority_of(path)`) is skipped with a warning before name collisions, so it
+  can't shadow an operator one; read operator-owned ones through `workspace=`.
 - `forward_usage=True`: children share the parent's usage, so a parent `usage_limits` bounds the tree.
   A `SubAgent.usage_limits` gives that child isolated accounting (its tokens stop aggregating).
 - `inherit_tools=False`: `True` is deprecated. Bind tools directly to explicit child agents, use
@@ -150,7 +152,9 @@ max_calls=None, on_failure=None, contain_errors=None, on_model_error=None)` sets
   callback enables `delegate_task(working_directory=...)`. Import `DelegationWorkspaceRequest` from
   `pydantic_ai_harness.sub_agents`. Validate permitted delegates and paths in the callback.
   Keep returned workspaces alive until background children finish. Parent/delegate read-only restrictions
-  still apply; supply trusted read-only tools too. Managed tasks save the resolved directory and reject
+  still apply, and the delegate's workspace gets the lowest authority the parent gives anything in or above
+  that directory: `'none'` for a directory outside the parent's working directory unless a parent
+  `path_authority` entry contains it; supply trusted read-only tools too. Managed tasks save the resolved directory and reject
   directory changes on resume. Remote and durable delegations reject this argument.
 - `include_self=False`: `True` lists the running agent as delegate `self` (fresh run with all bound
   capabilities). `max_depth=3` caps nesting, counting the top-level run.

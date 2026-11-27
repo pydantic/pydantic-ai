@@ -34,6 +34,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.framing import register_tag, wrap
 from pydantic_ai.messages import (
+    Authority,
     BaseToolReturnPart,
     ModelMessage,
     ModelResponse,
@@ -58,7 +59,13 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 # toolsets apart from the agent's own in `agent.toolsets`.
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
-from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai.workspaces import (
+    AuthorityWorkspace,
+    LocalWorkspaceBackend,
+    ReadOnlyWorkspace,
+    Workspace,
+    lowest_authority_under,
+)
 from pydantic_ai_harness._code_tools import reserve_nested_call
 from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._sub_agent_output import (
@@ -1008,7 +1015,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if previous is not None and directory != previous.working_directory:
             # Reject before charging max_calls or publishing task-start events.
             raise ModelRetry(RESUME_DIRECTORY_MISMATCH)
-        return (ReadOnlyWorkspace(workspace) if ctx.workspace.read_only else workspace), directory
+        if ctx.workspace.read_only:
+            workspace = ReadOnlyWorkspace(workspace)
+        return await _with_parent_authority(ctx.workspace, workspace, directory), directory
 
     def _is_self(self, agent_name: str) -> bool:
         """Whether `agent_name` names the running agent, which `include_self` makes a delegate."""
@@ -2003,3 +2012,29 @@ def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: Usage
         cost_limit=cost,
         count_tokens_before_request=parent.count_tokens_before_request or child.count_tokens_before_request,
     )
+
+
+async def _with_parent_authority(parent: Workspace, workspace: Workspace, directory: str) -> Workspace:
+    """`workspace`, rooted at `directory`, with no more [authority][pydantic_ai.messages.Authority] than `parent` gives it.
+
+    A delegate's `working_directory` workspace comes from the host's resolver, which knows nothing of the parent's
+    levels, as it knows nothing of its read-only policy. The delegate's files all get one level, the lower of:
+
+    - the lowest level the parent gives any path at or under `directory`, as
+      [`lowest_authority_under`][pydantic_ai.workspaces.lowest_authority_under] finds it: a directory outside the
+      parent's working directory is at `'none'`, as the parent gives it, unless a `path_authority` entry contains it;
+    - the parent's own level, which a capability reading above the delegate's directory, such as `RepoContext`'s
+      walk-up, gives the ancestors the parent doesn't list.
+
+    It's conservative: a file the parent gives more can get less in the delegate, but none gets more. Wrapping only
+    ever lowers, so the resolver's own levels still apply where they're lower.
+    """
+    if not parent.attached:
+        # A parent without a workspace has no files whose levels the delegate could raise.
+        return workspace
+    levels = {await lowest_authority_under(parent, directory), parent.authority}
+    # Both are needed: a `path_authority` entry can give `directory` more than the workspace's own level. The order
+    # is core's (`'none'` < `'user'` < `'operator'`, as `lowest_authority` in
+    # `pydantic_ai.workspaces._authority_paths` keeps it).
+    lowest: Authority = 'none' if 'none' in levels else 'user' if 'user' in levels else 'operator'
+    return workspace if lowest == 'operator' else AuthorityWorkspace(workspace, authority=lowest)
