@@ -256,6 +256,8 @@ Through the [Pydantic AI Gateway](https://pydantic.dev/docs/ai/overview/gateway/
 - `gateway/anthropic:claude-fable-5-2`
 - `gateway/openai:gpt-6-sol`
 
+Fallbacks configured on a Gateway endpoint can cross API formats (OpenAI to Anthropic or Bedrock, say): the agent follows them automatically, rebuilding the request for the model the Gateway names, so no capability or code change is needed. A `ModelFallback` on the agent only takes over once the Gateway's own chain has failed.
+
 Use a model instance instead of a string when the user needs provider-specific constructor arguments.
 
 A request to a model its provider has deprecated or retired emits a `DeprecatedModelWarning` naming the retirement date, the model the provider routes its requests to from then, if any, and the provider's recommended replacement. Move to that replacement rather than silencing the warning.

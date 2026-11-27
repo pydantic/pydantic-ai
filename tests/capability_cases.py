@@ -647,6 +647,7 @@ CASES: dict[str, CapabilityCase] = {
     ),
     'DeferredCapabilityLoader': CapabilityCase(Anonymous('auto-injected only when absent')),
     'PendingMessageDrainCapability': CapabilityCase(Anonymous('auto-injected only when absent')),
+    'GatewayFallback': CapabilityCase(Anonymous('auto-injected only when absent')),
     '_GroupMember': CapabilityCase(Anonymous('internal: dispatches a deferred group member, never registered')),
     'AnthropicCompaction': CapabilityCase(
         Anonymous('each appends its own compaction edit to `anthropic_context_management`, so two send both edits')

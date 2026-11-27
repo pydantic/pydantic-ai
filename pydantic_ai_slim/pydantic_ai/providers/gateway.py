@@ -2,10 +2,15 @@
 
 from __future__ import annotations as _annotations
 
+import importlib.util
 import os
 import re
 import weakref
-from collections.abc import Callable
+from collections.abc import Callable, Generator, Mapping
+from contextlib import contextmanager
+from contextvars import ContextVar
+from dataclasses import dataclass
+from functools import cache
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx2
@@ -26,7 +31,22 @@ if TYPE_CHECKING:
     from pydantic_ai.providers.anthropic import AsyncAnthropicClient
 
 
-_gateway_providers: weakref.WeakSet[Provider[Any]] = weakref.WeakSet()
+@dataclass(frozen=True)
+class _GatewayConfig:
+    """What a gateway provider was created with, so a provider for another route format can be created like it."""
+
+    api_key: str
+    base_url: str
+    """The base URL without the route."""
+    route: str
+    http_client: AsyncHTTPClient | None
+    """The caller's HTTP client, or `None` when the provider created its own."""
+
+
+_gateway_providers: weakref.WeakKeyDictionary[Provider[Any], _GatewayConfig] = weakref.WeakKeyDictionary()
+
+# The providers `_fallback_provider` created from each gateway provider, by API format.
+_fallback_providers: weakref.WeakKeyDictionary[Provider[Any], dict[str, Provider[Any]]] = weakref.WeakKeyDictionary()
 
 _ProviderT = TypeVar('_ProviderT', bound='Provider[Any]')
 _HTTPClientT = TypeVar('_HTTPClientT', bound=AsyncHTTPClient)
@@ -148,6 +168,19 @@ def gateway_provider(
             region, e.g. `https://gateway-us.pydantic.dev/proxy`.
         http_client: The HTTP client to use for the Gateway.
     """
+    return _create_gateway_provider(
+        upstream_provider, route=route, api_key=api_key, base_url=base_url, http_client=http_client
+    )
+
+
+def _create_gateway_provider(
+    upstream_provider: str,
+    *,
+    route: str | None,
+    api_key: str | None,
+    base_url: str | None,
+    http_client: AsyncHTTPClient | None,
+) -> Provider[Any]:
     api_key = api_key or os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', os.getenv('PAIG_API_KEY'))
     if not api_key:
         raise UserError(
@@ -164,6 +197,7 @@ def gateway_provider(
         # Use the implied providerId as the default route.
         route = _gateway_route(upstream_provider, canonical)
 
+    config = _GatewayConfig(api_key=api_key, base_url=base_url, route=route, http_client=http_client)
     base_url = _merge_url_path(base_url, route)
 
     # Bedrock uses the AWS SDK (botocore) rather than httpx, so skip http_client creation.
@@ -175,7 +209,8 @@ def gateway_provider(
             base_url=base_url,
             region_name='pydantic-ai-gateway',  # Fake region name to avoid NoRegionError
         )
-        _gateway_providers.add(provider)
+        _register_bedrock_fallback_headers(provider.client)
+        _gateway_providers[provider] = config
         provider._model_id_namespace = f'gateway/{provider.name}'  # pyright: ignore[reportPrivateUsage]
         return provider
 
@@ -184,8 +219,7 @@ def gateway_provider(
 
         return _build_gateway_provider(
             lambda client: OpenAIProvider(api_key=api_key, base_url=base_url, http_client=client),
-            api_key=api_key,
-            base_url=base_url,
+            config,
             http_client=http_client,
             create_http_client=create_async_httpx2_client,
         )
@@ -203,8 +237,7 @@ def gateway_provider(
 
         return _build_gateway_provider(
             build_google_provider,
-            api_key=api_key,
-            base_url=base_url,
+            config,
             http_client=http_client,
             create_http_client=_create_google_httpx2_client,
         )
@@ -216,8 +249,9 @@ def gateway_provider(
 
         # Narrower than the other routes: `anthropic>=1` rejects a legacy client outright, so the
         # route can't fall back to one the way the OpenAI and Google routes still do.
-        if http_client is not None and not isinstance(http_client, httpx2.AsyncClient):
+        if not _accepts_http_client(canonical, http_client):
             raise UserError('The Anthropic Gateway route requires an `httpx2.AsyncClient`.')
+        assert http_client is None or isinstance(http_client, httpx2.AsyncClient)  # what `_accepts_http_client` allows
 
         def build_anthropic_provider(client: httpx2.AsyncClient) -> AnthropicProvider:
             return AnthropicProvider(
@@ -226,22 +260,21 @@ def gateway_provider(
 
         return _build_gateway_provider(
             build_anthropic_provider,
-            api_key=api_key,
-            base_url=base_url,
+            config,
             http_client=http_client,
             create_http_client=create_async_httpx2_client,
         )
 
-    if isinstance(http_client, httpx2.AsyncClient):
+    if not _accepts_http_client(canonical, http_client):
         raise UserError('`httpx2.AsyncClient` is only supported for OpenAI, Google and Anthropic Gateway routes.')
+    assert not isinstance(http_client, httpx2.AsyncClient)  # what `_accepts_http_client` allows
 
     if canonical == 'groq':
         from .groq import GroqProvider
 
         return _build_gateway_provider(
             lambda client: GroqProvider(api_key=api_key, base_url=base_url, http_client=client),
-            api_key=api_key,
-            base_url=base_url,
+            config,
             http_client=http_client,
             create_http_client=create_async_http_client,
         )
@@ -251,9 +284,8 @@ def gateway_provider(
 
 def _build_gateway_provider(
     build_provider: Callable[[_HTTPClientT], _ProviderT],
+    config: _GatewayConfig,
     *,
-    api_key: str,
-    base_url: str,
     http_client: _HTTPClientT | None,
     create_http_client: Callable[[], _HTTPClientT],
 ) -> _ProviderT:
@@ -266,20 +298,20 @@ def _build_gateway_provider(
 
     def create_hooked_http_client() -> _HTTPClientT:
         client = create_http_client()
-        _add_request_hook(client, _GatewayRequestHook(api_key, base_url))
+        _add_request_hook(client, _GatewayRequestHook(config.api_key, config.base_url))
         return client
 
     own_http_client = http_client is None
     if http_client is None:
         http_client = create_hooked_http_client()
     else:
-        _add_request_hook(http_client, _GatewayRequestHook(api_key, base_url))
+        _add_request_hook(http_client, _GatewayRequestHook(config.api_key, config.base_url))
 
     provider = build_provider(http_client)
     if own_http_client:
         provider._own_http_client = http_client  # pyright: ignore[reportPrivateUsage]
         provider._http_client_factory = create_hooked_http_client  # pyright: ignore[reportPrivateUsage]
-    _gateway_providers.add(provider)
+    _gateway_providers[provider] = config
     provider._model_id_namespace = f'gateway/{provider.name}'  # pyright: ignore[reportPrivateUsage]
     return provider
 
@@ -352,6 +384,9 @@ class _GatewayRequestHook:
 
         if 'Authorization' not in request.headers:
             request.headers['Authorization'] = f'Bearer {self._api_key}'
+
+        if fallback_headers := _fallback_headers.get():
+            request.headers.update(fallback_headers)
 
         return request
 
@@ -429,6 +464,154 @@ def normalize_gateway_provider(provider: str) -> str:
     if provider in _GATEWAY_ROUTE_APIS:
         return _GATEWAY_ROUTE_APIS[provider]
     return _GATEWAY_PROVIDER_ALIASES.get(provider, provider)
+
+
+# Gateway-directed fallback across API formats.
+#
+# When a Gateway Endpoint fails over to a member in another API format than the request's, the gateway can't forward
+# the request itself. A client that says it can rebuild the request for that format gets a `424` naming the model to
+# send it to instead, plus a state token. The client sends the rebuilt request to the same route with the token, so
+# the gateway resumes the endpoint's chain where it left off. Clients that don't say so have those members skipped.
+
+_FALLBACK_STATUS_CODE = 424
+"""The status of the gateway's hand-back response."""
+
+_FALLBACK_HEADER = 'x-pydantic-ai-fallback'
+_FALLBACK_STATE_HEADER = 'x-pydantic-ai-fallback-state'
+_FALLBACK_MODEL_RESPONSE_HEADER = 'pydantic-ai-gateway-fallback-model'
+_FALLBACK_STATE_RESPONSE_HEADER = 'pydantic-ai-gateway-fallback-state'
+_FALLBACK_PROTOCOL_VERSION = 1
+
+_fallback_headers: ContextVar[Mapping[str, str] | None] = ContextVar('_gateway_fallback_headers', default=None)
+
+
+# The gateway's own API format IDs, with the SDK a model for each needs and the gateway route that serves it.
+_FALLBACK_FORMATS: dict[str, tuple[str, str]] = {
+    'openai': ('openai', 'openai'),
+    'anthropic': ('anthropic', 'anthropic'),
+    'gemini': ('google.genai', 'google-cloud'),
+    'bedrock-converse': ('boto3', 'bedrock'),
+}
+
+
+@cache
+def _installed_fallback_formats() -> tuple[str, ...]:
+    """The API formats this install can build a model for: those whose SDK is installed."""
+    formats: list[str] = []
+    for name, (module, _) in _FALLBACK_FORMATS.items():
+        try:
+            if importlib.util.find_spec(module) is not None:
+                formats.append(name)
+        except ModuleNotFoundError:  # pragma: lax no cover
+            # The parent package of a dotted name, like `google` for `google.genai`, isn't installed.
+            pass
+    return tuple(formats)
+
+
+def _accepted_fallback_formats(http_client: AsyncHTTPClient | None) -> str:
+    """The API formats a request can be handed back in, from a provider created with `http_client`.
+
+    A format whose route can't use the caller's HTTP client is left out, so the gateway skips its members rather than
+    have the request resent without the client's proxy, TLS and other settings.
+    """
+    return ','.join(
+        name for name in _installed_fallback_formats() if _accepts_http_client(_FALLBACK_FORMATS[name][1], http_client)
+    )
+
+
+@contextmanager
+def _fallback_headers_scope(provider: Provider[Any], state: str | None) -> Generator[None]:
+    """Tell the gateway, on the requests sent in this scope, that the client handles a fallback across API formats.
+
+    `provider` is the gateway provider sending the requests, and `state` is the token of the hand-back that sent the
+    request here, if any.
+    """
+    formats = _accepted_fallback_formats(_gateway_providers[provider].http_client)
+    headers = {_FALLBACK_HEADER: f'{_FALLBACK_PROTOCOL_VERSION}; formats={formats}'}
+    if state is not None:
+        headers[_FALLBACK_STATE_HEADER] = state
+    token = _fallback_headers.set(headers)
+    try:
+        yield
+    finally:
+        _fallback_headers.reset(token)
+
+
+def _fallback_target(headers: Mapping[str, str] | None) -> tuple[str, str | None] | None:  # pyright: ignore[reportUnusedFunction]
+    """The model a gateway hand-back response names, and its state token, read from the response's headers.
+
+    Only a `gateway/<provider>:<model>` string counts: the request goes back to the same gateway, with the same
+    credentials.
+    """
+    if headers is None or not (model := headers.get(_FALLBACK_MODEL_RESPONSE_HEADER)):
+        return None
+    if not (model.startswith('gateway/') and ':' in model):
+        return None
+    upstream, model_name = model.removeprefix('gateway/').split(':', 1)
+    if not (upstream and model_name):
+        return None
+    # A format can also be named by the gateway's ID for it, as in the `formats` the client advertised.
+    upstream = {'gemini': 'google', 'bedrock-converse': 'bedrock'}.get(upstream, upstream)
+    return f'gateway/{upstream}:{model_name}', headers.get(_FALLBACK_STATE_RESPONSE_HEADER)
+
+
+def _fallback_provider(provider: Provider[Any], upstream_provider: str) -> Provider[Any]:  # pyright: ignore[reportUnusedFunction]
+    """A gateway provider for `upstream_provider` with the credentials, base URL and route gateway `provider` has.
+
+    The new provider uses the caller's HTTP client, if any, so the resent request keeps its proxy, TLS and other
+    settings; a route that can't use it raises `UserError` instead of falling back to a default client. Each is
+    created once per `provider` and API format, so the requests the gateway hands back from it reuse one client, as
+    those to `provider` itself do.
+    """
+    canonical = normalize_gateway_provider(upstream_provider)
+    created = _fallback_providers.setdefault(provider, {})
+    if (fallback := created.get(canonical)) is None:
+        config = _gateway_providers[provider]
+        if not _accepts_http_client(canonical, config.http_client):
+            raise UserError(
+                f'The Gateway handed the request back to the {canonical!r} route, which cannot use the HTTP client the '
+                'original provider was created with.'
+            )
+        fallback = created[canonical] = _create_gateway_provider(
+            canonical,
+            route=config.route,
+            api_key=config.api_key,
+            base_url=config.base_url,
+            http_client=config.http_client,
+        )
+    return fallback
+
+
+def _accepts_http_client(canonical: str, http_client: AsyncHTTPClient | None) -> bool:
+    """Whether the route for `canonical` takes `http_client`: the one place each route's client support is decided.
+
+    Bedrock goes through botocore, so it takes none; Anthropic takes only an `httpx2.AsyncClient`; the OpenAI and Google
+    routes take either; the rest take only a legacy `httpx.AsyncClient`. Every route works without one.
+    """
+    if http_client is None:
+        return True
+    if canonical == 'bedrock':
+        return False
+    if canonical == 'anthropic':
+        return isinstance(http_client, httpx2.AsyncClient)
+    if canonical in ('openai', 'openai-chat', 'openai-responses', 'google-cloud'):
+        return True
+    return not isinstance(http_client, httpx2.AsyncClient)
+
+
+def _register_bedrock_fallback_headers(client: BaseClient) -> None:
+    """Send the fallback headers on Converse requests too, which go through botocore rather than httpx."""
+    for operation in ('Converse', 'ConverseStream'):
+        client.meta.events.register(
+            f'before-call.bedrock-runtime.{operation}',
+            _inject_bedrock_fallback_headers,
+            unique_id=f'pydantic-ai-gateway-fallback-{operation}',
+        )
+
+
+def _inject_bedrock_fallback_headers(params: dict[str, Any], **_: Any) -> None:
+    if fallback_headers := _fallback_headers.get():
+        params['headers'].update(fallback_headers)
 
 
 _PYDANTIC_TOKEN_PATTERN = re.compile(r'^pylf_v(?P<version>[0-9]+)_(?P<region>[a-z]+)_[a-zA-Z0-9-_]+$')

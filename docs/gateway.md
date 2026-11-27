@@ -425,6 +425,19 @@ The first known use of "hello, world" was in a 1974 textbook about the C program
 
 1. The slug of the gateway endpoint you created in Logfire.
 
+### Falling back across API formats
+
+An endpoint's providers don't have to speak the same API format: an endpoint can fall back from an OpenAI provider to an Anthropic or Bedrock one, say. The Gateway can't forward a request to a provider in another format itself, so it hands the request back to Pydantic AI, naming the model to send it to, and the agent sends the request there instead. The request is built again for that model, with its own message format, settings and native tools, as it would be for a candidate of [`ModelFallback`](capabilities/model-fallback.md). This happens automatically for every `gateway/` model in an agent run, with the same API key, base URL, `route` and `http_client` as the `gateway/` model whose request the Gateway handed back. If you passed an `http_client` that a format's route can't use (Bedrock takes none, and Anthropic only takes an `httpx2.AsyncClient`), Pydantic AI tells the Gateway it can't follow a fallback to that format, so the Gateway skips those providers rather than have the request sent without your client's proxy, TLS and other settings.
+
+Only Pydantic AI can follow a fallback like this, so other clients skip the providers in another format than the request's. A few things stay the same as for any fallback:
+
+- The response names the model that answered, and lists the attempt the Gateway handed back in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts]. When the agent is [instrumented](logfire.md), that attempt gets its own `model request attempt` span with an ERROR status. See [Failed attempts and telemetry](capabilities/model-fallback.md#failed-attempts-and-telemetry).
+- A [`ModelFallback`](capabilities/model-fallback.md) on the agent takes over once the Gateway's chain has failed, rather than on the first hand-back.
+- A streamed request is handed back before any output reaches you, so it's followed too.
+- Direct [`Model.request()`][pydantic_ai.models.Model.request] calls, the candidates of a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] (use [`ModelFallback`](capabilities/model-fallback.md) instead), [batch requests](batch.md), and runs under [durable execution](durable_execution/overview.md) aren't handed back: the Gateway falls back within the request's API format only, as it does for other clients.
+- In a capability's model request hooks, `request_context.model` for a `gateway/` model is a wrapper that adds the fallback headers. It answers for your model (its `profile`, `model_name`, `settings` and so on), and its `.wrapped` attribute is your model itself, for an `isinstance` check.
+- Embedding requests are never handed back: embeddings from different models can't be compared with each other.
+
 ## Troubleshooting
 
 ### Unable to calculate spend

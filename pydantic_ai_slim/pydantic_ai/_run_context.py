@@ -1533,7 +1533,8 @@ def in_durable_unit() -> bool:
     `FlowRunContext` is set inside a task), so a `DurableWorkspace` call or a capability's durable
     operation called from a tool goes direct. Every engine also sets it around a model unit, so an
     `OpenAIResponsesModel` uses HTTP unless it can borrow an explicit outer model or agent scope's
-    WebSocket on the same event loop.
+    WebSocket on the same event loop. `reject_serving_wrapper` also enters it on the workflow side,
+    around a synchronous `get_wrapper_model` call only, to ask which wrappers the unit would apply.
     """
     return _IN_DURABLE_UNIT.get()
 
