@@ -335,6 +335,7 @@ class Sessions(Generic[DepsT, OutputT]):
         """Pick from Pax's sessions and not-yet-imported ones, listing only one agent's sessions at first with `source`."""
         entries = await self.store.listing(archived=None)
         self.namer.backfill([entry for entry in entries if entry.archived_at is None], client=self.naming)
+        entries = await self._with_own_copies(entries, query='', limit=200, source=source)
         imports = await run_sync(ImportCatalog, IMPORT_SOURCES)
         loop = asyncio.get_running_loop()
 
@@ -353,7 +354,8 @@ class Sessions(Generic[DepsT, OutputT]):
             ]
 
         def listing(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
-            saved = apply(self.store.listing(query=query, limit=limit))
+            page = apply(self.store.listing(query=query, limit=limit))
+            saved = apply(self._with_own_copies(page, query=query, limit=limit, source=source))
             return self._browser_entries(saved, on_disk(query, limit), limit=limit, archived=archived, source=source)
 
         retitled: dict[str, str] = {}
@@ -399,6 +401,27 @@ class Sessions(Generic[DepsT, OutputT]):
             # The browser opens mid-turn, but a running conversation cannot be swapped out.
             return f'A turn is running. Enter /resume {selected} to restore that session once it ends.'
         return await self.resume(selected, allow_other_workspace=True, unarchive=unarchive)
+
+    async def _with_own_copies(
+        self, saved: list[ConversationSummary], *, query: str, limit: int, source: ImportSource | None
+    ) -> list[ConversationSummary]:
+        """`saved`, the store's newest `limit`, with `source`'s own newest `limit` copies from the pages after it.
+
+        Naming an agent lists its own newest originals past the overall cut, so their copies must be there
+        too, or an original Pax already imported would be offered to import again in its copy's place.
+        """
+        if source is None:
+            return saved
+        entries, page, offset = list(saved), saved, len(saved)
+        own = sum(source_of(entry) == source for entry in saved)
+        while own < limit and len(page) == limit:
+            page = await self.store.listing(query=query, limit=limit, offset=offset)
+            offset += len(page)
+            # Only the agent's own are kept from later pages; the rest stay past the cut.
+            mine = [entry for entry in page if source_of(entry) == source]
+            entries += mine
+            own += len(mine)
+        return entries
 
     @staticmethod
     def _browser_entries(

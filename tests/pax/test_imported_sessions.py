@@ -1393,6 +1393,31 @@ async def test_resume_with_a_source_lists_that_agents_sessions_past_newer_ones(
     assert seen == [(1, 201), (1, 201), (200, 200), (200, 200)]
 
 
+async def test_resume_with_a_source_lists_its_copy_past_newer_pax_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The copy takes its original's place even when more Pax sessions than the browser lists are newer than it."""
+    service, store = sessions_service(tmp_path)
+    os.utime(claude_session(tmp_path), (1_000, 1_000))
+    await service.command(['claude', CLAUDE_ID])
+    copy = service.session.conversation_id
+    await service.session.clear()
+    for _ in range(201):
+        await store.save(summary=ConversationSummary(id=str(uuid4()), workspace=str(tmp_path)), messages=[])
+    seen: list[list[bool]] = []
+
+    def check(browser: SessionBrowser) -> str:
+        for _ in range(2):
+            seen.append([browser.importing(entry) for entry in browser.visible if entry.id == copy])
+            browser.reload()
+        return ''
+
+    monkeypatch.setattr(SessionBrowser, 'run', check)
+    assert await service.command(['claude']) == ''
+    # Listed once, opening and reloading, as the copy rather than an original still to import.
+    assert seen == [[False], [False]]
+
+
 async def test_resume_browser_marks_a_copy_whose_original_moved_on(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
