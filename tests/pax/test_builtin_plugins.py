@@ -28,6 +28,7 @@ CURATED = {
     'repo_context',
     'compaction',
     'refinement',
+    'advisor',
     'persistence',
     'observability',
     'notifications',
@@ -51,6 +52,7 @@ CURATED = {
     'workspaces',
 }
 OPT_IN = {
+    'advisor',
     'aoe',
     'day_ai',
     'github',
