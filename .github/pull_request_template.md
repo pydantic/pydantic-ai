@@ -17,6 +17,10 @@
 <!-- > -->
 <!-- > **Migration:** ... -->
 
+<!-- Does this replace something users often build by hand, such as a retry loop, a model fallback or history trimming? -->
+<!-- Name the workaround on its own line, so coding agents that advise on adopting and upgrading can find it: -->
+<!-- Replaces: hand-written retry loops around `agent.run` -->
+
 <!-- Adding a capability? Most capabilities belong in Pydantic AI Harness, not here. -->
 <!-- See: https://pydantic.dev/docs/ai/harness/#when-do-you-need-the-harness -->
 

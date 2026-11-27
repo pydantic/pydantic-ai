@@ -165,6 +165,11 @@ contents from the count. For a feature or behavior change, use this order:
    reproduce the behavior.
 5. **What changes for existing users** — State the effect in one sentence. `Nothing` is valid.
 
+When a feature replaces something users commonly build by hand (a retry loop around `agent.run`, a
+model fallback, history trimming), add one line starting `Replaces:` that names the workaround, as the
+PR template shows. The `advising-pydantic-ai-repos` skill reads it from the PR to find that workaround in
+users' code. Leave it out when nothing would be replaced.
+
 Use one collapsed `<details>` section per goal only when the PR has multiple independent goals.
 For a trivial PR, use the issue link, a short summary, and the test plan.
 
