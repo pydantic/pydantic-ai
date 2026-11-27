@@ -930,6 +930,25 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           REVIEW_URL: ${{ needs.prior-findings.outputs.review_url }}
 
+      - name: Report review cancelled
+        # `cancel-in-progress` is true for a newer push and for removing `douwebot:review-agent-config`, and a
+        # run can be cancelled by hand as well, so this does not name a cause. The ordinary `douwebot` label is
+        # already gone by now, removed above; the approval label is never removed automatically, so what to do
+        # next differs per label. Without this the PR shows no label, no review and no failed job, which reads
+        # as nobody having asked for one.
+        if: always() && (needs.review.result == 'cancelled' || needs.douwebot-opencode.result == 'cancelled')
+        run: |
+          if [ "$LABEL" = 'douwebot' ]; then
+            again="Re-apply the \`$LABEL\` label to run the review again."
+          else
+            again="To run it again, remove the \`$LABEL\` label if it is still there, then add it."
+          fi
+          gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" \
+            --body "The \`$LABEL\` review was cancelled before it finished, so there is no verdict on this PR. $again"
+        env:
+          GH_TOKEN: ${{ github.token }}
+          LABEL: ${{ github.event.label.name }}
+
       # Without this, a review that crashed and a review that found nothing look
       # identical from the PR: the label is gone either way and no comment lands.
       # A silent breakage went unnoticed for three weeks that way.
