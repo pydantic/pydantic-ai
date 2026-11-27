@@ -55,6 +55,7 @@ from pydantic_ai.messages import (
     PartEndEvent,
     PartStartEvent,
     SpeechPart,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     ToolResultSource,
@@ -1570,7 +1571,7 @@ async def test_session_span_includes_resolved_run_attributes() -> None:
     ]
 
 
-async def test_session_span_marks_seeded_history_boundary() -> None:
+async def test_session_span_index_unchanged_for_single_part_seed() -> None:
     # A session seeded with `message_history=` includes the seeded messages in
     # `pydantic_ai.all_messages` and marks where this session's own messages begin with
     # `pydantic_ai.new_message_index`, exactly like a classic run given `message_history=`.
@@ -1591,6 +1592,28 @@ async def test_session_span_marks_seeded_history_boundary() -> None:
     all_messages = json.loads(str(sess.attributes['pydantic_ai.all_messages']))
     assert [m['role'] for m in all_messages] == ['user', 'assistant', 'user']
     assert all_messages[2]['parts'] == [{'type': 'text', 'content': 'and now?'}]
+
+
+async def test_session_span_index_counts_converted_entries_with_multi_part_seed() -> None:
+    # A seeded `ModelRequest` holding several role groups converts to several OTEL entries, so the
+    # span's `pydantic_ai.new_message_index` counts converted seed entries, not seeded messages.
+    settings, exporter = _settings()
+    conn = _Connection([InputTranscript(text='and now?', is_final=True), ResponseDone()])
+    seeded: list[ModelMessage] = [
+        ModelRequest(parts=[SystemPromptPart(content='be helpful'), UserPromptPart(content='earlier question')]),
+        ModelResponse(parts=[TextPart(content='earlier answer')]),
+    ]
+    session = RealtimeSession(
+        conn, _ok_runner, instrumentation=settings, model_name='gpt-realtime', message_history=seeded
+    )
+    _ = await collect_events(session)
+
+    sess = next(s for s in exporter.get_finished_spans() if s.name == 'invoke_agent agent')
+    assert sess.attributes is not None
+    assert sess.attributes['pydantic_ai.new_message_index'] == 3
+    all_messages = json.loads(str(sess.attributes['pydantic_ai.all_messages']))
+    assert [m['role'] for m in all_messages] == ['system', 'user', 'assistant', 'user']
+    assert all_messages[3]['parts'] == [{'type': 'text', 'content': 'and now?'}]
 
 
 async def test_include_content_false_redacts_transcript_messages() -> None:
