@@ -804,15 +804,15 @@ print(result.output)
     the token limit mid-thinking), and an empty or thinking-only response with a `'content_filter'` finish
     reason raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Other empty or thinking-only
     responses are re-prompted, up to the output retry limit. Non-empty responses are handled normally
-    regardless of finish reason, except for output that was cut off at `'length'` into JSON that doesn't parse,
-    or into a tool call with no arguments: a tool call, function or output tool alike, raises
-    [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
-    `OutputTokenLimitExceeded`, itself an `UnexpectedModelBehavior`) right away. (Under the `'graceful'` and
-    `'exhaustive'` [end strategies](../output.md#parallel-output-tool-calls), a function tool call in a response that
-    also has an output tool call with valid arguments is re-prompted like any other invalid-arguments failure
-    instead.) Likewise,
-    [`NativeOutput`][pydantic_ai.output.NativeOutput] or [`PromptedOutput`][pydantic_ai.output.PromptedOutput]
-    text raises `OutputTokenLimitExceeded` right away.
+    regardless of finish reason, except for output that was cut off at `'length'`. A tool call, function or output
+    tool alike, whose arguments were cut off into JSON that doesn't parse, or into no arguments that the tool's
+    schema doesn't accept, raises [`IncompleteToolCall`][pydantic_ai.exceptions.IncompleteToolCall] (a subclass of
+    `OutputTokenLimitExceeded`, itself an `UnexpectedModelBehavior`) right away. A function tool call in a response
+    that also has an output tool call with valid arguments is not treated as cut off: under the `'graceful'` and
+    `'exhaustive'` [end strategies](../output.md#parallel-output-tool-calls) it's retried, and under `'early'` it's
+    skipped once that output becomes the final result. [`NativeOutput`][pydantic_ai.output.NativeOutput] or
+    [`PromptedOutput`][pydantic_ai.output.PromptedOutput] text that was cut off into JSON that doesn't parse raises
+    `OutputTokenLimitExceeded` right away.
 
     All of these are raised from the agent loop, after `model.request()` has already returned
     successfully, so an exception-based `fallback_on` can't catch them: not the default

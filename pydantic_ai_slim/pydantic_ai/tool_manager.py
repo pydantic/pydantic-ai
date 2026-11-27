@@ -15,6 +15,7 @@ from pydantic import ValidationError
 from . import _usage_attribution, messages as _messages
 from ._deferred import filter_deferred_results, jsonable_validated_args
 from ._output import (
+    ObjectOutputProcessor,
     OutputSchema,
     OutputToolset,
     build_retried_tool_return,
@@ -1193,6 +1194,30 @@ class ToolManager(Generic[AgentDepsT]):
 
     # --- Output tool methods (output hooks, no tool hooks) ---
 
+    def _resolve_output_tool(
+        self, call: ToolCallPart, *, allow_partial: bool
+    ) -> tuple[str, ToolsetTool[AgentDepsT], RunContext[AgentDepsT], ObjectOutputProcessor[Any]]:
+        """Resolve the name, tool, run context and output processor that an output tool call is validated with."""
+        # Output tool names are pre-classified by _classify_tool_calls, so _resolve_tool
+        # should never fail here. The assert documents this invariant.
+        name, tool = self._resolve_tool(call)
+        assert isinstance(tool.toolset, OutputToolset), f'Expected output tool, got {type(tool.toolset).__name__}'
+        ctx = self._build_tool_context(call, tool, allow_partial=allow_partial)
+        return name, tool, ctx, tool.toolset.processors[name]
+
+    def _output_tool_call_args_valid(self, call: ToolCallPart) -> bool:
+        """Whether an output tool call's arguments pass the validation that `validate_output_tool_call` runs on them.
+
+        Only the output processor's `hook_validate` runs: no output hook, output function or output validator, and no
+        retry is counted or failed tool recorded.
+        """
+        try:
+            _name, _tool, ctx, processor = self._resolve_output_tool(call, allow_partial=False)
+            processor.hook_validate(call.args if call.args is not None else {}, run_context=ctx)
+        except (ValidationError, ModelRetry):
+            return False
+        return True
+
     async def validate_output_tool_call(
         self,
         call: ToolCallPart,
@@ -1214,14 +1239,7 @@ class ToolManager(Generic[AgentDepsT]):
             UnexpectedModelBehavior: If max retries exceeded.
         """
         assert self.ctx is not None
-        # Output tool names are pre-classified by _classify_tool_calls, so _resolve_tool
-        # should never fail here. The assert documents this invariant.
-        name, tool = self._resolve_tool(call)
-        assert isinstance(tool.toolset, OutputToolset), f'Expected output tool, got {type(tool.toolset).__name__}'
-        ctx = self._build_tool_context(call, tool, allow_partial=allow_partial)
-
-        toolset = tool.toolset
-        processor = toolset.processors[name]
+        name, tool, ctx, processor = self._resolve_output_tool(call, allow_partial=allow_partial)
         output_context = processor.get_output_context(schema, mode='tool', tool_call=call, tool_def=tool.tool_def)
 
         # Output hooks see the semantic value (what the model was asked to produce), not the

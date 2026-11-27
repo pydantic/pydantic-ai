@@ -19,7 +19,6 @@ from contextlib import aclosing
 from copy import deepcopy
 from typing import TYPE_CHECKING, Any, Generic, Literal, assert_never, cast
 
-from pydantic import ValidationError
 from typing_extensions import TypeVar
 
 from pydantic_ai._run_context import EventStreamBuffer
@@ -789,30 +788,15 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         run. (`'exhaustive'` validates function tool calls before it runs any output tool, so the final result isn't
         known yet then.)
         """
-        if not validated.args_valid and self.final_result is None and not self._has_output_call_with_valid_args():
+        if (
+            not validated.args_valid
+            and self.final_result is None
+            and not any(
+                self.tool_manager._output_tool_call_args_valid(self.tool_calls[i])  # pyright: ignore[reportPrivateUsage]
+                for i in self.output_indices
+            )
+        ):
             self.ctx.state.check_incomplete_tool_call(validated.call)
-
-    def _has_output_call_with_valid_args(self) -> bool:
-        """Whether an output tool call in the response has arguments that validate against its schema.
-
-        Only the arguments are validated, with the output tool's `args_validator`: no output hook, output function
-        or output validator runs, and no retry is counted.
-        """
-        tools, run_context = self.tool_manager.tools, self.tool_manager.ctx
-        assert tools is not None and run_context is not None
-        validation_context = run_context.validation_context
-        for i in self.output_indices:
-            call = self.tool_calls[i]
-            tool = tools[call.tool_name]
-            try:
-                if isinstance(call.args, str):
-                    tool.args_validator.validate_json(call.args or '{}', context=validation_context)
-                else:
-                    tool.args_validator.validate_python(call.args or {}, context=validation_context)
-            except (ValidationError, exceptions.ModelRetry):
-                continue
-            return True
-        return False
 
     def _skip_function_call(self, call: _messages.ToolCallPart) -> Iterator[_messages.HandleResponseEvent]:
         """Record a 'not executed' stub for a call skipped because a final result was already processed.
