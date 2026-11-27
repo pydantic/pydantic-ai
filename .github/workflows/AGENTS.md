@@ -36,6 +36,8 @@ previous label-as-switch design left a window in which a push got *neither* revi
 checked again when `CI` passes; a label or dispatch must be repeated. Nothing removes the
 `final-review` label: to retry a skipped request, remove and reapply it. A head that
 already has a `CI Review` is not reviewed again.
+An approval or `final-review` label requests a review only on a pull request into the default
+branch.
 
 `CI Review` starts on `workflow_run`, `pull_request_review`, `pull_request` (the
 `final-review` label) and `workflow_dispatch`. `workflow_run` and `workflow_dispatch`
@@ -330,7 +332,10 @@ Publication is serialized per PR and marks the `Gate:` statuses pending before s
 incomplete data fail closed. After the requirements are met, a new evaluation replaces the previous
 failure through GitHub's latest-per-context commit statuses. Rerun an existing current-head,
 default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add
-branch-selectable dispatch to this privileged workflow. Workflows and scripts remain owned in `.github/CODEOWNERS`.
+branch-selectable dispatch to this privileged workflow. Do not rerun a run whose `Resolve review gate target` job
+was skipped. That run woke on a cancelled run, a merge group, or a skipped `PR Review Checks` run, and its rerun
+skips again.
+Workflows and scripts remain owned in `.github/CODEOWNERS`.
 
 # `PR Review Checks` reviews every same-repository pull request head
 
