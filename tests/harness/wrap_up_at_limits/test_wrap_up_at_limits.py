@@ -360,11 +360,16 @@ class TestWrapUpAtLimits:
         assert wrapped_up_by(result.new_messages()) == 'request_limit'
 
     async def test_timeout_margin_none_does_not_wrap_up_for_time(self) -> None:
+        # 20s steps leave 10s of the 90s by the fifth request, so time would run out well before `request_limit=10`.
         result = await _agent(_Researcher(_Clock()), [], WrapUpAtLimits(timeout_margin=None)).run(
-            'Research', usage_limits=UsageLimits(request_limit=5), timeout=90
+            'Research', usage_limits=UsageLimits(request_limit=10), timeout=90
         )
 
         assert wrapped_up_by(result.new_messages()) == 'request_limit'
+
+    def test_a_negative_timeout_margin_is_refused(self) -> None:
+        with pytest.raises(UserError, match='must not be negative'):
+            WrapUpAtLimits(timeout_margin=-30)
 
     @pytest.mark.moves_cache_prefix(reason='with tool output, the final request sends only the output tools')
     @pytest.mark.parametrize(

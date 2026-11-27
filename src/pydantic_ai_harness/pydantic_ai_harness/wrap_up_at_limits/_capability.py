@@ -5,11 +5,11 @@ from __future__ import annotations
 from collections.abc import Sequence
 from dataclasses import dataclass, field, replace
 from decimal import Decimal
-from itertools import pairwise
 from typing import TYPE_CHECKING, Literal, TypeAlias, TypeVar
 
 from pydantic_ai._capability_parts import check_operator_text
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     InstructionCapabilityPart,
     ModelMessage,
@@ -85,17 +85,22 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
     timeout_margin: float | None = 0.0
     """Seconds to keep in reserve before the run's `timeout=` deadline, on top of the projected time.
 
-    `None` doesn't wrap up for time.
+    `None` doesn't wrap up for time. A negative margin is refused, as it would wrap up too late.
     """
 
-    _remaining_times: list[float] = field(default_factory=list[float], init=False, repr=False, compare=False)
-    """The seconds left before the deadline at each of this run's requests, to measure its steps by."""
+    _last_remaining: float | None = field(default=None, init=False, repr=False, compare=False)
+    """The seconds left before the deadline at this run's previous request."""
+
+    _longest_step: float = field(default=0.0, init=False, repr=False, compare=False)
+    """The seconds the run's longest step took, from one request to the next."""
 
     _longest_response: float = field(default=0.0, init=False, repr=False, compare=False)
     """The seconds the run's slowest model response took, counted from its request."""
 
     def __post_init__(self) -> None:
         check_operator_text(self.prompt, what='`WrapUpAtLimits.prompt`')
+        if self.timeout_margin is not None and self.timeout_margin < 0:
+            raise UserError(f'`WrapUpAtLimits.timeout_margin` must not be negative, got {self.timeout_margin}.')
 
     async def for_run(self, ctx: RunContext[AgentDepsT]) -> WrapUpAtLimits[AgentDepsT]:
         """Return a fresh capability, so each run measures its own steps."""
@@ -106,8 +111,8 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
     ) -> ModelResponse:
         """Measure how long the model took to respond, to project the final response by."""
         remaining = ctx.remaining_time()
-        if remaining is not None and self._remaining_times:
-            self._longest_response = max(self._longest_response, self._remaining_times[-1] - remaining)
+        if remaining is not None and self._last_remaining is not None:
+            self._longest_response = max(self._longest_response, self._last_remaining - remaining)
         return response
 
     async def before_model_request(
@@ -137,7 +142,8 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
         return replace(request_context, model_settings=settings)
 
     def _wrap_up_reason(self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage]) -> LimitName | None:
-        time_up = self._time_up(ctx)
+        # Measured before the usage limits are checked, so this request's time is recorded even when one fires.
+        time_up = self._record_time_and_check(ctx)
         if ctx.usage_limits is not None:
             prompt_tokens = len(self.prompt) // CHARS_PER_TOKEN
             limit = _limit_reached(ctx.usage, ctx.usage_limits, _run_responses(messages, ctx.run_id), prompt_tokens)
@@ -145,8 +151,8 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
                 return limit
         return 'timeout' if time_up else None
 
-    def _time_up(self, ctx: RunContext[AgentDepsT]) -> bool:
-        """Whether the time left fits this request's step but not a final response after it.
+    def _record_time_and_check(self, ctx: RunContext[AgentDepsT]) -> bool:
+        """Record this request's time left, and say whether it fits this request's step but not a final response.
 
         A step, from one request to the next with its tool calls, is assumed to take as long as the run's
         longest so far, and the final response as long as its slowest response, since it makes no tool calls.
@@ -154,9 +160,10 @@ class WrapUpAtLimits(AbstractCapability[AgentDepsT]):
         remaining = ctx.remaining_time()
         if self.timeout_margin is None or remaining is None:
             return False
-        self._remaining_times.append(remaining)
-        longest_step = max((before - after for before, after in pairwise(self._remaining_times)), default=0.0)
-        return remaining < longest_step + self._longest_response + self.timeout_margin
+        if self._last_remaining is not None:
+            self._longest_step = max(self._longest_step, self._last_remaining - remaining)
+        self._last_remaining = remaining
+        return remaining < self._longest_step + self._longest_response + self.timeout_margin
 
 
 def wrapped_up_by(messages: Sequence[ModelMessage]) -> LimitName | None:
