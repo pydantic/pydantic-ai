@@ -214,6 +214,16 @@ session; edit the project file to change it permanently. When a name exists in
 more than one place, your own server wins, then plugin settings, then
 `.clai/mcp_servers.json`, then `.mcp.json`.
 
+Accepting a file lets its servers run; it doesn't make them yours. A project
+server has the authority Pax gives the folder's files, which
+[folder trust](docs/reference.md#folder-trust) sets. In a trusted folder it is
+offered like your own servers. In an untrusted one, Pax lowers its capability
+to `'none'` authority with `with_authority`, eager or on demand, so what the
+capability sends mid-conversation reaches the model as the repository's data,
+not as yours. Its tool names and descriptions still reach the model as the
+server wrote them. Your own servers and plugin-settings servers keep your
+authority in any folder.
+
 ### Plugin settings and gaps
 
 Servers configured the older way, as plugin settings

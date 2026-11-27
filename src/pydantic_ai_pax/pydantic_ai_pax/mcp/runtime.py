@@ -3,6 +3,8 @@
 Enabled servers are offered to every run, by default as the on-demand capability `mcp_NAME`: the model
 sees one catalog line until it loads it, and only then does a run connect the server and list its tools.
 A server with `"defer_loading": false` is eager instead: the first prompt (or `/mcp start`) connects it.
+A server from a repository's project file has that file's authority, which the session's folder trust sets:
+in an untrusted folder its capability is lowered to `'none'`, eager or on demand (see `MCPServers.authority`).
 A connected server holds the connection open between prompts, which the dashboard reports as `running`.
 A server that fails to connect is marked `error` and left out, so it cannot fail the prompt.
 `stop` releases the connection and disables the server.
@@ -25,6 +27,7 @@ from anyio import to_thread
 
 from pydantic_ai import RunContext
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, Toolset
+from pydantic_ai.messages import Authority
 from pydantic_ai.toolsets import AbstractToolset, CombinedToolset, ToolsetTool
 from pydantic_ai_pax.mcp.settings import (
     RemoteServer,
@@ -38,6 +41,7 @@ from pydantic_ai_pax.mcp.settings import (
 from pydantic_ai_pax.mcp.store import MCPStore
 from pydantic_ai_pax.mcp.tokens import OAuthSignIn, TokenStore
 from pydantic_ai_pax.plugins.sign_in import SignInRequiredError, not_signed_in
+from pydantic_ai_pax.runtime.session import folder_authority
 
 if TYPE_CHECKING:
     from pydantic_ai.mcp import MCPToolset
@@ -239,12 +243,27 @@ class MCPServers:
         for name in list(self._connections):
             await self._release(name)
 
+    async def authority(self, entry: ServerEntry) -> Authority:
+        """The most authority the server's capability has: that of the file that configures it.
+
+        Your `mcp.json` and plugin settings are yours, so `'operator'`. A project file is the repository's: it has the
+        authority the session gives its folder's files (`folder_authority`), which folder trust sets, as for the
+        instruction files Pax reads from the folder and the folders above it. Accepting the file with `/mcp trust`
+        lets its servers run; it doesn't change their authority.
+        """
+        if entry.source != 'project':
+            return 'operator'
+        return await folder_authority(self.store.workspace)
+
     async def toolset(self, ctx: RunContext[None]) -> AbstractToolset[None] | None:
-        """The enabled eager servers for this run, each prefixed with its name."""
+        """The enabled eager servers for this run with `'operator'` authority, each prefixed with its name.
+
+        One below it is its own capability instead (see `capability`).
+        """
         await self.sync()
         toolsets: list[AbstractToolset[None]] = []
         for entry in self._usable():
-            if entry.server.defer_loading:
+            if entry.server.defer_loading or await self.authority(entry) != 'operator':
                 continue
             toolset = await self._attach(entry)
             if toolset is not None:
@@ -252,21 +271,28 @@ class MCPServers:
         return CombinedToolset(toolsets) if toolsets else None
 
     async def capability(self, ctx: RunContext[None]) -> AbstractCapability[None] | None:
-        """The enabled on-demand servers for this run, each its own deferred capability.
+        """The enabled on-demand servers for this run, each its own deferred capability, and the eager ones below `'operator'`.
 
-        Nothing connects here: a server connects on the first run step after the model loads it.
+        Each server below `'operator'` authority is lowered to it with `with_authority`. An on-demand server connects on
+        the first run step after the model loads it; an eager one here, and one that cannot connect is left out, as
+        `toolset` leaves out the others.
         """
         await self.sync()
-        capabilities: list[AbstractCapability[None]] = [
-            Toolset(
-                _OnDemandToolset(capability_id=capability_id(entry.name), attach=partial(self._attach, entry)),
-                id=capability_id(entry.name),
-                description=self.description(entry),
-                defer_loading=True,
-            )
-            for entry in self._usable()
-            if entry.server.defer_loading
-        ]
+        capabilities: list[AbstractCapability[None]] = []
+        for entry in self._usable():
+            authority = await self.authority(entry)
+            if entry.server.defer_loading:
+                capability = Toolset(
+                    _OnDemandToolset(capability_id=capability_id(entry.name), attach=partial(self._attach, entry)),
+                    id=capability_id(entry.name),
+                    description=self.description(entry),
+                    defer_loading=True,
+                )
+            elif authority != 'operator' and (toolset := await self._attach(entry)) is not None:
+                capability = Toolset(toolset, id=capability_id(entry.name))
+            else:
+                continue
+            capabilities.append(capability if authority == 'operator' else capability.with_authority(authority))
         return CombinedCapability(capabilities) if capabilities else None
 
     def _usable(self) -> list[ServerEntry]:
