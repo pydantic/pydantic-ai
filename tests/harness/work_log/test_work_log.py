@@ -329,6 +329,7 @@ class TestWorkLog:
             (True, False, [('text', 'hello')]),
             (True, True, [('thinking', 'pondering'), ('text', 'hello')]),
             (False, False, []),
+            (False, True, [('thinking', 'pondering')]),
         ],
     )
     async def test_text_is_logged_and_thinking_only_when_asked(
@@ -582,9 +583,6 @@ class TestWorkLogCodeMode:
         # Filler statements leave stream to go after the calls close, so the launched calls can run meanwhile.
         args = json.dumps({'code': code + ''.join(f'\npad_{index} = {index}' for index in range(20)) + '\n"ok"'})
 
-        def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            return ModelResponse(parts=[TextPart('done')])
-
         alpha_started = anyio.Event()
         # The alpha call's statement has closed once the stream is past `print(b)`.
         closed_at = args.index('print(b)') + len('print(b)')
@@ -611,7 +609,7 @@ class TestWorkLogCodeMode:
 
         store = InMemoryWorkLogStore()
         agent = Agent(
-            FunctionModel(answer, stream_function=stream),
+            FunctionModel(stream_function=stream),
             deps_type=type(None),
             tools=[search],
             capabilities=[CodeMode[None](speculate=['search']), WorkLog(store)],
@@ -877,6 +875,19 @@ class TestWorkLogTools:
         assert earlier == f'{"a" * 20_000}\n{"b" * 20_000}'
         assert long == 'z' * 50_000
         assert long_from_end == f'{"z" * 49_994}\nshort'
+
+    async def test_a_cap_on_a_line_break_cuts_no_line(self) -> None:
+        store = InMemoryWorkLogStore()
+        await store.append(_CONVERSATION, _record('k1', 'a' * 50_000 + '\nb'))
+        await store.append(_CONVERSATION, _record('k2', 'a\n' + 'b' * 50_000))
+
+        found = await _call_tools(store, ('read_work_log', {'seq': 1}), ('read_work_log', {'seq': 2, 'from_end': True}))
+
+        reads = [_READ.validate_python(result) for result in found]
+        assert [(read['text'], read['next_offset'], read['capped'], read['cut_at']) for read in reads] == [
+            ('a' * 50_000, 1, True, None),
+            ('b' * 50_000, 1, True, None),
+        ]
 
     async def test_a_cut_line_continues_in_a_bytes_read(self) -> None:
         content = '\n'.join(letter * 20_000 for letter in 'abcd')
