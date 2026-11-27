@@ -250,6 +250,7 @@ the usual instrumentation settings.
   already did, not for a file's current contents.
 - Speculative calls keep their provisional IDs; the log does not map them to the IDs the script
   would have given them.
+- It can't be loaded from an [agent spec](https://pydantic.dev/docs/ai/core-concepts/agent-spec/): its store is an object. Build it in Python.
 
 ## Further reading
 

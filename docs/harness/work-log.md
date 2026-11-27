@@ -147,6 +147,7 @@ Keep the `id` fixed once a workflow is live. Under a durable engine a store oper
 - A search reads the conversation's whole log on every call, so it gets slower as the log grows.
 - The log holds files as they were when the tool read them. A later write is not reflected in an earlier entry. The log is for results that are expensive to get again and for what the model already did, not for a file's current contents.
 - Speculative calls keep their provisional IDs; the log does not map them to the IDs the script would have given them.
+- It can't be loaded from an [agent spec](../agent-spec.md): its store is an object. Build it in Python.
 
 ## Further reading
 

@@ -223,7 +223,8 @@ class FileWorkLogStore:
             file.write(f'{line}\n'.encode())
 
 
-_ENTRY_FILE = re.compile(r'(\d{8,})-([0-9a-f]{16})\.json')
+# The lookbehind keeps a search from retrying inside a run of digits, so scanning stays linear.
+_ENTRY_FILE = re.compile(r'(?<!\d)(\d{8,})-([0-9a-f]{16})\.json')
 """An entry file's name: its zero-padded `seq`, then the start of its key's SHA-256 digest."""
 
 

@@ -291,6 +291,7 @@ conversation ends), `FileWorkLogStore(directory)` (one JSONL file per conversati
 Gotchas:
 - Not logged: deferred or approval-gated calls until they run, argument-validation failures, the
   work log's own tool calls, user prompts, and files (a placeholder names the media type).
+- It can't be loaded from an agent spec (`get_serialization_name()` returns `None`); build it in Python.
 - `ModelRetry` is logged as `retried`; other exceptions as `failed` and still raised. A result an outer hook rejects gets a `success` and a `retried` entry.
 - Both tools' returns are exempt from `ToolOutputLimits`, and both return other tools' results by
   their own UI visibility, so a `'private'` tool's result reaches a UI client through them under a

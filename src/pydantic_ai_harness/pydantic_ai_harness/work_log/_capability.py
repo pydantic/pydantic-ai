@@ -112,6 +112,11 @@ class WorkLog(AbstractCapability[AgentDepsT]):
         """Two under one `id` are one log stated twice; two that disagree raise rather than merge."""
         return one_per_id(capabilities)
 
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        """Not spec-serializable: `store` is a live object, and a store's spec form is not designed yet."""
+        return None
+
     def get_ordering(self) -> CapabilityOrdering:
         # Inside `ToolOutputLimits`: inner `after_tool_execute` hooks run first, so the log sees a
         # result before it is reduced.

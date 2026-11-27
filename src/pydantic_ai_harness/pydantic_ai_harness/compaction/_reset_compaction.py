@@ -78,9 +78,7 @@ class ResetNoticePart(
 
 
 @dataclass(kw_only=True)
-class CurrentStatePart(
-    DataCapabilityPart[str], namespace='reset_compaction', name='current_state', tag='current_state'
-):
+class CurrentStatePart(DataCapabilityPart[str], namespace='reset_compaction', name='state', tag='current_state'):
     """The task's current state, as `ResetCompaction.restate` returns it, right after the notice.
 
     Return one from `restate` to give the text its real source, such as `OperatorSource()` for text the
