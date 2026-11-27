@@ -85,6 +85,7 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     ModelHTTPError,
     ModelNotFoundError,
+    ModelSchemaTooComplexError,
     ModelServerError,
     UserError,
 )
@@ -274,7 +275,7 @@ def _map_client_error(
             suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
         hint = _DATA_RETENTION_HINT if isinstance(message, str) and 'data retention mode' in message.lower() else None
         if strict_schema_limits and status_code == 400 and is_schema_too_complex_error(message):
-            hint = SCHEMA_TOO_COMPLEX_HINT
+            category, hint = ModelSchemaTooComplexError, SCHEMA_TOO_COMPLEX_HINT
         return ModelHTTPError.for_category(
             category or _model_errors.http_status_category(status_code, message),
             status_code=status_code,
@@ -993,6 +994,11 @@ class BedrockConverseModel(Model[BaseClient]):
             return 'anthropic'
         return super().canonical_system
 
+    def _classifies_schema_too_complex(self) -> bool:
+        # Only a model that compiles strict schemas with Anthropic's limits, i.e. Claude, gets its 400 for a schema
+        # that's too complex classified as `ModelSchemaTooComplexError`.
+        return self.profile.get('anthropic_enforces_strict_schema_limits', False)
+
     @property
     def _canonical_system_stamp(self) -> str | None:
         """Also stamp `'bedrock'` on responses from models with the `openai_responses` thinking variant.
@@ -1618,7 +1624,7 @@ class BedrockConverseModel(Model[BaseClient]):
         with _map_api_errors(
             self.model_name,
             self._provider.model_id_namespace,
-            strict_schema_limits=self.profile.get('anthropic_enforces_strict_schema_limits', False),
+            strict_schema_limits=self._classifies_schema_too_complex(),
         ):
             if stream:
                 model_response = await _call_bedrock(

@@ -1,5 +1,5 @@
 {
-  "against": "v2.75.0",
+  "against": "v2.76.0",
   "reason": "`MistralModel.unsupported_settings` adds `citations`: the class never produces `TextPart.citations`, so it already ignored the setting and now declares it. `citations` is not a setting `Model.prepare_request` warns about, so no request or warning changes.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14782"
 }

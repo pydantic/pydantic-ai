@@ -271,11 +271,11 @@ GitHub matches required checks by job name, even across workflows and event type
 
 `Gate: .github changes by a maintainer` fails a PR that changes a file under `.github/`, or renames
 one out of it, unless its author is a `User` with `write` or `admin` permission, or `dependabot[bot]`.
-It applies at every size. The review status requires a clean douwebot approval for M/L/XL.
+It applies at every size. `Gate: clean douwebot approval` requires a clean douwebot approval for M/L/XL.
 The status fails until exactly one size label matches the shared PR Bots calculation; changing a label cannot
 lower the computed bar. PR Bots recalculates on open, push and PR edits, including base-branch changes.
 PR Bots labels only a trusted pull request; see
-[`trusted:ci-run`](#trustedci-run-activates-an-apps-pull-request). Size S remains a manual policy judgment. Merge groups receive success without reevaluating queue
+[`trusted:ci-run`](#trustedci-run-activates-an-apps-pull-request). On size S the douwebot approval remains a manual policy judgment. Merge groups receive success without reevaluating queue
 members because the review requirements are enforced before admission.
 
 A clean douwebot approval is the latest non-dismissed completed verdict on the current head, with no inline or
@@ -290,11 +290,32 @@ A clean OpenCode fallback approval satisfies the same gate as a Claude approval.
 An `engine=opencode-zai` review from before the Coding Plan moved to `glm-5.4` names `glm-5.3-flash` in its attribution.
 The gate and the `prior-findings` job read both attributions; `EARLIER_REVIEW_ATTRIBUTIONS` in `publish_douwebot_review.py` lists the earlier ones.
 
+`Gate: review findings dispositioned` applies at every size and counts findings on every head. Each inline
+thread a review bot starts needs a reply from a `User`: the pull request's author or a user with write access.
+The reply's first line that starts with one of these forms answers the finding:
+
+- `Fixed in <sha>`: a commit of this pull request.
+- `Tracked in #<n>`: another issue or pull request in this repository. Without write access, the replier must cite
+  one opened at or after the finding.
+- `Declined: <reason>`: counts from a user with write access, and from the author on a douwebot `Optional:` finding.
+
+The `PR Review Gates` run that the status links to lists each unanswered thread, and why each reply in one of these
+forms does not count. Rewriting the pull request's history drops earlier commits from it, so post `Fixed in` again
+with the new commits.
+
+Resolving a thread does not answer it, except that a thread started before 2026-11-27 02:00 UTC needs no reply
+once resolved. `REVIEWER_LOGINS` in `review_gates.py` names the review bots, and receipts tell douwebot,
+`PR Review Checks` and `CI Review` apart on `github-actions[bot]`. On a thread from an unregistered bot, or a
+`github-actions[bot]` thread without one of those receipts, only a reply from a user with write access counts, and the
+`PR Review Gates` run still lists the thread as unregistered. Threads a person starts and
+review-body findings are not checked. `CI Review` findings do not wake the gate yet (#13971), so the status
+reflects them only from the next wake-up.
+
 `pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews
 and inline-comment changes with a read-only token, including on forks. GitHub Actions has no
 review-thread trigger, so resolving an optional finding's thread updates the status on the next wake-up. Its completion wakes
-`PR Review Gates`, which also runs on PR Bots completion. The latter covers writes by `GITHUB_TOKEN`,
-which cannot trigger the observer. Do not add a `pull_request_target` trigger to `PR Review Gates`:
+`PR Review Gates`, which also runs on PR Bots and `PR Review Checks` completion, outside merge groups. These
+cover writes by `GITHUB_TOKEN`, which cannot trigger the observer. Do not add a `pull_request_target` trigger to `PR Review Gates`:
 GitHub blocks that event by default in public repositories (#12961). The publisher binds each
 wake-up to the unique open PR GitHub reports for its exact head SHA and repository. A review or
 inline-comment run reports the base repository as its head repository, even for a fork PR, so that
@@ -304,7 +325,7 @@ observers may need contributor approval.
 
 The `Gate: …` commit statuses carry the review verdict. The publisher job succeeds after publishing
 those statuses, including a failing verdict for an unmet requirement. The job fails on publisher errors.
-Publication is serialized per PR and marks both `Gate:` statuses pending before setup. API errors or
+Publication is serialized per PR and marks the `Gate:` statuses pending before setup. API errors or
 incomplete data fail closed. After the requirements are met, a new evaluation replaces the previous
 failure through GitHub's latest-per-context commit statuses. Rerun an existing current-head,
 default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add
