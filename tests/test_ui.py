@@ -449,56 +449,120 @@ async def test_event_stream_restarted_part_ends_open_text():
     )
 
 
-def _ag_ui_start_key(event: dict[str, Any]) -> tuple[str, str]:
-    """Identity of an AG-UI `*_START` event, for pairing it with its `*_END`."""
-    return (event['type'][: -len('_START')], str(event.get('messageId') or event.get('toolCallId')))
+# Expected encoder output for the republished-part-start stream, one entry per
+# (protocol, part_kind). Exact event lists make the end-before-restart semantics explicit:
+# every `*_START` is closed before the next one opens, and before the run finishes.
+# Volatile fields (wall-clock timestamps, generated UUIDs) are normalized away by
+# `_normalize_encoder_events` below, so each snapshot pins structure, not a run's ids.
+_RESTARTED_PART_EVENTS: dict[tuple[str, str], Any] = {
+    ('ag-ui', 'thinking'): snapshot(
+        [
+            {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1', 'protocolVersion': '1.0'},
+            {'type': 'REASONING_START', 'messageId': 'generated-0'},
+            {'type': 'REASONING_MESSAGE_START', 'messageId': 'generated-0', 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'messageId': 'generated-0', 'delta': 'Hel'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'messageId': 'generated-0', 'delta': 'lo'},
+            {'type': 'REASONING_MESSAGE_END', 'messageId': 'generated-0'},
+            {'type': 'REASONING_END', 'messageId': 'generated-0'},
+            {'type': 'REASONING_START', 'messageId': 'generated-1'},
+            {'type': 'REASONING_MESSAGE_START', 'messageId': 'generated-1', 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'messageId': 'generated-1', 'delta': 'Hel'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'messageId': 'generated-1', 'delta': ', world'},
+            {'type': 'REASONING_MESSAGE_END', 'messageId': 'generated-1'},
+            {'type': 'REASONING_END', 'messageId': 'generated-1'},
+            {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1', 'outcome': {'type': 'success'}},
+        ]
+    ),
+    ('ag-ui', 'tool-call'): snapshot(
+        [
+            {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1', 'protocolVersion': '1.0'},
+            {'type': 'TEXT_MESSAGE_START', 'messageId': 'generated-0', 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_END', 'messageId': 'generated-0'},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'generated-1',
+                'toolCallName': 'get_time',
+                'parentMessageId': 'generated-0',
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'generated-1', 'delta': '{"tz": '},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'generated-1', 'delta': '"UTC"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'generated-1'},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'generated-1',
+                'toolCallName': 'get_time',
+                'parentMessageId': 'generated-0',
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'generated-1', 'delta': '{"tz": '},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'generated-1', 'delta': '"UTC"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'generated-1'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': 'generated-2',
+                'toolCallId': 'generated-1',
+                'content': '12:00',
+                'role': 'tool',
+            },
+            {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1', 'outcome': {'type': 'success'}},
+        ]
+    ),
+    ('vercel-ai', 'thinking'): snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'reasoning-start', 'id': 'generated-0'},
+            {'type': 'reasoning-delta', 'id': 'generated-0', 'delta': 'Hel'},
+            {'type': 'reasoning-delta', 'id': 'generated-0', 'delta': 'lo'},
+            {'type': 'reasoning-end', 'id': 'generated-0'},
+            {'type': 'reasoning-start', 'id': 'generated-1'},
+            {'type': 'reasoning-delta', 'id': 'generated-1', 'delta': 'Hel'},
+            {'type': 'reasoning-delta', 'id': 'generated-1', 'delta': ', world'},
+            {'type': 'reasoning-end', 'id': 'generated-1'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    ),
+    ('vercel-ai', 'tool-call'): snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'generated-0', 'toolName': 'get_time'},
+            {'type': 'tool-input-delta', 'toolCallId': 'generated-0', 'inputTextDelta': '{"tz": '},
+            {'type': 'tool-input-delta', 'toolCallId': 'generated-0', 'inputTextDelta': '"UTC"}'},
+            {'type': 'tool-input-start', 'toolCallId': 'generated-0', 'toolName': 'get_time'},
+            {'type': 'tool-input-delta', 'toolCallId': 'generated-0', 'inputTextDelta': '{"tz": '},
+            {'type': 'tool-input-delta', 'toolCallId': 'generated-0', 'inputTextDelta': '"UTC"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'generated-0',
+                'toolName': 'get_time',
+                'input': {'tz': 'UTC'},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'generated-0', 'output': '12:00'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    ),
+}
 
 
-def _ag_ui_end_key(event: dict[str, Any]) -> tuple[str, str]:
-    """Identity of an AG-UI `*_END` event, as `{{<_kind>}}_START` keys are spelled."""
-    return (event['type'][: -len('_END')], str(event.get('messageId') or event.get('toolCallId')))
+def _normalize_encoder_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop wall-clock timestamps and relabel generated ids so runs compare stably.
 
-
-def _assert_ag_ui_no_start_open_at_run_finished(events: list[dict[str, Any]]) -> None:
-    """Mirror of the AG-UI client verifier's rule: `RUN_FINISHED` with an open start is invalid.
-
-    `verifyEvents` (TypeScript `@ag-ui/client`) rejects `RUN_FINISHED` while a text message is
-    still open; the same bookkeeping covers tool calls and the thinking/reasoning envelopes.
-    `RUN_STARTED` does not end with `_START` and needs no special case.
+    Timestamps are epoch milliseconds and message/part ids are UUIDs minted per run; both
+    would defeat exact snapshots. Relabeling preserves the identity semantics the test
+    cares about: the same id keeps the same label, so a restarted part visibly mints a
+    new one.
     """
-    open_starts: list[tuple[str, str]] = []
+    normalized: list[dict[str, Any]] = []
+    labels: dict[str, str] = {}
     for event in events:
-        type_ = event['type']
-        if type_ == 'RUN_FINISHED':
-            assert not open_starts, f'still open at RUN_FINISHED: {open_starts}'
-        elif type_.endswith('_START'):
-            open_starts.append(_ag_ui_start_key(event))
-        elif type_.endswith('_END'):
-            open_starts.remove(_ag_ui_end_key(event))
-
-
-def _assert_vercel_no_part_open_at_finish(events: list[dict[str, Any]]) -> None:
-    """Every Vercel AI data stream start is closed before the `finish` chunk.
-
-    An unclosed `text-start`/`reasoning-start` leaves the client message streaming, and an
-    unclosed `tool-input-start` leaves the call in `input-streaming` (its closing chunk is
-    `tool-input-available`/`tool-input-error`, emitted when the call result or error arrives).
-    """
-    open_parts: list[str] = []
-    streaming_calls: set[str] = set()
-    for event in events:
-        type_ = event['type']
-        if type_ in ('text-start', 'reasoning-start'):
-            open_parts.append(str(event['id']))
-        elif type_ in ('text-end', 'reasoning-end'):
-            open_parts.remove(str(event['id']))
-        elif type_ == 'tool-input-start':
-            streaming_calls.add(str(event['toolCallId']))
-        elif type_ in ('tool-input-available', 'tool-input-error'):
-            streaming_calls.discard(str(event['toolCallId']))
-        elif type_ == 'finish':
-            assert not open_parts, f'message parts still open at finish: {open_parts}'
-            assert not streaming_calls, f'calls still input-streaming at finish: {streaming_calls}'
+        cleaned = {key: value for key, value in event.items() if key != 'timestamp'}
+        for id_key in ('messageId', 'id', 'toolCallId', 'parentMessageId'):
+            if id_key in cleaned:
+                cleaned[id_key] = labels.setdefault(str(cleaned[id_key]), f'generated-{len(labels)}')
+        normalized.append(cleaned)
+    return normalized
 
 
 @pytest.mark.parametrize('part_kind', ['thinking', 'tool-call'])
@@ -575,10 +639,7 @@ async def test_event_stream_restarted_part_ends_open_part_in_real_encoders(proto
             if '[DONE]' not in event
         ]
 
-    if protocol == 'ag-ui':
-        _assert_ag_ui_no_start_open_at_run_finished(events)
-    else:
-        _assert_vercel_no_part_open_at_finish(events)
+    assert _normalize_encoder_events(events) == _RESTARTED_PART_EVENTS[(protocol, part_kind)]
 
 
 async def test_event_stream_error_closes_open_thinking():
