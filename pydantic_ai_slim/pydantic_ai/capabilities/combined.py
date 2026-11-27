@@ -833,6 +833,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 cap_ctx = _ctx_for_active_cap(capability, ctx)
                 if cap_ctx is None or not capability._handles_model_request_error(cap_ctx, request_context):
                     continue
+                said = _what_it_says(error, copy=True)
                 try:
                     recovered = await capability.on_model_request_error(
                         cap_ctx, request_context=request_context, error=error
@@ -843,8 +844,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                     # an outer one recover from — or re-wrap — the request for another attempt.
                     raise
                 except Exception as new_error:
-                    if new_error is not error:
-                        _hold_raised_from_error_hook(cap_ctx, new_error)
+                    _hold_raised_from_error_hook(cap_ctx, new_error, handed=error, said=said)
                     error = new_error
                     continue
                 if (held := _held_to_ceiling(cap_ctx)) is not None:
@@ -1551,8 +1551,15 @@ def _check_handler_responses_unchanged(
         raise _writes_model_turn(held, f"change the response's parts {where}")
 
 
-def _hold_raised_from_error_hook(cap_ctx: RunContext[Any], raised: Exception) -> None:
-    """Hold what a capability's `on_model_request_error` raised itself, rather than handed on, to its authority."""
+def _hold_raised_from_error_hook(
+    cap_ctx: RunContext[Any], raised: Exception, *, handed: Exception, said: object
+) -> None:
+    """Hold what a capability's `on_model_request_error` raised itself, rather than handed on, to its authority.
+
+    Re-raising the error it was `handed` hands it on, unless the hook changed what it says (`said` before the hook ran).
+    """
+    if raised is handed and says_the_same(_what_it_says(raised), said):
+        return
     if (held := _held_to_ceiling(cap_ctx)) is None:
         return
     if isinstance(raised, SkipModelRequest):
