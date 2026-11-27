@@ -625,18 +625,17 @@ class TestResetCompaction:
     async def test_a_run_continued_from_the_whole_conversation_resets_again_and_counts_on(self) -> None:
         """`result.conversation` keeps what each reset cleared, so the next run resets on its first request.
 
-        Each reset leaves its notice among the messages it cleared, so the count follows the highest number and the
-        model gets one notice, the new one.
+        It does so even when the run before answered once after its own reset, which leaves the notice after the
+        responses it kept. The model gets one notice, the new one, numbered on from the highest.
         """
         work_log = WorkLog[None]()
+        reset = ResetCompaction(work_log, max_messages=6, notice=_numbered)
         script = Script([_call(f'city{index}', f'c{index}') for index in range(4)])
-        agent = _agent(script, ResetCompaction(work_log, max_messages=6, notice=_numbered), work_log=work_log)
-
-        result = await agent.run('Plan the trip.', conversation_id=_CONVERSATION)
-        for prompt in ('And Rome?', 'And Milan?'):
+        result = await _agent(script, reset, work_log=work_log).run('Plan the trip.', conversation_id=_CONVERSATION)
+        for prompt in ('And Rome?', 'And Milan?', 'And Oslo?'):
             [(highest, _)] = _notices(result.all_messages())
-            script.seen.clear()
-            result = await agent.run(prompt, conversation=result.conversation)
+            script = Script()
+            result = await _agent(script, reset, work_log=work_log).run(prompt, conversation=result.conversation)
 
             assert _seen_notices(script.seen[0]) == [f'Reset #{highest + 1}.']
 

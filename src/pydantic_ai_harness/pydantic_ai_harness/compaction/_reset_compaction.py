@@ -389,32 +389,26 @@ def is_reset_part(part: ModelRequestPart) -> bool:
     return isinstance(part, ResetNoticePart | CurrentStatePart)
 
 
-def last_reset_notice(messages: Sequence[ModelMessage]) -> ResetNoticePart | None:
-    """The newest reset notice in *messages*, including one merged into another request, or `None`."""
-    for message in reversed(messages):
-        if isinstance(message, ModelRequest):
-            for part in reversed(message.parts):
-                if isinstance(part, ResetNoticePart):
-                    return part
-    return None
+def newest_reset_notice(messages: Sequence[ModelMessage]) -> ResetNoticePart | None:
+    """The reset notice in *messages* with the highest number, including one merged into another request, or `None`.
+
+    The highest rather than the last: `result.conversation` places a notice after the messages the run was given,
+    so a notice from a reset in a continued run comes after the responses that reset kept, and need not come last.
+    """
+    notices = [
+        part
+        for message in messages
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ResetNoticePart)
+    ]
+    return max(notices, key=lambda notice: notice.number, default=None)
 
 
 def reset_count(messages: Sequence[ModelMessage]) -> int:
-    """How many times the conversation in *messages* has been cleared: the highest notice number, or 0.
-
-    The highest rather than the last: `result.conversation` keeps each notice where the reset put it among the
-    messages it cleared, so the newest notice need not come last.
-    """
-    return max(
-        (
-            part.number
-            for message in messages
-            if isinstance(message, ModelRequest)
-            for part in message.parts
-            if isinstance(part, ResetNoticePart)
-        ),
-        default=0,
-    )
+    """How many times the conversation in *messages* has been cleared: the newest notice's number, or 0."""
+    notice = newest_reset_notice(messages)
+    return 0 if notice is None else notice.number
 
 
 def without_reset_parts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
@@ -429,14 +423,13 @@ def without_reset_parts(messages: Sequence[ModelMessage]) -> list[ModelMessage]:
 
 
 def responses_past_kept(messages: Sequence[ModelMessage]) -> int | None:
-    """Model responses after the latest reset notice beyond those that reset kept, or `None` before any reset.
+    """Model responses in *messages* beyond those the newest reset kept, or `None` before any reset.
 
+    Counted over the whole history, not after the notice: a reset's own history holds no responses but the ones it
+    kept, while `result.conversation` also holds the ones it cleared and can place the notice after the kept ones.
     Responses rather than messages: core merges consecutive requests in a continued history, never responses.
     """
-    responses = 0
-    for message in reversed(messages):
-        if isinstance(message, ModelResponse):
-            responses += 1
-        elif (notice := last_reset_notice([message])) is not None:
-            return responses - notice.kept_responses
-    return None
+    notice = newest_reset_notice(messages)
+    if notice is None:
+        return None
+    return sum(isinstance(message, ModelResponse) for message in messages) - notice.kept_responses
