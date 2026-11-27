@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import hashlib
 from collections.abc import Sequence
 from dataclasses import dataclass, field
 from typing import TYPE_CHECKING, Any, NoReturn
@@ -9,20 +8,18 @@ import anyio
 
 from pydantic_ai._agent_graph import _agent_graph_sleep  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai._fallback import (
+    TRANSIENT_MODEL_ERRORS,
     FallbackOn,
     FallbackPredicates,
     SpecModelError,
+    jittered_backoff,
     spec_error_types,
     warn_response_handlers_not_applied,
 )
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.exceptions import (
     ModelAPIError,
-    ModelConnectionError,
     ModelHTTPError,
-    ModelRateLimitError,
-    ModelServerError,
-    ModelUnavailableError,
     RetryModelRequest,
     UsageLimitExceeded,
     UserError,
@@ -41,22 +38,6 @@ if TYPE_CHECKING:
 
 __all__ = ('TRANSIENT_MODEL_ERRORS', 'RetryOnModelErrors')
 
-TRANSIENT_MODEL_ERRORS: tuple[type[ModelAPIError], ...] = (
-    ModelRateLimitError,
-    ModelUnavailableError,
-    ModelServerError,
-    ModelConnectionError,
-)
-"""The model errors that waiting may fix, which [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors]
-retries by default.
-
-[`ModelRateLimitError`][pydantic_ai.exceptions.ModelRateLimitError],
-[`ModelUnavailableError`][pydantic_ai.exceptions.ModelUnavailableError] (including an overloaded model),
-[`ModelServerError`][pydantic_ai.exceptions.ModelServerError] and
-[`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] (including a transport timeout or an HTTP
-408). Extend it to retry another error too, as in `retry_on=(*TRANSIENT_MODEL_ERRORS, MyError)`, or check an error
-against it with `isinstance(error, TRANSIENT_MODEL_ERRORS)`.
-"""
 # `TRANSIENT_MODEL_ERRORS` by name, for the spec schema.
 _DEFAULT_SPEC_RETRY_ON: tuple[SpecModelError, ...] = (
     'ModelRateLimitError',
@@ -204,14 +185,16 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
 
         An attempt is one more at the same model, or the first at another one, whichever capability asked for it, so
         a `ModelFallback` moving on to its next model starts a fresh budget, and two of these capabilities share one
-        per model. A retry gets what's left of the first attempt's `request_timeout` rather than a fresh one, so the
-        deadline covers the retries and the waits between them.
+        per model. A new `ModelFallback` pass also starts a fresh budget when it starts over on the model the last
+        pass ended on. A retry gets what's left of the first attempt's `request_timeout` rather than a fresh one, so
+        the deadline covers the retries and the waits between them.
         """
         # The model may be wrapped by now, e.g. by a durable-execution capability, and wasn't on the previous attempt.
         model = unwrap_model(request_context.model)
         settings: ModelSettings = merge_model_settings(model.settings, request_context.model_settings) or {}
         updates: ModelSettings = {}
-        if self._step == ctx.run_step and model is self._model:
+        new_pass = request_context._new_fallback_pass  # pyright: ignore[reportPrivateUsage]
+        if self._step == ctx.run_step and model is self._model and not new_pass:
             self._attempt += 1
             if self._deadline is not None:
                 updates['request_timeout'] = max(self._deadline - _now(), 0.0)
@@ -279,8 +262,9 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
                 return None
             delay = max(retry_after, 0.0)
         else:
-            backoff = min(self.initial_delay * 2 ** (self._attempt - 1), self.max_delay)
-            delay = backoff * (1 - _jitter(ctx, self._attempt) / 2)
+            delay = jittered_backoff(
+                ctx, self._attempt, initial_delay=self.initial_delay, max_delay=self.max_delay, key=str(self._attempt)
+            )
         if (remaining := ctx.remaining_time()) is not None and delay >= remaining:
             # The run would time out while waiting; raising now lets a `ModelFallback` try another model instead.
             return None
@@ -325,13 +309,3 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
 def _now() -> float:
     # The clock a `request_timeout` deadline is set on: the workflow's on Temporal, which replays it.
     return anyio.current_time()  # workflow-nondeterminism-ok: the clock `request_timeout` runs on, replayed by Temporal
-
-
-def _jitter(ctx: RunContext[Any], attempt: int) -> float:
-    """A number in `[0, 1)` that differs between runs, steps and attempts, and is the same when a run is replayed.
-
-    Derived from the run's ID rather than drawn at random, so a durable execution engine replaying the run waits the
-    same delay it recorded, while runs that fail at the same moment still spread out their retries.
-    """
-    digest = hashlib.blake2b(f'{ctx.run_id}:{ctx.run_step}:{attempt}'.encode(), digest_size=8).digest()
-    return int.from_bytes(digest, 'big') / 2**64

@@ -721,6 +721,12 @@ class ModelRequestContext:
     _usage_response_ledger: _ModelRequestUsageLedger = field(
         default_factory=_ModelRequestUsageLedger, repr=False, compare=False
     )
+    _new_fallback_pass: bool = field(default=False, repr=False, compare=False)
+    """Whether this attempt is the first of a new `ModelFallback` pass through its chain.
+
+    Set by `ModelFallback.prepare_model_request`, so that a `RetryOnModelErrors` gives the model a fresh budget even
+    when the pass starts over on the model the last pass ended on.
+    """
     _serving_wrapper: tuple[Model, Model] | None = field(default=None, repr=False, compare=False)
     """The model a capability's `get_wrapper_model` returned to serve the request, which is entered around it, and
     the model it wraps, whose lifecycle its owner manages."""

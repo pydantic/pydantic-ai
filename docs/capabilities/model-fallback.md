@@ -313,7 +313,7 @@ capabilities:
       fallback_on: [ModelRateLimitError, ModelUnavailableError]
 ```
 
-A spec can also set [`sticky: true`](#staying-on-the-model-that-answered) the same way.
+A spec can also set [`sticky: true`](#staying-on-the-model-that-answered) and [`passes`, `initial_delay` and `max_delay`](#going-through-the-chain-again) the same way.
 
 Model names are resolved when they're attempted, like those passed to `ModelFallback(...)`, so a spec can also list model IDs of your own that a [`ResolveModelId`](resolve-model-id.md) capability resolves, passed to [`Agent.from_spec()`][pydantic_ai.agent.Agent.from_spec] or [`Agent.from_file()`][pydantic_ai.agent.Agent.from_file] with `capabilities=`.
 
@@ -437,6 +437,24 @@ The second run goes straight to the backup model. Every response records the mod
 
 `sticky` only replaces the agent's default model: a model passed to `agent.run(model=...)` or [`Agent.override`][pydantic_ai.agent.Agent.override], or selected by a capability such as [`SelectModel`](select-model.md), is still attempted first. A recorded candidate that's no longer among `ModelFallback`'s models is ignored.
 
+## Going through the chain again
+
+By default, a request every model in the chain failed raises a [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup] straight away. When the models are likely to come back soon, as when several providers are overloaded at the same moment, set `passes` to go through the whole chain again after a wait, starting over from the model the first pass started with:
+
+```python {title="model_fallback_passes.py"}
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import ModelFallback
+
+# Try both models, and if both fail with a transient error, try both again after up to a second, then up to two.
+agent = Agent('{{ openai:medium }}', capabilities=[ModelFallback('{{ anthropic:medium }}', passes=3)])
+```
+
+`passes` counts the first time through, so the default `1` never starts over. Another pass is only worth it if waiting may fix what went wrong, so one is only started when at least one model in the pass that failed raised one of the errors [`TRANSIENT_MODEL_ERRORS`][pydantic_ai.capabilities.TRANSIENT_MODEL_ERRORS] lists: a rate limit, an unavailable or overloaded model, a server error or a connection error, unless the provider said retrying won't help. A pass that failed only on errors like an authentication error or a refusal, or on responses `fallback_on` rejected, would fail the same way again, so its `FallbackExceptionGroup` is raised straight away. The wait before the second pass is `initial_delay` seconds (1 by default), doubled for each pass after it up to `max_delay` (30 by default), with a random part of up to half of it taken off, so that runs failing at the same moment don't all try again at the same moment too. When a model in the pass that failed asked to wait longer in its error's [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after], the longest such wait is used instead, up to `max_delay`. No pass is started when its wait would end after the run's [`timeout=`](../timeouts.md#bounding-a-whole-run), and the run's [usage limits](../agent.md#usage-limits) are checked before every attempt in every pass, as they are within one.
+
+Each pass goes through the chain as the first one did, falling back on what `fallback_on` matches, with [`RetryOnModelErrors`](retry-on-model-errors.md)'s retries of each model within the pass. All the attempts are attempts within the same request step, so the response that answers lists those of every earlier pass in [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts], each with a [`kind`][pydantic_ai.messages.ModelRequestAttempt.kind] of `'fallback'`. When the last pass fails too, the `FallbackExceptionGroup` holds the errors of every pass and lists all their attempts. The agent attempts a request at most 100 times across all models and passes, after which it raises a [`UserError`][pydantic_ai.exceptions.UserError].
+
+Prefer `RetryOnModelErrors` to retry one model that's briefly unavailable: another pass also tries every other model again first. Reach for `passes` when every model in the chain can fail at once, and the run is worth waiting for rather than failing.
+
 ## Continuing suspended responses
 
 Some providers suspend a response and continue it on a later request, like Anthropic's `pause_turn` or OpenAI's background mode. Every response records the model that served it as [`model_id`][pydantic_ai.messages.ModelResponse.model_id], so when a later run resumes a suspended response one of `ModelFallback`'s models started, the continuation goes to that model rather than to the first model in the chain. A suspended response started by a model outside the chain is continued by the step's model, as without `ModelFallback`. Response handlers judge the continued response like any other. If that continuation fails or is rejected, the suspended response is dropped and the turn is generated again by the next model in the chain after the one it was pinned to, as it would have been had the response failed in the run that started it. The chain doesn't start over: with [batching](../batch.md), the first model would only accept a new batch, and the request would never reach the models after it. A rejected response the provider is still working on, like a batch request that hasn't finished, has its job cancelled.
@@ -454,6 +472,8 @@ With [`BatchModelRequests`](../batch.md), every attempt is batched with the mode
 ## Durable execution
 
 Under a [durability capability](../durable_execution/overview.md), each attempt is a durable model operation of its own: on [Temporal](../durable_execution/temporal.md), an activity per model tried. The activity's retry policy retries a failed request before the error reaches `ModelFallback`'s `fallback_on`, and Temporal's default retry policy retries without limit: set `maximum_attempts` in the retry policy of `TemporalDurability`'s [`model_activity_config`](../durable_execution/temporal.md#activity-configuration) so that a failing model doesn't hold up the fallback. Each model's `request_timeout` deadline runs as a durable timer around its own activity. Its `first_event_timeout` deadline runs inside the activity, which is what sees the stream's events, so the `ModelRequestTimeout` it raises fails the activity there. `ModelRequestTimeout` is in [`non_retryable_model_errors`](../durable_execution/temporal.md#activity-retries) by default, so the activity isn't retried and `ModelFallback` moves on to the next model straight away. So are a rejected request and an exhausted quota.
+
+The wait before [another pass through the chain](#going-through-the-chain-again) is a durable timer on Temporal and a durable sleep on DBOS, which a replay waits out the same way. On Prefect and the Pydantic AI Harness engines, it's a plain sleep in the process for now, which a recovered run waits out again. Whether a pass starts at all depends on the time left before the run's `timeout=`: on DBOS, a recovered workflow reads that from the current clock, so after a long outage it can stop where the original run would have started another pass. On Temporal, an activity's retry policy retries a failed attempt within a pass, before the model counts as failed for that pass: a pass only moves on once each model's activity has given up.
 
 A streamed request is consumed inside its durable unit, where its events reach a durability capability's `event_stream_handler`, so a stream that fails after producing output there is raised rather than fallen back from, as outside durable execution, and what it produced counts towards the run's usage.
 
