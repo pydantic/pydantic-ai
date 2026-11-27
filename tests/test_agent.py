@@ -3326,6 +3326,33 @@ def test_output_type_structured_dict_refuses_numbers_too_large_to_check():
     assert 'a number is too large to check against the schema' in retry_messages[0]
 
 
+async def test_structured_dict_validate_streams_partial_output():
+    """Partial outputs aren't schema-checked, so `stream_output()` yields them; the final output still is.
+
+    It streams deliberately incomplete output, which no provider sends on demand, so this is a unit test.
+    """
+    Person = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+            'required': ['name', 'age'],
+        },
+        validate=True,
+    )
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"name": "Ada"')}
+        yield {0: DeltaToolCall(json_args=', "age": 36}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_function), output_type=Person)
+    async with agent.run_stream('Who?') as result:
+        outputs = [output async for output in result.stream_output(debounce_by=None)]
+
+    assert outputs[0] == snapshot({'name': 'Ada'})
+    assert outputs[-1] == snapshot({'name': 'Ada', 'age': 36})
+
+
 def test_structured_dict_validate_does_not_fetch_remote_refs():
     """A reference to a remote schema is never fetched; validating against one is a configuration error.
 

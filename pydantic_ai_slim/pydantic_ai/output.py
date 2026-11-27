@@ -4,6 +4,7 @@ import copy
 import inspect
 import math
 from collections.abc import Awaitable, Callable, Iterable, Iterator, Mapping, Sequence
+from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, cast, overload
 
@@ -418,7 +419,8 @@ def StructuredDict(
         name: Optional name of the structured output. If not provided, the `title` field of the JSON schema will be used if it's present.
         description: Optional description of the structured output. If not provided, the `description` field of the JSON schema will be used if it's present.
         validate: Whether to validate the output against the JSON schema. Values are not converted: `"42"` where the
-            schema asks for an integer is an error, not `42`. `pattern` and `patternProperties` are checked with a
+            schema asks for an integer is an error, not `42`. Partial outputs streamed before the run ends aren't
+            checked, so they can be incomplete; the final output is. `pattern` and `patternProperties` are checked with a
             linear-time regex engine, so a pattern that uses lookarounds or backreferences raises a `UserError` here.
             Requires the `jsonschema` package, installed with `pip install "pydantic-ai-slim[jsonschema]"`.
 
@@ -521,6 +523,9 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
     validator: Any = validator_class(json_schema, registry=Registry[Any]())
 
     def validate(value: dict[str, Any]) -> dict[str, Any]:
+        if _VALIDATING_PARTIAL_OUTPUT.get():
+            # A partial object rarely meets `required` and the like yet, so only the complete output is checked.
+            return value
         # JSON has no NaN or infinity, and they pass `minimum`/`maximum` checks, so they're refused first. Some
         # keywords, like `multipleOf`, would raise on NaN instead of reporting an error.
         problems = [f'at `{path}`: {number!r} is not a finite number' for path, number in _non_finite_numbers(value)]
@@ -566,6 +571,10 @@ def _error_message(error: Any) -> str:
 
         message += f' (closest: {_error_message(best_match(error.context))})'
     return message
+
+
+_VALIDATING_PARTIAL_OUTPUT: ContextVar[bool] = ContextVar('pydantic_ai.output.validating_partial', default=False)
+"""Whether output is being validated as a partial, streamed result, which `StructuredDict(validate=True)` skips."""
 
 
 _DATA_KEYWORDS = frozenset({'enum', 'const', 'default', 'examples', 'dependentRequired'})
