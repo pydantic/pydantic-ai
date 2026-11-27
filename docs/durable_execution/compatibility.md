@@ -19,7 +19,8 @@ on each change.
 - **Broken**: the engine runs it and gets it wrong; the linked issue tracks the fix.
 
 Recovery is what an engine does after a crash: an engine that **replays** the record returns each completed call's
-recorded result. One that **restarts** makes every call again, so all its cells are limited.
+recorded result. One that **restarts** makes every call again, so each of its cells that isn't refused or broken is
+limited.
 
 The scenarios check more than one call per response:
 
