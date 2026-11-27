@@ -143,13 +143,14 @@ async def _drain(
     stream: AsyncIterable[AgentStreamEvent],
     handler: EventStreamHandler[AgentDepsT] | None,
 ) -> None:
-    """Hand the stream to `handler`, then consume whatever it left behind, so every event is still published."""
-    try:
-        if handler is not None:
-            await handler(run_context, stream)
-    finally:
-        async for _ in stream:
-            pass
+    """Hand the stream to `handler`, then consume whatever it left behind, so every event is still published.
+
+    A handler that raises fails the task with its own error, which a stream error from draining would replace.
+    """
+    if handler is not None:
+        await handler(run_context, stream)
+    async for _ in stream:
+        pass
 
 
 class HatchetAgentRunEvents(Generic[OutputDataT], AsyncIterator[AgentStreamEvent | AgentRunResultEvent[OutputDataT]]):

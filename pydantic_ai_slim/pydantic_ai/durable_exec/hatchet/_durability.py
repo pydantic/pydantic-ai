@@ -585,5 +585,10 @@ class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
                 with anyio.CancelScope(shield=True):
                     await self._durability._publish_terminal_error(ctx, error_name)  # pyright: ignore[reportPrivateUsage]
             raise
-        await self._durability._publish_terminal_event(ctx, result)  # pyright: ignore[reportPrivateUsage]
+        try:
+            await self._durability._publish_terminal_event(ctx, result)  # pyright: ignore[reportPrivateUsage]
+        except Exception as error:
+            # E.g. an output that can't be serialized: no result event will come, so end subscribers' iteration.
+            await self._durability._publish_terminal_error(ctx, type(error).__name__)  # pyright: ignore[reportPrivateUsage]
+            raise
         return result

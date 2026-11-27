@@ -107,7 +107,7 @@ A run's `timeout=` counts from the time the durable task first started the run, 
 
 `event_stream_handler` sees the run's events: model events are handled live inside the model request task, and every other event in a task of its own that the durable task spawns.
 
-To observe a run from outside the durable task, as it happens or afterwards, pass `event_stream=True` (or a [`HatchetEventStream`][pydantic_ai.durable_exec.hatchet.HatchetEventStream]) to publish its events to a Hatchet [durable stream](https://docs.hatchet.run/home/durable-streams) topic, one per run by default. [`stream_agent_events()`][pydantic_ai.durable_exec.hatchet.HatchetDurability.stream_agent_events] subscribes to it with the durable task's workflow run ID and yields the events typed and in order, ending with the [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] that carries the result:
+To observe a run from outside the durable task, as it happens or afterwards, pass `event_stream=True` (or a [`HatchetEventStream`][pydantic_ai.durable_exec.hatchet.HatchetEventStream]) to publish its events to a Hatchet [durable stream](https://docs.hatchet.run/home/durable-streams) topic, one per durable task and agent by default. [`stream_agent_events()`][pydantic_ai.durable_exec.hatchet.HatchetDurability.stream_agent_events] subscribes to it with the durable task's workflow run ID and yields the events typed and in order, ending with the [`AgentRunResultEvent`][pydantic_ai.run.AgentRunResultEvent] that carries the result:
 
 ```python {title="hatchet_event_stream.py" test="skip" lint="skip"}
 durability = HatchetDurability(hatchet, event_stream=True)
@@ -130,6 +130,8 @@ Model events are published from the model request task that produces them, so to
 ```python {title="hatchet_task_config.py" test="skip" lint="skip"}
 from datetime import timedelta
 
+from hatchet_sdk import RateLimit
+
 durability = HatchetDurability(
     hatchet,
     task_config={'execution_timeout': timedelta(minutes=2)},
@@ -150,7 +152,7 @@ async def transcribe(audio_url: str) -> str: ...
 
 ### Retries
 
-A model request task retries model errors as its `retries` allow, waiting as long as the provider's `Retry-After` asks, up to a minute. `non_retryable_model_errors` lists the errors another attempt of the same request can't fix, which fail the task without a retry; by default [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError], [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] and [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout]. Either way, the durable task receives the error as the class the model raised, so [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] and `on_model_request_error` hooks handle it as they would outside durable execution.
+A model request task retries model errors as its `retries` allow, waiting as long as the provider's `Retry-After` asks, up to a minute. `non_retryable_model_errors` lists the errors another attempt of the same request can't fix, which fail the task without a retry; by default [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError], [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] and [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout]. Either way, the durable task receives the error as the Pydantic AI class the model raised, so [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] and `on_model_request_error` hooks handle it as they would outside durable execution.
 
 When the agent is built with [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors], that capability retries model errors in the durable task, waiting on a durable sleep, and the model request task treats every model error as non-retryable, so the two don't multiply each other's attempts. Its `retries` still cover worker crashes and timeouts. A `non_retryable_model_errors` other than the default is then ignored, with a `UserWarning`.
 

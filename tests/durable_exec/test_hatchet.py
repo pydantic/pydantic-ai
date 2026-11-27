@@ -426,7 +426,7 @@ def app(tmp_path_factory: pytest.TempPathFactory) -> Iterator[App]:
         hatchet = Hatchet.from_embedded(ClientConfig(embedded=embedded_config))
     app, workflows = _build_app(hatchet)
     # The worker installs its own signal handlers; put pytest's back once it's done.
-    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
+    handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM, signal.SIGQUIT)}
     worker: Worker = hatchet.worker('pydantic-ai-test-worker', workflows=workflows)
     # Wait for the worker to start its action listener process during setup, where its launch belongs to this
     # module's fixture rather than to the first test.
@@ -463,12 +463,12 @@ def _stop_worker(worker: Worker, thread: threading.Thread) -> None:
         return
     exiting = asyncio.run_coroutine_threadsafe(worker._exit_gracefully(), loop)  # pyright: ignore[reportPrivateUsage]
     try:
-        exiting.result(timeout=10)
+        exiting.result(timeout=10)  # real-wait: how long a graceful exit gets before the worker is stopped by force
     except TimeoutError:
         # `_exit_forcefully` ends with `sys.exit`, so do what it does short of that.
         worker._terminate_processes()  # pyright: ignore[reportPrivateUsage]
         loop.call_soon_threadsafe(loop.stop)
-    thread.join(timeout=10)
+    thread.join(timeout=READINESS_WAIT_TIMEOUT)
 
 
 @pytest.fixture(autouse=True, scope='module')
