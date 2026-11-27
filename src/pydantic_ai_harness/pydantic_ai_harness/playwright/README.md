@@ -450,18 +450,19 @@ between tool calls.
 - Set `headless=False` to watch the run in a real window.
 - Every browser operation opens an OpenTelemetry span named `browser <action>`
   (`browser click`, `browser navigate`), carrying `browser.action`,
-  `browser.timeout_ms`, `browser.outcome`, and, with content, the resulting `url.full`. What the
-  page did during that operation is attached as span events: console output,
-  uncaught script errors, responses, requests the egress policy refused, dialogs
-  the page opened, and tabs it opened. Each event carries `browser.event.kind`,
-  `browser.event.level`, and, for a request, `http.request.method` and
-  `http.response.status_code` when it has them: a failed or refused request has no status. The page's URLs (`url.full`, on the span and its
+  `browser.timeout_ms`, `browser.outcome`, and, with content, the resulting
+  `url.full`. What the page did during that operation is attached as span events:
+  console output, uncaught script errors, responses, requests the egress policy
+  refused, dialogs the page opened, and tabs it opened. Each event carries
+  `browser.event.kind`, `browser.event.level`, and, for a request,
+  `http.request.method` and `http.response.status_code` when it has them: a failed
+  or refused request has no status. The page's URLs (`url.full`, on the span and its
   events) and an event's text (`browser.event.message`) are recorded only when the
   run includes content in traces. The spans go to the run's own tracer, so an agent
   instrumented for [Logfire](https://pydantic.dev/docs/ai/integrations/logfire/)
-  reports them with everything else. A
-  browser tool called outside an agent run's tool call, such as on a session driven
-  directly, reports to `PlaywrightBrowserSession.tracer` and records everything.
+  reports them with everything else. A browser tool called outside an agent run's
+  tool call, such as on a session driven directly, reports to
+  `PlaywrightBrowserSession.tracer` and records everything.
 - The agent can read the same log through `console_messages` and
   `network_requests`, which is often how it recovers from a page that renders
   from an API rather than from HTML. Only what identifies a request is recorded,

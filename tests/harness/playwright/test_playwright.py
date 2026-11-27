@@ -4010,11 +4010,8 @@ class TestBrowserEvents:
         tracer, exporter = _recording_tracer()
         session.tracer = tracer
         toolset = _toolset(page, session=session)
-        token = toolset_module._calling_ctx.set(DurableRunContext[None](deps=None))  # pyright: ignore[reportPrivateUsage]
-        try:
-            await toolset.get_text()
-        finally:
-            toolset_module._calling_ctx.reset(token)  # pyright: ignore[reportPrivateUsage]
+        tools = await toolset.get_tools(_ctx())
+        await toolset.call_tool('get_text', {}, DurableRunContext[None](deps=None), tools['get_text'])
         assert [span.name for span in exporter.get_finished_spans()] == ['browser get_text']
 
     async def test_network_event_attributes_follow_otel_conventions(self) -> None:

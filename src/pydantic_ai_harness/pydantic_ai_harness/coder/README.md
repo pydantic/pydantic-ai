@@ -305,10 +305,10 @@ follow normal validation and retry behavior. Repair applies to tools added along
 If the repair parser raises a value or recursion error, original arguments go through normal validation.
 
 Repair is heuristic: malformed input can be ambiguous, and inferred strings may differ from the model's
-intent. It does not supply a schema to the repair library or bypass exact edit matching.
-Each attempt emits a `repair_tool_arguments` span in the run's trace, with no attribute for the arguments or
-file contents; see [what it records](https://pydantic.dev/docs/ai/harness/repair-tool-arguments/#telemetry). Other Coder operations rely on core tool spans and on the events its `FileSystem` and `Shell`
-capabilities emit.
+intent. It does not supply a schema to the repair library or bypass exact edit matching. Each attempt emits
+a `repair_tool_arguments` span in the run's trace, with no attribute for the arguments or file contents; see
+[what it records](https://pydantic.dev/docs/ai/harness/repair-tool-arguments/#telemetry). Other Coder
+operations rely on core tool spans and on the events its `FileSystem` and `Shell` capabilities emit.
 
 ## Strict tool schemas
 
