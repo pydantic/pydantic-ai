@@ -115,8 +115,14 @@ class ImmediateDecisionCapability(AbstractCapability[None]):
     id = 'immediate_decision'
 
     def __init__(self, decision: ProtectedDecision, protected_actions: list[str]) -> None:
+        self.emit_errors: list[Exception] = []
+
         async def protected_operation(ctx: RunContext[None]) -> str:
-            await ctx.emit(ImmediateDecisionEvent(operation='publish'))
+            try:
+                await ctx.emit(ImmediateDecisionEvent(operation='publish'))
+            except Exception as exc:
+                self.emit_errors.append(exc)
+                raise
             if decision.allowed:
                 protected_actions.append('published')
             return 'checked'
@@ -422,12 +428,25 @@ async def test_immediate_capability_event_fails_before_protected_action() -> Non
         capabilities=[capability, _immediate_decision_hooks(decision), runtime],
     )
 
+    context = JsonRecordingTaskContext()
     with pytest.raises(
         UserError,
-        match='Immediate capability events are unsupported inside a Render child task',
+        match="immediate capability event 'ImmediateDecisionEvent' is not supported inside a Render child task",
     ):
-        await run_agent_in_task(agent, runtime, JsonRecordingTaskContext(), usage=RunUsage())
+        await run_agent_in_task(agent, runtime, context, usage=RunUsage())
 
+    # The tool sees a `UserError`, and its task finishes with a permanent error rather than a retryable failure.
+    emit_errors = capability.emit_errors
+    assert len(emit_errors) == 1
+    assert isinstance(emit_errors[0], UserError)
+    task_name, result = context.results[-1]
+    assert task_name.endswith('immediate-decision.call_tool')
+    assert result == {
+        'version': 2,
+        'status': 'error',
+        'error': {'kind': 'invalid-result', 'message': str(emit_errors[0])},
+    }
+    # The refused operation records nothing: no protected action, no events, no usage carried back.
     assert protected_actions == []
 
 

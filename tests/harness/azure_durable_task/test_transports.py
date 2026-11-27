@@ -194,6 +194,48 @@ def test_nested_aliased_tool_arguments_cross_the_activity_input_by_alias(durable
     assert observed == [('A1', 10.0, 'Ada')]
 
 
+def test_json_tool_arguments_cross_the_activity_input_as_json_strings(durable_worker: 'InMemoryWorker') -> None:
+    """A validated `Json` value is the parsed list, which the tool's schema rejects with `json_type` in the activity.
+
+    So it crosses as a JSON string again: a top-level parameter's too, which the activity input's untyped dump
+    can't tell apart from a list.
+
+    Not a VCR test: the claim is about the arguments crossing into the activity input, and no provider request is
+    involved.
+    """
+
+    class Batch(BaseModel):
+        nums: Json[list[int]]
+
+    seen: dict[str, list[int]] = {}
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) > 1:
+            return ModelResponse(parts=[TextPart('done')])
+        return ModelResponse(
+            parts=[
+                ToolCallPart('sum_nums', {'nums': '[1, 2]'}, tool_call_id='nums'),
+                ToolCallPart('sum_batch', {'nums': '[3, 4]'}, tool_call_id='batch'),
+            ]
+        )
+
+    agent = Agent(FunctionModel(model), name='json-args', capabilities=[AzureDurableTaskDurability()])
+
+    @agent.tool_plain
+    def sum_nums(nums: Json[list[int]]) -> int:
+        seen['sum_nums'] = nums
+        return sum(nums)
+
+    @agent.tool_plain
+    def sum_batch(batch: Batch) -> int:
+        seen['sum_batch'] = batch.nums
+        return sum(batch.nums)
+
+    with registered_agent(durable_worker, agent):
+        assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
+    assert seen == {'sum_nums': [1, 2], 'sum_batch': [3, 4]}
+
+
 def test_choice_action_output_and_partial_output(durable_worker: 'InMemoryWorker') -> None:
     choices = Choices({'answer': Choice(value=lambda: 42)})
     choice_agent = Agent(TestModel(), output_type=choices, name='choice', capabilities=[AzureDurableTaskDurability()])

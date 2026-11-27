@@ -18,6 +18,8 @@ agent = Agent(
 )
 ```
 
+The subagent's requests and tokens count toward the agent run's usage and its [usage limits](../agent.md#usage-limits). Its model does not count tokens ahead of each request, even with [`count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request] on: the token limits are checked against each of its responses instead.
+
 !!! note "`fallback_model` is deprecated"
     `fallback_model` is the former name of `fallback_subagent_model`. It keeps working, in Python and in an [agent spec](../agent-spec.md), and warns; passing both names is refused: [`UserError`][pydantic_ai.exceptions.UserError] when you construct the capability, and the `ValueError` the spec loader wraps it in when you load a spec.
 
@@ -27,4 +29,4 @@ agent = Agent(
     `None` omits the tool for that request only when no `fallback_subagent_model` is set. With a `fallback_subagent_model`, the subagent tool is offered to the model whenever the factory returns `None` — even on a model that supports [`XSearchTool`][pydantic_ai.native_tools.XSearchTool] natively — and calling it raises [`UserError`][pydantic_ai.exceptions.UserError] rather than searching X with default settings.
 
 !!! note "Durable execution with Temporal"
-    The `fallback_subagent_model` subagent's tool call runs inside a Temporal activity, so a `native=` factory resolved there receives the limited [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext]: reading `ctx.messages`, or any other field Temporal does not carry, raises a [`UserError`][pydantic_ai.exceptions.UserError]. `ctx.deps` does cross the boundary, so keep the factory reading `deps` only. See [Agent Run Context and Dependencies](../durable_execution/temporal.md#agent-run-context-and-dependencies) for the fields that are available. [DBOS](../durable_execution/dbos.md) and [Prefect](../durable_execution/prefect.md) pass the live `RunContext` and are unaffected.
+    The `fallback_subagent_model` subagent's tool call runs inside a Temporal activity, so a `native=` factory resolved there receives the limited [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext]: reading `ctx.messages`, or any other field Temporal does not carry, raises a [`UserError`][pydantic_ai.exceptions.UserError]. `ctx.deps` does cross the boundary, so keep the factory reading `deps` only. See [Agent Run Context and Dependencies](../durable_execution/temporal.md#agent-run-context-and-dependencies) for the fields that are available. The activity's `ctx.usage` is a copy, so the subagent's usage stays in the activity: it is missing from the run's usage, and the run's later limit checks do not count it. [DBOS](../durable_execution/dbos.md) and [Prefect](../durable_execution/prefect.md) pass the live `RunContext` and are unaffected.

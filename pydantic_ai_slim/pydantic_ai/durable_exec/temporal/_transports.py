@@ -29,7 +29,13 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetCallToolParams,
     ToolsetGetToolsParams,
 )
-from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult, Instructions, revalidate_function_call
+from pydantic_ai.durable_exec._toolset import (
+    CallToolResult,
+    DynamicToolsResult,
+    Instructions,
+    dump_json_function_args,
+    revalidate_function_call,
+)
 from pydantic_ai.durable_exec._workspace import WorkspaceCall, WorkspaceCallParams, WorkspaceCallResult
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
@@ -88,7 +94,8 @@ class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, t
         return (
             CallToolParams(
                 name=params.name,
-                tool_args=params.tool_args,
+                # `PydanticAIPayloadConverter` dumps with `to_json`'s defaults.
+                tool_args=dump_json_function_args(self._toolset, tool, params.tool_args, by_alias=None),
                 serialized_run_context=self._durability.run_context_type.serialize_run_context(params.ctx),
                 tool_def=tool.tool_def,
                 original_name=tool.original_name if isinstance(tool, FunctionToolsetTool) else None,

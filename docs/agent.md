@@ -1393,7 +1393,7 @@ from pydantic_ai.models.google import GoogleModel
 
 # 1. Model-level defaults
 model = GoogleModel(
-    '{{ google:medium.name }}',
+    '{{ google:small.name }}',
     settings=ModelSettings(temperature=0.8, max_tokens=500)  # Base defaults
 )
 
@@ -1536,7 +1536,7 @@ from google.genai.types import HarmBlockThreshold, HarmCategory
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models.google import GoogleModelSettings
 
-agent = Agent('{{ google:medium }}')
+agent = Agent('{{ google:small }}')
 
 try:
     result = agent.run_sync(
