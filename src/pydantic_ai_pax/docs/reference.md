@@ -42,7 +42,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/plugins [...]` | Manage plugins; no arguments opens the menu |
 | `/mcp [...]` | Manage MCP servers (from the built-in `mcp` plugin) |
 | `/compact [FOCUS]` | Summarise older messages now (from the built-in `compaction` plugin) |
-| `/auto-compact [TOKENS\|PERCENT\|reset]` | Choose when compaction runs automatically from a list, or set it directly, such as `70%` or `150k` (from the built-in `compaction` plugin) |
+| `/auto-compact [TOKENS\|PERCENT\|reset]` | Choose when compaction runs automatically in the compaction settings, or set it directly, such as `70%` or `150k` (from the built-in `compaction` plugin) |
 | `/refine [FOCUS]` | Have the model review and revise its last answer (from the built-in `refinement` plugin) |
 | `/usage` | Tokens and cost per turn |
 | `/cost` | The retained history's total cost and tokens |
@@ -2320,25 +2320,23 @@ back to truncation; other exceptions propagate. The summary request is billed
 to the current model unless `summarization_model` selects another.
 
 The chain runs automatically before requests above `threshold` (85% of the context
-window by default). To change when, run `/auto-compact` and pick from the list with the arrow keys
-and Enter:
+window by default). To change when, run `/auto-compact`, or `/plugins configure compaction`: both
+open the compaction settings, with **Compact at** first.
 
 ```text
-When should Pax compact automatically?
-  50% - about 100k tokens
-  60% - about 120k tokens
-  70% - about 140k tokens
-  80% - about 160k tokens
-> 85% - about 170k tokens - default (current)
-  90% - about 180k tokens
-  Fixed token count...
-  Reset to default
+Compaction settings
+> Compact at               85% - about 170k tokens
+  Strategy                 summarization
+  Protected tokens         50000
+  ...
 ```
 
-Each share shows what it means in tokens on the model you are using, once its window is known.
-A share follows you when you switch models; **Fixed token count...** asks for a number of tokens
-instead, such as `150k`, whatever the window. Esc leaves it as it was. The change applies from the
-next turn. You can also type the value and skip the list:
+Space steps through 50%, 60%, 70%, 80%, 85%, and 90% of the window, each shown with what it means
+in tokens on the model you are using, once its window is known. Enter lists them, with
+**Type a value...** for a token count such as `150k`, whatever the window, or a share the list does
+not have. R resets it to 85%. Each change is saved as you make it and applies from the next turn.
+A share follows you when you switch models; a token count does not. You can also type the value and
+skip the menu:
 
 ```text
 /auto-compact 150k     # once a request passes 150,000 tokens (also 150000, 150,000, 1.5m)
@@ -2346,12 +2344,11 @@ next turn. You can also type the value and skip the list:
 /auto-compact reset    # back to 85% of the window
 ```
 
-In the web UI the list opens as a dialog. Where there is nowhere to show it, such as output redirected
-to a file, `/auto-compact` alone says when compaction runs.
+Where the menu cannot open, as in the web UI or with output redirected to a file, `/auto-compact`
+alone says when compaction runs; the web UI's Plugins page has the same compaction settings.
 
-A token count saves `threshold_tokens` and a share saves `threshold`, the same settings as the
-**Threshold tokens** and **Threshold** rows of `/plugins configure compaction`. With
-`threshold_tokens` set, the chain runs once a request passes that many tokens, whatever the
+A token count saves `threshold_tokens` and a share saves `threshold` and clears `threshold_tokens`.
+With `threshold_tokens` set, the chain runs once a request passes that many tokens, whatever the
 model's window, and `threshold` is ignored. Keep it below the model's window: above it, the provider rejects the
 request before compaction runs. `/compact` runs the same chain between turns regardless of that
 threshold, but it caps the protected tokens at half the conversation, so it usually has older

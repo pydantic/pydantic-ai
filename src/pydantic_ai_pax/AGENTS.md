@@ -287,9 +287,11 @@ only passes the setting, closes the chain in `on_session_end`, discards the summ
 conversations other than the shown one and its running tasks at each turn end and conversation
 change (not per task event, which would build one for every streamed event), and has `/compact` try the
 chain's `take_background_compaction` (without a focus) or `discard_background_compaction`
-(with one) before the capped chain. `/auto-compact` saves `threshold_tokens` or `threshold` through
-`host.plugins.save_settings`, so the plugin reloads itself from its own handler; after that call the
-handler only formats its reply, since the instance running it has been unloaded. The status
+(with one) before the capped chain. `threshold` and `threshold_tokens` are one **Compact at** row
+(`COMPACT_AT`) in `CompactionSource`, not a second picker. Bare `/auto-compact` opens that menu with
+`host.plugins.edit_settings`, and `/auto-compact VALUE` saves through `host.plugins.save_settings`; either
+reloads the plugin from its own handler, which then only formats its reply, since its instance has been
+unloaded. It sets no `Command.menu`: the web UI applies those edits without reloading the plugin. The status
 row's window does not depend on the plugin: `Session.on_context_window` reports each
 streamed request model's window, and the shell fills it in when no gauge has.
 Until a turn on the selected model runs in the conversation, `show_model` sets

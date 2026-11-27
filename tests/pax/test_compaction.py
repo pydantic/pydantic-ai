@@ -15,7 +15,6 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
 from termflow.tui.menu import MenuResult
-from termflow.tui.textinput import TextInput, TextInputResult
 
 from pydantic_ai import Agent, ModelHTTPError, capture_run_messages
 from pydantic_ai.messages import (
@@ -64,12 +63,11 @@ from pydantic_ai_pax.plugins import (
     load_plugin,
 )
 from pydantic_ai_pax.plugins.loader import PluginLoader
+from pydantic_ai_pax.plugins.menus import FieldRow
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from pydantic_ai_pax.ui.menus import dialogs
-from pydantic_ai_pax.ui.menus.field_menu import Runners
 from pydantic_ai_pax.ui.menus.menu_worker import without_terminal
 from tests._timeouts import READINESS_WAIT_TIMEOUT
-from tests.pax.dialog_script import Answer, Asked, Back, Pick, ScriptedDialogs, Type
 from tests.pax.menu_script import Script, pick, typed
 from tests.pax.test_app_edges import inputs
 
@@ -509,11 +507,10 @@ def test_settings_source_shows_validates_saves_and_resets() -> None:
         save_settings=saved.append,
     )
     source = CompactionSource(host)
-    strategy, threshold, tokens, protected, window, summarizer, background, start = source.rows()
+    compact_at, strategy, protected, window, summarizer, background, start = source.rows()
     assert [source.current(row) for row in source.rows()] == [
+        '85%',
         'summarization',
-        '0.85',
-        '(not set)',
         '0',
         '(not set)',
         '(not set)',
@@ -521,9 +518,8 @@ def test_settings_source_shows_validates_saves_and_resets() -> None:
         '0.85',
     ]
     assert [row.default for row in source.rows()] == [
+        '85%',
         'summarization',
-        '0.85',
-        '(not set)',
         '50000',
         '(not set)',
         '(not set)',
@@ -533,35 +529,62 @@ def test_settings_source_shows_validates_saves_and_resets() -> None:
     assert background.choices == ('true', 'false') and not background.allow_custom
     assert source.problem(start, '1') == 'Input should be less than 1'
     assert strategy.choices == ('summarization', 'truncation') and not strategy.allow_custom
-    assert threshold.allow_custom and not threshold.choices
-    assert source.problem(threshold, '0') == 'Input should be greater than 0'
-    assert source.problem(threshold, 'most') is not None
     assert source.problem(protected, '2.5') == 'Input should be a valid integer'
-    assert source.problem(tokens, '0') == 'Input should be greater than 0'
-    assert source.apply(tokens, '150000') == 'Saved Threshold tokens.'
-    assert source.current(tokens) == '150000'
-    assert source.reset(tokens) == 'Reset Threshold tokens.'
-    assert 'threshold_tokens' not in saved[-1]
-    assert source.problem(threshold, '1') is None
-    assert source.apply(threshold, '0.7') == 'Saved Threshold.'
     assert source.apply(window, '200000') == 'Saved Context window.'
     assert source.apply(summarizer, 'openai:gpt-5-mini') == 'Saved Summarization model.'
     assert source.apply(strategy, 'truncation') == 'Saved Strategy.'
     assert source.apply(background, 'true') == 'Saved Background compaction.'
     assert source.apply(start, '0.9') == 'Saved Background start.'
+    assert source.apply(compact_at, '70%') == 'Saved Compact at.'
     assert saved[-1] == {
         'protected_tokens': 0,
-        'threshold': 0.7,
         'context_window': 200_000,
         'summarization_model': 'openai:gpt-5-mini',
         'strategy': 'truncation',
         'background_compaction': True,
         'background_start': 0.9,
+        'threshold': 0.7,
     }, 'only chosen settings are saved, so later default changes still apply'
     assert source.current(window) == '200000'
-    assert source.reset(threshold) == 'Reset Threshold.'
-    assert 'threshold' not in saved[-1] and source.current(threshold) == '0.85'
-    assert source.reset(threshold) == 'Reset Threshold.'
+    assert source.reset(window) == 'Reset Context window.'
+    assert 'context_window' not in saved[-1] and source.current(window) == '(not set)'
+
+
+def test_compact_at_row_steps_through_shares_or_takes_a_token_count() -> None:
+    """Mike's settings menu edits `threshold` and `threshold_tokens` as one row, as `/auto-compact` does."""
+    saved: list[dict[str, JsonValue]] = []
+    host = PluginHost[None](
+        name='compaction', console=Console(file=io.StringIO()), settings={}, save_settings=saved.append
+    )
+    source = CompactionSource(host)
+
+    def row() -> FieldRow:
+        return source.rows()[0]
+
+    assert (row().label, row().default, row().allow_custom) == ('Compact at', '85%', True)
+    assert row().choices == ('50%', '60%', '70%', '80%', '85%', '90%')
+    assert row().choice_labels == {}, 'no window known yet, so no token counts'
+    host.status.context_window = 200_000
+    assert row().display('70%') == '70% - about 140k tokens'
+    assert row().display('85%') == '85% - about 170k tokens'
+
+    assert source.problem(row(), 'lots') == 'Type a token count such as 150k, or a share of the window such as 70%.'
+    assert source.problem(row(), '1.5') == 'Type a whole number of tokens.'
+    assert source.problem(row(), '0') == 'Input should be greater than 0'
+    assert source.problem(row(), '150%') == 'Type a share above 0% and up to 100%.'
+    assert source.problem(row(), '150k') is None
+
+    assert source.apply(row(), '150k') == 'Saved Compact at.'
+    assert saved[-1] == {'threshold_tokens': 150_000}
+    assert source.current(row()) == '150k'
+    assert row().choices[-1] == '150k', 'a token count is listed, so stepping can return to it'
+    assert source.apply(row(), '150500') == 'Saved Compact at.'
+    assert source.current(row()) == '150500'
+    assert source.apply(row(), '75%') == 'Saved Compact at.'
+    assert saved[-1] == {'threshold': 0.75}, 'a share clears the token count'
+    assert row().choices[-1] == '75%'
+    assert source.reset(row()) == 'Reset Compact at.'
+    assert saved[-1] == {} and source.current(row()) == '85%'
 
 
 async def test_configure_outside_a_terminal_explains_how() -> None:
@@ -572,9 +595,14 @@ async def test_configure_outside_a_terminal_explains_how() -> None:
     ('script', 'shown', 'saves'),
     [
         (
-            Script([pick('threshold'), MenuResult(cancelled=True)], [], [typed('0.5')]),
-            'Saved Threshold.',
+            Script([pick('compact_at'), MenuResult(cancelled=True)], [pick('50%')], []),
+            'Saved Compact at.',
             [{'threshold': 0.5}],
+        ),
+        (
+            Script([pick('protected_tokens'), MenuResult(cancelled=True)], [], [typed('1000')]),
+            'Saved Protected tokens.',
+            [{'protected_tokens': 1000}],
         ),
         (Script([MenuResult(cancelled=True)], [], []), 'Compaction settings: nothing changed.', []),
     ],
@@ -655,13 +683,18 @@ async def test_auto_compact_sets_the_trigger_for_the_next_turn(tmp_path: Path) -
     try:
         await plugins.load_all()
         assert await commands.execute_async('/auto-compact') == (
-            'Auto-compaction runs above 85% of the context window. Set it with /auto-compact 150k, 70%, or reset.'
+            'Auto-compaction runs above 85% of the context window. Change it with /auto-compact 70%, 150k or reset, '
+            'or in the compaction settings.'
         )
         assert await commands.execute_async('/auto-compact 150k') == 'Auto-compaction now runs above 150,000 tokens.'
         assert (chain().max_tokens, chain().max_fraction) == (150_000, None)
         assert store.plugins()[0].settings == {'threshold_tokens': 150_000}
+        assert await commands.execute_async('/auto-compact 150,000') == (
+            'Auto-compaction unchanged: it runs above 150,000 tokens.'
+        ), 'the same count, written another way'
         assert await commands.execute_async('/auto-compact') == (
-            'Auto-compaction runs above 150,000 tokens. Set it with /auto-compact 150k, 70%, or reset.'
+            'Auto-compaction runs above 150,000 tokens. Change it with /auto-compact 70%, 150k or reset, '
+            'or in the compaction settings.'
         )
         assert await commands.execute_async('/auto-compact 1.5m') == 'Auto-compaction now runs above 1,500,000 tokens.'
         assert await commands.execute_async('/auto-compact 120,000') == 'Auto-compaction now runs above 120,000 tokens.'
@@ -686,14 +719,14 @@ async def test_auto_compact_sets_the_trigger_for_the_next_turn(tmp_path: Path) -
 @pytest.mark.parametrize(
     ('arguments', 'error'),
     [
-        ('lots', "'lots' is not a token count such as 150k, a share such as 70%, or reset."),
-        ('1,5m', "'1,5m' is not a token count such as 150k, a share such as 70%, or reset."),
-        ('inf', "'inf' is not a token count such as 150k, a share such as 70%, or reset."),
-        ('1.5', "'1.5' is not a whole number of tokens."),
-        ('1.0005k', "'1.0005k' is not a whole number of tokens."),
+        ('lots', '/auto-compact lots: Type a token count such as 150k, or a share of the window such as 70%.'),
+        ('1,5m', '/auto-compact 1,5m: Type a token count such as 150k, or a share of the window such as 70%.'),
+        ('inf', '/auto-compact inf: Type a token count such as 150k, or a share of the window such as 70%.'),
+        ('1.5', '/auto-compact 1.5: Type a whole number of tokens.'),
+        ('1.0005k', '/auto-compact 1.0005k: Type a whole number of tokens.'),
         ('0', '/auto-compact 0: Input should be greater than 0'),
-        ('half%', "'half%' is not a share of the window such as 70%."),
-        ('150%', '/auto-compact 150%: Input should be less than or equal to 1'),
+        ('half%', '/auto-compact half%: Type a token count such as 150k, or a share of the window such as 70%.'),
+        ('150%', '/auto-compact 150%: Type a share above 0% and up to 100%.'),
         ('150k 70%', 'Give one value: /auto-compact 150k, /auto-compact 70%, or /auto-compact reset.'),
     ],
 )
@@ -716,14 +749,16 @@ def test_auto_compact_completes_its_forms() -> None:
     assert list(command.complete(['150k', ''])) == []
 
 
-async def test_auto_compact_alone_offers_a_list_of_triggers(tmp_path: Path) -> None:
-    """Bare `/auto-compact` lists shares of the window, each with its tokens on this model, and a token count row."""
+async def test_auto_compact_alone_opens_the_compaction_settings(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """In a terminal, bare `/auto-compact` opens `/plugins configure compaction`'s menu; an edit reloads the plugin."""
     store = SettingsStore(tmp_path / 'settings.db')
     compaction = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'compaction')
     commands = Commands()
     plugins = PluginLoader[None](
         store=store,
-        console=Console(file=io.StringIO()),
+        console=Console(file=io.StringIO(), force_terminal=True),
         commands=commands,
         session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
         builtin=(compaction,),
@@ -734,120 +769,25 @@ async def test_auto_compact_alone_offers_a_list_of_triggers(tmp_path: Path) -> N
         assert loaded is not None and isinstance(loaded.plugin, CompactionPlugin)
         return loaded.plugin.chain
 
-    async def answered(*answers: Answer) -> tuple[str, list[Asked]]:
-        asking = ScriptedDialogs(answers)
-        with without_terminal('/auto-compact', dialogs=asking):
-            reply = await commands.execute_async('/auto-compact')
-        assert not asking.unused
-        return reply, asking.asked
-
     try:
         await plugins.load_all()
-        loaded = plugins.entries()[0].loaded
-        assert loaded is not None
-        loaded.host.status.context_window = 200_000
+        script = Script([pick('compact_at'), MenuResult(cancelled=True)], [pick('70%')], [])
+        monkeypatch.setattr(dialogs, 'RUNNERS', script.runners)
+        assert await commands.execute_async('/auto-compact') == 'Saved Compact at.'
+        assert script.opened == ['list', 'choice', 'list']
+        assert chain().max_fraction == 0.7 and store.plugins()[0].settings == {'threshold': 0.7}
 
-        reply, [asked] = await answered(Pick(value='70%'))
-        assert reply == 'Auto-compaction now runs above 70% of the context window.'
-        assert (asked.title, asked.current, asked.description) == (
-            'When should Pax compact automatically?',
-            '85%',
-            'This model has a 200k window.',
+        monkeypatch.setattr(dialogs, 'RUNNERS', Script([MenuResult(cancelled=True)], [], []).runners)
+        assert await commands.execute_async('/auto-compact') == (
+            'Auto-compaction unchanged: it runs above 70% of the context window.'
         )
-        assert [(option.label, option.description) for option in asked.options] == [
-            ('50% - about 100k tokens', 'Compacts at about 100k tokens of the 200k window.'),
-            ('60% - about 120k tokens', 'Compacts at about 120k tokens of the 200k window.'),
-            ('70% - about 140k tokens', 'Compacts at about 140k tokens of the 200k window.'),
-            ('80% - about 160k tokens', 'Compacts at about 160k tokens of the 200k window.'),
-            ('85% - about 170k tokens - default', 'Compacts at about 170k tokens of the 200k window.'),
-            ('90% - about 180k tokens', 'Compacts at about 180k tokens of the 200k window.'),
-            ('Fixed token count...', 'Type a count, such as 150k.'),
-            ('Reset to default', 'Compacts at 85% of the window.'),
-        ]
-        assert chain().max_fraction == 0.7
-
-        reply, [_, typing] = await answered(Pick(value='custom'), Type(text='150k'))
-        assert reply == 'Auto-compaction now runs above 150,000 tokens.'
-        assert (typing.title, typing.placeholder, typing.initial) == ('Compact above how many tokens?', '150k', '')
-        assert (chain().max_tokens, chain().max_fraction) == (150_000, None)
-
-        reply, [asked, typing] = await answered(Pick(value='custom'), Type(text=''))
-        assert reply == 'Auto-compaction unchanged: it runs above 150,000 tokens.'
-        assert asked.current == '150000' and asked.options[-3].label == '150,000 tokens'
-        assert typing.initial == '150000'
-
-        reply, _ = await answered(Back())
-        assert reply == 'Auto-compaction unchanged: it runs above 150,000 tokens.'
-
-        reply, _ = await answered(Pick(value='150000'))
-        assert reply == 'Auto-compaction unchanged: it runs above 150,000 tokens.', 'the current row changes nothing'
-        reply, _ = await answered(Pick(value='custom'), Type(text='150k'))
-        assert reply == 'Auto-compaction unchanged: it runs above 150,000 tokens.', (
-            'the same count, written another way'
-        )
-
-        reply, _ = await answered(Pick(value='reset'))
-        assert reply == 'Auto-compaction now runs above 85% of the context window.'
-        assert store.plugins()[0].settings == {}
-        reply, _ = await answered(Pick(value='reset'))
-        assert reply == 'Auto-compaction unchanged: it runs above 85% of the context window.'
+        with without_terminal('/auto-compact'):
+            assert await commands.execute_async('/auto-compact') == (
+                'Auto-compaction runs above 70% of the context window. Change it with /auto-compact 70%, 150k or '
+                'reset, or in the compaction settings.'
+            )
     finally:
         await plugins.close('exit')
-
-
-async def test_auto_compact_list_without_a_known_window_keeps_an_unlisted_share() -> None:
-    asking = ScriptedDialogs([Back()])
-    with without_terminal('/auto-compact', dialogs=asking):
-        reply = await make_plugin(threshold=0.75).commands.execute_async('/auto-compact')
-    assert reply == 'Auto-compaction unchanged: it runs above 75% of the context window.'
-    [asked] = asking.asked
-    assert asked.description == '' and asked.current == '75%'
-    assert [option.label for option in asked.options][:6] == ['50%', '60%', '70%', '75%', '80%', '85% - default']
-    assert (
-        asked.options[0].description == "Compacts at this share of the model's context window, whichever model you use."
-    )
-
-
-async def test_auto_compact_opens_its_list_in_the_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
-    script = Script([], [MenuResult(cancelled=True)], [])
-    monkeypatch.setattr(dialogs, 'RUNNERS', script.runners)
-    host = PluginHost[None](name='compaction', console=Console(file=io.StringIO(), force_terminal=True), settings={})
-    plugin = load_plugin(CompactionPlugin, host)
-    assert await plugin.commands.execute_async('/auto-compact') == (
-        'Auto-compaction unchanged: it runs above 85% of the context window.'
-    )
-    assert script.opened == ['choice']
-    with without_terminal('/auto-compact'):
-        assert await plugin.commands.execute_async('/auto-compact') == (
-            'Auto-compaction runs above 85% of the context window. Set it with /auto-compact 150k, 70%, or reset.'
-        )
-
-
-async def test_auto_compact_token_count_input_says_what_is_wrong(monkeypatch: pytest.MonkeyPatch) -> None:
-    """The custom row's input takes only a token count, and says why anything else is not one."""
-    inputs: list[TextInput] = []
-
-    def run_text(widget: TextInput) -> TextInputResult:
-        inputs.append(widget)
-        return TextInputResult(cancelled=True)
-
-    monkeypatch.setattr(dialogs, 'RUNNERS', Runners(run_choice=lambda menu: pick('custom'), run_text=run_text))
-    host = PluginHost[None](name='compaction', console=Console(file=io.StringIO(), force_terminal=True), settings={})
-    assert await load_plugin(CompactionPlugin, host).commands.execute_async('/auto-compact') == (
-        'Auto-compaction unchanged: it runs above 85% of the context window.'
-    )
-    [widget] = inputs
-    validator = widget._validator  # pyright: ignore[reportPrivateUsage]
-    assert validator is not None
-    assert [validator(text) for text in ('150k', '1,500,000', '70%', 'reset', 'lots', '1.5', '0')] == [
-        None,
-        None,
-        'Type a token count, such as 150k or 1.5m.',
-        'Type a token count, such as 150k or 1.5m.',
-        'Type a token count, such as 150k or 1.5m.',
-        "'1.5' is not a whole number of tokens.",
-        'Input should be greater than 0',
-    ]
 
 
 @pytest.mark.parametrize(

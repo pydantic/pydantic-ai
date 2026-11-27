@@ -11,7 +11,6 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
-from functools import partial
 from typing import Literal, Self
 
 from pydantic import (
@@ -38,11 +37,11 @@ from pydantic_ai_harness.compaction import (
 )
 from pydantic_ai_pax.commands import Command
 from pydantic_ai_pax.plugins import ConversationChanged, Plugin, PluginHost, SessionEnd, TurnEnd
-from pydantic_ai_pax.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
+from pydantic_ai_pax.plugins.menus import FieldRow, SettingsMenu
 from pydantic_ai_pax.runtime import agent_instrumentation
 from pydantic_ai_pax.ui.menus import dialogs
 from pydantic_ai_pax.ui.menus.field_menu import first_error, shown
-from pydantic_ai_pax.ui.menus.menu_worker import remote_dialogs, require_terminal
+from pydantic_ai_pax.ui.menus.menu_worker import require_terminal
 from pydantic_ai_pax.ui.rendering.status import Status
 
 
@@ -60,7 +59,7 @@ class CompactionSettings(BaseModel):
         le=1,
         allow_inf_nan=False,
         description='Compact once the history exceeds this fraction of the context window. '
-        'Ignored when Threshold tokens is set.',
+        'Ignored when threshold_tokens is set.',
     )
     threshold_tokens: int | None = Field(
         default=None,
@@ -92,7 +91,7 @@ class CompactionSettings(BaseModel):
         lt=1,
         allow_inf_nan=False,
         description='Experimental: with background compaction on, start the summary at this fraction of the threshold, '
-        'or of Threshold tokens when set.',
+        'or of threshold_tokens when set.',
     )
 
     @model_serializer(mode='wrap')
@@ -107,6 +106,9 @@ BACKGROUND_COMPACTION_FEATURE = 'compaction-background'
 
 THRESHOLD_TOKENS_FEATURE = 'compaction-threshold-tokens'
 """Builds without it would reject a saved `threshold_tokens`, so they drop it and compact at `threshold`."""
+
+COMPACT_AT = 'compact_at'
+"""The settings menu row that edits `threshold` and `threshold_tokens` together; not a setting itself."""
 
 _TEXT_FIELDS = frozenset({'strategy', 'summarization_model'})
 """Settings typed as plain text; the others are typed as JSON numbers."""
@@ -135,9 +137,8 @@ class CompactionSource:
             )
 
         return (
+            self._compact_at(),
             row('strategy', 'Strategy', ('summarization', 'truncation')),
-            row('threshold', 'Threshold'),
-            row('threshold_tokens', 'Threshold tokens'),
             row('protected_tokens', 'Protected tokens'),
             row('context_window', 'Context window'),
             row('summarization_model', 'Summarization model'),
@@ -145,12 +146,31 @@ class CompactionSource:
             row('background_start', 'Background start'),
         )
 
+    def _compact_at(self) -> FieldRow:
+        """`threshold` and `threshold_tokens` as one row: shares of the window to step through, or a token count."""
+        current = _trigger_text(self.host.settings(CompactionSettings))
+        shares = [_share(fraction) for fraction in _PRESETS]
+        window = self.host.status.window
+        return FieldRow(
+            key=COMPACT_AT,
+            label='Compact at',
+            description='When compaction runs: a share of the context window, such as 70%, which fits every '
+            'model, or a token count, such as 150k, whatever the window.',
+            default=_share(_DEFAULT_THRESHOLD),
+            choices=(*shares, *(() if current in shares else (current,))),
+            choice_labels={
+                share: f'{share} - about {_thousands(round(window * fraction))} tokens'
+                for share, fraction in zip(shares, _PRESETS, strict=True)
+            }
+            if window
+            else {},
+        )
+
     def current(self, row: FieldRow) -> str:
         settings = self.host.settings(CompactionSettings)
         values: dict[str, JsonValue] = {
+            COMPACT_AT: _trigger_text(settings),
             'strategy': settings.strategy,
-            'threshold': settings.threshold,
-            'threshold_tokens': settings.threshold_tokens,
             'protected_tokens': settings.protected_tokens,
             'context_window': settings.context_window,
             'summarization_model': settings.summarization_model,
@@ -160,6 +180,8 @@ class CompactionSource:
         return shown(values[row.key])
 
     def _updated(self, row: FieldRow, raw: str) -> CompactionSettings:
+        if row.key == COMPACT_AT:
+            return _with_trigger(self.host.settings(CompactionSettings), raw)
         data: dict[str, JsonValue] = self.host.settings(CompactionSettings).model_dump(mode='json')
         data[row.key] = raw if row.key in _TEXT_FIELDS else TypeAdapter(JsonValue).validate_json(raw)
         return CompactionSettings.model_validate(data)
@@ -176,6 +198,9 @@ class CompactionSource:
         return f'Saved {row.label}.'
 
     def reset(self, row: FieldRow) -> str:
+        if row.key == COMPACT_AT:
+            self.host.save_settings(_with_trigger(self.host.settings(CompactionSettings), 'reset'))
+            return f'Reset {row.label}.'
         data: dict[str, JsonValue] = self.host.settings(CompactionSettings).model_dump(mode='json')
         data.pop(row.key, None)
         self.host.save_settings(CompactionSettings.model_validate(data))
@@ -187,50 +212,48 @@ _TOKEN_COUNT = re.compile(r'(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)([km]?)', re.IGNOR
 
 _SUFFIXES = {'': 1, 'k': 1_000, 'm': 1_000_000}
 
+_NOT_A_TRIGGER = 'Type a token count such as 150k, or a share of the window such as 70%.'
+
+_PRESETS = (0.5, 0.6, 0.7, 0.8, 0.85, 0.9)
+"""The shares of the window the Compact at row steps through."""
+
+_DEFAULT_THRESHOLD: float = CompactionSettings.model_fields['threshold'].default
+
 
 def _token_count(text: str) -> int:
     """`150000`, `150,000`, `150k` or `1.5m` as a token count; `ValueError` otherwise."""
     if (match := _TOKEN_COUNT.fullmatch(text)) is None:
-        raise ValueError(f'{text!r} is not a token count such as 150k, a share such as 70%, or reset.')
+        raise ValueError(_NOT_A_TRIGGER)
     # Decimal, so `4.1m` is exactly 4,100,000 rather than a float just under it.
     count = Decimal(match[1].replace(',', '')) * _SUFFIXES[match[2].lower()]
     if count != count.to_integral_value():
-        raise ValueError(f'{text!r} is not a whole number of tokens.')
+        raise ValueError('Type a whole number of tokens.')
     return int(count)
 
 
+def _percent(text: str) -> float:
+    """`70%` as `0.7`; `ValueError` otherwise."""
+    try:
+        return float(text[:-1]) / 100
+    except ValueError:
+        raise ValueError(_NOT_A_TRIGGER) from None
+
+
 def _with_trigger(settings: CompactionSettings, value: str) -> CompactionSettings:
-    """`settings` with the trigger `/auto-compact VALUE` sets; `ValueError` saying why `value` is not one."""
+    """`settings` compacting at `value` (`70%`, `150k`, or `reset`); `ValueError` saying why it is not a trigger."""
     data: dict[str, JsonValue] = settings.model_dump(mode='json')
     data.pop('threshold_tokens', None)
+    share = value.endswith('%')
     if value.lower() == 'reset':
         data.pop('threshold', None)
-    elif value.endswith('%'):
+    elif share:
         data['threshold'] = _percent(value)
     else:
         data['threshold_tokens'] = _token_count(value)
     try:
         return CompactionSettings.model_validate(data)
     except ValueError as exc:
-        raise ValueError(f'/auto-compact {value}: {first_error(exc)}') from None
-
-
-def _trigger_problem(settings: CompactionSettings, value: str) -> str | None:
-    """Why `value` is not a token count to compact above, for the custom row's input; `None` when it is."""
-    if _TOKEN_COUNT.fullmatch(value) is None:
-        return 'Type a token count, such as 150k or 1.5m.'
-    try:
-        CompactionSettings.model_validate({**settings.model_dump(mode='json'), 'threshold_tokens': _token_count(value)})
-    except ValueError as exc:
-        return first_error(exc)
-    return None
-
-
-_PRESETS = (0.5, 0.6, 0.7, 0.8, 0.85, 0.9)
-"""The shares of the window the `/auto-compact` list offers."""
-
-_CUSTOM = 'custom'
-"""The list row that asks for a token count, an `Option.value` `/auto-compact` never takes typed."""
+        raise ValueError('Type a share above 0% and up to 100%.' if share else first_error(exc)) from None
 
 
 def _share(fraction: float) -> str:
@@ -241,57 +264,17 @@ def _thousands(tokens: int) -> str:
     return f'{round(tokens / 1000):,}k'
 
 
-def _trigger_options(settings: CompactionSettings, window: int | None) -> tuple[list[Option], str]:
-    """The `/auto-compact` list, each value what `/auto-compact` takes typed, and the current row's value."""
-    default = CompactionSettings.model_fields['threshold'].default
-    shares = sorted({*_PRESETS, settings.threshold})
-    options = [
-        Option(
-            value=_share(fraction),
-            label=' - '.join(
-                (
-                    _share(fraction),
-                    *((f'about {_thousands(round(window * fraction))} tokens',) if window else ()),
-                    *(('default',) if fraction == default else ()),
-                )
-            ),
-            description=(
-                f'Compacts at about {_thousands(round(window * fraction))} tokens of the {_thousands(window)} window.'
-                if window
-                else "Compacts at this share of the model's context window, whichever model you use."
-            ),
-        )
-        for fraction in shares
-    ]
-    current = _share(settings.threshold)
-    if (tokens := settings.threshold_tokens) is not None:
-        current = str(tokens)
-        options.append(
-            Option(
-                value=current,
-                label=f'{tokens:,} tokens',
-                description='Compacts at this many tokens, whatever the window.',
-            )
-        )
-    options += [
-        Option(value=_CUSTOM, label='Fixed token count...', description='Type a count, such as 150k.'),
-        Option(value='reset', label='Reset to default', description=f'Compacts at {_share(default)} of the window.'),
-    ]
-    return options, current
+def _trigger_text(settings: CompactionSettings) -> str:
+    """The trigger as the Compact at row and `/auto-compact` take it typed: `70%` or `150k`."""
+    if (tokens := settings.threshold_tokens) is None:
+        return _share(settings.threshold)
+    return f'{tokens // 1000}k' if tokens % 1000 == 0 else str(tokens)
 
 
 def _trigger(settings: CompactionSettings) -> str:
     if (tokens := settings.threshold_tokens) is not None:
         return f'above {tokens:,} tokens'
-    return f'above {settings.threshold * 100:g}% of the context window'
-
-
-def _percent(text: str) -> float:
-    """`70%` as `0.7`; `ValueError` otherwise."""
-    try:
-        return float(text[:-1]) / 100
-    except ValueError:
-        raise ValueError(f'{text!r} is not a share of the window such as 70%.') from None
+    return f'above {_share(settings.threshold)} of the context window'
 
 
 def build_chain(config: CompactionSettings) -> FallbackCompaction[None]:
@@ -387,7 +370,7 @@ class CompactionPlugin(Plugin[CompactionSettings]):
             ),
             Command(
                 name='auto-compact',
-                description='Choose when compaction runs, or set it directly: a share of the window (70%) or tokens (150k)',
+                description='Choose when compaction runs, or set it: a share of the window (70%) or tokens (150k)',
                 handler=self._auto_compact,
                 complete=lambda args: ('150k', '70%', 'reset') if len(args) <= 1 else (),
             ),
@@ -396,62 +379,38 @@ class CompactionPlugin(Plugin[CompactionSettings]):
     async def _auto_compact(self, args: list[str]) -> str:
         if len(args) > 1:
             raise ValueError('Give one value: /auto-compact 150k, /auto-compact 70%, or /auto-compact reset.')
-        asking = self._dialogs()
-        if args:
-            value = args[0]
-        elif asking is None:
-            return f'Auto-compaction runs {_trigger(self.settings)}. Set it with /auto-compact 150k, 70%, or reset.'
-        elif (picked := await self._pick_trigger(asking)) is None:
-            return f'Auto-compaction unchanged: it runs {_trigger(self.settings)}.'
-        else:
-            value = picked
-        settings = _with_trigger(self.settings, value)
+        plugins = self.host.plugins
+        if not args:
+            if plugins is None or not self._terminal():
+                return (
+                    f'Auto-compaction runs {_trigger(self.settings)}. Change it with /auto-compact 70%, 150k or reset, '
+                    'or in the compaction settings.'
+                )
+            # The settings menu `/plugins configure compaction` opens; the plugin loads again if it changed.
+            messages = await plugins.edit_settings(self.host.name, dialogs.run_settings_menu)
+            return '\n'.join(messages) or f'Auto-compaction unchanged: it runs {_trigger(self.settings)}.'
+        try:
+            settings = _with_trigger(self.settings, args[0])
+        except ValueError as exc:
+            raise ValueError(f'/auto-compact {args[0]}: {exc}') from None
         # Compared as saved, so `150k` over a saved 150000 changes nothing, and reset still drops a pinned default.
         if settings.model_dump(mode='json') == self.settings.model_dump(mode='json'):
             return f'Auto-compaction unchanged: it runs {_trigger(settings)}.'
-        if (plugins := self.host.plugins) is None:
+        if plugins is None:
             raise ValueError('/auto-compact needs a Pax session; use /plugins configure compaction.')
         # Loads the plugin again, so the next turn runs the new chain; this instance is unloaded.
         await plugins.save_settings(self.host.name, settings)
         return f'Auto-compaction now runs {_trigger(settings)}.'
 
-    def _dialogs(self) -> Dialogs | None:
-        """Where to show the trigger list: the web UI's dialogs, the terminal, or `None` with neither, as in `-p`."""
-        if (remote := remote_dialogs()) is not None:
-            return remote
+    def _terminal(self) -> bool:
+        """Whether the settings menu can open here: a terminal, and not a surface that refuses one, as the web UI does."""
         if not self.host.console.is_terminal:
-            return None
+            return False
         try:
             require_terminal()
         except ValueError:
-            return None
-        # The module's `RUNNERS` is read here, not imported, so tests can script the terminal.
-        return dialogs.TerminalDialogs(dialogs.RUNNERS)
-
-    async def _pick_trigger(self, asking: Dialogs) -> str | None:
-        """What the user picked in the trigger list, as `/auto-compact` takes it typed; `None` to keep the current one."""
-        window = self.host.status.window
-        options, current = _trigger_options(self.settings, window)
-        picked = await asking.choose(
-            title='When should Pax compact automatically?',
-            options=options,
-            current=current,
-            description=f'This model has a {_thousands(window)} window.' if window else '',
-        )
-        if picked == _CUSTOM:
-            picked = await self._ask_token_count(asking)
-        return None if picked in (None, '', current) else picked
-
-    async def _ask_token_count(self, asking: Dialogs) -> str | None:
-        tokens = self.settings.threshold_tokens
-        return await asking.text(
-            title='Compact above how many tokens?',
-            label='Tokens',
-            placeholder='150k',
-            initial='' if tokens is None else str(tokens),
-            check=partial(_trigger_problem, self.settings),
-            description="Such as 150000, 150k or 1.5m. Keep it below the model's window.",
-        )
+            return False
+        return True
 
     def settings_menu(self) -> SettingsMenu:
         return SettingsMenu(source=CompactionSource(self.host))
