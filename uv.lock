@@ -25,7 +25,6 @@ listentome = false
 logfire = false
 logfire-api = false
 logfire-sdk = false
-platinum-sdk = "2026-11-20T22:00:00Z"
 pydantic = false
 pydantic-ai-harness = false
 pydantic-core = false
