@@ -1201,6 +1201,7 @@ def test_temporal_run_context_serialization_is_exhaustive():
         '_capability',  # live capability instance used only while dispatching workflow-side hooks
         'realtime_session',  # live RealtimeSession, not serializable; realtime sessions don't run inside Temporal activities
         '_cancellation',  # runtime-only controller holding a live asyncio task reference; cannot cross the activity boundary
+        '_in_flight',  # runtime-only registry holding live tasks; `ctx.in_flight` raises inside an activity
         '_durable_operations',  # workflow-side callables cannot cross the activity boundary; worker dispatch is pre-registered
         '_run_capabilities_by_id',  # live per-run capability instances are recovered from the worker agent instead
         '_output_submitter',  # live view of the workflow's graph state; output can only be submitted from workflow code

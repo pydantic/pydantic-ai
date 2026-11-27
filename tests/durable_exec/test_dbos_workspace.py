@@ -17,7 +17,8 @@ import pytest
 from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, RunContext, Tool, ToolOutput
-from pydantic_ai.capabilities import SetToolMetadata
+from pydantic_ai.capabilities import AbstractCapability, SetToolMetadata
+from pydantic_ai.exceptions import UserError
 from pydantic_ai.models.test import TestModel
 
 from ..workspace_fakes import InMemoryProvider
@@ -217,4 +218,38 @@ async def test_dbos_child_workflow_tools_run_in_parallel_with_a_workspace(dbos: 
                 'dbos_parallel__capability__workspace.call',
             ],
         }
+    )
+
+
+in_flight_errors: list[str] = []
+
+
+class _StartsWork(AbstractCapability[None]):
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        with pytest.raises(UserError) as exc_info:
+            _ = ctx.in_flight
+        in_flight_errors.append(str(exc_info.value))
+
+
+in_flight_agent = Agent(
+    TestModel(call_tools=[]),
+    name='dbos_in_flight_workspace',
+    capabilities=[provider.capability(), _StartsWork(), DBOSDurability()],
+)
+
+
+@DBOS.workflow()
+async def in_flight_workflow() -> str:
+    return (await in_flight_agent.run('go')).output
+
+
+async def test_dbos_with_a_workspace_rejects_in_flight(dbos: DBOS) -> None:
+    """A workspace makes the run execute tool calls sequentially, and DBOS still refuses `ctx.in_flight` for its start order."""
+    in_flight_errors.clear()
+    provider.reset()
+    await in_flight_workflow()
+    assert in_flight_errors == snapshot(
+        [
+            '`ctx.in_flight` is not supported in DBOS runs yet: DBOS identifies each recorded step by the order it starts in, so on recovery work running alongside the run could start its steps in a different order and read the recorded result of another step (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call itself instead.'
+        ]
     )

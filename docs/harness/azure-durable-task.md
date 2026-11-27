@@ -123,6 +123,9 @@ completed results from history. This shapes how you write agents for it:
   orchestrator as `durabletask.task.TaskFailedError`. [`UserError`][pydantic_ai.exceptions.UserError] keeps its type.
 - **Activities on a worker share one event loop.** A blocking call in an async tool or event handler
   stalls every other activity on that worker.
+- **In-flight work restarts each dispatch.** Work started with `ctx.in_flight` in orchestrator code
+  is started again by each replay and stopped at the end of each dispatch, so a `finally` in it runs
+  once per dispatch. See [Work that outlives a step](../capabilities/custom.md#in-flight-work).
 
 ## Dependencies
 

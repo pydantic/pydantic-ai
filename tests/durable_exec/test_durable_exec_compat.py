@@ -70,7 +70,7 @@ from pydantic_ai.durable_exec._toolset import (
 )
 from pydantic_ai.durable_exec._utils import unwrap_model
 from pydantic_ai.durable_exec._workspace import WORKSPACE_OPERATION_ID
-from pydantic_ai.exceptions import RunCancelled, RunTimedOut
+from pydantic_ai.exceptions import RunCancelled, RunTimedOut, UserError
 from pydantic_ai.messages import (
     BinaryContent,
     CapabilityEvent,
@@ -1242,3 +1242,43 @@ async def test_run_cancelled_crosses_call_tool_result_boundary(exc_type: type[Ru
     with pytest.raises(exc_type, match='the sub-agent stopped') as exc_info:
         unwrap_recorded_tool_call_result(payload)
     assert type(exc_info.value) is exc_type
+
+
+class _StartOrderJournalDurability(JournalDurability):
+    engine_spec = DurabilityEngineSpec(
+        engine_name='Start-order journal stub',
+        durable_unit_noun='unit',
+        durable_container_noun='journal',
+        codec=JSON_CODEC,
+        _steps_identified_by_start_order=True,
+    )
+
+
+@pytest.mark.parametrize('start_order', [False, True])
+async def test_in_flight_under_user_chosen_sequential_mode_follows_the_engine(start_order: bool) -> None:
+    """Choosing sequential tool execution yourself doesn't refuse `ctx.in_flight`; only the engine's start order does."""
+    outcomes: list[str] = []
+
+    class StartsWork(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            try:
+                outcomes.append(f'live work: {len(ctx.in_flight.live())}')
+            except UserError as error:
+                outcomes.append(str(error))
+
+    durability = _StartOrderJournalDurability() if start_order else JournalDurability()
+    agent = Agent(
+        TestModel(), name='in_flight_sequential', deps_type=type(None), capabilities=[StartsWork(), durability]
+    )
+
+    with agent.parallel_tool_call_execution_mode('sequential'):
+        await agent.run('go')
+
+    assert outcomes == [
+        '`ctx.in_flight` is not supported in Start-order journal stub runs yet: Start-order journal stub identifies '
+        'each recorded unit by the order it starts in, so on recovery work running alongside the run could start its '
+        'units in a different order and read the recorded result of another unit '
+        '(https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call itself instead.'
+        if start_order
+        else 'live work: 0'
+    ]

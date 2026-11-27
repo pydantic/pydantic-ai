@@ -248,6 +248,11 @@ async def wait_for_external_event(
     `UserError`: a wait in process would not be recorded, so a replay would ask again and could get a
     different answer than the one the run already acted on, and a restart would lose the wait.
 
+    A durable wait called from a `handle_deferred_tool_calls` capability hook, as
+    [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] does, also applies the
+    `on_end` of the run's [in-flight work][pydantic_ai.in_flight.InFlightOnEnd]. `'cancel'` work is cancelled
+    before the wait. A wait that returns does so only once `'drain'` work has finished as well.
+
     Args:
         name: A name for the wait in a durable engine's history. Keep it stable across deployments.
         ask: Sync or async function called with the token, returning the answer or `None`. A sync
@@ -279,7 +284,8 @@ async def wait_for_external_event(
             '`TemporalDurability` or AWS Lambda durable functions with `AWSLambdaDurability`.'
         )
     # A durable engine installs its waiter, or one that refuses, for its runs; elsewhere, wait in process.
-    waiter = _current_waiter.get() or _IN_PROCESS_WAITER
+    durable_waiter = _current_waiter.get()
+    waiter = durable_waiter or _IN_PROCESS_WAITER
 
     async def ask_with_token(token: str) -> JsonValue:
         # `ask` runs inside the engine's durable unit, so mark it as one: a durable operation it
@@ -293,7 +299,13 @@ async def wait_for_external_event(
                 answer = await await_maybe(await run_in_executor(ask, token))
         return None if answer is None else _to_json(answer)
 
-    return await waiter.wait(name, ask=ask_with_token, timeout=timeout)
+    if durable_waiter is None:
+        return await waiter.wait(name, ask=ask_with_token, timeout=timeout)
+    from .in_flight import durable_wait_scope
+
+    # A durable wait applies the `on_end` of the run's in-flight work: see `InFlightOnEnd`.
+    async with durable_wait_scope():
+        return await waiter.wait(name, ask=ask_with_token, timeout=timeout)
 
 
 def resolve_external_event(token: str, payload: object) -> None:

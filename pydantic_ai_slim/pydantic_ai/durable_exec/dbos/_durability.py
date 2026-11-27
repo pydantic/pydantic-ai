@@ -99,6 +99,8 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
         journal_discovery=True,
         sequential_tools_in_durable_context=False,
         tool_config_key=None,
+        # DBOS numbers steps as they start (https://github.com/pydantic/pydantic-ai/issues/14500).
+        _steps_identified_by_start_order=True,
         # `DBOS.cancel_workflow()` aborts the run with one of these `BaseException`s rather than a
         # `CancelledError`: `DBOSWorkflowCancelledError` when a step starts (or a preemptible step is
         # aborted), and, since dbos 3.2, `DBOSWorkflowConflictIDError` when a step that was running as

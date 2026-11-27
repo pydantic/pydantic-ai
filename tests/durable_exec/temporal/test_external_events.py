@@ -20,9 +20,9 @@ import pytest
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import HandleDeferredToolCalls
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 from tests._timeouts import READINESS_WAIT_TIMEOUT
@@ -30,6 +30,7 @@ from tests.temporal_utils import temporal_dev_server_cache_dir
 
 try:
     from temporalio import workflow
+    from temporalio.api.enums.v1 import EventType
     from temporalio.client import Client, WorkflowHandle
     from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
@@ -74,6 +75,8 @@ class Records:
     asked_about: list[list[str]] = field(default_factory=list[list[str]])
     deleted: list[str] = field(default_factory=list[str])
     model_calls: int = 0
+    log: list[str] = field(default_factory=list[str])
+    """What the model and the run's in-flight work did, in order."""
 
 
 _records: list[Records] = []
@@ -170,6 +173,98 @@ class TwoApprovalsWorkflow:
     @workflow.run
     async def run(self, prompt: str) -> str:
         return (await _two_approvals_agent.run(prompt)).output
+
+
+def _logged_delete_then_report(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    _current().log.append('model request')
+    return _delete_then_report(messages, info)
+
+
+@dataclass
+class _StartsWork(AbstractCapability[None]):
+    """Starts in-flight work from `before_run`, in workflow code: a `'cancel'` piece and a `'drain'` piece."""
+
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        log = _current().log
+
+        async def never_finishes() -> None:
+            try:
+                await workflow.wait_condition(lambda: False)
+            finally:
+                log.append('cancel work stopped')
+
+        async def reports_once_the_wait_began() -> None:
+            # Workflow state, so a replay reaches it at the same point: the wait cancels this work as it begins.
+            await workflow.wait_condition(lambda: cancel_work.state == 'cancelled')
+            # A durable timer, which the time-skipping server only fires once the workflow has nothing else to do:
+            # a run that went on past the wait would reach its next model request first.
+            await workflow.sleep(timedelta(hours=1))
+            log.append('drain work finished')
+            ctx.enqueue('background result')
+
+        cancel_work = ctx.in_flight.start(
+            never_finishes, kind='test', name='never finishes', id='cancel-work', on_end='cancel'
+        )
+        ctx.in_flight.start(reports_once_the_wait_began, kind='test', name='reports', id='drain-work')
+
+
+_in_flight_approvals_agent = Agent(
+    FunctionModel(_logged_delete_then_report),
+    name='temporal_in_flight_approvals',
+    deps_type=type(None),
+    capabilities=[
+        _StartsWork(),
+        TemporalDurability[None](activity_config=ACTIVITY_CONFIG),
+        HandleDeferredToolCalls[None](_approve_all, timeout=timedelta(minutes=5)),
+    ],
+)
+_in_flight_approvals_agent.tool_plain(name='delete', requires_approval=True)(_delete)
+
+
+@workflow.defn
+class InFlightApprovalsWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> list[str]:
+        result = await _in_flight_approvals_agent.run(prompt)
+        return [
+            str(part.content)
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, UserPromptPart) and part.content != prompt
+        ]
+
+
+def _waits_for_the_background_result(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    texts = [part.content for message in messages for part in message.parts if isinstance(part, UserPromptPart)]
+    return ModelResponse(parts=[TextPart('got it' if 'background result' in texts else 'waiting')])
+
+
+@dataclass
+class _StartsDrainWork(AbstractCapability[None]):
+    """Starts `'drain'` work in workflow code that queues its result after the run's first model request."""
+
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        async def report_later() -> None:
+            # Fired by the time-skipping server once the model request's activity has completed.
+            await workflow.sleep(timedelta(hours=1))
+            ctx.enqueue('background result')
+
+        ctx.in_flight.start(report_later, kind='test', name='reports later', id='drain-work')
+
+
+_in_flight_end_agent = Agent(
+    FunctionModel(_waits_for_the_background_result),
+    name='temporal_in_flight_end',
+    deps_type=type(None),
+    capabilities=[_StartsDrainWork(), TemporalDurability[None](activity_config=ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class InFlightEndWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await _in_flight_end_agent.run(prompt)).output
 
 
 @pytest.fixture(scope='module')
@@ -349,6 +444,66 @@ async def test_a_resolution_for_a_wait_that_ended_is_discarded(
 
     assert records.asked_about == [['call-a.txt'], ['call-b.txt']]
     assert records.deleted == ['a.txt', 'b.txt']
+
+
+async def test_the_wait_cancels_cancel_work_and_returns_once_drain_work_has_finished(
+    temporal_env: WorkflowEnvironment, records: Records
+) -> None:
+    """In-flight work started in workflow code keeps running across the wait, which applies each piece's `on_end`."""
+    client = temporal_env.client
+    task_queue = f'in-flight-approvals-{uuid.uuid4()}'
+    async with _worker(client, task_queue, InFlightApprovalsWorkflow, _in_flight_approvals_agent):
+        handle = await client.start_workflow(
+            InFlightApprovalsWorkflow.run,
+            args=['clean up'],
+            id=f'in-flight-approvals-{uuid.uuid4()}',
+            task_queue=task_queue,
+        )
+        assert await handle.result() == ['background result']
+
+    assert records.log == [
+        'model request',
+        'cancel work stopped',
+        'drain work finished',
+        'model request',
+    ]
+    assert records.deleted == ['a.txt']
+
+    await Replayer(
+        workflows=[InFlightApprovalsWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(await handle.fetch_history())
+
+
+async def test_the_run_waits_to_end_for_drain_work_started_in_workflow_code(temporal_env: WorkflowEnvironment) -> None:
+    """The model ends the run before the work queued its result: the run waits, then gives the model a turn on it."""
+    client = temporal_env.client
+    task_queue = f'in-flight-end-{uuid.uuid4()}'
+    async with _worker(client, task_queue, InFlightEndWorkflow, _in_flight_end_agent):
+        handle = await client.start_workflow(
+            InFlightEndWorkflow.run, args=['go'], id=f'in-flight-end-{uuid.uuid4()}', task_queue=task_queue
+        )
+        assert await handle.result() == 'got it'
+
+    history = await handle.fetch_history()
+    completions = [
+        name
+        for event in history.events
+        if (name := EventType.Name(event.event_type))
+        in ('EVENT_TYPE_ACTIVITY_TASK_COMPLETED', 'EVENT_TYPE_TIMER_FIRED')
+    ]
+    # The work queued its result between the two model requests: after the first had ended the run, so it waited.
+    assert completions[-3:] == [
+        'EVENT_TYPE_ACTIVITY_TASK_COMPLETED',
+        'EVENT_TYPE_TIMER_FIRED',
+        'EVENT_TYPE_ACTIVITY_TASK_COMPLETED',
+    ]
+    await Replayer(
+        workflows=[InFlightEndWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(history)
 
 
 async def test_a_token_from_elsewhere_is_refused(temporal_env: WorkflowEnvironment) -> None:

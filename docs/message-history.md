@@ -1189,6 +1189,8 @@ Content stays queued instead in two cases:
 
 Content left queued isn't delivered. When you drive the run with [`iter()`][pydantic_ai.agent.AbstractAgent.iter], you can read it (but not change it) from [`AgentRun.pending_messages`][pydantic_ai.run.AgentRun.pending_messages]. With `run()`, `run_stream()` or a UI adapter, it's dropped. Pydantic AI itself doesn't resend it, for example as the next run's `user_prompt`. Capabilities that track what they queue, like [`SubAgents`](harness/subagents.md) background reports, queue it again in the next run, so don't resubmit theirs, or it arrives twice.
 
+Background work that enqueues its result when it finishes may still be running when the model ends the run. Start it with [`ctx.in_flight.start()`][pydantic_ai.in_flight.InFlightRegistry.start], so the run waits for its result before ending or pausing. See [Work that outlives a step](capabilities/custom.md#in-flight-work).
+
 `enqueue` is variadic — each positional argument is one item, and can be:
 
 - a piece of [`UserContent`][pydantic_ai.messages.UserContent] — a `str` or multi-modal content like an [`ImageUrl`][pydantic_ai.messages.ImageUrl]. Adjacent user content is gathered into a single [`UserPromptPart`][pydantic_ai.messages.UserPromptPart], so `enqueue('caption', image)` forms one user turn. To pass an existing list, spread it: `enqueue(*items)`;

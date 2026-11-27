@@ -3063,6 +3063,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         '_capability',  # live capability instance used only while dispatching workflow-side hooks
         'realtime_session',  # live RealtimeSession, not hashable run state; sessions don't run inside Prefect tasks
         '_cancellation',  # runtime-only cancellation controller; carries no run inputs and must not fork the cache key
+        '_in_flight',  # runtime-only in-flight work registry; carries no run inputs and must not fork the cache key
         '_durable_operations',  # runtime callables are derived from the static agent and do not vary cache identity
         '_run_capabilities_by_id',  # live instances are represented by their projected capability state instead
         '_output_submitter',  # live view of the run's graph state; carries no inputs and must not fork the cache key
@@ -5464,6 +5465,45 @@ async def test_prefect_task_wrapped_tool_rejects_enqueue() -> None:
 
     # Outside a flow the tool runs inline and enqueueing keeps working.
     await agent.run('run')
+
+
+async def test_prefect_allows_in_flight_in_flow_code_and_rejects_it_in_tasks() -> None:
+    """`ctx.in_flight` works in flow code, such as a capability hook, and raises in a task."""
+    errors: list[str] = []
+    live: list[int] = []
+
+    def record(ctx: RunContext[object]) -> None:
+        with pytest.raises(UserError) as exc_info:
+            _ = ctx.in_flight
+        errors.append(str(exc_info.value))
+
+    class InFlightInFlowCode(AbstractCapability[object]):
+        async def before_run(self, ctx: RunContext[object]) -> None:
+            live.append(len(ctx.in_flight.live()))
+
+    async def in_task(ctx: RunContext[object]) -> str:
+        record(ctx)
+        return 'checked'
+
+    agent = Agent(
+        TestModel(),
+        deps_type=object,
+        name='prefect_in_flight',
+        tools=[in_task],
+        capabilities=[InFlightInFlowCode(), PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> None:
+        await agent.run('run')
+
+    await run_agent()
+    assert live == [0]
+    assert errors == snapshot(
+        [
+            "`ctx.in_flight` is not supported inside a durable task: the durable runtime replays the task's recorded result without re-running your code, so work it started or registered would be lost.",
+        ]
+    )
 
 
 @dataclass(kw_only=True)

@@ -52,6 +52,7 @@ if TYPE_CHECKING:
     from .capabilities.abstract import AbstractCapability
     from .durable_exec._base import BaseDurabilityCapability
     from .durable_exec._toolset import RunHeldToolset
+    from .in_flight import InFlightRegistry
     from .models import AbstractModel
     from .realtime import RealtimeModelSettings, RealtimeSession
     from .settings import ModelSettings
@@ -386,6 +387,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
     drains it into the agent event stream so consumers (`event_stream_handler`, `agent.run_stream_events`,
     `agent.iter` streaming) observe them. `None` in synthetic contexts not backed by a running agent,
     where [`emit`][pydantic_ai.tools.RunContext.emit] raises.
+    """
+
+    _in_flight: InFlightRegistry | None = field(default=None, repr=False)
+    """Private implementation detail — not part of the public API; do not read or write.
+
+    The run's registry of in-flight work, exposed as [`in_flight`][pydantic_ai.tools.RunContext.in_flight].
+    Holds live tasks, so it is runtime-only: `None` in synthetic contexts that aren't backed by a running
+    agent, and not available across durable-execution serialization boundaries.
     """
 
     _pending_immediate_dispatches: dict[int, list[anyio.Event]] = field(
@@ -1400,6 +1409,49 @@ class RunContext(Generic[RunContextAgentDepsT]):
                 'This `RunContext` has no run to cancel.'
             )
         cancellation.cancel()
+
+    @property
+    def in_flight(self) -> InFlightRegistry:
+        """The run's registry of [work that outlives the step that started it](../capabilities/custom.md#in-flight-work).
+
+        A tool or capability that starts work the model hears about later, like a tool running in the
+        background, tracks it here, so the run waits for it before it ends, or cancels it, and a UI can show
+        what is still running.
+
+        In a durable run (see [`in_durable_context`][pydantic_ai.tools.RunContext.in_durable_context]), work
+        started from the durable container runs there alongside the run, and the durable units it calls are
+        recorded as the run's own are. A wait for an external event that the engine records, like a
+        [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] handler that takes a resume
+        token, applies each piece of work's `on_end` (see [`InFlightOnEnd`][pydantic_ai.in_flight.InFlightOnEnd]).
+
+        Raises:
+            UserError: If this `RunContext` isn't backed by a running agent in this process (e.g. the synthetic
+                context from `Agent.system_prompt_parts`, or a realtime session), it runs inside a durable
+                execution unit, where work it starts would be lost on replay, or the run is durable on an engine
+                that identifies each recorded unit by the order it starts in: DBOS, AWS Lambda, Absurd and pgtask,
+                until https://github.com/pydantic/pydantic-ai/issues/14500 lands.
+        """
+        queue = self.pending_messages
+        if isinstance(queue, EnqueueGuard):
+            raise queue.in_flight_error()
+        if (durability := self._durability) is not None and durability.in_durable_context:
+            if durability.engine_spec._steps_identified_by_start_order:  # pyright: ignore[reportPrivateUsage]
+                engine, unit = durability.engine_name, durability.durable_unit_noun
+                raise UserError(
+                    f'`ctx.in_flight` is not supported in {engine} runs yet: {engine} identifies each recorded {unit} '
+                    f'by the order it starts in, so on recovery work running alongside the run could start its '
+                    f'{durability.durable_unit_plural} in a different order and read the recorded result of another '
+                    f'{unit} (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call '
+                    'itself instead.'
+                )
+        # Read via `__dict__`, like `_cancellation` in `cancel`: the registry never crosses a durable boundary.
+        registry: InFlightRegistry | None = self.__dict__.get('_in_flight')
+        if registry is None:
+            raise UserError(
+                '`ctx.in_flight` is only available during an agent run (from tools or capability hooks) in the same '
+                'process as the run itself. This `RunContext` has no run to track work for.'
+            )
+        return registry
 
     def remaining_time(self) -> float | None:
         """Return the seconds left until [`deadline`][pydantic_ai.tools.RunContext.deadline], or `None` if the run has none.

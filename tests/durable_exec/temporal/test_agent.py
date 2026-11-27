@@ -4537,6 +4537,68 @@ async def test_temporal_event_stream_handler_reads_dispatch_snapshots(client: Cl
     )
 
 
+def _in_flight_error(ctx: RunContext[None]) -> str:
+    with pytest.raises(UserError) as exc_info:
+        _ = ctx.in_flight
+    return str(exc_info.value)
+
+
+@dataclass
+class _InFlightInWorkflowCode(AbstractCapability[None]):
+    """Reads `ctx.in_flight` from `before_run`, which runs in workflow code, and passes what it lists to the model."""
+
+    async def before_run(self, ctx: RunContext[None]) -> None:
+        ctx.enqueue(f'live work: {len(ctx.in_flight.live())}')
+
+
+async def _in_flight_in_activity(ctx: RunContext[None]) -> str:
+    """Runs in an activity, so its context holds the enqueue guard."""
+    return _in_flight_error(ctx)
+
+
+_in_flight_agent = Agent(
+    TestModel(),
+    name='temporal_in_flight',
+    deps_type=type(None),
+    tools=[_in_flight_in_activity],
+    capabilities=[_InFlightInWorkflowCode(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@workflow.defn
+class InFlightGuardWorkflow:
+    @workflow.run
+    async def run(self) -> list[str]:
+        result = await _in_flight_agent.run('run')
+        return [
+            str(part.content)
+            for message in result.all_messages()
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, (UserPromptPart, ToolReturnPart)) and part.content != 'run'
+        ]
+
+
+async def test_temporal_allows_in_flight_in_workflow_code_and_rejects_it_in_activities(client: Client) -> None:
+    """`ctx.in_flight` works in workflow code, where its tasks run on the workflow loop, and raises in an activity."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[InFlightGuardWorkflow],
+        plugins=[AgentPlugin(_in_flight_agent)],
+    ):
+        errors = await client.execute_workflow(
+            InFlightGuardWorkflow.run, id=InFlightGuardWorkflow.__name__, task_queue=TASK_QUEUE
+        )
+
+    assert errors == snapshot(
+        [
+            'live work: 0',
+            "`ctx.in_flight` is not supported inside a durable activity: the durable runtime replays the activity's recorded result without re-running your code, so work it started or registered would be lost.",
+        ]
+    )
+
+
 async def test_temporal_tool_rejects_enqueue(client: Client) -> None:
     _enqueue_guard_tool_queue[:] = ['later']
     async with Worker(

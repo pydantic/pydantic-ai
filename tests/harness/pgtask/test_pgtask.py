@@ -10,7 +10,7 @@ from __future__ import annotations
 import gc
 import weakref
 from collections.abc import AsyncIterable, AsyncIterator
-from typing import Self
+from typing import Literal, Self
 
 import anyio
 import pytest
@@ -963,3 +963,39 @@ class TestRetryAfter:
 
         assert counter['calls'] == 1
         assert await checkpoints(pgtask_db, task_id) == {}
+
+
+@pytest.mark.parametrize('mode', ['sequential', 'parallel_ordered_events'])
+async def test_in_flight_is_refused(
+    pgtask_db: PGTaskDatabase, mode: Literal['sequential', 'parallel_ordered_events']
+) -> None:
+    """pgtask identifies each step by the order it starts in, so either mode refuses."""
+    errors: list[str] = []
+
+    class StartsWork(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            with pytest.raises(UserError) as exc_info:
+                _ = ctx.in_flight
+            errors.append(str(exc_info.value))
+
+    agent = Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
+        name='in_flight',
+        capabilities=[StartsWork(), PGTaskDurability(parallel_execution_mode=mode)],
+    )
+
+    outputs: list[str] = []
+
+    async def body(attempt: int) -> None:
+        outputs.append((await agent.run('go')).output)
+
+    await run_in_task(pgtask_db, body)
+    assert outputs == ['done']
+
+    assert errors == [IN_FLIGHT_REFUSALS[mode]]
+
+
+IN_FLIGHT_REFUSALS = {
+    'sequential': '`ctx.in_flight` is not supported in pgtask runs yet: pgtask identifies each recorded step by the order it starts in, so on recovery work running alongside the run could start its steps in a different order and read the recorded result of another step (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call itself instead.',
+    'parallel_ordered_events': '`ctx.in_flight` is not supported in pgtask runs yet: pgtask identifies each recorded step by the order it starts in, so on recovery work running alongside the run could start its steps in a different order and read the recorded result of another step (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call itself instead.',
+}

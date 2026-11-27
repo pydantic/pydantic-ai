@@ -8,7 +8,7 @@ disambiguation and checkpoint storage are Absurd's own.
 from __future__ import annotations
 
 from collections.abc import AsyncIterable, AsyncIterator
-from typing import Any
+from typing import Any, Literal
 
 import anyio
 import pytest
@@ -945,3 +945,34 @@ class TestRetryAfter:
             'unlimited__model.request.retry_after#2',
             'unlimited__model.request#3',
         ]
+
+
+@pytest.mark.parametrize('mode', ['sequential', 'parallel_ordered_events'])
+async def test_in_flight_is_refused(
+    absurd: AsyncAbsurd, mode: Literal['sequential', 'parallel_ordered_events']
+) -> None:
+    """Absurd identifies each step by the order it starts in, so either mode refuses."""
+    errors: list[str] = []
+
+    class StartsWork(AbstractCapability[None]):
+        async def before_run(self, ctx: RunContext[None]) -> None:
+            with pytest.raises(UserError) as exc_info:
+                _ = ctx.in_flight
+            errors.append(str(exc_info.value))
+
+    agent = Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')])),
+        name='in_flight',
+        capabilities=[StartsWork(), AbsurdDurability(parallel_execution_mode=mode)],
+    )
+
+    async with running_task_context(absurd):
+        assert (await agent.run('go')).output == 'done'
+
+    assert errors == [IN_FLIGHT_REFUSALS[mode]]
+
+
+IN_FLIGHT_REFUSALS = {
+    'sequential': '`ctx.in_flight` is not supported in Absurd runs yet: Absurd identifies each recorded step by the order it starts in, so on recovery work running alongside the run could start its steps in a different order and read the recorded result of another step (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call itself instead.',
+    'parallel_ordered_events': '`ctx.in_flight` is not supported in Absurd runs yet: Absurd identifies each recorded step by the order it starts in, so on recovery work running alongside the run could start its steps in a different order and read the recorded result of another step (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call itself instead.',
+}
