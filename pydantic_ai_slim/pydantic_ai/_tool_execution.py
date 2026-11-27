@@ -1239,7 +1239,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         and emitted their `FunctionToolCallEvent` then, so only the result event is emitted here.
         """
         deferred = [call for bucket in _DEFERRED_BUCKETS for call in self.deferred_calls[bucket]]
-        for call in sorted(deferred, key=self.tool_calls.index):
+        positions = {call.tool_call_id: index for index, call in enumerate(self.tool_calls)}
+        for call in sorted(deferred, key=lambda call: positions[call.tool_call_id]):
             part = _messages.ToolReturnPart(
                 tool_name=call.tool_name,
                 content=DEFERRED_CALL_FINAL_ALREADY_PROCESSED,
