@@ -20,6 +20,7 @@ from pydantic_ai.capabilities import AgentCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness.report_tool_errors import ReportToolErrors
 from pydantic_ai_pax import warm_imports
 from pydantic_ai_pax.cli.self_update import WebHandoff
 from pydantic_ai_pax.commands import (
@@ -77,12 +78,14 @@ def create_stock_agent(model: Model | str | None = None) -> StockAgent[None, str
     """Build the CLI-owned template; caller-supplied agents are never reconstructed.
 
     It is named `clai2`, which its run spans carry and which Logfire Agent Control addresses it by.
+    It binds harness `ReportToolErrors`, so an exception a plugin or MCP tool raises reaches the model
+    as a failed tool result instead of ending the turn.
     """
     return StockAgent(
         model,
         deps_type=type(None),
         output_type=str,
-        capabilities=[PaxDocs(), WorkspacelessCapability(_resumed_docs)],
+        capabilities=[PaxDocs(), WorkspacelessCapability(_resumed_docs), ReportToolErrors()],
         name='clai2',
     )
 

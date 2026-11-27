@@ -837,7 +837,9 @@ a sandbox. Model names resolve as in the CLI, with Pax's per-model defaults.
 `plugin_settings` merges settings over a built-in's stock ones, for example
 {'coder': {'sub_agents': False, 'agent_folders': []}}. Saved, drop-in, and project plugins,
 .clai/settings.json, saved model settings, and chain: fallback chains do not apply; nor do
-ask_user, observability, mcp, or this guide. When approvals end the run, as over ACP, set
+ask_user, observability, mcp, or this guide. Unlike the CLI's agent, it leaves out harness
+`ReportToolErrors`, so an exception a tool raises ends the run; pass `ReportToolErrors()` in
+`capabilities` to send it to the model as a failed tool result. When approvals end the run, as over ACP, set
 coder sub_agents to false: a delegated task's approval fails the run
 (https://github.com/pydantic/pydantic-ai/issues/4302).
 

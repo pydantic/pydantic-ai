@@ -3503,6 +3503,9 @@ provider, and relies on argument repair and retries instead. A `NativeOutput` sc
 the provider's mode, as Anthropic and Bedrock only offer native output in strict mode. The built-in `compaction`
 plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
 it summarises older messages before the context runs out and adds `/compact`.
+When a tool raises an exception, such as a plugin's tool hitting a bug or an MCP server
+dropping its connection, the model gets a failed tool result that names the tool and the
+exception type, and the turn goes on; see [Tool errors](../PLUGINS.md#tool-errors).
 The built-in `refinement` plugin adds `/refine`: the model reviews its last answer and gives it
 again, revised, as a turn of its own. Add words to say what to look at, such as
 `/refine check the error handling`. To have every answer reviewed without asking, add harness
@@ -3899,6 +3902,11 @@ plugin_settings = {'coder': {'unrestricted_filesystem': False, 'agent_folders': 
 
 `capabilities` adds your own capabilities. They are bound beside the built-ins, so
 delegated tasks carry them too.
+
+Unlike in `pax`, an exception a tool raises ends the run. To send it to the model as a
+failed tool result instead, pass harness
+[`ReportToolErrors`](../../../docs/harness/report-tool-errors.md):
+`capabilities=[ReportToolErrors()]`.
 
 #### Serving it over ACP
 
