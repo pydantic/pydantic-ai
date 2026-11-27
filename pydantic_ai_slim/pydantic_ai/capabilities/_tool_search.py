@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from dataclasses import KW_ONLY, dataclass, field
-from typing import TYPE_CHECKING, ClassVar
+from typing import TYPE_CHECKING, Any, ClassVar
 
 from .._run_context import AgentDepsT, RunContext
 from ..native_tools._tool_search import (
@@ -25,7 +25,12 @@ from ..tools import (
     ToolSelector,
 )
 from ..toolsets import AbstractToolset
-from ..toolsets._tool_search import ToolSearchToolset, keywords_search
+from ..toolsets._tool_search import (
+    ToolSearchRevealScope,
+    ToolSearchToolset,
+    has_run_scoped_tool_search_toolset,
+    keywords_search,
+)
 from ._deferred_capabilities import record_loaded_capability_tools
 from .abstract import AbstractCapability, CapabilityOrdering
 
@@ -155,6 +160,15 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
     marked `defer_loading`, so a bare `ToolSearch()` only configures how search runs.
     """
 
+    reveal_scope: ToolSearchRevealScope = 'conversation'
+    """Scope over which tool-search discoveries remain revealed.
+
+    * `'conversation'` (default): tools discovered via tool search remain revealed across later
+      runs that reuse `message_history`.
+    * `'run'`: tool-search discoveries remain revealed only for the current run; subsequent runs
+      reusing `message_history` start with deferred tools hidden again until searched anew.
+    """
+
     id: str | None = 'tool_search'
     """One-off: an agent has a single tool-discovery configuration, so the id is fixed by default.
 
@@ -232,6 +246,7 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
             tool_description=self.tool_description,
             parameter_description=self.parameter_description,
             enable_fallback=self.strategy not in ('bm25', 'regex'),
+            reveal_scope=self.reveal_scope,
         )
 
     def _realtime_uncalled_hooks(self) -> tuple[str, ...]:
@@ -252,3 +267,13 @@ class ToolSearch(AbstractCapability[AgentDepsT]):
 
     function_tool_name: ClassVar[str] = 'search_tools'
     """Reserved name of the local function tool used when tool search runs client-side."""
+
+
+def is_tool_search_run_scoped(
+    capabilities: Iterable[AbstractCapability[Any]],
+    toolset: AbstractToolset[Any] | None = None,
+) -> bool:
+    """Return True when tool-search reveals are scoped to the active run (`reveal_scope='run'`)."""
+    if any(isinstance(cap, ToolSearch) and cap.reveal_scope == 'run' for cap in capabilities):
+        return True
+    return toolset is not None and has_run_scoped_tool_search_toolset(toolset)

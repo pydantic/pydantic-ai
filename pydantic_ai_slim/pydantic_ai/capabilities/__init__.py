@@ -11,7 +11,7 @@ from pydantic_ai.native_tools._tool_search import (
 )
 from pydantic_ai.output import OutputContext
 
-from ..toolsets._tool_search import keywords_search
+from ..toolsets._tool_search import ToolSearchRevealScope, keywords_search
 from ._dynamic import CapabilityFunc, DynamicCapability
 from ._on_event import on_event
 from ._tool_search import ToolSearch
@@ -180,6 +180,7 @@ __all__ = [
     'ToolSearchFunc',
     'ToolSearchLocalStrategy',
     'ToolSearchNativeStrategy',
+    'ToolSearchRevealScope',
     'ToolSearchStrategy',
     'keywords_search',
     'Toolset',

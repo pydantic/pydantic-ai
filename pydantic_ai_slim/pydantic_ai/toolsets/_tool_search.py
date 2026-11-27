@@ -43,7 +43,7 @@ from copy import deepcopy
 from dataclasses import dataclass, field, replace
 from functools import cache
 from heapq import nsmallest
-from typing import Annotated, Any, assert_never
+from typing import Annotated, Any, Literal, assert_never
 
 from pydantic import Field, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
@@ -76,7 +76,7 @@ from ..tools import (
     matches_tool_selector,
 )
 from ._capability_owned import is_gated_by_deferred_capability
-from .abstract import ToolsetTool
+from .abstract import AbstractToolset, ToolsetTool
 from .wrapper import WrapperToolset
 
 _SEARCH_TOOLS_NAME = TOOL_SEARCH_FUNCTION_TOOL_NAME
@@ -201,7 +201,21 @@ def _build_search_args_schema(parameter_description: str) -> tuple[dict[str, Any
     return schema, _SEARCH_TOOL_VALIDATOR
 
 
-def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
+ToolSearchRevealScope = Literal['run', 'conversation']
+"""Scope over which discovered deferred tools remain revealed.
+
+* `'conversation'` (default): discovered tools remain revealed across subsequent runs that reuse
+  `message_history`.
+* `'run'`: tool-search discoveries remain revealed only for the active run (`run_id`); subsequent
+  runs that reuse `message_history` start with deferred tools hidden again until searched anew.
+"""
+
+
+def parse_discovered_tools(
+    messages: Sequence[ModelMessage],
+    *,
+    run_id: str | None = None,
+) -> set[str]:
     """Scan visible message history for previously-discovered tool names.
 
     Every [`CompactionPart`][pydantic_ai.messages.CompactionPart] resets the derived
@@ -225,37 +239,54 @@ def parse_discovered_tools(messages: Sequence[ModelMessage]) -> set[str]:
     Only the [`post_compaction_window`][pydantic_ai.messages.post_compaction_window] is scanned —
     the one definition of the boundary — so locating it costs a cheap reverse
     `isinstance` pass rather than parsing history the boundary would reset anyway.
+
+    When `run_id` is provided, tool-search discoveries (`ToolSearchReturnPart`,
+    `NativeToolSearchReturnPart`, and legacy `search_tools` metadata) are scoped to
+    messages whose `run_id` matches; `ToolAvailabilityDeltaPart` entries are always
+    preserved.
     """
-    return set(discovered_tool_names_in_order(messages))
+    return set(discovered_tool_names_in_order(messages, run_id=run_id))
 
 
-def discovered_tool_names_in_order(messages: Sequence[ModelMessage]) -> tuple[str, ...]:
+def discovered_tool_names_in_order(
+    messages: Sequence[ModelMessage],
+    *,
+    run_id: str | None = None,
+) -> tuple[str, ...]:
     """Return discovered names in first-appearance order for byte-stable provider tool segments.
 
     Scans only the [`post_compaction_window`][pydantic_ai.messages.post_compaction_window], so both the
     reveal set and the wire ordering derive from what the model can actually see.
     """
-    return _discovered_tool_names_in_order(post_compaction_window(messages))
+    return _discovered_tool_names_in_order(post_compaction_window(messages), run_id=run_id)
 
 
-def _discovered_tool_names_in_order(messages: Sequence[ModelMessage]) -> tuple[str, ...]:
+def _discovered_tool_names_in_order(
+    messages: Sequence[ModelMessage],
+    *,
+    run_id: str | None = None,
+) -> tuple[str, ...]:
     """Parse discovery evidence from an already-selected message window."""
     discovered: dict[str, None] = {}
     for msg in messages:
         if isinstance(msg, ModelRequest):
-            discovered.update(dict.fromkeys(_request_discoveries(msg)))
+            include_search = run_id is None or msg.run_id == run_id
+            discovered.update(dict.fromkeys(_request_discoveries(msg, include_search_discoveries=include_search)))
         elif isinstance(msg, ModelResponse):
-            discovered.update(dict.fromkeys(_response_discoveries(msg)))
+            if run_id is None or msg.run_id == run_id:
+                discovered.update(dict.fromkeys(_response_discoveries(msg)))
         else:
             assert_never(msg)
     return tuple(discovered)
 
 
-def _request_discoveries(request: ModelRequest) -> Iterator[str]:
+def _request_discoveries(request: ModelRequest, *, include_search_discoveries: bool = True) -> Iterator[str]:
     """The tool names a request's parts record as discovered, in order."""
     for part in request.parts:
         if isinstance(part, ToolAvailabilityDeltaPart):
             yield from part.tools_added
+        elif not include_search_discoveries:
+            continue
         elif isinstance(part, ToolSearchReturnPart):
             yield from (match['name'] for match in part.discovered_tools)
         elif isinstance(part, ToolReturnPart) and part.tool_name == _SEARCH_TOOLS_NAME:
@@ -332,6 +363,9 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     tools: ToolSelector[AgentDepsT] | None = field(default=None, kw_only=True)
     """Which tools to defer in addition to those marked `defer_loading`; see
     [`ToolSearch.tools`][pydantic_ai.capabilities.ToolSearch.tools]."""
+
+    reveal_scope: ToolSearchRevealScope = field(default='conversation', kw_only=True)
+    """Scope over which discovered tools stay revealed: `'conversation'` (default) or `'run'`."""
 
     enable_fallback: bool = True
     """When False, the local `search_tools` function tool is not emitted — used when the
@@ -575,3 +609,20 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
     def _build_return(matches: list[ToolSearchMatch]) -> ToolSearchReturnContent:
         """Shaped matches return: typed [`ToolSearchReturnContent`][pydantic_ai.messages.ToolSearchReturnContent]."""
         return {'discovered_tools': matches}
+
+
+def has_run_scoped_tool_search_toolset(toolset: AbstractToolset[Any]) -> bool:
+    """Return True if *toolset* or any wrapped/combined descendant is a run-scoped `ToolSearchToolset`."""
+    if isinstance(toolset, ToolSearchToolset) and toolset.reveal_scope == 'run':
+        return True
+
+    found = False
+
+    def _check(t: AbstractToolset[Any]) -> AbstractToolset[Any]:
+        nonlocal found
+        if isinstance(t, ToolSearchToolset) and t.reveal_scope == 'run':
+            found = True
+        return t
+
+    toolset.visit_and_replace(_check)
+    return found

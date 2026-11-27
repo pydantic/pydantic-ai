@@ -102,6 +102,7 @@ from ..capabilities import (
 from ..capabilities._dynamic import wrap_capability_funcs
 from ..capabilities._ordering import collect_leaves, has_capability_type
 from ..capabilities._pending_messages import PendingMessageDrainCapability
+from ..capabilities._tool_search import is_tool_search_run_scoped
 from ..capabilities.abstract import (
     _combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
     _declares_default_id,  # pyright: ignore[reportPrivateUsage]
@@ -2229,7 +2230,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             if message_history
             else set[str]()
         )
-        discovered_tool_names = parse_discovered_tools(message_history) if message_history else set[str]()
+        tool_search_run_id = run_id if is_tool_search_run_scoped(capabilities_dict.values(), toolset) else None
+        discovered_tool_names = (
+            parse_discovered_tools(message_history, run_id=tool_search_run_id) if message_history else set[str]()
+        )
 
         run_model_contribution = None if model_is_explicit else run_capability.get_model()
         self._check_dynamic_model_resume(run_model_contribution, message_history)
@@ -4309,7 +4313,10 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         run_context.loaded_capability_ids.update(
             registered_loaded_capability_ids(message_history or (), run_context.capabilities.keys())
         )
-        run_context.discovered_tool_names.update(parse_discovered_tools(message_history or ()))
+        tool_search_run_id = run_id if is_tool_search_run_scoped(run_context.capabilities.values()) else None
+        run_context.discovered_tool_names.update(
+            parse_discovered_tools(message_history or (), run_id=tool_search_run_id)
+        )
         model_profile = model.profile
         deferred_capability_ids = _realtime_deferred_capability_ids(run_context, model)
         _warn_realtime_uncalled_hooks(run_capability)

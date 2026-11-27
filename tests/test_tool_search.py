@@ -9282,3 +9282,118 @@ async def test_tool_search_tools_selected_tool_is_discovered_and_called():
             ['load_capability', 'search_tools', 'weather_report'],
         ]
     )
+
+
+def test_parse_discovered_tools_run_id_filtering():
+    """`parse_discovered_tools(..., run_id=...)` scopes search discoveries to that run while keeping deltas."""
+    messages: list[ModelMessage] = [
+        ModelRequest(
+            run_id='run-1',
+            parts=[
+                ToolSearchReturnPart(
+                    tool_name='search_tools',
+                    content={'discovered_tools': [{'name': 'weather_tool'}]},
+                    tool_call_id='s1',
+                ),
+                ToolAvailabilityDeltaPart(tools_added=['capability_tool']),
+            ],
+        ),
+        ModelResponse(
+            run_id='run-1',
+            parts=[
+                NativeToolSearchReturnPart(
+                    tool_name='tool_search',
+                    content={'discovered_tools': [{'name': 'native_tool'}]},
+                    tool_call_id='ns1',
+                ),
+            ],
+        ),
+        ModelRequest(
+            run_id='run-2',
+            parts=[
+                ToolSearchReturnPart(
+                    tool_name='search_tools',
+                    content={'discovered_tools': [{'name': 'billing_tool'}]},
+                    tool_call_id='s2',
+                ),
+            ],
+        ),
+    ]
+
+    assert parse_discovered_tools(messages) == {'weather_tool', 'capability_tool', 'native_tool', 'billing_tool'}
+    assert parse_discovered_tools(messages, run_id='run-1') == {'weather_tool', 'capability_tool', 'native_tool'}
+    assert parse_discovered_tools(messages, run_id='run-2') == {'capability_tool', 'billing_tool'}
+    assert parse_discovered_tools(messages, run_id='run-3') == {'capability_tool'}
+
+
+@pytest.mark.anyio
+@pytest.mark.parametrize('reveal_scope', ['conversation', 'run'])
+async def test_tool_search_reveal_scope_across_runs(reveal_scope: Literal['run', 'conversation']):
+    """With `reveal_scope='run'`, tools discovered in run 1 are hidden again in run 2 until searched anew."""
+    seen: list[list[str]] = []
+    search_call_count = 0
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal search_call_count
+        seen.append(sorted(t.name for t in info.function_tools))
+        visible = {t.name for t in info.function_tools}
+        if 'get_weather' not in visible:
+            search_call_count += 1
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(
+                        tool_name='search_tools',
+                        args={'queries': ['weather']},
+                        tool_call_id=f's-{search_call_count}',
+                    )
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        NoNativeToolSearchModel(model_fn),
+        capabilities=[ToolSearch(reveal_scope=reveal_scope)],
+    )
+
+    @agent.tool_plain(defer_loading=True)
+    def get_weather() -> str:  # pragma: no cover
+        return 'sunny'
+
+    @agent.tool_plain(defer_loading=True)
+    def get_stock() -> str:  # pragma: no cover
+        return '100'
+
+    result1 = await agent.run('weather please')
+    assert result1.output == 'done'
+    assert search_call_count == 1
+
+    seen.clear()
+    result2 = await agent.run('weather again', message_history=result1.all_messages())
+    assert result2.output == 'done'
+
+    if reveal_scope == 'conversation':
+        assert search_call_count == 1
+        assert seen == [['get_weather', 'search_tools']]
+    else:
+        assert search_call_count == 2
+        assert seen == [['search_tools'], ['get_weather', 'search_tools']]
+
+
+def test_tool_search_toolset_reveal_scope_attribute():
+    """`ToolSearchToolset(..., reveal_scope='run')` is detected by `has_run_scoped_tool_search_toolset`."""
+    from pydantic_ai.toolsets._tool_search import has_run_scoped_tool_search_toolset
+
+    toolset = FunctionToolset()
+    assert not has_run_scoped_tool_search_toolset(ToolSearchToolset(wrapped=toolset))
+    assert has_run_scoped_tool_search_toolset(ToolSearchToolset(wrapped=toolset, reveal_scope='run'))
+
+
+def test_tool_search_reveal_scope_from_spec():
+    agent = Agent.from_spec(
+        {
+            'model': 'test',
+            'capabilities': [{'ToolSearch': {'reveal_scope': 'run'}}],
+        }
+    )
+    tool_search = next(cap for cap in agent._root_capability.capabilities if isinstance(cap, ToolSearch))  # pyright: ignore[reportPrivateUsage]
+    assert tool_search.reveal_scope == 'run'

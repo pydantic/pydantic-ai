@@ -67,6 +67,7 @@ from pydantic_ai._utils import (
 )
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabilityLoader
+from pydantic_ai.capabilities._tool_search import is_tool_search_run_scoped
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.capabilities.compaction import CompactionModelRequest, CompactionRequest, CompactionResult
 from pydantic_ai.models import (
@@ -4559,9 +4560,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             bool(messages) and isinstance(last := messages[-1], _messages.ModelResponse) and last.state == 'suspended'
         )
         if not resuming:
-            # Normalize consecutive trailing requests for model adapters without changing stored history.
-            messages = _clean_message_history(list(messages), repair_last_response=True)
-            model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, messages)
+            # Derive outgoing reveal state before `_clean_message_history` merges consecutive
+            # `ModelRequest`s so `run_id` provenance on individual requests is preserved.
+            pre_merge_messages = list(messages)
+            messages = _clean_message_history(pre_merge_messages, repair_last_response=True)
+            model_request_parameters = _with_outgoing_reveal_state(
+                model_request_parameters,
+                pre_merge_messages,
+                run_id=_tool_search_run_id(ctx),
+            )
             request_context.model_request_parameters = model_request_parameters
             adapted = model.prepare_messages(messages, model_request_parameters)
             # This pass folds a `ModelRequest` that `prepare_messages` inserted into the request ahead of
@@ -4629,7 +4636,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # The step-start check in `_prepare_request` ran before this request's tokens were counted.
                 ctx.deps.usage_limits.check_before_request(usage)
         else:
-            model_request_parameters = _with_outgoing_reveal_state(model_request_parameters, list(messages))
+            model_request_parameters = _with_outgoing_reveal_state(
+                model_request_parameters,
+                list(messages),
+                run_id=_tool_search_run_id(ctx),
+            )
             request_context.model_request_parameters = model_request_parameters
             if _continuation_needs_prepare(messages):
                 # Projection can split a foreign native tool-search exchange into a trailing
@@ -5617,7 +5628,9 @@ class CallToolsNode(AgentNode[DepsT, NodeRunEndT]):
         )
         # Held in a local because it lands in two places below.
         anchored_evidence = AnchoredEvidence(
-            discovered_tool_names=frozenset(_discovered_tool_names_in_order(evidence_window))
+            discovered_tool_names=frozenset(
+                _discovered_tool_names_in_order(evidence_window, run_id=_tool_search_run_id(ctx))
+            )
             - ctx.deps.discovered_tool_names,
             loaded_capability_ids=frozenset(_parse_loaded_capabilities(evidence_window))
             - ctx.deps.loaded_capability_ids,
@@ -6100,9 +6113,16 @@ def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAg
     ctx.deps.loaded_capability_ids.update(loaded_capability_ids)
 
 
+def _tool_search_run_id(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> str | None:
+    """Return the active `run_id` when tool-search reveals are run-scoped, otherwise `None`."""
+    if is_tool_search_run_scoped(ctx.deps.capabilities.values(), ctx.deps.tool_manager.toolset):
+        return ctx.state.run_id
+    return None
+
+
 def _refresh_discovered_tool_names(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
     """Refresh the history-derived discovered tool names from the current graph state."""
-    discovered_tool_names = parse_discovered_tools(ctx.state.message_history)
+    discovered_tool_names = parse_discovered_tools(ctx.state.message_history, run_id=_tool_search_run_id(ctx))
 
     # Mutate in place (not reassign), for the same shared-by-reference reason as the set above.
     ctx.deps.discovered_tool_names.clear()
@@ -6286,7 +6306,10 @@ def _continuation_needs_prepare(messages: list[_messages.ModelMessage]) -> bool:
 
 
 def _with_outgoing_reveal_state(
-    parameters: models.ModelRequestParameters, messages: list[_messages.ModelMessage]
+    parameters: models.ModelRequestParameters,
+    messages: list[_messages.ModelMessage],
+    *,
+    run_id: str | None = None,
 ) -> models.ModelRequestParameters:
     """Make per-request reveal state match the history that will be sent to the model.
 
@@ -6300,7 +6323,7 @@ def _with_outgoing_reveal_state(
     return replace(
         parameters,
         revealed_tool_names=_revealed_tool_names(
-            parse_discovered_tools(messages),
+            parse_discovered_tools(messages, run_id=run_id),
             parameters.function_tools,
             deferred_capability_ids=parameters.deferred_capability_ids,
             loaded_capability_ids=parse_loaded_capabilities(messages),
