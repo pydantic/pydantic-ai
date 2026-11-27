@@ -2147,6 +2147,29 @@ class OpensOnWait(SpanProcessor):
             self.gate.opened.set()
 
 
+def backgrounding_agent_without_sub_agents() -> Agent[None, str]:
+    """An agent with a directly registered `SubAgentToolset`, so no `SubAgents.wrap_run`, that backgrounds one task."""
+    toolset = SubAgentToolset[None](
+        agents={'researcher': researcher()},
+        forward_usage=True,
+        inherit_tools=False,
+        shared_capabilities=[],
+        event_stream_handler=None,
+        tool_name='delegate_task',
+        tool_retries=2,
+        contain_errors=False,
+        call_counts={},
+        task_control=TaskControl(),
+        dynamic_agents=DynamicAgents(),
+        created={},
+    )
+    return Agent(
+        scripted(call('delegate_task', agent_name='researcher', task='Find x.', background=True), text('Bye.')),
+        deps_type=type(None),
+        toolsets=[toolset],
+    )
+
+
 class TestTaskControlTelemetry:
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_vetoes_backgrounding_and_waits_are_spans(self, include_content: bool) -> None:
@@ -2225,26 +2248,8 @@ class TestTaskControlTelemetry:
 
     async def test_a_directly_registered_toolsets_background_task_settles_and_is_recorded(self) -> None:
         """Without `SubAgents.wrap_run` no run trace context is stored, so the settled span goes under the task's current span."""
-        toolset = SubAgentToolset[None](
-            agents={'researcher': researcher()},
-            forward_usage=True,
-            inherit_tools=False,
-            shared_capabilities=[],
-            event_stream_handler=None,
-            tool_name='delegate_task',
-            tool_retries=2,
-            contain_errors=False,
-            call_counts={},
-            task_control=TaskControl(),
-            dynamic_agents=DynamicAgents(),
-            created={},
-        )
         settings, exporter = traced(False)
-        parent = Agent(
-            scripted(call('delegate_task', agent_name='researcher', task='Find x.', background=True), text('Bye.')),
-            deps_type=type(None),
-            toolsets=[toolset],
-        )
+        parent = backgrounding_agent_without_sub_agents()
         parent.instrument = settings
         owner = DelegationTasks()
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
@@ -2259,6 +2264,32 @@ class TestTaskControlTelemetry:
         assert settled.parent is not None and delegate.context is not None
         assert settled.parent.span_id == delegate.context.span_id
         assert (settled.attributes or {})['sub_agents.outcome'] == 'ok'
+
+    async def test_a_nested_toolsets_settled_span_does_not_go_under_the_enclosing_run(self) -> None:
+        """The enclosing run's stored context is inherited by the child, but belongs to another run."""
+        settings, exporter = traced(False)
+        middle = backgrounding_agent_without_sub_agents()
+        middle.instrument = settings
+        outer = Agent(
+            scripted(call('delegate_task', agent_name='middle', task='Go.'), echo_last_return),
+            capabilities=[controlled(SubAgent(middle, name='middle'))],
+        )
+        outer.instrument = settings
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await outer.run('Go.')
+        spans = exporter.get_finished_spans()
+        [settled] = [span for span in spans if span.name == 'sub_agents task settled']
+        [outer_run] = [span for span in spans if span.name.startswith('invoke_agent') and span.parent is None]
+        assert outer_run.context is not None
+        [middle_call] = [
+            span
+            for span in spans
+            if span.name == 'execute_tool delegate_task'
+            and span.parent is not None
+            and span.parent.span_id != outer_run.context.span_id
+        ]
+        assert settled.parent is not None and middle_call.context is not None
+        assert settled.parent.span_id == middle_call.context.span_id
 
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_a_listener_answer_is_a_span(self, include_content: bool) -> None:

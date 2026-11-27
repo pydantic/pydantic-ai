@@ -573,7 +573,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         if self.include_self:
             self._require_bound_to(ctx.agent)
         # Inside `Instrumentation`'s run span, which stays open while the run waits for its tasks.
-        trace_token = RUN_TRACE_CONTEXT.set(otel_context.get_current())
+        trace_token = RUN_TRACE_CONTEXT.set((ctx.run_id, otel_context.get_current()))
         try:
             owner = DelegationTasks.current()
             if ctx.in_durable_context:

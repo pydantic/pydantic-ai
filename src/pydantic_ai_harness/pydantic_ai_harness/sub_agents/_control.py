@@ -75,28 +75,30 @@ RUN_OWNER: ContextVar[tuple[str, DelegationTasks] | None] = ContextVar(
 )
 """The run ID and owner of the run that opened a `DelegationTasks` of its own, for its task-control `SubAgents`."""
 
-RUN_TRACE_CONTEXT: ContextVar[otel_context.Context | None] = ContextVar(
+RUN_TRACE_CONTEXT: ContextVar[tuple[str | None, otel_context.Context] | None] = ContextVar(
     'pydantic_ai_harness.sub_agents.run_trace_context', default=None
 )
-"""The OpenTelemetry context of the delegating run's body, inside its run span, set by `SubAgents.wrap_run`.
+"""The run ID and OpenTelemetry context of the delegating run's body, inside its run span, set by `SubAgents.wrap_run`.
 
-A task in the background inherits it from the tool call that started it.
+A task in the background inherits it from the tool call that started it, and so does every run that run starts:
+the run ID says which run it belongs to.
 """
 
 
 @contextmanager
-def in_run_trace_context() -> Generator[None]:
+def in_run_trace_context(run_id: str | None) -> Generator[None]:
     """Make the delegating run's span current, for a decision made after the tool call that led to it ended.
 
     A task in the background settles after its `execute_tool` span ended, while the run that started it, which
     waits for its tasks, still has its span open. A `SubAgentToolset` registered without `SubAgents` stores no
-    run context, so the decision goes under whatever span is current.
+    run context of its own, so the decision goes under whatever span is current, even when an enclosing run
+    stored one.
     """
-    run_context = RUN_TRACE_CONTEXT.get()
-    if run_context is None:
+    stored = RUN_TRACE_CONTEXT.get()
+    if stored is None or stored[0] != run_id:
         yield
         return
-    token = otel_context.attach(run_context)
+    token = otel_context.attach(stored[1])
     try:
         yield
     finally:

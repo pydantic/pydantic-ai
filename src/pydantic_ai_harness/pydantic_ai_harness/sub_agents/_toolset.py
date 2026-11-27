@@ -1559,7 +1559,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             outcome: DelegationOutcome = (
                 'cancelled' if isinstance(exc, (asyncio.CancelledError, RunCancelled)) else 'error'
             )
-            model = _served_model_label(serving_model, run_model, sub_agent)
+            model = _served_model_label(serving_model, run_model, sub_agent.agent.model)
             _record_delegation_ended(telemetry, agent_name=agent_name, record=record, outcome=outcome, model=model)
             if owner is not None:
                 with anyio.move_on_after(5, shield=True):
@@ -1578,7 +1578,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             _depth.reset(token)
             if child_usage is not None and self._forward_usage:
                 ctx.usage.incr(child_usage)
-        model = _served_model_label(serving_model, run_model, sub_agent)
+        model = _served_model_label(serving_model, run_model, sub_agent.agent.model)
         _record_delegation_ended(telemetry, agent_name=agent_name, record=record, outcome=ended.outcome, model=model)
         if record is not None:
             record.outcome = ended.outcome
@@ -1891,7 +1891,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
 
 def _served_model_label(
-    serving_model: ServingModelRecorder, run_model: Model | KnownModelName | str | None, sub_agent: SubAgent[Any]
+    serving_model: ServingModelRecorder,
+    run_model: Model | KnownModelName | str | None,
+    configured_model: Model | KnownModelName | str | None,
 ) -> str | None:
     """The model that answered the delegation's last request, else the one it was configured to run on.
 
@@ -1899,7 +1901,7 @@ def _served_model_label(
     """
     if serving_model.answered_by is not None:
         return serving_model.answered_by
-    model = run_model or sub_agent.agent.model
+    model = run_model or configured_model
     return None if model is None else model_label(model)
 
 
@@ -1923,7 +1925,7 @@ def _record_delegation_ended(
         attributes['sub_agents.model'] = model
     if record is not None and record.background:
         call_id = telemetry.ctx.tool_call_id
-        with in_run_trace_context():
+        with in_run_trace_context(telemetry.ctx.run_id):
             telemetry.decision(
                 'task settled',
                 agent_name=agent_name,
