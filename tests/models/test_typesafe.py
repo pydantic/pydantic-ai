@@ -2842,7 +2842,7 @@ async def test_a_streamed_fallback_takes_the_proposed_step(allow_model_requests:
 
 
 async def test_fallback_moves_past_jev_when_the_output_needs_text(
-    allow_model_requests: None, typesafe_model: TypeSafeModel
+    allow_model_requests: None, typesafe_model: TypeSafeModel, request_capture: RequestCapture
 ):
     """An output Jev can't write, plain text, moves a fallback on to the next model, without sending Jev anything.
 
@@ -2851,6 +2851,7 @@ async def test_fallback_moves_past_jev_when_the_output_needs_text(
     agent = Agent(FallbackModel(typesafe_model, TestModel()))
     result = await agent.run('anything')
     assert result.response.model_name == 'test'
+    assert request_capture.bodies() == []
     assert [
         (attempt.model_name, attempt.outcome, attempt.error) for attempt in result.response.failed_attempts or []
     ] == [
