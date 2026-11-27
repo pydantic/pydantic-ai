@@ -68,14 +68,15 @@ async def _model_fallback_switch(native: RouteRun, directory: Path) -> list[Mode
     """The case rerun with a `FallbackModel` whose primary fails from its second request, so the backup finishes it."""
     assert isinstance(native, NativeRun)
     backup = OneCallPerResponse(native.calls.made).model
-    assert backup.stream_function is not None
+    assert backup.function is not None and backup.stream_function is not None
     scripted_stream = backup.stream_function
 
     def failing(step: int) -> None:
         if step >= 1:
             raise ModelHTTPError(status_code=503, model_name='primary', body='overloaded')
 
-    # Streamed only: the run streams every request, so a non-streamed path would never be called.
+    # The run streams every request it makes; a capability's own unstreamed run on this model, like `BrowserUse`'s
+    # browser agent, gets the scripted answer, as on the backup.
     async def stream(
         messages: list[ModelMessage], info: AgentInfo
     ) -> AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns]:
@@ -83,7 +84,7 @@ async def _model_fallback_switch(native: RouteRun, directory: Path) -> list[Mode
         async for chunk in scripted_stream(messages, info):
             yield chunk
 
-    primary = FunctionModel(stream_function=stream, model_name='primary')
+    primary = FunctionModel(backup.function, stream_function=stream, model_name='primary')
     capabilities, observer = await _built(native.calls, directory)
     agent = Agent(FallbackModel(primary, backup), deps_type=type(None), capabilities=[*capabilities, observer])
     result = await agent.run('go', event_stream_handler=drain_events)
