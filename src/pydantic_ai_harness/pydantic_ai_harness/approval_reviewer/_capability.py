@@ -36,7 +36,7 @@ from .._judge import (
     reported_confidence,
     tool_call_prompt,
 )
-from ..permissions._capability import person_only_request
+from ..permissions._capability import person_only_request, reviewer_approval_metadata
 
 _REVIEWER_INSTRUCTIONS = """{question}
 
@@ -222,7 +222,12 @@ class ApprovalReviewer(AbstractCapability[AgentDepsT]):
                 self.on_review(review)
             if review.decision == 'approve':
                 approved[call.tool_call_id] = ToolApproved()
-        return DeferredToolResults(approvals=approved) if approved else None
+        if not approved:
+            return None
+        # Marked, so a `Permissions` hold for a person only that this call also has doesn't take it as the person's.
+        return DeferredToolResults(
+            approvals=approved, metadata={call_id: reviewer_approval_metadata() for call_id in approved}
+        )
 
     async def _selects(self, ctx: RunContext[AgentDepsT], call: ToolCallPart) -> bool:
         """Whether `tools` selects the called tool. A tool the run cannot resolve is left for the person."""
