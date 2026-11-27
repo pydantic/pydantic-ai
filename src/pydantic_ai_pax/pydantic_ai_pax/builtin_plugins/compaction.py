@@ -406,6 +406,9 @@ class CompactionPlugin(Plugin[CompactionSettings]):
         else:
             value = picked
         settings = _with_trigger(self.settings, value)
+        # Compared as saved, so `150k` over a saved 150000 changes nothing, and reset still drops a pinned default.
+        if settings.model_dump(mode='json') == self.settings.model_dump(mode='json'):
+            return f'Auto-compaction unchanged: it runs {_trigger(settings)}.'
         if (plugins := self.host.plugins) is None:
             raise ValueError('/auto-compact needs a Pax session; use /plugins configure compaction.')
         # Loads the plugin again, so the next turn runs the new chain; this instance is unloaded.

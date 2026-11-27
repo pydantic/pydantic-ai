@@ -781,10 +781,16 @@ async def test_auto_compact_alone_offers_a_list_of_triggers(tmp_path: Path) -> N
 
         reply, _ = await answered(Pick(value='150000'))
         assert reply == 'Auto-compaction unchanged: it runs above 150,000 tokens.', 'the current row changes nothing'
+        reply, _ = await answered(Pick(value='custom'), Type(text='150k'))
+        assert reply == 'Auto-compaction unchanged: it runs above 150,000 tokens.', (
+            'the same count, written another way'
+        )
 
         reply, _ = await answered(Pick(value='reset'))
         assert reply == 'Auto-compaction now runs above 85% of the context window.'
         assert store.plugins()[0].settings == {}
+        reply, _ = await answered(Pick(value='reset'))
+        assert reply == 'Auto-compaction unchanged: it runs above 85% of the context window.'
     finally:
         await plugins.close('exit')
 
