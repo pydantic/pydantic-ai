@@ -4145,6 +4145,18 @@ class TestToolSearchIntegration:
         # add should be sandboxed (not a separate native tool)
         assert 'add' not in tools
 
+    async def test_search_tool_named_in_a_tool_list_stays_native(self) -> None:
+        """Listing `search_tools` worked before `allowed_callers` existed, so it still does, without an error."""
+        search_toolset = _StaticToolset([_search_tool_def()])
+        func_toolset = _build_function_toolset(add)
+        combined = CombinedToolset([search_toolset, func_toolset])
+        code_mode = CodeModeToolset(wrapped=combined, tool_selector=[_SEARCH_TOOLS_NAME, 'add'])
+        tools = await code_mode.get_tools(build_run_context(None))
+
+        assert _SEARCH_TOOLS_NAME in tools
+        assert 'run_code' in tools
+        assert 'add' not in tools
+
     async def test_search_tools_description_appended(self) -> None:
         """search_tools description gets a modifier appended about run_code functions."""
 

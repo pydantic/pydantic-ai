@@ -1156,7 +1156,7 @@ It works like tool search's [`defer_loading`](#tool-search): the field is the to
 | `allowed_callers` | Meaning | Code Mode's `tools` matches the tool | Code Mode's `tools` doesn't match it |
 |---|---|---|---|
 | `None` (the default) | No constraint, so the selector decides | Callable in `run_code`, not a direct tool | A direct tool |
-| `{'direct'}` | Only the model may call it | A direct tool; naming it in a list of tool names raises `UserError` | A direct tool |
+| `{'direct'}` | Only the model may call it | A direct tool; naming it in a list of tool names raises `UserError`, except for the framework's own tools | A direct tool |
 | `{'programmatic'}` | Only code may call it | Callable in `run_code`, never a direct tool | Callable in `run_code`, never a direct tool |
 | `{'direct', 'programmatic'}` | Both may call it | A direct tool, and callable in `run_code` | A direct tool, and callable in `run_code` |
 
@@ -1168,7 +1168,7 @@ These raise [`UserError`][pydantic_ai.exceptions.UserError]:
 
 - An empty set, which would leave nothing able to call the tool, or a caller that isn't a `ToolCaller`, when the tool or its definition is created.
 - A tool only code may call, with nothing on the agent that calls tools from code, when a request is prepared. No model calls function tools from its own code execution yet, so such a tool needs Code Mode or IPython Code Mode; otherwise it would silently never be called.
-- In Code Mode and IPython Code Mode, when they build their tools: a list of tool names that names a `{'direct'}` tool, and a native fallback (a tool with [`unless_native`][pydantic_ai.tools.ToolDefinition.unless_native]) or a tool that runs code itself whose `allowed_callers` includes `'programmatic'`, since Code Mode keeps those direct. A callable, metadata or `'all'` selector skips a `{'direct'}` tool silently.
+- In Code Mode and IPython Code Mode, when they build their tools: a list of tool names that names a `{'direct'}` tool, and a native fallback (a tool with [`unless_native`][pydantic_ai.tools.ToolDefinition.unless_native]) or a tool that runs code itself whose `allowed_callers` includes `'programmatic'`, since Code Mode keeps those direct. A callable, metadata or `'all'` selector skips a `{'direct'}` tool silently, and so does a list naming one of the framework's own `{'direct'}` tools above, which a list could name before `allowed_callers` existed.
 
 ## Typed Tool Parts {#typed-tool-parts}
 

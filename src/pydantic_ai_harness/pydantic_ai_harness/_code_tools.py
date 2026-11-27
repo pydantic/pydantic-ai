@@ -104,10 +104,13 @@ def check_selector_names(selector: ToolSelector[Any], tool_def: ToolDefinition, 
     """Raise when a list of tool names names a tool only the model may call.
 
     A callable, metadata or `'all'` selector skips such a tool silently, as tool search's selector skips the
-    framework's tools.
+    framework's tools. So does a list naming one of the framework's own direct-only tools (tool search, the
+    capability loader, computer use): those stayed native silently before `allowed_callers` existed.
     """
     allowed_callers = tool_def.allowed_callers
     if allowed_callers is None or 'programmatic' in allowed_callers:
+        return
+    if tool_def.tool_kind is not None:
         return
     if selector == 'all' or callable(selector) or isinstance(selector, dict):
         return
