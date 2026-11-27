@@ -216,13 +216,13 @@ def _with_trigger(settings: CompactionSettings, value: str) -> CompactionSetting
 
 
 def _trigger_problem(settings: CompactionSettings, value: str) -> str | None:
-    """Why `value` typed as a token count is not one, for the custom row's input."""
-    if value.endswith('%') or value.lower() == 'reset':
-        return 'Type a token count, such as 150k; pick a share of the window from the list.'
+    """Why `value` is not a token count to compact above, for the custom row's input; `None` when it is."""
+    if _TOKEN_COUNT.fullmatch(value) is None:
+        return 'Type a token count, such as 150k or 1.5m.'
     try:
-        _with_trigger(settings, value)
+        CompactionSettings.model_validate({**settings.model_dump(mode='json'), 'threshold_tokens': _token_count(value)})
     except ValueError as exc:
-        return str(exc)
+        return first_error(exc)
     return None
 
 
@@ -401,7 +401,7 @@ class CompactionPlugin(Plugin[CompactionSettings]):
             value = args[0]
         elif asking is None:
             return f'Auto-compaction runs {_trigger(self.settings)}. Set it with /auto-compact 150k, 70%, or reset.'
-        elif not (picked := await self._pick_trigger(asking)):
+        elif (picked := await self._pick_trigger(asking)) is None:
             return f'Auto-compaction unchanged: it runs {_trigger(self.settings)}.'
         else:
             value = picked
@@ -426,7 +426,7 @@ class CompactionPlugin(Plugin[CompactionSettings]):
         return dialogs.TerminalDialogs(dialogs.RUNNERS)
 
     async def _pick_trigger(self, asking: Dialogs) -> str | None:
-        """What the user picked in the trigger list, as `/auto-compact` takes it typed; `None` or empty to keep it."""
+        """What the user picked in the trigger list, as `/auto-compact` takes it typed; `None` to keep the current one."""
         window = self.host.status.window
         options, current = _trigger_options(self.settings, window)
         picked = await asking.choose(
@@ -435,8 +435,11 @@ class CompactionPlugin(Plugin[CompactionSettings]):
             current=current,
             description=f'This model has a {_thousands(window)} window.' if window else '',
         )
-        if picked != _CUSTOM:
-            return picked
+        if picked == _CUSTOM:
+            picked = await self._ask_token_count(asking)
+        return None if picked in (None, '', current) else picked
+
+    async def _ask_token_count(self, asking: Dialogs) -> str | None:
         tokens = self.settings.threshold_tokens
         return await asking.text(
             title='Compact above how many tokens?',

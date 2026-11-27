@@ -15,6 +15,7 @@ from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanE
 from pydantic import JsonValue, ValidationError
 from rich.console import Console
 from termflow.tui.menu import MenuResult
+from termflow.tui.textinput import TextInput, TextInputResult
 
 from pydantic_ai import Agent, ModelHTTPError, capture_run_messages
 from pydantic_ai.messages import (
@@ -45,7 +46,6 @@ from pydantic_ai_pax.builtin_plugins.compaction import (
     CompactionPlugin,
     CompactionSettings,
     CompactionSource,
-    _trigger_problem,  # pyright: ignore[reportPrivateUsage]
     build_chain,
 )
 from pydantic_ai_pax.commands import Command, Commands
@@ -66,6 +66,7 @@ from pydantic_ai_pax.plugins import (
 from pydantic_ai_pax.plugins.loader import PluginLoader
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from pydantic_ai_pax.ui.menus import dialogs
+from pydantic_ai_pax.ui.menus.field_menu import Runners
 from pydantic_ai_pax.ui.menus.menu_worker import without_terminal
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.pax.dialog_script import Answer, Asked, Back, Pick, ScriptedDialogs, Type
@@ -778,6 +779,9 @@ async def test_auto_compact_alone_offers_a_list_of_triggers(tmp_path: Path) -> N
         reply, _ = await answered(Back())
         assert reply == 'Auto-compaction unchanged: it runs above 150,000 tokens.'
 
+        reply, _ = await answered(Pick(value='150000'))
+        assert reply == 'Auto-compaction unchanged: it runs above 150,000 tokens.', 'the current row changes nothing'
+
         reply, _ = await answered(Pick(value='reset'))
         assert reply == 'Auto-compaction now runs above 85% of the context window.'
         assert store.plugins()[0].settings == {}
@@ -813,18 +817,31 @@ async def test_auto_compact_opens_its_list_in_the_terminal(monkeypatch: pytest.M
         )
 
 
-@pytest.mark.parametrize(
-    ('typed_text', 'problem'),
-    [
-        ('150k', None),
-        ('70%', 'Type a token count, such as 150k; pick a share of the window from the list.'),
-        ('reset', 'Type a token count, such as 150k; pick a share of the window from the list.'),
-        ('lots', "'lots' is not a token count such as 150k, a share such as 70%, or reset."),
-        ('0', '/auto-compact 0: Input should be greater than 0'),
-    ],
-)
-def test_auto_compact_token_count_input_says_what_is_wrong(typed_text: str, problem: str | None) -> None:
-    assert _trigger_problem(CompactionSettings(), typed_text) == problem
+async def test_auto_compact_token_count_input_says_what_is_wrong(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The custom row's input takes only a token count, and says why anything else is not one."""
+    inputs: list[TextInput] = []
+
+    def run_text(widget: TextInput) -> TextInputResult:
+        inputs.append(widget)
+        return TextInputResult(cancelled=True)
+
+    monkeypatch.setattr(dialogs, 'RUNNERS', Runners(run_choice=lambda menu: pick('custom'), run_text=run_text))
+    host = PluginHost[None](name='compaction', console=Console(file=io.StringIO(), force_terminal=True), settings={})
+    assert await load_plugin(CompactionPlugin, host).commands.execute_async('/auto-compact') == (
+        'Auto-compaction unchanged: it runs above 85% of the context window.'
+    )
+    [widget] = inputs
+    validator = widget._validator  # pyright: ignore[reportPrivateUsage]
+    assert validator is not None
+    assert [validator(text) for text in ('150k', '1,500,000', '70%', 'reset', 'lots', '1.5', '0')] == [
+        None,
+        None,
+        'Type a token count, such as 150k or 1.5m.',
+        'Type a token count, such as 150k or 1.5m.',
+        'Type a token count, such as 150k or 1.5m.',
+        "'1.5' is not a whole number of tokens.",
+        'Input should be greater than 0',
+    ]
 
 
 @pytest.mark.parametrize(
