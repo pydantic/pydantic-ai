@@ -36,8 +36,9 @@ def file_links(text: str) -> list[Citation]:
 
     Each citation's anchor is the link's position in `text`, so you can replace the link with your own
     download link. A link inside code, or to a relative path or one with a NUL byte, is left as text.
-    Nothing is read, so the file may not exist. The path comes from the model: check it before reading
-    it with [`Workspace.in_working_dir`][pydantic_ai.workspaces.Workspace.in_working_dir].
+    Nothing is read, so the file may not exist. The path comes from the model: read it with
+    [`Workspace.read_file(source)`][pydantic_ai.workspaces.Workspace.read_file], which refuses a path
+    outside the working directory.
     """
     citations: list[Citation] = []
     for match in _CODE_OR_LINK.finditer(text):
