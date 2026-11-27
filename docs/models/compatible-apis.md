@@ -479,6 +479,27 @@ Compatibility with one API does not imply support for the other or for every Ope
 
 [`OpenAIProvider`][pydantic_ai.providers.openai.OpenAIProvider] also takes a `base_url`, but it's for OpenAI itself, or a transparent proxy to it: it assumes OpenAI's models and features, and sends OpenAI's encrypted reasoning and compaction items to the endpoint.
 
+### Obscurify.ai
+
+[Obscurify.ai](https://obscurify.ai/?utm_source=pydanticai) is a privacy-focused service with an OpenAI-compatible Chat Completions API serving 200+ models named `vendor/model`, such as `deepseek/deepseek-v4-flash` and `z-ai/glm-5.3`. Accounts are a random account number with no email, and prompts and responses are not stored on the server. Get an API key from your [account page](https://obscurify.ai/account) and use `https://obscurify.ai/v1` as the `base_url`. The model names are listed in the [API docs](https://obscurify.ai/api-docs) and at `https://obscurify.ai/v1/models`.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.models.openai import OpenAIChatModel
+from pydantic_ai.providers.openai_compatible import OpenAICompatibleProvider
+
+model = OpenAIChatModel(
+    'deepseek/deepseek-v4-flash',
+    provider=OpenAICompatibleProvider(
+        'obscurify',
+        base_url='https://obscurify.ai/v1',
+        api_key='your-obscurify-api-key',
+    ),
+)
+agent = Agent(model)
+...
+```
+
 ### Oracle Cloud Infrastructure (OCI) Generative AI {#oci-generative-ai}
 
 [OCI Generative AI](https://docs.oracle.com/en-us/iaas/Content/generative-ai/home.htm) serves an [OpenAI-compatible API](https://docs.oracle.com/en-us/iaas/Content/generative-ai/openai-compatible-api.htm) at `https://inference.generativeai.<region>.oci.oraclecloud.com/openai/v1`. Create a [Generative AI API key](https://docs.oracle.com/en-us/iaas/Content/generative-ai/api-keys.htm) in the region of the model you want to use, and pass it as `api_key`:
