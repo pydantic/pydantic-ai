@@ -149,13 +149,14 @@ def get_instructions(ctx: RunContext[MyDeps]) -> str:  # (2)!
 
 
 async def main():
-    deps = MyDeps('foobar', httpx.Client())
-    result = await agent.run(
-        'Tell me a joke.',
-        deps=deps,
-    )
-    print(result.output)
-    #> Did you hear about the toothpaste scandal? They called it Colgate.
+    with httpx.Client() as client:
+        deps = MyDeps('foobar', client)
+        result = await agent.run(
+            'Tell me a joke.',
+            deps=deps,
+        )
+        print(result.output)
+        #> Did you hear about the toothpaste scandal? They called it Colgate.
 ```
 
 1. Here we use a synchronous `httpx.Client` instead of an asynchronous `httpx.AsyncClient`.
