@@ -29,7 +29,13 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
-from pydantic_ai.models.function import AgentInfo, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import (
+    AgentInfo,
+    BuiltinToolCallsReturns,
+    DeltaThinkingCalls,
+    DeltaToolCalls,
+    FunctionModel,
+)
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.usage import RunUsage
 from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
@@ -74,7 +80,9 @@ async def _model_fallback_switch(native: RouteRun, directory: Path) -> list[Mode
         failing(sum(isinstance(message, ModelResponse) for message in messages))
         return await await_maybe(scripted(messages, info))
 
-    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    async def stream(
+        messages: list[ModelMessage], info: AgentInfo
+    ) -> AsyncIterator[str | DeltaToolCalls | DeltaThinkingCalls | BuiltinToolCallsReturns]:
         failing(sum(isinstance(message, ModelResponse) for message in messages))
         async for chunk in scripted_stream(messages, info):
             yield chunk
