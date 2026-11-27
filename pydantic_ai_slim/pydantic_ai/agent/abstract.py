@@ -1206,9 +1206,9 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                     output_parts=parts,
                                 ):
                                     pass
-                                if isinstance(final_result.output, DeferredToolRequests):
-                                    # Calls a tool deferred while running were added to the requests above.
-                                    stream._cached_output = final_result.output  # pyright: ignore[reportPrivateUsage]
+                                # Processing the tool calls can add calls a tool deferred while running to a
+                                # `DeferredToolRequests` output, so the stream's output is the processed one.
+                                stream._cached_output = final_result.output  # pyright: ignore[reportPrivateUsage]
 
                                 # To allow this message history to be used in a future run without dangling tool calls,
                                 # append a new ModelRequest using the tool returns and retries
