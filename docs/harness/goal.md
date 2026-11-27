@@ -9,8 +9,6 @@ Keep an unattended agent working until a caller-defined completion check accepts
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/goal/)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ## Define completion
 
 Supply an explicit `goal` and an async `verify(ctx, output)` callable. Without `verify`, `Goal` only adds the goal instructions and never vetoes an answer. The verifier returns `None` to accept the output, or a nonempty string describing what remains. It receives the processed output unchanged, including structured outputs, and can inspect dependencies and message history through [`RunContext`][pydantic_ai.tools.RunContext]; [durable execution](#durable-execution) changes some of this.

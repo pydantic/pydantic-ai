@@ -3,8 +3,6 @@
 Repair malformed JSON tool arguments when a model produces trailing commas, single-quoted keys,
 or incomplete JSON. Use this capability on its own or through [Coder](../coder/), which includes it.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](../../../../docs/harness/index.md#version-policy).
-
 ```mermaid
 flowchart TB
     accTitle: Repair Tool Arguments: fix malformed JSON before validation

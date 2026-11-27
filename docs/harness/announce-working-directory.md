@@ -7,8 +7,6 @@ description: "Tell a Pydantic AI agent its workspace's working directory, once, 
 
 Tell the model the workspace's working directory, so it uses relative paths instead of guessing absolute ones. [FileSystem](filesystem.md) and [Shell](shell.md) add it themselves; add it yourself when your agent's own tools work in the run's workspace.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ## Usage
 
 ```bash

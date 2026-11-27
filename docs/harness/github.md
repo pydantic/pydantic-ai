@@ -6,8 +6,6 @@ description: "Give a Pydantic AI agent GitHub tools through GitHub's hosted MCP 
 
 Let an agent read and change GitHub repositories, issues, pull requests, and other resources. By default it gets the tools in GitHub's default tool groups, which include tools that make changes; `toolsets` picks other groups. The token's permissions decide what those tools can reach.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ```mermaid
 flowchart TB
     accTitle: GitHub: repository, issue and pull request tools from GitHub's MCP server

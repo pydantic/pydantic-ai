@@ -596,13 +596,13 @@ _VERSION_POLICY_HEADING = '## Version policy'
 
 
 def test_version_policy_matches_across_surfaces() -> None:
-    """The README and the docs index state the same version policy, including what stays stable after 1.0."""
+    """The README and the docs index state the same version policy, including what stays stable within 1.x."""
     docs, readme = (
         _without_link_targets(_section(surface, _VERSION_POLICY_HEADING).splitlines())
         for surface in ('../../docs/harness/index.md', 'README.md')
     )
     assert readme == docs
-    assert '### After 1.0' in docs
+    assert '### Stability within 1.x' in docs
 
 
 def test_packaged_skill_routes_problem_index_needs() -> None:

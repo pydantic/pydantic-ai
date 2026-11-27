@@ -16,8 +16,6 @@ Any other deferred call stays deferred for its own handler. Without `DenyUnanswe
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/deny_unanswered/)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ```mermaid
 flowchart TB
     accTitle: Deny Unanswered: deferred calls nobody attended get results inside the run

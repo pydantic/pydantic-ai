@@ -2,8 +2,6 @@
 
 Let an agent query Logfire telemetry and manage Logfire projects. `LogfireMCP` gives the agent every tool Logfire's hosted MCP server offers, including tools that make changes. The credential you connect with decides what those tools can reach.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
-
 ```mermaid
 flowchart TB
     accTitle: Logfire MCP: query traces and telemetry through Logfire's MCP server

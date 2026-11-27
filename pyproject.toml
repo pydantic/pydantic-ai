@@ -106,7 +106,6 @@ pydantic-graph = { workspace = true }
 pydantic-ai-examples = { workspace = true }
 pydantic-ai-harness = { workspace = true }
 pydantic-ai-pax = { workspace = true }
-pydantic-clai2 = { workspace = true }
 
 [tool.uv.workspace]
 members = [
@@ -117,7 +116,6 @@ members = [
     "examples",
     "src/pydantic_ai_harness",
     "src/pydantic_ai_pax",
-    "src/pydantic_clai2",
 ]
 
 [tool.uv]
@@ -332,7 +330,6 @@ include = [
     "clai/**/*.py",
     "src/pydantic_ai_harness/**/*.py",
     "src/pydantic_ai_pax/**/*.py",
-    "src/pydantic_clai2/**/*.py",
     "tests/**/*.py",
     "docs/**/*.py",
     "scripts/typecheck_changed.py",
@@ -416,7 +413,7 @@ ignore = [
 
 [tool.ruff.lint.isort]
 combine-as-imports = true
-known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph", "pydantic_ai_harness", "pydantic_ai_pax", "pydantic_clai2"]
+known-first-party = ["pydantic_ai", "pydantic_evals", "pydantic_graph", "pydantic_ai_harness", "pydantic_ai_pax"]
 
 [tool.ruff.lint.pydocstyle]
 convention = "google"
@@ -540,7 +537,6 @@ include = [
     "clai",
     "src/pydantic_ai_harness",
     "src/pydantic_ai_pax",
-    "src/pydantic_clai2",
     "scripts/typecheck_changed.py",
     "scripts/test_typecheck_changed.py",
     "scripts/_ratchet.py",

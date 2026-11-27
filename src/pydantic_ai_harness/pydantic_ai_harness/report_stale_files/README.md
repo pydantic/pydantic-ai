@@ -10,8 +10,6 @@ build step changes or deletes the file. The model can't see that, so it keeps wo
 `FileSystem`'s `expected_hash` rejects a stale write, but only once the model writes, and only when it passes the
 hash. `ReportStaleFiles` tells the model before its next request instead.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
-
 ## Usage
 
 ```python

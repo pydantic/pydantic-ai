@@ -4,8 +4,6 @@ Run your agent's commands in a Linux [bubblewrap](https://github.com/containers/
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/bubblewrap_sandbox/)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
-
 !!! warning "Best effort, not a security boundary"
     `BubblewrappedWorkspace` keeps a trusted agent from accidentally changing files outside its working directory. It is **not a security boundary** and **not a sandbox for untrusted code or untrusted agents**: commands share the host kernel and run as the host user. For untrusted agents, use a VM or microVM-backed sandbox such as [E2B](https://pydantic.dev/docs/ai/harness/e2b-sandbox/), [Modal](https://pydantic.dev/docs/ai/harness/modal-sandbox/), [Daytona](https://pydantic.dev/docs/ai/harness/daytona-sandbox/), [BoxLite](https://pydantic.dev/docs/ai/harness/boxlite-sandbox/), or [Smol](https://pydantic.dev/docs/ai/harness/smol-sandbox/).
 

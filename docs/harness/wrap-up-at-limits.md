@@ -7,8 +7,6 @@ description: "End a Pydantic AI agent run with a final answer, instead of `Usage
 
 End a run with a final answer when a [usage limit](../agent.md#usage-limits) would otherwise stop it with [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded]. Use it where the work done before the limit is worth returning, such as a research or coding agent running on a request, tool-call or token budget.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ## Usage
 
 ```bash

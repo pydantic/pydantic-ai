@@ -7,8 +7,6 @@ description: "Keep a Pydantic AI agent's tool list fixed with three dispatcher t
 
 Keep the tool list the model sees fixed while the tools behind it are many or change during a run, so the tool definitions at the head of the prompt stay cached on every provider. Use it for large or dynamic tool populations, such as several MCP servers, on providers that have no cache-safe way to reveal a tool mid-run.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ## Usage
 
 ```python

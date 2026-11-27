@@ -156,7 +156,7 @@ jobs:
           # `uv.lock`, `tests/conftest.py`, ...) are outside them and still run everything.
           is_clai2() {
             case "$1" in
-              src/pydantic_ai_pax/*|src/pydantic_clai2/*|tests/pax/*) ;;
+              src/pydantic_ai_pax/*|tests/pax/*) ;;
               *) return 1 ;;
             esac
           }
@@ -2530,7 +2530,6 @@ jobs:
           "$smoke_dir/bin/pai" --help
           "$smoke_dir/bin/clai" --help
           "$smoke_dir/bin/pax" --help
-          "$smoke_dir/bin/clai2" --help
           "$smoke_dir/bin/python" -I src/pydantic_ai_pax/scripts/check_web_assets.py src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static
 
       - name: Inspect package version

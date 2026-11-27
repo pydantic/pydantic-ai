@@ -364,13 +364,11 @@ Core's [Instrumentation](../capabilities/instrumentation.md) capability (or `log
 
 ## Version policy
 
-Pydantic AI Harness uses **0.x versioning** to signal API stability, not maturity: the capabilities are tested end-to-end and meant for production use, but their APIs may change between minor releases (0.1 -> 0.2) through renamed parameters, changed defaults, or restructured APIs, with deprecation warnings where practical. Patch releases will not intentionally break existing behavior, and every breaking change is documented in release notes with migration guidance your agent can follow. Keeping the Harness a separate package from [Pydantic AI](https://github.com/pydantic/pydantic-ai), which has a [stricter version policy](../version-policy.md), lets capabilities change faster than core.
+Each Harness 1.N release ships alongside Pydantic AI 2.N, with the same minor and patch number (Harness 1.80.0 ships with Pydantic AI 2.80.0), and pins that exact `pydantic-ai-slim` version, so upgrading the Harness upgrades Pydantic AI with it and every installable pair has been tested together. The pin is listed in the package metadata on PyPI, and the release notes name the Pydantic AI release each Harness release ships with.
 
-On 0.x, each Harness release ships alongside the Pydantic AI release with the same minor and patch number (Harness 0.51.0 ships with Pydantic AI 2.51.0) and pins that exact `pydantic-ai-slim` version, so upgrading the Harness upgrades Pydantic AI with it and every installable pair has been tested together.
+### Stability within 1.x
 
-### After 1.0
-
-From 1.0, the Harness follows the rules of Pydantic AI's [version policy](../version-policy.md): no intentional breaking changes in minor releases, and deprecated functionality is not removed until the next major version. The changes that policy does not consider breaking, such as bug fixes for code that relied on undocumented behavior, OpenTelemetry span attributes, and `__repr__` output, are not breaking for the Harness either. Neither is a change that follows a third-party service or SDK a capability integrates with, when that service removes or changes what the capability relied on. Capabilities marked experimental on their page (currently [ACP](acp.md)) are excluded until they graduate.
+The Harness follows semantic versioning and the rules of Pydantic AI's [version policy](../version-policy.md): no intentional breaking changes in minor releases, no public class, function, or parameter is removed or renamed without a deprecation warning first, and deprecated functionality is only removed in a Harness major release. The changes that policy does not consider breaking, such as bug fixes for code that relied on undocumented behavior, OpenTelemetry span attributes, and `__repr__` output, are not breaking for the Harness either. Neither is a change that follows a third-party service or SDK a capability integrates with, when that service removes or changes what the capability relied on. Capabilities marked experimental on their page (currently [ACP](acp.md)) are excluded until they graduate.
 
 A capability's behavior includes what it sends to the model, so stability covers more than signatures:
 
@@ -378,7 +376,7 @@ A capability's behavior includes what it sends to the model, so stability covers
 - **Stored history**: tool names, argument schemas, and the other records a capability writes into message history and reads back on later runs, such as metadata keys and framing tags, persist in histories that you may store and resume. A minor release can add optional tool arguments but does not rename or remove a tool, an argument, or a record a capability relies on.
 - **Prompt text**: the wording of instructions, tool descriptions, and other text a capability sends to the model can change in a minor release, since improving how models use a capability is part of maintaining it. Release notes list these changes. Where a capability accepts its own instructions or descriptions as parameters, passing them keeps your wording fixed.
 
-From 1.0, Harness version numbers no longer mirror Pydantic AI's, and a Harness major release does not require a Pydantic AI major release. Every Harness release still pins the exact `pydantic-ai-slim` release it was tested with, and moving that pin to a new Pydantic AI major version is itself a Harness major release, so upgrading the Harness within a major version does not cross a Pydantic AI major. The pin is listed in the package metadata on PyPI, and the release notes name the Pydantic AI release each Harness release ships with.
+A Harness major release does not require a Pydantic AI major release: the Harness major version moves on its own, while its minor keeps matching the Pydantic AI release it ships with. Moving the pin to a new Pydantic AI major version is itself a Harness major release, so upgrading the Harness within a major version does not cross a Pydantic AI major.
 
 ## Further reading
 

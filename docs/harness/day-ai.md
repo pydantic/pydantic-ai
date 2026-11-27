@@ -9,8 +9,6 @@ description: Connect a Pydantic AI agent to Day AI's hosted MCP server to search
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/day_ai/)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ```mermaid
 flowchart TB
     accTitle: Day AI: CRM records and meeting context through Day AI's MCP server

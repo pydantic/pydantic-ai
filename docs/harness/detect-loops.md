@@ -7,8 +7,6 @@ description: "Stop a Pydantic AI agent that repeats the same tool calls or respo
 
 Notice when an agent repeats the same actions without making progress, and interrupt it before the loop uses up the run's request, token, or cost budget. Use it on agents that run autonomously for many steps.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ```mermaid
 flowchart LR
     accTitle: Detect Loops: interrupt an agent that repeats itself

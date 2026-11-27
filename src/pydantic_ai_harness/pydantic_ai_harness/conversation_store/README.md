@@ -11,8 +11,6 @@
 > )
 > ```
 >
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
-
 SQLite, PostgreSQL and MongoDB backends of Pydantic AI's `ConversationStore`, for saving a chat and loading it
 again later. [Storing conversations](https://pydantic.dev/docs/ai/core-concepts/persistence/#using-a-conversation-store)
 covers how a conversation store works; this README covers what each backend stores and how.

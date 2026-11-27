@@ -9,8 +9,6 @@ Let a second model approve the low-risk tool calls that need approval, and leave
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/approval_reviewer/)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 !!! tip "Approval Reviewer or Tool Call Judge?"
     Both ask a second model one yes/no question about a tool call, but give it opposite powers. Use [Tool Call Judge](tool-call-judge.md) when you want a model to say no: its `yes` blocks a call, whether or not a person is watching. Use Approval Reviewer when you want a model to say yes on a person's behalf: it reviews only calls that already need approval, its `no` approves the call, and everything else still goes to the person. A judge cannot do the second job, because it runs when a call executes, after the person has already approved it.
 

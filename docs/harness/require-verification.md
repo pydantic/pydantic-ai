@@ -7,8 +7,6 @@ description: "Send a Pydantic AI coding agent back to run its tests, lint, type 
 
 Send a coding agent back to verify its work when it tries to finish after editing code without a passing check since its last edit. Use it on agents that edit code, where a claim of finished, verified work should rest on a check that ran after the final edit.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ## Usage
 
 ```bash

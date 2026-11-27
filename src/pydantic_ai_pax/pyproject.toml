@@ -10,7 +10,7 @@ source = "uv-dynamic-versioning"
 vcs = "git"
 style = "pep440"
 bump = true
-format-jinja = "0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"
+format-jinja = "1.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"
 
 [project]
 name = "pydantic-ai-pax"
@@ -36,7 +36,7 @@ classifiers = [
 
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
 dependencies = [
-    "pydantic-ai-harness[coder,skills]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
+    "pydantic-ai-harness[coder,skills]==1.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
     # Direct `httpx` use in `pydantic-ai-pax` until its own `httpx2` migration; the harness no longer installs it.
     "httpx>=0.28.1",
     # The `skills` extra's dependency, declared directly as well: `/update` to `main` runs the old build,
@@ -100,21 +100,21 @@ typesafe = ["pydantic-ai-slim[typesafe]=={{ major }}.{{ minor }}.{{ patch }}{% i
 huggingface = ["pydantic-ai-slim[huggingface]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 # END provider extras
 # `/sandbox PROVIDER`: each installs the harness backend for that provider.
-boxd = ["pydantic-ai-harness[boxd]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-daytona = ["pydantic-ai-harness[daytona]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-e2b = ["pydantic-ai-harness[e2b]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-kubernetes = ["pydantic-ai-harness[kubernetes]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+boxd = ["pydantic-ai-harness[boxd]==1.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+daytona = ["pydantic-ai-harness[daytona]==1.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+e2b = ["pydantic-ai-harness[e2b]==1.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+kubernetes = ["pydantic-ai-harness[kubernetes]==1.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 # `/sandbox local smol` and `local boxlite` on macOS and Linux; neither SDK has a Windows wheel, where
 # `/sandbox local smol` uses the `smolvm` CLI.
-local = ["pydantic-ai-harness[smol,boxlite]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-modal = ["pydantic-ai-harness[modal]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-opensandbox = ["pydantic-ai-harness[opensandbox]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-render = ["pydantic-ai-harness[render]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-sprites = ["pydantic-ai-harness[sprites]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+local = ["pydantic-ai-harness[smol,boxlite]==1.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+modal = ["pydantic-ai-harness[modal]==1.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+opensandbox = ["pydantic-ai-harness[opensandbox]==1.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+render = ["pydantic-ai-harness[render]==1.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+sprites = ["pydantic-ai-harness[sprites]==1.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 # Every extra above that installs on every platform: all but `local`, whose SDKs have no Windows wheel.
 all = [
     "pydantic-ai-slim[anthropic,bedrock,bedrock-mantle,cerebras,cohere,crusoe,google,groq,huggingface,mistral,openai,openrouter,snowflake,typesafe,xai,zai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
-    "pydantic-ai-harness[boxd,daytona,e2b,kubernetes,modal,opensandbox,render,sprites]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
+    "pydantic-ai-harness[boxd,daytona,e2b,kubernetes,modal,opensandbox,render,sprites]==1.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
 ]
 
 [project.urls]

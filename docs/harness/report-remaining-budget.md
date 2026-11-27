@@ -7,8 +7,6 @@ description: "Tell a Pydantic AI agent's model, on every request, how many reque
 
 Tell the model, on every model request, how much of the run's usage limits and the agent's spend budgets is left, so it can pace its work and answer before a limit stops the run. It only discloses the budget: core [`UsageLimits`](../agent.md#usage-limits) and [Spend Limits](spend.md) still enforce it.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ## Usage
 
 ```bash

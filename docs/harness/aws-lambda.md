@@ -15,8 +15,6 @@ Lambda keeps a log of durable operations. When an execution resumes, the handler
 the top and completed steps return their stored results rather than executing. Without
 checkpointing, a resumed run would repeat every model request and tool call.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ```mermaid
 sequenceDiagram
     accTitle: AWS Lambda Durability: resume an agent run from its last completed step
