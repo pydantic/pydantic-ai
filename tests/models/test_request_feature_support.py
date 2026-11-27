@@ -19,6 +19,10 @@ skip, or a tracked gap.
 
 `ToolDefinition.strict` is left out: a provider that drops it is handled by retrying on the invalid arguments, so it
 stays best-effort.
+
+This is not a VCR test, and can't be one: a cassette is a frozen recording, so it keeps matching after the code stops
+sending a feature, which is the silent drop this file exists to catch. Nothing is recorded either, since every probe
+aborts before a response.
 """
 
 from __future__ import annotations
