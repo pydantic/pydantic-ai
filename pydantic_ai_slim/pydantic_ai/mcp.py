@@ -10,7 +10,7 @@ import warnings
 import weakref
 from abc import ABC
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
@@ -39,7 +39,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 # extra admits both. We only use their shared interfaces, so these unions type them without
 # importing a family that the other generation's installs don't ship.
 from ._http import AsyncHTTPClient, HTTPAuth, HTTPTimeout
-from ._run_context import _CURRENT_RUN_CONTEXT  # pyright: ignore[reportPrivateUsage]
+from ._run_context import set_current_run_context
 from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
@@ -1417,11 +1417,8 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     # `RunContext` would pin the agent, toolset and transport until the server stops.
                     # Connect it without the ambient run context; every other transport keeps it.
                     keeps_connection = isinstance(transport, StdioTransport) and transport.keep_alive
-                    token = _CURRENT_RUN_CONTEXT.set(None if keeps_connection else _CURRENT_RUN_CONTEXT.get())
-                    try:
+                    with set_current_run_context(None) if keeps_connection else nullcontext():
                         await exit_stack.enter_async_context(self.client)
-                    finally:
-                        _CURRENT_RUN_CONTEXT.reset(token)
                     # A modern (sessionless) session has no `initialize` handshake, so server
                     # metadata comes from era-neutral client properties; older clients only populate
                     # `initialize_result`.
