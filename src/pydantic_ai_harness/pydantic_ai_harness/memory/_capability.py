@@ -77,7 +77,7 @@ _LoadedSnapshot: TypeAlias = tuple[MemoryFile | None, list[str], bool, str | Non
 type, and who wrote the snapshot."""
 
 _LoadedSnapshotWithoutSource: TypeAlias = tuple[MemoryFile | None, list[str], bool, str | None]
-"""What `Memory._load_snapshot` journaled up to v2.73.0, without the source, so a run journaled then still replays."""
+"""What `Memory._load_snapshot` journaled up to v2.74.0, without the source, so a run journaled then still replays."""
 
 _MEMORY_SOURCE: Final = ModelSource('agent in an earlier run')
 """Who wrote a memory snapshot: the agent, through its memory tools, in earlier runs: another model's text, with no
@@ -350,9 +350,10 @@ class Memory(AbstractCapability[AgentDepsT]):
 
         The snapshot is enqueued, so it is added to the conversation once and sent unchanged with every later
         request: history only ever grows. It is only added before the model has responded in this run, which
-        keeps it with the user's prompt: later requests carry tool results, where a block of user-channel
-        text reads as a new message from the user. If compaction later in the run drops the snapshot the run
-        started with, the same snapshot is enqueued again, without reading the store again.
+        keeps it with the user's prompt, placed before it so the question comes last: later requests carry tool
+        results, where a block of user-channel text reads as a new message from the user. If compaction later in
+        the run drops the snapshot the run started with, the same snapshot is enqueued again, at the end of the
+        request being sent, without reading the store again.
         """
         if not self.inject_memory:
             return request_context
@@ -415,9 +416,10 @@ class Memory(AbstractCapability[AgentDepsT]):
             )
             appended = _snapshot_to_append(ctx.messages, snapshot, latest)
             if appended is not None:
-                # When an earlier hook retried the first request, this lands after its retry feedback: still
-                # ahead of any response, so nothing the model has seen changes.
-                ctx.enqueue(_snapshot_part(appended, metadata, self._run_source))
+                # Context goes before the question. The request hasn't been sent, so the cached prefix holds. When
+                # an earlier hook retried the first request, the request being sent holds its retry feedback, not
+                # the prompt, so this lands after the feedback: still ahead of any response.
+                ctx.enqueue(_snapshot_part(appended, metadata, self._run_source), placement='before_prompt')
                 self._run_snapshot = appended
             self._record_injection(span, main, subfiles, files_truncated, snapshot, appended, withheld)
         return request_context

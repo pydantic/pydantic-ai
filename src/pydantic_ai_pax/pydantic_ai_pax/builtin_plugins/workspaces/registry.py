@@ -1,6 +1,6 @@
 """The workspaces, one folder each under Pax's state directory, readable by you alone.
 
-`$XDG_STATE_HOME/pydantic-clai2/workspaces/registry/ID/workspace.json` holds the record. Every Pax process
+`$XDG_STATE_HOME/pydantic-ai-pax/workspaces/registry/ID/workspace.json` holds the record. Every Pax process
 reads the same folders, so a workspace made in one session is listed and destroyed from another.
 """
 
@@ -15,7 +15,7 @@ from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai_pax.builtin_plugins.workspaces.kinds import Teardown
 from pydantic_ai_pax.config.private_files import write_private
-from pydantic_ai_pax.config.settings_store import state_dir
+from pydantic_ai_pax.paths import state_dir
 
 _ID = re.compile(r'[a-z0-9][a-z0-9-]{0,47}')
 

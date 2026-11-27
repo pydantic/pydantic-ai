@@ -169,7 +169,7 @@ async def env(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Fixture:
 
     monkeypatch.setattr(aoe.Mappings, 'write', remembering)
     return Fixture(
-        system=system, hooks=tmp_path / 'hooks', state=tmp_path / 'state' / 'pydantic-clai2' / 'aoe', writes=writes
+        system=system, hooks=tmp_path / 'hooks', state=tmp_path / 'state' / 'pydantic-ai-pax' / 'aoe', writes=writes
     )
 
 
@@ -693,7 +693,7 @@ def test_commands_that_cannot_run(monkeypatch: pytest.MonkeyPatch) -> None:
 def test_state_directory(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
     monkeypatch.setenv('XDG_STATE_HOME', 'relative')
     monkeypatch.setenv('HOME', str(tmp_path))
-    assert aoe.state_directory() == tmp_path / '.local' / 'state' / 'pydantic-clai2' / 'aoe'
+    assert aoe.state_directory() == tmp_path / '.local' / 'state' / 'pydantic-ai-pax' / 'aoe'
     assert aoe.hooks_base() == Path(f'/tmp/aoe-hooks-{os.geteuid()}')
 
 
