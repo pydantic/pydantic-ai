@@ -938,7 +938,8 @@ def _tool_config(tool: ToolDefinition, remote: _AgentToolConfig | None = None) -
         'name': tool.name,
         'description': tool.description or '',
         # Pydantic AI's session always settles a call and sends its result back, so every synced tool
-        # expects a response; the server's default `response_timeout_secs` (20s) is left in place.
+        # expects a response. A created tool gets the server's default `response_timeout_secs` (20s); an updated one
+        # keeps its own, with its other ElevenLabs-side settings (see below).
         'expects_response': True,
         'parameters': _elevenlabs_parameters(tool.name, _prepared_parameters(tool.parameters_json_schema)),
     }
