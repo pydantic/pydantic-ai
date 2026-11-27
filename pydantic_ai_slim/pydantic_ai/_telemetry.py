@@ -80,14 +80,14 @@ def open_span(
     Meant for tool and model request hooks and `before_run`. `for_run` runs before the run's tracing
     settings are final, so a span from there can use a tracer or content setting the run then drops.
 
-    Yields `INVALID_SPAN` when the run isn't traced. `attributes` are always recorded; `content`, which
-    can quote what the span is about, only when the run captures content. Both are set at the start, so
-    Logfire's console and pending spans show them. An uncaught `Exception` marks the span ERROR, sets
-    `error.type` to the exception's type, and is recorded by its type only, unless the run captures
-    content, as its message can quote content. A cancellation is not an error, as in OpenTelemetry's own
-    spans, and neither is a deferral, an approval request or a skip (`CallDeferred`, `ApprovalRequired`,
-    `SkipToolExecution`, `SkipModelRequest`): they leave the status unset. In a Temporal workflow, from
-    `wrap_run` on, a span that covered only replayed work is not exported again.
+    Yields `INVALID_SPAN` when the run isn't traced. `attributes` are always recorded; `content`, which can quote
+    what the span is about, only when the run captures content, and then replaces an attribute of the same key. Both
+    are set at the start, so Logfire's console and pending spans show them. An uncaught `Exception` marks the span
+    ERROR, sets `error.type` to the exception's type, and is recorded by its type only, unless the run captures
+    content, as its message can quote content. A cancellation is not an error, as in OpenTelemetry's own spans, and
+    neither is a deferral, an approval request or a skip (`CallDeferred`, `ApprovalRequired`, `SkipToolExecution`,
+    `SkipModelRequest`): they leave the status unset. In a Temporal workflow, from `wrap_run` on, a span that
+    covered only replayed work is not exported again.
     """
     with _open_span(_traced_run_of(ctx), name, attributes=attributes, content=content) as span:
         yield span
@@ -138,8 +138,8 @@ def record_decision(
 
     It is recorded as a span named `name`, on the run's tracer, that ends as soon as it starts. `attributes`
     are always recorded; `content`, which can quote what the decision was about, only when the run captures
-    content. In a Temporal workflow, from `wrap_run` on, a decision made again during replay is not exported
-    again.
+    content, and then replaces an attribute of the same key. In a Temporal workflow, from `wrap_run` on, a
+    decision made again during replay is not exported again.
     """
     if (traced_run := _traced_run_of(ctx)) is not None:
         with start_as_current_span(traced_run.tracer, name, attributes=_with_content(traced_run, attributes, content)):

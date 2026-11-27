@@ -326,6 +326,22 @@ def test_an_escaping_exception_is_recorded_by_its_type(include_content: bool):
     assert ('private' in recorded) is include_content
 
 
+@pytest.mark.parametrize('include_content', [True, False])
+def test_content_replaces_an_attribute_of_the_same_key(include_content: bool):
+    """A capability can record a redacted value as an attribute and the full value as content under the same key."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    ctx = traced_context(provider.get_tracer('test'), include_content)
+
+    with open_span(ctx, 'example work', attributes={'example.names': 'a'}, content={'example.names': 'a, private'}):
+        pass
+    record_decision(ctx, 'example decided', attributes={'example.names': 'a'}, content={'example.names': 'a, private'})
+
+    expected = 'a, private' if include_content else 'a'
+    assert [(span.attributes or {})['example.names'] for span in exporter.get_finished_spans()] == [expected, expected]
+
+
 def test_a_cancellation_is_not_an_error():
     """As in OpenTelemetry's own spans, a cancellation leaves the status unset and records no exception."""
     exporter = InMemorySpanExporter()
