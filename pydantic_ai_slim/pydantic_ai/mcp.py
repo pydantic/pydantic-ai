@@ -39,7 +39,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 # extra admits both. We only use their shared interfaces, so these unions type them without
 # importing a family that the other generation's installs don't ship.
 from ._http import AsyncHTTPClient, HTTPAuth, HTTPTimeout
-from ._run_context import _CURRENT_RUN_CONTEXT
+from ._run_context import _CURRENT_RUN_CONTEXT  # pyright: ignore[reportPrivateUsage]
 from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
@@ -57,6 +57,7 @@ try:
         StdioTransport,
         StreamableHttpTransport,
     )
+    from fastmcp.client.transports.config import MCPConfigTransport
     from fastmcp.exceptions import ToolError
     from fastmcp.mcp_config import infer_transport_type_from_url
 except ImportError as _import_error:
@@ -1408,12 +1409,15 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 # once initialization fully succeeds, so `_initialized` can't see stale data from a
                 # session that got torn down mid-setup.
                 async with AsyncExitStack() as exit_stack:
-                    # FastMCP's stdio transport snapshots the current context into its long-lived
-                    # connection task (`asyncio.create_task`), which would otherwise pin the run's
-                    # `RunContext` — and through it the agent, toolset and transport — until the
-                    # server process stops. Connect without the ambient run context; the caller's
-                    # context is restored before the entered session is used.
-                    token = _CURRENT_RUN_CONTEXT.set(None)
+                    transport = self.client.transport
+                    if isinstance(transport, MCPConfigTransport) and len(transport.config.mcpServers) == 1:
+                        transport = transport.transport
+                    # A kept-alive stdio transport starts a connection task that outlives this run, and
+                    # `asyncio.create_task` snapshots the current context into it: the run's
+                    # `RunContext` would pin the agent, toolset and transport until the server stops.
+                    # Connect it without the ambient run context; every other transport keeps it.
+                    keeps_connection = isinstance(transport, StdioTransport) and transport.keep_alive
+                    token = _CURRENT_RUN_CONTEXT.set(None if keeps_connection else _CURRENT_RUN_CONTEXT.get())
                     try:
                         await exit_stack.enter_async_context(self.client)
                     finally:

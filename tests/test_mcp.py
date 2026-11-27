@@ -38,7 +38,7 @@ from opentelemetry import propagate
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent, ToolsetTool, models
-from pydantic_ai._run_context import _CURRENT_RUN_CONTEXT, RunContext, get_current_run_context
+from pydantic_ai._run_context import RunContext, get_current_run_context, set_current_run_context
 from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.capabilities import MCP, Capability
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior, UserError
@@ -86,10 +86,12 @@ with try_import() as imports_successful:
     from fastmcp.client import Client
     from fastmcp.client.client import CallToolResult
     from fastmcp.client.transports import (
+        ClientTransport,
         SSETransport,
         StdioTransport,
         StreamableHttpTransport,
     )
+    from fastmcp.client.transports.config import MCPConfigTransport
     from fastmcp.exceptions import McpError, ToolError
     from fastmcp.prompts import Message
     from fastmcp.server.dependencies import get_http_request
@@ -785,18 +787,23 @@ class TestMCPToolsetIntegration:
             await toolset.__aexit__(None, None, None)
 
     @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
-    async def test_stdio_server_stops_once_agent_and_toolset_are_dropped(self):
-        """A stdio connection outlives `async with agent` while the toolset is held, and ends once the toolset is dropped.
+    @pytest.mark.parametrize('entered', [True, False], ids=['entered', 'plain'])
+    async def test_stdio_server_stops_once_agent_and_toolset_are_dropped(self, entered: bool):
+        """A stdio connection outlives its run while the toolset is held, and ends once the toolset is dropped.
 
         FastMCP's `StdioTransport` keeps its server running between connections and stops it from its finalizer,
-        so the connection task that outlives the exit must not keep the toolset, and with it the transport, alive.
+        so the connection task that outlives the run must not keep the toolset, and with it the transport, alive:
+        not through the message handler, and, when a plain run opens the connection, not through that run's context.
         """
         tasks_before = asyncio.all_tasks()
         toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
         # A name skips the agent's name inference, which reads this frame's `f_locals`. Before Python 3.13, that
         # read leaves a snapshot of the locals on the frame, which would still hold `toolset` after the `del` below.
         agent = Agent(TestModel(call_tools=[]), name='stdio_agent', toolsets=[toolset])
-        async with agent:
+        if entered:
+            async with agent:
+                await agent.run('Hello')
+        else:
             await agent.run('Hello')
 
         # The connection tasks own the server process. They're still pending, so the next run can reuse the server.
@@ -811,44 +818,76 @@ class TestMCPToolsetIntegration:
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
             await asyncio.wait(connection_tasks)
 
-    @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
-    async def test_plain_run_connect_task_does_not_capture_the_run_context(self):
-        """The stdio connection task created by a plain run inherits no run context, so it can't pin the run alive."""
-        tasks_before = asyncio.all_tasks()
-        toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
-        # A name skips the agent's name inference, which reads this frame's `f_locals`. Before Python 3.13, that
-        # read leaves a snapshot of the locals on the frame, which would still hold `toolset` after the `del` below.
-        agent = Agent(TestModel(call_tools=[]), name='stdio_agent', toolsets=[toolset])
-        await agent.run('Hello')
-
-        connection_tasks = asyncio.all_tasks() - tasks_before
-        assert connection_tasks
-        if sys.version_info >= (3, 12):
-            # `Task.get_context` was added in 3.12. The task was created mid-run, so its context must
-            # not hold the run's context variables — that is what pinned the run after it ended.
-            # `MCPToolset` connects with `_CURRENT_RUN_CONTEXT` set to None, so the snapshot holds None.
-            for task in connection_tasks:
-                assert task.get_context().get(_CURRENT_RUN_CONTEXT) is None
-
-        toolset_ref = weakref.ref(toolset)
-        del agent, toolset
-        gc.collect()
-        assert toolset_ref() is None
-        # The transport's finalizer stops the server, and the connection tasks end once the process has exited.
-        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            await asyncio.wait(connection_tasks)
-
-    async def test_entered_connection_preserves_the_current_run_context(
-        self, fastmcp_server: FastMCP[None], run_context: RunContext
+    @pytest.mark.subprocess(reason='connects to `tests.mcp_log_server` over stdio')
+    @pytest.mark.parametrize(
+        ('make_transport', 'tool_name', 'sees_the_run'),
+        [
+            pytest.param(
+                lambda: StdioTransport(command='python', args=['-m', 'tests.mcp_log_server']),
+                'log_text',
+                False,
+                id='stdio',
+            ),
+            pytest.param(
+                lambda: StdioTransport(command='python', args=['-m', 'tests.mcp_log_server'], keep_alive=False),
+                'log_text',
+                True,
+                id='stdio-not-kept-alive',
+            ),
+            pytest.param(
+                lambda: MCPConfigTransport(
+                    {'mcpServers': {'logger': {'command': 'python', 'args': ['-m', 'tests.mcp_log_server']}}}
+                ),
+                'log_text',
+                False,
+                id='single-server-config',
+            ),
+            pytest.param(
+                lambda: MCPConfigTransport(
+                    {
+                        'mcpServers': {
+                            'logger': {'command': 'python', 'args': ['-m', 'tests.mcp_log_server']},
+                            'other': {'command': 'python', 'args': ['-m', 'tests.mcp_log_server']},
+                        }
+                    }
+                ),
+                'logger_log_text',
+                True,
+                id='multi-server-config',
+                # A multi-server config runs an in-process FastMCP proxy, which forwards the server's log message
+                # through the logging API that MCP SDK v2 deprecates.
+                marks=pytest.mark.filterwarnings('ignore:The logging capability is deprecated'),
+            ),
+        ],
+    )
+    async def test_stdio_handlers_see_the_run_only_on_connections_that_end_with_it(
+        self, make_transport: Callable[[], ClientTransport], tool_name: str, sees_the_run: bool
     ):
-        """Connecting outside a run leaves the caller's current run context untouched."""
-        token = _CURRENT_RUN_CONTEXT.set(run_context)
-        toolset = MCPToolset(fastmcp_server)
-        try:
-            async with toolset:
+        """Handlers on a kept-alive stdio connection see no current run, because that connection outlives the run.
+
+        Its connection task would otherwise hold the context of the plain run that opened it, and later runs' handlers
+        would see that stale run. Connections that close with the run keep seeing it.
+        """
+        seen: list[str | None] = []
+
+        async def log_handler(message: mcp_types.LoggingMessageNotificationParams) -> None:
+            run_context = get_current_run_context()
+            seen.append(None if run_context is None else run_context.run_id)
+
+        transport = make_transport()
+        toolset = MCPToolset(transport, log_handler=log_handler)
+        result = await Agent(TestModel(call_tools=[tool_name]), name='stdio_agent', toolsets=[toolset]).run('Hello')
+        await transport.close()
+        assert seen == [result.run_id if sees_the_run else None]
+
+    @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+    async def test_entered_connection_preserves_the_current_run_context(self, run_context: RunContext):
+        """Connecting a kept-alive stdio transport without the run context gives the caller's back afterwards."""
+        transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+        with set_current_run_context(run_context):
+            async with MCPToolset(transport):
                 assert get_current_run_context() is run_context
-        finally:
-            _CURRENT_RUN_CONTEXT.reset(token)
+        await transport.close()
 
     async def test_get_tools_caches_and_lists(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server, include_instructions=True)
