@@ -13,10 +13,11 @@ from pydantic_ai.capabilities import PrefixTools, SetToolMetadata
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart, UserPromptPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.tools import RunContext
 from pydantic_ai_harness import DenyUnanswered
 from pydantic_ai_harness.ask_user import AskUser
 from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE
-from pydantic_ai_harness.permissions import PermissionRule, Permissions
+from pydantic_ai_harness.permissions import PermissionMode, PermissionRule, Permissions
 from pydantic_ai_harness.sub_agents import DynamicAgents, SubAgent, SubAgents, SubAgentToolset, TaskControl
 from tests.conftest import try_import
 from tests.harness._deferred_tools import QUESTION, call_then_echo
@@ -328,53 +329,70 @@ def _delegates_to_self_once(messages: list[ModelMessage], info: AgentInfo) -> Mo
     return ModelResponse(parts=[TextPart('from the delegate')])
 
 
-async def test_a_durable_delegate_to_self_runs_under_its_own_managed_layer(dbos: DBOS) -> None:
+def _full_mode(ctx: RunContext[object]) -> PermissionMode:
+    return 'full'
+
+
+@pytest.mark.parametrize('max_mode', ['full', _full_mode], ids=['string', 'function'])
+async def test_a_durable_delegate_to_self_runs_under_its_own_managed_layer(
+    dbos: DBOS, max_mode: PermissionMode | Callable[[RunContext[object]], PermissionMode]
+) -> None:
     """The delegate holds the managed `Permissions` itself, so its child workflows read the layer."""
     agent = Agent(
         FunctionModel(_delegates_to_self_once),
-        name='dbos_self_managed',
+        name=f'dbos_self_managed_{callable(max_mode)}',
         capabilities=[
-            Permissions[object](managed_rules=[PermissionRule('deny', command='rm')]),
+            Permissions[object](max_mode=max_mode, managed_rules=[PermissionRule('deny', command='rm')]),
             SubAgents[object](include_self=True),
             DBOSDurability[object](),
         ],
     )
 
-    @DBOS.workflow(name='dbos_self_managed_workflow')
+    @DBOS.workflow(name=f'dbos_self_managed_{callable(max_mode)}_workflow')
     async def workflow() -> str:
         return (await agent.run('Delegate it')).output
 
     assert await workflow() == 'from the delegate'
 
 
-async def test_a_durable_delegate_with_the_same_managed_layer_runs(dbos: DBOS) -> None:
-    """A delegate whose own `Permissions` has the run's `max_mode` and `managed_rules` reads them in its child workflows."""
+@pytest.mark.parametrize('max_mode', ['full', _full_mode], ids=['string', 'function'])
+async def test_a_durable_delegate_with_the_same_managed_layer_runs(
+    dbos: DBOS, max_mode: PermissionMode | Callable[[RunContext[object]], PermissionMode]
+) -> None:
+    """A delegate whose own `Permissions` has the run's limits reads them in its child workflows.
+
+    A `max_mode` function is refused: the delegate's child workflow would call it with the delegate's context.
+    """
     rules = [PermissionRule[object]('deny', command='rm')]
     grandchild = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('grandchild done')])))
     child_agent = Agent(
         FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('child done')])),
-        name='holding_child',
+        name=f'holding_child_{callable(max_mode)}',
         capabilities=[
-            Permissions[object](managed_rules=rules),
+            Permissions[object](max_mode=max_mode, managed_rules=rules),
             SubAgents[object](agents=[SubAgent(grandchild, name='grandchild')]),
             DBOSDurability[object](),
         ],
     )
     parent = Agent(
         call_then_echo('delegate_task', {'agent_name': 'child', 'task': 'go'}, 'd1', 'parent done'),
-        name='holding_parent',
+        name=f'holding_parent_{callable(max_mode)}',
         capabilities=[
-            Permissions[object](managed_rules=rules),
+            Permissions[object](max_mode=max_mode, managed_rules=rules),
             SubAgents[object](agents=[SubAgent(child_agent, name='child')]),
             DBOSDurability[object](),
         ],
     )
 
-    @DBOS.workflow(name='holding_parent_workflow')
+    @DBOS.workflow(name=f'holding_parent_{callable(max_mode)}_workflow')
     async def workflow() -> str:
         return (await parent.run('delegate')).output
 
-    assert await workflow() == 'parent done'
+    if callable(max_mode):
+        with pytest.raises(UserError, match=r"Sub-agent 'child' is bound to a durable execution engine .*14944"):
+            await workflow()
+    else:
+        assert await workflow() == 'parent done'
 
 
 async def test_a_managed_permissions_added_per_run_is_refused_in_the_workflow(dbos: DBOS) -> None:

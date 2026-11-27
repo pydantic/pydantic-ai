@@ -763,9 +763,16 @@ def managed_layer_not_held_by(ctx: RunContext[AgentDepsT], agent: AbstractAgent[
     """Whether a `Permissions` on `ctx`'s run has a managed layer that `agent`'s own capabilities don't also hold.
 
     A `Permissions` of `agent` with the same `max_mode`, `managed_rules` and `ask_commands` holds it. A `max_mode`
-    function is read only for a `Permissions` that `agent` doesn't hold.
+    function counts only when `agent` is `ctx`'s own agent: another agent's child workflow would call it with that
+    agent's context, which can return a weaker mode. A `max_mode` function is read only for a `Permissions` that
+    `agent` doesn't hold.
     """
-    held = [_layer_key(permissions) for permissions in _permissions(leaf_capabilities(agent.root_capability))]
+    same_agent = agent is ctx.agent
+    held = [
+        _layer_key(permissions)
+        for permissions in _permissions(leaf_capabilities(agent.root_capability))
+        if same_agent or not callable(permissions.max_mode)
+    ]
     return any(
         _layer_key(permissions) not in held and _managed_layer(permissions, ctx) is not None
         for permissions in _permissions(_run_capabilities(ctx))
