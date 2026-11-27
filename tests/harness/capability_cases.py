@@ -354,7 +354,7 @@ def _check_reset(merged: ResetCompaction[None]) -> None:
 
 def _reset_compaction(_: Path) -> list[AbstractCapability[None]]:
     # The reset requires the `WorkLog` it points the model at to be registered on the agent.
-    work_log = WorkLog[None]()
+    work_log = WorkLog[None](InMemoryWorkLogStore())
     return [work_log, ResetCompaction[None](work_log, max_messages=6, keep_messages=2)]
 
 
@@ -817,8 +817,8 @@ CASES: dict[str, CapabilityCase] = {
         Combines(
             'two would each clear the history, the second clearing what the first just kept',
             lambda: (
-                ResetCompaction[None](WorkLog[None](), max_messages=50, keep_messages=3),
-                ResetCompaction[None](WorkLog[None](), max_messages=50, keep_messages=7),
+                ResetCompaction[None](WorkLog[None](InMemoryWorkLogStore()), max_messages=50, keep_messages=3),
+                ResetCompaction[None](WorkLog[None](InMemoryWorkLogStore()), max_messages=50, keep_messages=7),
             ),
             _check_reset,
         ),
@@ -1094,8 +1094,9 @@ CASES: dict[str, CapabilityCase] = {
     'WorkLog': CapabilityCase(
         Narrows(
             'one log per id under fixed tool names, and its store decides where raw tool results are kept',
-            lambda cls: (cls(), cls(record_thinking=True)),
+            lambda cls: (cls(InMemoryWorkLogStore()), cls(InMemoryWorkLogStore(), record_thinking=True)),
         ),
+        build=lambda _: WorkLog[None](InMemoryWorkLogStore()),
         calls=Calls(
             (
                 ('search_work_log', {'query': 'tabs'}),

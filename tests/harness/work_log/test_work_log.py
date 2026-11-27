@@ -499,7 +499,10 @@ class TestWorkLog:
         assert _tool_entries(await kept.read(_CONVERSATION)) == [('lookup', 'success', 'sunny in Paris')]
         assert await dropped.read(_CONVERSATION) == []
         with pytest.raises(UserError, match="disagree on 'record_text'"):
-            Agent(_scripted(), capabilities=[WorkLog(), WorkLog(record_text=False)])
+            Agent(
+                _scripted(),
+                capabilities=[WorkLog(InMemoryWorkLogStore()), WorkLog(InMemoryWorkLogStore(), record_text=False)],
+            )
 
     async def test_exports(self) -> None:
         assert WorkLog is pydantic_ai_harness.work_log.WorkLog
@@ -698,7 +701,9 @@ class TestWorkLogTools:
             seen.update((tool.name, tool.ui_visibility) for tool in info.function_tools)
             return ModelResponse(parts=[TextPart('done')])
 
-        await Agent(FunctionModel(respond), capabilities=[WorkLog()]).run('Go', conversation_id=_CONVERSATION)
+        await Agent(FunctionModel(respond), capabilities=[WorkLog(InMemoryWorkLogStore())]).run(
+            'Go', conversation_id=_CONVERSATION
+        )
 
         assert seen == {'search_work_log': 'redacted', 'read_work_log': 'redacted'}
 

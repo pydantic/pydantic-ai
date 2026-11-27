@@ -26,7 +26,7 @@ flowchart TB
     accTitle: Work Log: keep every tool result where the model can read it again
     accDescr: A tool's full result goes to WorkLog, which appends it to the conversation's log in its store before ToolOutputLimits reduces the copy the conversation keeps. After compaction has cleared that result from the conversation, the model searches the log with search_work_log and reads an entry with read_work_log, as tools or from code.
     tool["tool call"]
-    log["WorkLog()<br/>search_work_log<br/>read_work_log"]:::capability
+    log["WorkLog(store)<br/>search_work_log<br/>read_work_log"]:::capability
     store[("work log store<br/>one log per conversation")]:::external
     limits["ToolOutputLimits"]
     model(["model"])
@@ -154,9 +154,11 @@ application derive it on the server from the authenticated user, as for
 
 ## Stores
 
+`WorkLog` takes its store as its first argument, with no default: the choice decides how long the log lasts and who can open it.
+
 | Store | Where the log is | Handle a reset notice shows |
 | --- | --- | --- |
-| `InMemoryWorkLogStore()` (default) | This process, until `discard(conversation_id)` or process exit | None: the agent reaches the log only through the tools |
+| `InMemoryWorkLogStore()` | This process, until `discard(conversation_id)` or process exit | None: the agent reaches the log only through the tools |
 | `FileWorkLogStore(directory)` | One JSONL file per conversation, `<directory>/<log>.jsonl`, on the machine running the agent | The file's absolute path |
 | `WorkspaceWorkLogStore(workspace=None)` | One file per entry under `.pydantic-ai-harness/work-log/<log>/` in the run's workspace | That directory, relative to the working directory; none with `workspace=` |
 
@@ -165,7 +167,7 @@ dots and not starting with `sha256-`; otherwise it is `sha256-` and the ID's SHA
 No ID can name a path outside the store's directory, and no two IDs share a log.
 
 - **In memory.** The log grows for as long as the process runs, so a long-lived server should call
-  `discard` when a conversation ends. Two `WorkLog()`s with default stores are one log stated twice
+  `discard` when a conversation ends. Two `WorkLog(InMemoryWorkLogStore())`s are one log stated twice
   (see [Two of them](#two-of-them)). A reset notice names no handle for it: the agent reaches the
   log only through the tools.
 - **File.** The directory is created on the first write, readable by its owner only (`0700`), and
@@ -218,7 +220,7 @@ durable unit runs inline in it, and the entry's key keeps a retried unit from wr
 Keep the `id` fixed once a workflow is live. Each store numbers entries in the memory of the
 process that writes them, so two processes appending to one log give two entries the same `seq`.
 With one worker at a time, `FileWorkLogStore` and `WorkspaceWorkLogStore` keep the log across a
-worker restart, which the in-memory default loses. When a log's operations can run on several
+worker restart, which the in-memory store loses. When a log's operations can run on several
 workers at once, implement `WorkLogStore` over storage that assigns `seq` atomically, such as a
 database.
 

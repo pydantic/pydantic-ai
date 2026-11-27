@@ -179,9 +179,9 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
         ```python
         from pydantic_ai import Agent
         from pydantic_ai_harness.compaction import ResetCompaction
-        from pydantic_ai_harness.work_log import WorkLog
+        from pydantic_ai_harness.work_log import FileWorkLogStore, WorkLog
 
-        work_log = WorkLog()
+        work_log = WorkLog(FileWorkLogStore('work-logs'))
         agent = Agent('openai:gpt-5', capabilities=[work_log, ResetCompaction(work_log, max_fraction=0.6)])
         ```
     """

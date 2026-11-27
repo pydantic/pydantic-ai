@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Sequence
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import KW_ONLY, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
@@ -49,7 +49,6 @@ from pydantic_ai_harness.compaction._reset_compaction import reset_count
 from pydantic_ai_harness.tool_output_limits import ToolOutputLimits, indented_json
 from pydantic_ai_harness.tool_output_limits._payload import to_text
 from pydantic_ai_harness.work_log._store import (
-    InMemoryWorkLogStore,
     WorkLogEntry,
     WorkLogEntryKind,
     WorkLogOutcome,
@@ -89,8 +88,9 @@ class WorkLog(AbstractCapability[AgentDepsT]):
     `WorkLog` adds no instructions: the tool descriptions say what the log holds.
     """
 
-    store: WorkLogStore | WorkspaceWorkLogStore = field(default_factory=InMemoryWorkLogStore)
-    """Where the log is kept. Defaults to an `InMemoryWorkLogStore`, which lasts as long as the process."""
+    store: WorkLogStore | WorkspaceWorkLogStore
+    """Where the log is kept: an `InMemoryWorkLogStore`, which lasts as long as the process, a
+    `FileWorkLogStore`, a `WorkspaceWorkLogStore`, or your own `WorkLogStore`."""
 
     record_text: bool = True
     """Record the model's text replies."""

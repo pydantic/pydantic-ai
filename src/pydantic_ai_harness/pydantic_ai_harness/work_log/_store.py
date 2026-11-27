@@ -1,8 +1,8 @@
 """Stores for `WorkLog`: where each conversation's log of tool calls and replies is kept.
 
 `WorkLogStore` is the narrow protocol for any backend: append a record under an idempotency key,
-read entries back by `seq`, and name the log for a reset notice. `InMemoryWorkLogStore` is the
-default, `FileWorkLogStore` keeps one JSONL file per log on this machine, and
+read entries back by `seq`, and name the log for a reset notice. `InMemoryWorkLogStore` keeps
+each log in this process, `FileWorkLogStore` keeps one JSONL file per log on this machine, and
 `WorkspaceWorkLogStore` keeps one file per entry in the run's workspace.
 
 Each store assigns `seq` in memory under a per-log lock, so it supports one writer process per log.
@@ -117,12 +117,12 @@ def file_name(log_id: str) -> str:
 
 @dataclass
 class InMemoryWorkLogStore:
-    """The default store: each log lives in this process until `discard` or process exit.
+    """Each log lives in this process until `discard` or process exit.
 
     A long-lived server should call `discard` when a conversation ends. The log is lost when the
     process exits, so a durable run that can resume after a worker restart needs `FileWorkLogStore`
-    or `WorkspaceWorkLogStore`. The state is left out of comparisons, so `WorkLog()` stated twice is
-    one log.
+    or `WorkspaceWorkLogStore`. The state is left out of comparisons, so
+    `WorkLog(InMemoryWorkLogStore())` stated twice is one log.
     """
 
     _entries: dict[str, list[WorkLogEntry]] = field(
