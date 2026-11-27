@@ -6,6 +6,7 @@ import asyncio
 import hashlib
 import json
 import os
+import re
 from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
@@ -117,11 +118,15 @@ def _name(log_id: str) -> str:
 
 
 async def _call_tools(
-    store: WorkLogStore, *calls: tuple[str, dict[str, object]], capabilities: Sequence[AbstractCapability[None]] = ()
+    store: WorkLogStore,
+    *calls: tuple[str, dict[str, object]],
+    capabilities: Sequence[AbstractCapability[None]] = (),
+    max_scanned_entries: int = 2_000,
 ) -> list[object]:
     """Make each work log tool call in its own turn, over `store`'s log; return what the model saw for each."""
     turns = [[ToolCallPart(name, args, tool_call_id=f'call-{index}')] for index, (name, args) in enumerate(calls)]
-    agent = Agent(_scripted(*turns), deps_type=type(None), capabilities=[WorkLog(store), *capabilities])
+    work_log = WorkLog(store, max_scanned_entries=max_scanned_entries)
+    agent = Agent(_scripted(*turns), deps_type=type(None), capabilities=[work_log, *capabilities])
     result = await agent.run('Look it up', conversation_id=_CONVERSATION)
     return [_returned(result.all_messages(), f'call-{index}') for index in range(len(calls))]
 
@@ -722,6 +727,7 @@ class TestWorkLogTools:
 
         assert _SEARCH.validate_python(found) == {
             'total_entries': 3,
+            'unsearched_entries': 0,
             'matches': [
                 {
                     'seq': 3,
@@ -964,6 +970,102 @@ class TestWorkLogTools:
 
         assert _SEARCH.validate_python(searched)['capped'] is True
         assert _READ.validate_python(read)['text'] == 'z' * 30_000
+
+
+class TestWorkLogSearchBounds:
+    """Ranking runs on the event loop, so the query and the scored entries are both bounded."""
+
+    async def test_an_over_long_query_is_retried(self) -> None:
+        store = InMemoryWorkLogStore()
+        await store.append(_CONVERSATION, _record('k1', 'the needle target'))
+
+        assert await _call_tools(store, ('search_work_log', {'query': 'needle ' + 'x' * 994})) == [
+            'Search queries must be at most 1000 characters.'
+        ]
+
+    async def test_a_query_with_too_many_unique_terms_is_retried(self) -> None:
+        store = InMemoryWorkLogStore()
+        await store.append(_CONVERSATION, _record('k1', 'the needle target'))
+        query = ' '.join(f'term{i}' for i in range(33))
+
+        assert await _call_tools(store, ('search_work_log', {'query': query})) == [
+            'Search queries must contain at most 32 unique terms.'
+        ]
+
+    async def test_a_query_at_the_bounds_is_searched(self) -> None:
+        store = InMemoryWorkLogStore()
+        await store.append(_CONVERSATION, _record('k1', 'the needle target'))
+        # 32 unique terms; repeats and case variants of a term count once.
+        query = ' '.join(['needle', 'NEEDLE', *(f'term{i}' for i in range(31))]).ljust(1_000, ' ')
+        assert len(query) == 1_000
+
+        (found,) = await _call_tools(store, ('search_work_log', {'query': query}))
+
+        assert [match['seq'] for match in _SEARCH.validate_python(found)['matches']] == [1]
+
+    async def test_an_out_of_bounds_query_is_retried_before_the_store_is_read(self) -> None:
+        class Unreadable(InMemoryWorkLogStore):
+            async def read(self, log_id: str, start: int = 1, stop: int | None = None) -> list[WorkLogEntry]:
+                raise AssertionError('the store must not be read for a rejected query')  # pragma: no cover
+
+        assert await _call_tools(Unreadable(), ('search_work_log', {'query': 'x' * 1_001})) == [
+            'Search queries must be at most 1000 characters.'
+        ]
+
+    async def test_only_the_newest_entries_are_scored_and_the_result_says_so(self) -> None:
+        store = InMemoryWorkLogStore()
+        for index, word in enumerate(['oldest', 'second', 'third', 'fourth', 'newest']):
+            await store.append(_CONVERSATION, _record(f'k{index}', f'needle {word}'))
+
+        (found,) = await _call_tools(store, ('search_work_log', {'query': 'needle'}), max_scanned_entries=4)
+
+        result = _SEARCH.validate_python(found)
+        assert (result['total_entries'], result['unsearched_entries']) == (5, 1)
+        assert sorted(match['seq'] for match in result['matches']) == [2, 3, 4, 5]
+
+    async def test_a_capped_search_without_matches_says_what_it_skipped(self) -> None:
+        store = InMemoryWorkLogStore()
+        await store.append(_CONVERSATION, _record('k1', 'needle oldest', run_id='run-1'))
+        await store.append(_CONVERSATION, _record('k2', 'filler one', run_id='run-2'))
+        await store.append(_CONVERSATION, _record('k3', 'filler two', run_id='run-2'))
+
+        missed, reached = await _call_tools(
+            store,
+            ('search_work_log', {'query': 'needle'}),
+            # A filter narrows the entries before the newest are kept, so the skipped entry stays reachable.
+            ('search_work_log', {'query': 'needle', 'run_id': 'run-1'}),
+            max_scanned_entries=2,
+        )
+
+        assert (_SEARCH.validate_python(missed)['matches'], _SEARCH.validate_python(missed)['unsearched_entries']) == (
+            [],
+            1,
+        )
+        assert [match['seq'] for match in _SEARCH.validate_python(reached)['matches']] == [1]
+
+    async def test_entries_at_the_cap_are_scored_whole(self) -> None:
+        store = InMemoryWorkLogStore()
+        await store.append(_CONVERSATION, _record('k1', 'needle oldest'))
+        await store.append(_CONVERSATION, _record('k2', 'filler'))
+
+        (found,) = await _call_tools(store, ('search_work_log', {'query': 'needle'}), max_scanned_entries=2)
+
+        result = _SEARCH.validate_python(found)
+        assert ([match['seq'] for match in result['matches']], result['unsearched_entries']) == ([1], 0)
+
+    async def test_listing_without_a_query_is_not_cut(self) -> None:
+        store = InMemoryWorkLogStore()
+        for index in range(5):
+            await store.append(_CONVERSATION, _record(f'k{index}'))
+
+        (found,) = await _call_tools(store, ('search_work_log', {}), max_scanned_entries=2)
+
+        result = _SEARCH.validate_python(found)
+        assert ([match['seq'] for match in result['matches']], result['unsearched_entries']) == ([5, 4, 3, 2, 1], 0)
+
+    def test_the_cap_must_be_positive(self) -> None:
+        with pytest.raises(ValueError, match=re.escape('max_scanned_entries must be positive, got 0.')):
+            WorkLog(InMemoryWorkLogStore(), max_scanned_entries=0)
 
 
 class TestWorkLogStores:

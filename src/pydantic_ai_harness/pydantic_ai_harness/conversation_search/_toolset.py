@@ -18,7 +18,7 @@ from typing import TYPE_CHECKING, Literal, assert_never
 
 from pydantic_core import ErrorDetails
 
-from pydantic_ai import ModelRetry, RunContext
+from pydantic_ai import RunContext
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
     CapabilityPart,
@@ -42,7 +42,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
-from pydantic_ai_harness._history_bm25 import Bm25Params, bm25_rank, clip, tokenize
+from pydantic_ai_harness._history_bm25 import Bm25Params, bm25_rank, check_query, clip, tokenize
 from pydantic_ai_harness._message_text import capability_part_text, tool_return_text, user_prompt_texts
 from pydantic_ai_harness._warn import warn_default_changed
 from pydantic_ai_harness.conversation_search._source import SUMMARY_PREFIX, HistorySource, message_hash
@@ -97,10 +97,6 @@ _EXCERPT_CHARS = 500
 _SHORT_EXCERPT_CHARS = 200
 """Display cap for system text and tool-call arguments."""
 
-_MAX_QUERY_CHARS = 1_000
-_MAX_QUERY_TERMS = 32
-"""Query bounds, the same as `Memory`'s `search_memory`: ranking costs unique terms times scanned messages."""
-
 _ECHOED_QUERY_CHARS = 200
 """How much of the query the result header repeats back."""
 
@@ -110,14 +106,6 @@ DEFAULT_MAX_SCANNED_MESSAGES = 2_000
 Scoring runs synchronously on the event loop, so this bounds how long one search holds it:
 a 32-term query over 2,000 short messages takes tens of milliseconds.
 """
-
-
-def _check_query(query: str) -> None:
-    """Reject a query whose ranking would hold the event loop, so the model can retry with a shorter one."""
-    if len(query) > _MAX_QUERY_CHARS:
-        raise ModelRetry(f'Search queries must be at most {_MAX_QUERY_CHARS} characters.')
-    if len(set(tokenize(query))) > _MAX_QUERY_TERMS:
-        raise ModelRetry(f'Search queries must contain at most {_MAX_QUERY_TERMS} unique terms.')
 
 
 def _echo_query(query: str) -> str:
@@ -405,7 +393,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
             run_id: Search only this run's history. Use it to resolve a run
                 another tool or a compaction receipt referenced.
         """
-        _check_query(query)
+        check_query(query)
         return await self._search(ctx, query, run_id)
 
     async def _search(self, ctx: RunContext[AgentDepsT], query: str, run_id: str | None) -> str:

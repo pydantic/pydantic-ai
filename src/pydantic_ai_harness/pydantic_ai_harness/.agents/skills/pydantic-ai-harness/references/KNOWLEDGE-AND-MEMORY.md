@@ -285,7 +285,7 @@ agent = Agent('test', capabilities=[WorkLog(FileWorkLogStore('work-logs'))])
 ```
 
 Key parameters: `store` (required), `record_text=True`, `record_thinking=False`,
-`id='work_log'` (also the toolset's id). Stores: `InMemoryWorkLogStore` (call `discard(log_id)` when a
+`max_scanned_entries=2000` and `id='work_log'` (also the toolset's id), both keyword-only. Stores: `InMemoryWorkLogStore` (call `discard(log_id)` when a
 conversation ends), `FileWorkLogStore(directory)` (one JSONL file per conversation),
 `WorkspaceWorkLogStore(workspace=None)` (one file per entry under
 `.pydantic-ai-harness/work-log/<log>/` in the run's workspace), or your own `WorkLogStore`
@@ -295,6 +295,9 @@ Gotchas:
 - Not logged: deferred or approval-gated calls until they run, argument-validation failures, the
   work log's own tool calls, user prompts, and files (a placeholder names the media type).
 - It can't be loaded from an agent spec (`get_serialization_name()` returns `None`); build it in Python.
+- A search with a `query` scores only the newest `max_scanned_entries` entries that pass the
+  filters, and its `unsearched_entries` counts the older ones skipped. Queries over 1,000
+  characters or 32 unique terms raise `ModelRetry`.
 - `ModelRetry` is logged as `retried`; other exceptions as `failed`, by type only, and still raised. A result an outer hook rejects gets a `success` and a `retried` entry.
 - Both tools' returns are exempt from `ToolOutputLimits`. Both tools are `'redacted'` for UI
   clients, since they return other tools' results, a `'private'` tool's included.

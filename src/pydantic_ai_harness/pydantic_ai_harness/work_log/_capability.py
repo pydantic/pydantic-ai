@@ -65,6 +65,9 @@ _BM25 = Bm25Params(k1=1.5, b=0.75)
 """`ConversationSearch`'s default BM25 tuning."""
 
 _ARGS_CHARS = 200
+
+DEFAULT_MAX_SCANNED_ENTRIES = 2_000
+"""How many of the newest matching entries one search scores by default: `ConversationSearch`'s `max_scanned_messages`."""
 _EXCERPT_CHARS = 300
 
 
@@ -99,6 +102,14 @@ class WorkLog(AbstractCapability[AgentDepsT]):
     """Record the model's thinking."""
 
     _: KW_ONLY
+    max_scanned_entries: int = DEFAULT_MAX_SCANNED_ENTRIES
+    """How many of the newest matching entries one search with a `query` scores. Must be positive.
+
+    Ranking runs on the event loop, so this bounds how long one search can hold it. When more
+    entries match the filters, older ones are not searched and the result's `unsearched_entries`
+    says how many. Raise it to search further back at the cost of slower searches.
+    """
+
     id: str | None = 'work_log'
     """Stable capability ID: durable execution names the log's operations by it, and it is the id of the toolset
     holding `search_work_log` and `read_work_log`.
@@ -106,6 +117,10 @@ class WorkLog(AbstractCapability[AgentDepsT]):
     Two `WorkLog`s sharing this `id` are one log stated twice when they agree, and an error when
     they differ.
     """
+
+    def __post_init__(self) -> None:
+        if self.max_scanned_entries < 1:
+            raise ValueError(f'max_scanned_entries must be positive, got {self.max_scanned_entries!r}.')
 
     @classmethod
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
@@ -226,8 +241,13 @@ class WorkLog(AbstractCapability[AgentDepsT]):
             for entry in entries
             if (tool_name is None or entry['tool_name'] == tool_name) and (run_id is None or entry['run_id'] == run_id)
         ]
-        matches, capped = _matches(_ranked(candidates, query)[:limit], frozenset(tokenize(query or '')))
-        return WorkLogSearchResult(total_entries=len(entries), matches=matches, capped=capped)
+        # Listing the newest entries ranks nothing, so only a search with a query is cut to the newest.
+        unsearched = max(0, len(candidates) - self.max_scanned_entries) if query and query.strip() else 0
+        ranked = _ranked(candidates[unsearched:], query)
+        matches, capped = _matches(ranked[:limit], frozenset(tokenize(query or '')))
+        return WorkLogSearchResult(
+            total_entries=len(entries), unsearched_entries=unsearched, matches=matches, capped=capped
+        )
 
     @durable_operation('read')
     async def _read(

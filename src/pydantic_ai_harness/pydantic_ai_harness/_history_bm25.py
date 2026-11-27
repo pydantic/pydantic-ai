@@ -1,4 +1,4 @@
-"""Dependency-free BM25 ranking and excerpt clipping over plain-text documents.
+"""BM25 ranking, its query bounds, and excerpt clipping over plain-text documents.
 
 Shared by `ConversationSearch` and `WorkLog`. The ranking core is ported from VStorm's
 `pydantic-deepagents` (`pydantic_deep/features/history_archive/toolset.py`). It is a different
@@ -11,6 +11,8 @@ import math
 import re
 from collections import Counter
 from dataclasses import dataclass
+
+from pydantic_ai import ModelRetry
 
 TOKENIZE_RE = re.compile(r'\w+')
 """Tokenizer regex: word runs (unicode letters, digits, underscore).
@@ -30,6 +32,19 @@ class Bm25Params:
 
 def tokenize(text: str) -> list[str]:
     return [match.group().lower() for match in TOKENIZE_RE.finditer(text)]
+
+
+MAX_QUERY_CHARS = 1_000
+MAX_QUERY_TERMS = 32
+"""Query bounds, the same as `Memory`'s `search_memory`: ranking costs unique terms times scanned documents."""
+
+
+def check_query(query: str) -> None:
+    """Reject a query whose ranking would hold the event loop, so the model can retry with a shorter one."""
+    if len(query) > MAX_QUERY_CHARS:
+        raise ModelRetry(f'Search queries must be at most {MAX_QUERY_CHARS} characters.')
+    if len(set(tokenize(query))) > MAX_QUERY_TERMS:
+        raise ModelRetry(f'Search queries must contain at most {MAX_QUERY_TERMS} unique terms.')
 
 
 def compute_idf(term: str, term_counts: list[Counter[str]]) -> float:

@@ -13,6 +13,7 @@ from pydantic_ai.exceptions import ModelRetry
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._durable import RetryRequest, raise_retry
+from pydantic_ai_harness._history_bm25 import check_query
 from pydantic_ai_harness._line_slice import ReadUnit, check_window
 from pydantic_ai_harness._work_log_kinds import WORK_LOG_READ_KIND, WORK_LOG_SEARCH_KIND
 from pydantic_ai_harness.work_log._store import WorkLogEntryKind, WorkLogOutcome
@@ -38,6 +39,9 @@ class WorkLogSearchResult(TypedDict):
 
     total_entries: int
     """Entries in the whole log, before any filter."""
+    unsearched_entries: int
+    """Older entries that pass the filters but fall outside the newest `WorkLog.max_scanned_entries`, so a
+    search with `query` did not score them; `0` when it scored every one."""
     matches: list[WorkLogMatch]
     capped: bool
     """Whether matches were left out to keep the result under the read size cap."""
@@ -109,12 +113,15 @@ class WorkLogToolset(FunctionToolset[AgentDepsT]):
         Args:
             ctx: The run context (supplied by the agent).
             query: Words to search for. Omit it to list the most recent entries.
+                At most 1,000 characters and 32 unique terms.
             tool_name: Only entries for calls to this tool.
             run_id: Only entries from this agent run.
             limit: Maximum number of matches (>= 1).
         """
         if limit < 1:
             raise ModelRetry('`limit` must be >= 1.')
+        if query is not None:
+            check_query(query)
         return await self._search(ctx, query, tool_name, run_id, limit)
 
     async def read_work_log(
