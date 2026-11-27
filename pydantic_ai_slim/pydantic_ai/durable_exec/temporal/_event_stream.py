@@ -165,6 +165,9 @@ class AgentEventStream:
         self._drain_timeout = drain_timeout
         self._pending_drains: set[str] = set()
         self._next_drain_token = 0
+        # Events published before the run's stream reached them, keyed by topic and identity. Holding the event
+        # keeps its `id()` from being reused until the stream reaches it and `_publish` skips it.
+        self._published_ahead: dict[tuple[str, int], NativeEvent] = {}
         workflow.set_signal_handler(_DRAINED_SIGNAL, self._on_drained)  # pyright: ignore[reportUnknownMemberType]
         _streams[workflow.info().run_id] = self
 
@@ -183,7 +186,14 @@ class AgentEventStream:
         Workflow-side publishing costs nothing beyond the workflow task that is already running, and
         replay rebuilds the log identically, so these events are delivered exactly once.
         """
+        if self._published_ahead.pop((topic, id(event)), None) is not None:
+            return
         self._stream.topic(topic).publish(event)
+
+    def _publish_ahead(self, topic: str, event: NativeEvent) -> None:
+        """Publish an event the run's stream hasn't reached yet, so `_publish` skips it when the stream does."""
+        self._publish(topic, event)
+        self._published_ahead[(topic, id(event))] = event
 
     def _publish_result(self, topic: str, result: AgentRunResult[Any]) -> None:
         """Append a terminal event and raise its execution-scoped drain barrier."""
@@ -230,6 +240,12 @@ def publish_agent_event(topic: str, event: NativeEvent) -> None:
     """
     stream = _get_agent_event_stream()
     stream._publish(topic, event)  # pyright: ignore[reportPrivateUsage]
+
+
+def publish_agent_event_ahead(topic: str, event: NativeEvent) -> None:
+    """Publish one event to `topic` before the run's stream reaches it, which then doesn't publish it again."""
+    stream = _get_agent_event_stream()
+    stream._publish_ahead(topic, event)  # pyright: ignore[reportPrivateUsage]
 
 
 def publish_agent_result(topic: str, result: AgentRunResult[Any]) -> None:
