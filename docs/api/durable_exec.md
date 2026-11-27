@@ -18,5 +18,3 @@
             - SupportLevel
             - Recovery
             - RecoveryMode
-            - ran_in_foreground
-            - INLINE_ANSWER

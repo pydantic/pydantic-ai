@@ -22,7 +22,8 @@ import pytest
 
 from pydantic_ai import Agent, FunctionToolset, Tool
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls
-from pydantic_ai.durable_exec.conformance import INLINE_ANSWER, EngineRun, Support
+from pydantic_ai.durable_exec._support import INLINE_ANSWER
+from pydantic_ai.durable_exec.conformance import EngineRun, Support
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel

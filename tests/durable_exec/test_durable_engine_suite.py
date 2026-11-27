@@ -79,11 +79,19 @@ def _check(run: EngineRun) -> None:
 
 
 def test_a_supported_cell_must_not_break() -> None:
+    """A `supported` cell fails on any break the run or its recovery shows.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
     with pytest.raises(AssertionError, match='case under stand-in: lost'):
         _suite()._assert_cell('case', _Engine(), EngineRun('', ANSWER), ['lost'])  # pyright: ignore[reportPrivateUsage]
 
 
 def test_a_limited_cell_checks_its_limit() -> None:
+    """A `limited` cell must not break either, and its `check` asserts the limit.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
     suite = _suite({'case': Support('limited', 'runs in the foreground', check=_check, issue=1)})
     suite._assert_cell('case', _Engine(), EngineRun('', ANSWER), [])  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(AssertionError):
@@ -91,6 +99,10 @@ def test_a_limited_cell_checks_its_limit() -> None:
 
 
 def test_a_refused_cell_must_refuse_before_it_records_anything() -> None:
+    """A `refused` cell needs a matching `UserError`, raised before the run records anything.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
     suite = _suite({'case': Support('refused', 'unit', match='inside a durable', issue=1)})
     raised = 'the run raised UserError: not supported inside a durable unit'
     suite._assert_cell('case', _Engine(), EngineRun('', REFUSAL), [raised])  # pyright: ignore[reportPrivateUsage]
@@ -101,6 +113,10 @@ def test_a_refused_cell_must_refuse_before_it_records_anything() -> None:
 
 
 def test_a_broken_cell_must_still_show_its_symptom() -> None:
+    """A `broken` cell needs a break matching its symptom, so it fails once the bug is fixed.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
     suite = _suite({'case': Support('broken', 'loses an event', match='lost', issue=1)})
     suite._assert_cell('case', _Engine(), EngineRun('', ANSWER), ['recovery lost an event'])  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(AssertionError, match='it now passes'):
@@ -108,12 +124,20 @@ def test_a_broken_cell_must_still_show_its_symptom() -> None:
 
 
 def test_an_untested_cell_fails() -> None:
+    """An `untested` cell is a failure, not a skip.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
     suite = _suite({'case': Support('untested', 'no suite', issue=1)})
     with pytest.raises(pytest.fail.Exception, match='run it, or declare it'):
         suite._assert_cell('case', _Engine(), EngineRun('', ANSWER), [])  # pyright: ignore[reportPrivateUsage]
 
 
 def test_an_unlisted_cell_can_be_pending() -> None:
+    """With `unlisted='pending'`, an unlisted cell passes if nothing breaks, and is an xfail if something does.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
     suite = _suite(unlisted='pending')
     suite._assert_cell('case', _Engine(), EngineRun('', ANSWER), [])  # pyright: ignore[reportPrivateUsage]
     with pytest.raises(pytest.xfail.Exception, match='declare its support'):
@@ -121,6 +145,11 @@ def test_an_unlisted_cell_can_be_pending() -> None:
 
 
 def test_the_first_run_must_answer_once_and_observe_what_it_should() -> None:
+    """The first run must answer, make each counted request once, record the pinned units and observe what it should.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
+
     def expected_units(self: DurableEngineSuite, name: str) -> tuple[str, ...]:
         return ('tool',)
 
@@ -145,6 +174,10 @@ def test_the_first_run_must_answer_once_and_observe_what_it_should() -> None:
 
 
 def test_the_defaults_pin_nothing_and_count_nothing() -> None:
+    """A suite that overrides nothing pins no unit names and counts no requests.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
     suite = _suite()
     assert suite.expected_units('case') is None
     assert suite.marks('case') == ()
@@ -154,6 +187,10 @@ def test_the_defaults_pin_nothing_and_count_nothing() -> None:
 
 
 async def test_a_replayed_recovery_must_be_the_same_and_repeat_no_request() -> None:
+    """A replayed recovery, whole or from part way, keeps the output, units and observations, and repeats no request.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
     run = EngineRun('', ANSWER, ['model', 'tool', 'model'], ['event:a'])
     engine = _Engine(
         [
@@ -173,6 +210,10 @@ async def test_a_replayed_recovery_must_be_the_same_and_repeat_no_request() -> N
 
 
 async def test_a_restarted_recovery_makes_each_request_once_more() -> None:
+    """A restarted recovery makes each counted request exactly once more and returns the same output.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
     suite = _suite(recovery=Recovery('restart', 'reruns the entry task', issue=1))
     run = EngineRun('', ANSWER, ['tool'])
     engine = _Engine([(EngineRun('', ANSWER, ['tool']), []), (EngineRun('', 'other', ['tool']), [])])
@@ -184,6 +225,10 @@ async def test_a_restarted_recovery_makes_each_request_once_more() -> None:
 
 
 async def test_a_refusal_mid_run_must_leave_its_record_unaffected() -> None:
+    """Recovering a run refused mid-run records the same units, raises the same refusal and makes no request again.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
     run = EngineRun('', REFUSAL, ['model'])
     engine = _Engine([(EngineRun('', REFUSAL, ['model']), []), (EngineRun('', ANSWER, ['model', 'tool']), [])])
     assert await _suite()._refusal_breaks(engine, run, None, _counts({}, {})) == []  # pyright: ignore[reportPrivateUsage]
@@ -201,7 +246,10 @@ class _RefusedAtBuild(_Script):
 
 
 async def test_a_refusal_when_the_case_is_built_is_judged_by_its_cell(tmp_path: Path) -> None:
-    """A capability that refuses the engine as it's built records nothing, so a `refused` cell holds."""
+    """A capability that refuses the engine as it's built records nothing, so a `refused` cell holds.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
     cases = {'case': _RefusedAtBuild()}
     refused = _suite({'case': Support('refused', 'unit', match='inside a durable', issue=1)}, cases=cases)
     await refused.test_case('case', _Engine(), True, dict, tmp_path)
@@ -210,7 +258,10 @@ async def test_a_refusal_when_the_case_is_built_is_judged_by_its_cell(tmp_path: 
 
 
 async def test_a_refused_unit_records_no_result() -> None:
-    """The unit a refusal raised in is failed, and only that one: an engine that recorded its result breaks the cell."""
+    """The unit a refusal raised in is failed, and only that one: an engine that recorded its result breaks the cell.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
     run = EngineRun('', REFUSAL, ['model'], failed=['tool'])
     engine = _Engine([(EngineRun('', REFUSAL, ['model'], failed=['tool']), [])])
     assert await _suite()._refusal_breaks(engine, run, None, _counts({}, {})) == []  # pyright: ignore[reportPrivateUsage]
@@ -224,7 +275,10 @@ async def test_a_refused_unit_records_no_result() -> None:
 
 
 async def test_a_refusal_mid_run_may_repeat_requests_under_a_restarting_engine() -> None:
-    """A restart makes every call again, so recovering a refused run under one doesn't have to repeat no request."""
+    """A restart makes every call again, so recovering a refused run under one doesn't have to repeat no request.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
     suite = _suite(recovery=Recovery('restart', 'reruns the entry task', issue=1))
     run = EngineRun('', REFUSAL, ['model'])
     engine = _Engine([(EngineRun('', REFUSAL, ['model']), [])])
@@ -249,7 +303,10 @@ async def test_a_refusal_mid_run_must_keep_what_it_observed(recovery: Recovery) 
 
 
 async def test_a_nested_run_on_the_suite_model_is_answered_and_counted() -> None:
-    """A capability's own run on the run's model is counted, so a recovery that repeats it breaks the cell."""
+    """A capability's own run on the run's model is counted, so a recovery that repeats it breaks the cell.
+
+    It judges synthetic runs from a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
     conformance._NESTED.clear()  # pyright: ignore[reportPrivateUsage]
     model = conformance._scripted_model((('ask', {}),))  # pyright: ignore[reportPrivateUsage]
 

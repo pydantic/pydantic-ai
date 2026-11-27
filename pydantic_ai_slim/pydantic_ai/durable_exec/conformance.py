@@ -41,18 +41,16 @@ from ..run import AgentRunResult
 from ..tools import RunContext
 from ..toolsets import AbstractToolset
 from ._base import BaseDurabilityCapability
-from ._support import INLINE_ANSWER, EngineRun, Recovery, RecoveryMode, Support, SupportLevel, ran_in_foreground
+from ._support import EngineRun, Recovery, RecoveryMode, Support, SupportLevel
 
 __all__ = (
     'DurableEngine',
     'DurableEngineSuite',
     'EngineRun',
-    'INLINE_ANSWER',
     'Recovery',
     'RecoveryMode',
     'Support',
     'SupportLevel',
-    'ran_in_foreground',
 )
 
 PROMPT = 'go'
