@@ -1320,8 +1320,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
         Return new message and part objects for what you change, for instance with `dataclasses.replace`, rather than
         mutating the ones the history holds. Under durable execution this runs in workflow code, like
-        `before_model_request`, so it runs again on replay and has to be deterministic; I/O belongs in a
-        [`durable_operation`][pydantic_ai.capabilities.durable_operation].
+        `before_model_request`, so it runs again on replay and has to be deterministic. For I/O, such as a model
+        that summarizes, decorate the hook itself with
+        [`durable_operation`][pydantic_ai.capabilities.durable_operation], which makes it one durable unit per step,
+        or call a `durable_operation` from it.
         """
         return messages
 
