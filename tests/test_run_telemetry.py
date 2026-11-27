@@ -7,16 +7,18 @@ These are unit tests, not VCR tests: what they check is span attributes and the 
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
-from opentelemetry.trace import INVALID_SPAN, NoOpTracer, SpanContext, Tracer
-from opentelemetry.util.types import AttributeValue
+from opentelemetry.context import Context
+from opentelemetry.trace import INVALID_SPAN, Link, Span, SpanKind, Tracer, TracerProvider as ApiTracerProvider
+from opentelemetry.util._decorator import _agnosticcontextmanager  # pyright: ignore[reportPrivateUsage]
+from opentelemetry.util.types import Attributes, AttributeValue
 
 from pydantic_ai import Agent, AgentRunResult, RunContext
-from pydantic_ai._telemetry import open_ambient_span, run_telemetry_scope
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CapabilityOrdering,
@@ -42,7 +44,7 @@ from .conftest import Instrumented, try_import
 from .realtime.test_session import FakeRealtimeConnection, FakeRealtimeModel
 
 with try_import() as otel_sdk_installed:
-    from opentelemetry.sdk.trace import ReadableSpan, TracerProvider
+    from opentelemetry.sdk.trace import TracerProvider
     from opentelemetry.sdk.trace.export import SimpleSpanProcessor
     from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
@@ -212,73 +214,11 @@ async def test_tool_call_span_leaves_the_applications_span_alone_in_an_uninstrum
     assert [(span.name, dict(span.attributes or {})) for span in exporter.get_finished_spans()] == [('app request', {})]
 
 
-async def test_an_uninstrumented_sub_agent_does_not_trace_onto_its_parent(instrumented: Instrumented):
-    """The parent's telemetry is published around the sub-agent's run, but not inside it."""
-    instrumentation, exporter = instrumented(False)
-    child = Agent(TestModel(call_tools=['helper']), capabilities=[MarkToolCall()])
-    parent = Agent(TestModel(call_tools=['delegate']), capabilities=[instrumentation])
-
-    @child.tool_plain
-    def helper() -> str:
-        with open_ambient_span('example helper'):
-            return 'ok'
-
-    @parent.tool_plain
-    async def delegate() -> str:
-        return (await child.run('go')).output
-
-    await parent.run('go')
-
-    names = [span.name for span in exporter.get_finished_spans()]
-    assert 'example helper' not in names
-    assert [span.name for span in exporter.get_finished_spans() if (span.attributes or {}).get('example.marked')] == []
-
-
 @dataclass
 class MarkWhenPrepared(AbstractCapability[object]):
     async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
         tool_call_span(ctx).set_attribute('example.prompt', 'secret')
         return self
-
-
-@dataclass
-class HelperWhenPrepared(AbstractCapability[object]):
-    async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
-        # Core code without a `ctx`, such as a workspace operation in setup, reads the published telemetry.
-        with open_ambient_span('example helper'):
-            return self
-
-
-async def test_a_sub_agents_setup_does_not_trace_onto_its_parent(instrumented: Instrumented):
-    """A sub-agent's `for_run` runs inside its parent's tool call, before the sub-agent's run publishes."""
-    instrumentation, exporter = instrumented(False)
-    child = Agent(TestModel(), capabilities=[HelperWhenPrepared()])
-    parent = Agent(TestModel(call_tools=['delegate']), capabilities=[instrumentation])
-
-    @parent.tool_plain
-    async def delegate() -> str:
-        return (await child.run('go')).output
-
-    await parent.run('go')
-
-    assert 'example helper' not in [span.name for span in exporter.get_finished_spans()]
-
-
-async def test_a_realtime_sessions_setup_does_not_trace_onto_its_parent(instrumented: Instrumented):
-    """A realtime session opened in a parent's tool prepares its capabilities before the session publishes."""
-    instrumentation, exporter = instrumented(False)
-    child = Agent(capabilities=[HelperWhenPrepared()])
-    parent = Agent(TestModel(call_tools=['talk']), capabilities=[instrumentation])
-
-    @parent.tool_plain
-    async def talk() -> str:
-        async with child.realtime(FakeRealtimeModel(FakeRealtimeConnection([ResponseDone()]))).session() as session:
-            _ = [event async for event in session]
-        return 'ok'
-
-    await parent.run('go')
-
-    assert 'example helper' not in [span.name for span in exporter.get_finished_spans()]
 
 
 @dataclass
@@ -348,35 +288,6 @@ def test_a_durable_unit_that_did_not_carry_the_tracer_is_untraced():
     assert ctx.trace_include_content is False
 
 
-async def test_code_without_a_ctx_traces_to_the_calling_run(instrumented: Instrumented):
-    """Core code with no `RunContext` reads the run's published telemetry; outside a run there is none."""
-    instrumentation, exporter = instrumented(False)
-    agent = Agent(TestModel(call_tools=['noop']), capabilities=[instrumentation])
-
-    @agent.tool_plain
-    def noop() -> str:
-        with open_ambient_span('example helper', content={'example.input': 'a'}):
-            pass
-        return 'ok'
-
-    await agent.run('go')
-
-    assert example_spans(exporter) == [{'name': 'example helper'}]
-    spans = {span.name: span for span in exporter.get_finished_spans()}
-    assert parent_id(spans['example helper']) == context_of(spans['execute_tool noop']).span_id
-    with open_ambient_span('example outside a run') as span:
-        assert span is INVALID_SPAN
-
-
-def parent_id(span: ReadableSpan) -> int | None:
-    return span.parent.span_id if span.parent is not None else None
-
-
-def context_of(span: ReadableSpan) -> SpanContext:
-    assert span.context is not None
-    return span.context
-
-
 def traced_context(tracer: Tracer, include_content: bool) -> RunContext[None]:
     return RunContext(
         deps=None, model=TestModel(), usage=RunUsage(), tracer=tracer, trace_include_content=include_content
@@ -435,39 +346,6 @@ def test_an_errored_span_sets_error_type_without_content():
     assert dict(span.attributes or {}) == {'error.type': 'tests.test_run_telemetry.ExampleError'}
 
 
-def test_a_telemetry_scope_publishes_for_its_block_only():
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-
-    tracer = provider.get_tracer('test')
-    with tracer.start_as_current_span('example owner') as owner:
-        with run_telemetry_scope(traced_context(tracer, False), owner):
-            with run_telemetry_scope(traced_context(NoOpTracer(), True), owner):
-                with open_ambient_span('example inner') as span:
-                    assert span is INVALID_SPAN
-            with open_ambient_span('example outer'):
-                pass
-        with open_ambient_span('example after') as span:
-            assert span is INVALID_SPAN
-
-    assert [span.name for span in exporter.get_finished_spans()] == ['example outer', 'example owner']
-
-
-def test_a_published_run_is_gone_once_its_span_ends():
-    """A task that copied the context keeps the value, but the run's span has ended, so it traces nothing."""
-    exporter = InMemorySpanExporter()
-    provider = TracerProvider()
-    provider.add_span_processor(SimpleSpanProcessor(exporter))
-    tracer = provider.get_tracer('test')
-    with run_telemetry_scope(traced_context(tracer, False), owner := tracer.start_span('example owner')):
-        owner.end()
-        with open_ambient_span('example late') as span:
-            assert span is INVALID_SPAN
-
-    assert [span.name for span in exporter.get_finished_spans()] == ['example owner']
-
-
 @dataclass
 class RecordToolCallSpanOutsideToolCalls(AbstractCapability[object]):
     """Records what `tool_call_span` returns in hooks that run outside any tool call."""
@@ -511,6 +389,52 @@ async def test_tool_call_span_is_invalid_in_a_sub_agent_run_inside_a_parent_tool
     await parent.run('go')
 
     assert seen == {'for_run': INVALID_SPAN, 'before_run': INVALID_SPAN, 'wrap_run': INVALID_SPAN}
+
+
+class LeavesTheCurrentSpanTracer(Tracer):
+    """Yields `INVALID_SPAN` without making it current, as no-op tracers on older `opentelemetry-api` versions do."""
+
+    def start_span(self, *args: Any, **kwargs: Any) -> Span:
+        return INVALID_SPAN
+
+    @_agnosticcontextmanager
+    def start_as_current_span(
+        self,
+        name: str,
+        context: Context | None = None,
+        kind: SpanKind = SpanKind.INTERNAL,
+        attributes: Attributes = None,
+        links: Sequence[Link] | None = None,
+        start_time: int | None = None,
+        record_exception: bool = True,
+        set_status_on_exception: bool = True,
+        end_on_exit: bool = True,
+    ) -> Iterator[Span]:
+        yield INVALID_SPAN
+
+
+class LeavesTheCurrentSpanTracerProvider(ApiTracerProvider):
+    def get_tracer(self, *args: Any, **kwargs: Any) -> Tracer:
+        return LeavesTheCurrentSpanTracer()
+
+
+async def test_a_sub_agent_whose_tracer_opens_no_span_does_not_write_to_its_parents_tool_span(
+    instrumented: Instrumented,
+):
+    """The child binds the span its own tool call opened, not whichever span is current, here the parent's."""
+    parent_instrumentation, exporter = instrumented(False)
+    child_settings = InstrumentationSettings(tracer_provider=LeavesTheCurrentSpanTracerProvider(), include_content=True)
+    child = agent_with_tool(Instrumentation(settings=child_settings))
+    parent = Agent(TestModel(call_tools=['delegate']), capabilities=[parent_instrumentation])
+
+    @parent.tool_plain
+    async def delegate() -> str:
+        return (await child.run('go')).output
+
+    await parent.run('go')
+
+    assert spans_with(exporter, 'example.marked') == []
+    assert spans_with(exporter, 'example.marked_in_body') == []
 
 
 async def test_tool_call_span_is_invalid_in_a_realtime_sessions_before_run(instrumented: Instrumented):
@@ -588,58 +512,3 @@ async def test_tool_call_span_is_invalid_where_the_calls_span_is_not_open(instru
         'wrap_tool_execute outside Instrumentation': INVALID_SPAN,
         'task that outlives the call': INVALID_SPAN,
     }
-
-
-@dataclass
-class TraceAfterTheRun(AbstractCapability[object]):
-    """Opens an ambient span in `wrap_run` once the run returns, as core code with no `RunContext` would."""
-
-    def get_ordering(self) -> CapabilityOrdering:
-        return CapabilityOrdering(position='outermost')
-
-    async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        result = await handler()
-        with open_ambient_span('example after the run'):
-            pass
-        return result
-
-
-async def test_an_outer_wrap_run_after_the_run_traces_nothing(instrumented: Instrumented):
-    """The run's span has closed by then, so the ambient span would land under the application's span."""
-    instrumentation, exporter = instrumented(False)
-    with TracerProvider().get_tracer('app').start_as_current_span('app request'):
-        await Agent(TestModel(), capabilities=[TraceAfterTheRun(), instrumentation]).run('go')
-
-    assert 'example after the run' not in [span.name for span in exporter.get_finished_spans()]
-
-
-@dataclass
-class TraceInRealtimeSetup(AbstractCapability[object]):
-    async def before_run(self, ctx: RunContext[object]) -> None:
-        with open_ambient_span('example realtime setup'):
-            pass
-
-
-async def test_a_realtime_session_publishes_only_under_its_span(instrumented: Instrumented):
-    """Setup runs before the session span exists; a tool call's ambient span sits under the session's tool span."""
-    instrumentation, exporter = instrumented(False)
-
-    def noop() -> str:
-        with open_ambient_span('example in a session tool'):
-            return 'ok'
-
-    connection = FakeRealtimeConnection([ToolCall(tool_call_id='call-1', tool_name='noop', args='{}'), ResponseDone()])
-    realtime = Agent(capabilities=[TraceInRealtimeSetup(), instrumentation]).realtime(
-        FakeRealtimeModel(connection), toolsets=[FunctionToolset([noop])]
-    )
-    async with realtime.session() as session:
-        _ = [event async for event in session]
-
-    spans = {span.name: span for span in exporter.get_finished_spans()}
-    assert 'example realtime setup' not in spans
-    session_span = next(
-        span for span in spans.values() if (span.attributes or {}).get('pydantic_ai.realtime') and span.parent is None
-    )
-    tool_span = spans['execute_tool noop']
-    assert parent_id(spans['example in a session tool']) == context_of(tool_span).span_id
-    assert context_of(tool_span).trace_id == context_of(session_span).trace_id
