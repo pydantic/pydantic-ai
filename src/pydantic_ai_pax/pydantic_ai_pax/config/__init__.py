@@ -112,7 +112,8 @@ class Settings(BaseModel):
         default='full',
         description=(
             'What runs without asking: full runs everything; auto asks before commands that delete, push, '
-            'install, or reach the network; read-only asks before every file write and command. /permissions sets it.'
+            "install, or reach the network, always asks before changes to Pax's own settings, and gives run_code "
+            'the workspace read-only; read-only asks before every file write and command. /permissions sets it.'
         ),
     )
     instructions: str = Field(
