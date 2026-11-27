@@ -231,6 +231,23 @@ async def test_a_refusal_mid_run_may_repeat_requests_under_a_restarting_engine()
     assert await suite._refusal_breaks(engine, run, None, _counts({}, {'a': 1})) == []  # pyright: ignore[reportPrivateUsage]
 
 
+@pytest.mark.parametrize('recovery', [Recovery('replay'), Recovery('restart', 'reruns the entry task', issue=1)])
+async def test_a_refusal_mid_run_must_keep_what_it_observed(recovery: Recovery) -> None:
+    """Recovering a refused run observes what the run did before it refused, each once, in any order.
+
+    It runs a stand-in engine, with no provider exchange to record, so it isn't a VCR test.
+    """
+    suite = _suite(recovery=recovery)
+    run = EngineRun('', REFUSAL, ['model'], ['event:a', 'enqueued:b'])
+    reordered = _Engine([(EngineRun('', REFUSAL, ['model']), ['enqueued:b', 'event:a'])])
+    assert await suite._refusal_breaks(reordered, run, 'observer', _counts({}, {})) == []  # pyright: ignore[reportPrivateUsage]
+    changed = _Engine([(EngineRun('', REFUSAL, ['model']), ['event:a', 'event:a'])])
+    assert await suite._refusal_breaks(changed, run, 'observer', _counts({}, {})) == [  # pyright: ignore[reportPrivateUsage]
+        "recovering the refused run lost ['enqueued:b']",
+        "recovering the refused run added ['event:a']",
+    ]
+
+
 async def test_a_nested_run_on_the_suite_model_is_answered_and_counted() -> None:
     """A capability's own run on the run's model is counted, so a recovery that repeats it breaks the cell."""
     conformance._NESTED.clear()  # pyright: ignore[reportPrivateUsage]
