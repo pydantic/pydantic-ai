@@ -47,6 +47,8 @@ _INTERACTIONS_TOOL_RETURN_MIME_TYPES: tuple[tuple[str, tuple[str, ...]], ...] = 
     # Verified live 2026-11-18 on the Gemini API: PDF, MP3 and MP4 `function_result` items are read natively.
     ('gemini-4-carbon', _INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES),
     ('gemini-4-hydrogen', _INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES),
+    # Verified live 2026-11-27 on the Gemini API: MP3 and MP4 `function_result` items are read natively.
+    ('gemini-4-neon', _INTERACTIONS_NATIVE_TOOL_RETURN_MIME_TYPES),
 )
 
 _SCHEMA_VALUED_KEYWORDS = frozenset({'items', 'additionalProperties'})
