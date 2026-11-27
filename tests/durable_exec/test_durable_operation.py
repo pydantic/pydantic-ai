@@ -364,7 +364,7 @@ async def test_event_stream_dispatch_accumulates_while_dispatch_is_in_flight() -
     finish_first_dispatch = asyncio.Event()
     batches: list[list[AgentStreamEvent]] = []
 
-    class BlockingJournalDurability(JournalDurability):
+    class BlockingJournalDurability(BatchingJournalDurability):
         async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
             batches.append(events)
             if len(batches) == 1:
@@ -386,10 +386,7 @@ async def test_event_stream_dispatch_accumulates_while_dispatch_is_in_flight() -
         finish_first_dispatch.set()
         yield events[3]
 
-    assert [
-        event
-        async for event in durability._batched_event_stream(ctx, stream())  # pyright: ignore[reportPrivateUsage]
-    ] == events
+    assert [event async for event in durability.wrap_run_event_stream(ctx, stream=stream())] == events
     assert batches == [[events[0]], events[1:]]
 
 
@@ -409,7 +406,7 @@ async def test_event_stream_dispatch_ignores_spurious_wake(monkeypatch: pytest.M
         async for _ in stream:
             pass
 
-    durability = JournalDurability(event_stream_handler=handler)
+    durability = BatchingJournalDurability(event_stream_handler=handler)
     event = _tool_events(1)[0]
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
@@ -419,10 +416,7 @@ async def test_event_stream_dispatch_ignores_spurious_wake(monkeypatch: pytest.M
 
     with monkeypatch.context() as patch:
         patch.setattr(asyncio, 'Event', SpuriousEvent)
-        assert [
-            item
-            async for item in durability._batched_event_stream(ctx, stream())  # pyright: ignore[reportPrivateUsage]
-        ] == [event]
+        assert [item async for item in durability.wrap_run_event_stream(ctx, stream=stream())] == [event]
 
 
 async def test_event_stream_dispatch_propagates_handler_failure_and_closes_stream() -> None:
@@ -432,7 +426,7 @@ async def test_event_stream_dispatch_propagates_handler_failure_and_closes_strea
     async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
         raise handler_error
 
-    durability = JournalDurability(event_stream_handler=handler)
+    durability = BatchingJournalDurability(event_stream_handler=handler)
     events = _tool_events(2)
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     tasks_before = asyncio.all_tasks()
@@ -446,7 +440,7 @@ async def test_event_stream_dispatch_propagates_handler_failure_and_closes_strea
             stream_closed = True
 
     with pytest.raises(RuntimeError, match='handler failed') as exc_info:
-        async for _ in durability._batched_event_stream(ctx, stream()):  # pyright: ignore[reportPrivateUsage]
+        async for _ in durability.wrap_run_event_stream(ctx, stream=stream()):
             pass
 
     await asyncio.sleep(0)
@@ -463,7 +457,7 @@ async def test_event_stream_dispatch_propagates_producer_failure_and_closes_stre
         async for _ in stream:
             pass
 
-    durability = JournalDurability(event_stream_handler=handler)
+    durability = BatchingJournalDurability(event_stream_handler=handler)
     event = _tool_events(1)[0]
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
@@ -477,7 +471,7 @@ async def test_event_stream_dispatch_propagates_producer_failure_and_closes_stre
 
     received: list[AgentStreamEvent] = []
     with pytest.raises(RuntimeError, match='producer failed') as exc_info:
-        async for item in durability._batched_event_stream(ctx, stream()):  # pyright: ignore[reportPrivateUsage]
+        async for item in durability.wrap_run_event_stream(ctx, stream=stream()):
             received.append(item)
 
     assert exc_info.value is producer_error
@@ -489,7 +483,7 @@ async def test_event_stream_batching_preserves_model_delta_backpressure() -> Non
     async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
         pass
 
-    durability = JournalDurability(event_stream_handler=handler)
+    durability = BatchingJournalDurability(event_stream_handler=handler)
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
     part = TextPart('hello ')
 
@@ -511,9 +505,7 @@ async def test_event_stream_batching_preserves_model_delta_backpressure() -> Non
                 assert isinstance(event.delta, TextPartDelta)
                 observed_deltas.append(event.delta.content_delta)
 
-    batched_stream = durability._batched_event_stream(  # pyright: ignore[reportPrivateUsage]
-        ctx, stream()
-    )
+    batched_stream = durability.wrap_run_event_stream(ctx, stream=stream())
     observed_stream = ProcessEventStream(observe).wrap_run_event_stream(ctx, stream=batched_stream)
     chunks: list[str] = []
     deltas: list[str] = []
@@ -535,7 +527,7 @@ async def test_event_stream_dispatch_does_not_block_embedded_tool_execution() ->
     finish_dispatch = asyncio.Event()
     ordering: list[str] = []
 
-    class BlockingJournalDurability(JournalDurability):
+    class BlockingJournalDurability(BatchingJournalDurability):
         async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
             ordering.append('dispatch started')
             dispatch_started.set()
@@ -556,10 +548,7 @@ async def test_event_stream_dispatch_does_not_block_embedded_tool_execution() ->
         finish_dispatch.set()
         yield result
 
-    assert [
-        event
-        async for event in durability._batched_event_stream(ctx, stream())  # pyright: ignore[reportPrivateUsage]
-    ] == [call, result]
+    assert [event async for event in durability.wrap_run_event_stream(ctx, stream=stream())] == [call, result]
     assert ordering == [
         'dispatch started',
         'tool started',
@@ -599,10 +588,7 @@ async def test_model_request_waits_for_events_pulled_before_it() -> None:
         # The pulled event is recorded by now.
         await _await_pending_event_dispatch()
 
-    assert [
-        item
-        async for item in durability._batched_event_stream(ctx, stream())  # pyright: ignore[reportPrivateUsage]
-    ] == [event]
+    assert [item async for item in durability.wrap_run_event_stream(ctx, stream=stream())] == [event]
     assert ordering == ['dispatch started', 'model request waiting', 'dispatch finished', 'model request started']
 
 
@@ -637,7 +623,7 @@ async def test_model_request_after_a_failed_dispatch_does_not_start(count: int) 
         await asyncio.Event().wait()
 
     with pytest.raises(RuntimeError, match='handler failed'):
-        async for _ in durability._batched_event_stream(ctx, stream()):  # pyright: ignore[reportPrivateUsage]
+        async for _ in durability.wrap_run_event_stream(ctx, stream=stream()):
             pass  # pragma: no cover
     (waiter,) = waiters
     with pytest.raises(
@@ -673,7 +659,7 @@ async def test_model_request_wait_propagates_its_own_cancellation() -> None:
         resumed = True  # pragma: no cover
 
     async def consume() -> None:
-        async for _ in durability._batched_event_stream(ctx, stream()):  # pyright: ignore[reportPrivateUsage]
+        async for _ in durability.wrap_run_event_stream(ctx, stream=stream()):
             pass  # pragma: no cover
 
     consumer = asyncio.create_task(consume())
@@ -694,14 +680,22 @@ async def test_event_stream_handler_operation_preserves_one_handler_call_per_eve
         handler_calls += 1
         handled.extend([event async for event in stream])
 
-    durability = JournalDurability(event_stream_handler=handler)
+    durability = BatchingJournalDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='burst-handler-calls', capabilities=[durability])
+    bound = BatchingJournalDurability.from_agent(agent)
+    assert bound is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
     events = _tool_events(2)
-    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
-    await durability._event_stream_handler_operation(  # pyright: ignore[reportPrivateUsage]
-        event_stream_handler_params(events, ctx)
-    )
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        for event in events:
+            yield event
 
+    assert [event async for event in bound.wrap_run_event_stream(ctx, stream=stream())] == events
+
+    # The burst is one durable unit, but the handler still sees each event in its own call, as without batching.
+    event_calls = [call for call in bound.calls if call[0].endswith('__event_stream_handler')]
+    assert [call[1] for call in event_calls] == [(events,)]
     assert handled == events
     assert handler_calls == len(events)
 
