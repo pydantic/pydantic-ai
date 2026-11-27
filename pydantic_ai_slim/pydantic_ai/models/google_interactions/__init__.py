@@ -230,9 +230,16 @@ class GoogleInteractionsModel(Model[Client]):
         return self._provider._configured_model_profile(model_name) or {}  # pyright: ignore[reportPrivateUsage]
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Add the Interactions API's profile, and `deprecation` from the schedule of the API the client reaches."""
+        """Add the Interactions API's profile, and `deprecation` from the schedule of the API the client reaches.
+
+        `google_supports_computer_use` is turned off on Google Cloud, as `GoogleModel` turns it off there, so a
+        `ComputerTool` error names `GoogleModel` only where it sends the tool.
+        """
         profile = merge_profile(profile, google_interactions_model_profile(self.model_name))
-        return _google_common.with_deprecation(self.model_name, profile, google_cloud=bool(self.client.vertexai))
+        google_cloud = bool(self.client.vertexai)
+        if google_cloud:
+            profile = merge_profile(profile, GoogleModelProfile(google_supports_computer_use=False))
+        return _google_common.with_deprecation(self.model_name, profile, google_cloud=google_cloud)
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
@@ -287,16 +294,16 @@ class GoogleInteractionsModel(Model[Client]):
     def prepare_request(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
-        # Check before base validation so a computer use model points at `GoogleModel`, which sends the tool on the
-        # Gemini API, not the generic error.
-        if (
-            self.profile.get('google_supports_computer_use', False)
-            and not self.client.vertexai
-            and _google_common.rejects_native_tool(self, model_request_parameters, ComputerTool)
+        # Check before base validation so a computer use model points at `GoogleModel`, which sends the tool, not the
+        # generic error.
+        if self.profile.get('google_supports_computer_use', False) and _google_common.rejects_native_tool(
+            self, model_request_parameters, ComputerTool
         ):
+            # The `google:` prefix uses the Gemini API, so a Google Cloud model isn't pointed at it.
+            prefix = '' if self.client.vertexai else ', with the `google:` prefix,'
             raise UserError(
-                '`ComputerTool` is not supported by `GoogleInteractionsModel`. Use `GoogleModel`, with the `google:` '
-                f'prefix, for computer use with {self.model_name!r}.'
+                f'`ComputerTool` is not supported by `GoogleInteractionsModel`. Use `GoogleModel`{prefix} for computer '
+                f'use with {self.model_name!r}.'
             )
         return super().prepare_request(model_settings, model_request_parameters)
 

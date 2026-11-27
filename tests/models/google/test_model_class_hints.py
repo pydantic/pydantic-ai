@@ -15,6 +15,7 @@ from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import ModelHTTPError, ModelRequestRejectedError, UserError
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.native_tools import AbstractNativeTool, ComputerTool, MCPServerTool
+from pydantic_ai.profiles.google import GoogleModelProfile
 from pydantic_ai.usage import UsageLimits
 
 from ...conftest import try_import
@@ -127,18 +128,42 @@ async def test_interactions_batch_names_google_model(allow_model_requests: None,
     )
 
 
-def test_interactions_computer_tool_names_google_model():
-    """A computer use model on the Gemini API points at `GoogleModel`, which sends the tool there.
+@pytest.mark.parametrize(
+    'google_cloud,expected',
+    [
+        pytest.param(
+            False,
+            '`ComputerTool` is not supported by `GoogleInteractionsModel`. Use `GoogleModel`, with the `google:` '
+            "prefix, for computer use with 'gemini-3-flash-preview'.",
+            id='gemini-api',
+        ),
+        pytest.param(
+            True,
+            '`ComputerTool` is not supported by `GoogleInteractionsModel`. Use `GoogleModel` for computer use with '
+            "'gemini-3-flash-preview'.",
+            id='google-cloud-opted-in',
+        ),
+    ],
+)
+def test_interactions_computer_tool_names_google_model(google_cloud: bool, expected: str):
+    """A computer use model points at `GoogleModel`, which sends the tool.
 
-    Not a VCR test: the tool is rejected in `prepare_request`, before any request is built.
+    On Google Cloud, both models turn computer use off unless `profile=` turns it back on, and the hint leaves out the
+    `google:` prefix, which uses the Gemini API. Not a VCR test: the tool is rejected in `prepare_request`, before any
+    request is built.
     """
-    model = GoogleInteractionsModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='mock-api-key'))
-    assert model.profile.get('google_supports_computer_use') is True
+    if google_cloud:
+        model = GoogleInteractionsModel(
+            'gemini-3-flash-preview',
+            provider=GoogleCloudProvider(api_key='mock-api-key'),
+            profile=GoogleModelProfile(google_supports_computer_use=True),
+        )
+    else:
+        model = GoogleInteractionsModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='mock-api-key'))
+        assert model.profile.get('google_supports_computer_use') is True
     with pytest.raises(UserError) as exc_info:
         model.prepare_request(None, ModelRequestParameters(native_tools=[ComputerTool(display_size=DISPLAY_SIZE)]))
-    assert str(exc_info.value) == snapshot(
-        "`ComputerTool` is not supported by `GoogleInteractionsModel`. Use `GoogleModel`, with the `google:` prefix, for computer use with 'gemini-3-flash-preview'."
-    )
+    assert str(exc_info.value) == expected
 
 
 @pytest.mark.parametrize(
@@ -151,7 +176,7 @@ def test_interactions_computer_tool_names_google_model():
 def test_interactions_computer_tool_without_google_model_support(model_name: str, google_cloud: bool):
     """Where `GoogleModel` doesn't send `ComputerTool` either, the error stays the generic one.
 
-    `gemini-2.5-flash` isn't a computer use model, and `GoogleModel` turns computer use off on Google Cloud.
+    `gemini-2.5-flash` isn't a computer use model, and both models turn computer use off on Google Cloud.
     Not a VCR test: the tool is rejected in `prepare_request`, before any request is built.
     """
     provider = GoogleCloudProvider(api_key='mock-api-key') if google_cloud else GoogleProvider(api_key='mock-api-key')
