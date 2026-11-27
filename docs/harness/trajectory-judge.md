@@ -9,8 +9,6 @@ Watch a live agent run with a second model, and steer it back on course mid-run.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/trajectory_judge/)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ```mermaid
 flowchart TB
     accTitle: Trajectory Judge: a second model reviews the run while it runs

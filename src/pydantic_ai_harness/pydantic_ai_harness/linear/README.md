@@ -2,8 +2,6 @@
 
 Let an agent read and change Linear issues, projects, teams, and comments through Linear's hosted MCP server. The agent gets every tool the server offers, write tools included, scoped to the connected account. Pass `read_only=True` for read tools only.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
-
 ```mermaid
 flowchart TB
     accTitle: Linear: issue, project and comment tools from Linear's MCP server

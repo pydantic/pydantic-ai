@@ -43,7 +43,6 @@ members = [
     "pydantic-ai-harness",
     "pydantic-ai-pax",
     "pydantic-ai-slim",
-    "pydantic-clai2",
     "pydantic-evals",
     "pydantic-graph",
 ]
@@ -8008,125 +8007,6 @@ requires-dist = [
     { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.21.0,<2" },
 ]
 provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "jsonschema", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
-
-[[package]]
-name = "pydantic-clai2"
-source = { editable = "src/pydantic_clai2" }
-dependencies = [
-    { name = "pydantic-ai-pax" },
-]
-
-[package.optional-dependencies]
-all = [
-    { name = "pydantic-ai-pax", extra = ["all"] },
-]
-anthropic = [
-    { name = "pydantic-ai-pax", extra = ["anthropic"] },
-]
-bedrock = [
-    { name = "pydantic-ai-pax", extra = ["bedrock"] },
-]
-bedrock-mantle = [
-    { name = "pydantic-ai-pax", extra = ["bedrock-mantle"] },
-]
-boxd = [
-    { name = "pydantic-ai-pax", extra = ["boxd"] },
-]
-cerebras = [
-    { name = "pydantic-ai-pax", extra = ["cerebras"] },
-]
-cohere = [
-    { name = "pydantic-ai-pax", extra = ["cohere"] },
-]
-crusoe = [
-    { name = "pydantic-ai-pax", extra = ["crusoe"] },
-]
-daytona = [
-    { name = "pydantic-ai-pax", extra = ["daytona"] },
-]
-e2b = [
-    { name = "pydantic-ai-pax", extra = ["e2b"] },
-]
-google = [
-    { name = "pydantic-ai-pax", extra = ["google"] },
-]
-groq = [
-    { name = "pydantic-ai-pax", extra = ["groq"] },
-]
-huggingface = [
-    { name = "pydantic-ai-pax", extra = ["huggingface"] },
-]
-kubernetes = [
-    { name = "pydantic-ai-pax", extra = ["kubernetes"] },
-]
-local = [
-    { name = "pydantic-ai-pax", extra = ["local"] },
-]
-mistral = [
-    { name = "pydantic-ai-pax", extra = ["mistral"] },
-]
-modal = [
-    { name = "pydantic-ai-pax", extra = ["modal"] },
-]
-openai = [
-    { name = "pydantic-ai-pax", extra = ["openai"] },
-]
-openrouter = [
-    { name = "pydantic-ai-pax", extra = ["openrouter"] },
-]
-opensandbox = [
-    { name = "pydantic-ai-pax", extra = ["opensandbox"] },
-]
-render = [
-    { name = "pydantic-ai-pax", extra = ["render"] },
-]
-snowflake = [
-    { name = "pydantic-ai-pax", extra = ["snowflake"] },
-]
-sprites = [
-    { name = "pydantic-ai-pax", extra = ["sprites"] },
-]
-typesafe = [
-    { name = "pydantic-ai-pax", extra = ["typesafe"] },
-]
-xai = [
-    { name = "pydantic-ai-pax", extra = ["xai"] },
-]
-zai = [
-    { name = "pydantic-ai-pax", extra = ["zai"] },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "pydantic-ai-pax", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["all"], marker = "extra == 'all'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["anthropic"], marker = "extra == 'anthropic'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["bedrock"], marker = "extra == 'bedrock'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["bedrock-mantle"], marker = "extra == 'bedrock-mantle'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["boxd"], marker = "extra == 'boxd'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["cerebras"], marker = "extra == 'cerebras'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["cohere"], marker = "extra == 'cohere'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["crusoe"], marker = "extra == 'crusoe'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["daytona"], marker = "extra == 'daytona'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["e2b"], marker = "extra == 'e2b'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["google"], marker = "extra == 'google'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["groq"], marker = "extra == 'groq'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["huggingface"], marker = "extra == 'huggingface'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["kubernetes"], marker = "extra == 'kubernetes'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["local"], marker = "extra == 'local'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["mistral"], marker = "extra == 'mistral'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["modal"], marker = "extra == 'modal'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["openai"], marker = "extra == 'openai'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["openrouter"], marker = "extra == 'openrouter'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["opensandbox"], marker = "extra == 'opensandbox'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["render"], marker = "extra == 'render'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["snowflake"], marker = "extra == 'snowflake'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["sprites"], marker = "extra == 'sprites'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["typesafe"], marker = "extra == 'typesafe'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["xai"], marker = "extra == 'xai'", editable = "src/pydantic_ai_pax" },
-    { name = "pydantic-ai-pax", extras = ["zai"], marker = "extra == 'zai'", editable = "src/pydantic_ai_pax" },
-]
-provides-extras = ["all", "anthropic", "bedrock", "bedrock-mantle", "boxd", "cerebras", "cohere", "crusoe", "daytona", "e2b", "google", "groq", "huggingface", "kubernetes", "local", "mistral", "modal", "openai", "openrouter", "opensandbox", "render", "snowflake", "sprites", "typesafe", "xai", "zai"]
 
 [[package]]
 name = "pydantic-core"

@@ -9,8 +9,6 @@ Ask a person before the agent writes files or runs commands, by permission mode,
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/permissions/)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ## The problem
 
 A coding agent's [`FileSystem`](filesystem.md) and [`Shell`](shell.md) tools run with your permissions as soon as the model calls them. Sometimes that is what you want; sometimes you want to watch what the agent does and stop a `rm -rf` or a `git push` before it happens. Marking each tool `requires_approval=True` asks about every call, including the harmless `ls`, so the person stops reading the requests.

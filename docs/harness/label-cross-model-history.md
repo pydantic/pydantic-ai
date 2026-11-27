@@ -7,8 +7,6 @@ description: "Tell a Pydantic AI agent's model when earlier assistant turns in i
 
 Tell the model when earlier assistant turns in its conversation came from another model, so after a model upgrade, an A/B handoff, or a fallback, it treats them as inherited context instead of statements it made itself.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ## Minimal usage
 
 ```python

@@ -4,8 +4,6 @@ Choose the model for an agent run from a named menu, using another Pydantic AI m
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/model_router/)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://ai.pydantic.dev/harness/#version-policy).
-
 ## Usage
 
 Declare each model with a stable key and a description of when it should be used. `default` is the choice used if routing fails:

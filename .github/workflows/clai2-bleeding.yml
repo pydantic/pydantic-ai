@@ -17,7 +17,6 @@ on:
       - main
     paths:
       - src/pydantic_ai_pax/**
-      - src/pydantic_clai2/**
       - src/pydantic_ai_harness/**
       - pydantic_ai_slim/**
       - pydantic_graph/**

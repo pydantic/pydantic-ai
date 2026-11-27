@@ -158,8 +158,8 @@ A declaration's `factory` resolves to a plugin class:
 
 A factory that still resolves to an `activate(host)` function fails to load with
 an error pointing at "What a plugin declares" in `PLUGINS.md`, rather than being run
-through a compatibility shim. `pydantic-ai-pax` is 0.x, whose minor releases may
-change APIs; it has shipped one release with `activate(host)`, every known plugin
+through a compatibility shim. `pydantic-ai-pax` was on 0.x then, whose minor releases could
+change APIs; it had shipped one release with `activate(host)`, every known plugin
 is in this repository and was ported, and a shim would have to keep the whole
 registration API this change removes. Saved declarations of the built-in `ask_user` plugin, the
 only built-in declared as `module:activate`, are redirected to its new module.

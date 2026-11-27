@@ -14,8 +14,6 @@ If you only need background execution, a native Render task around `agent.run(..
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/render/) | [Detailed reference](#task-definitions-and-chained-task-runs)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
-
 ```mermaid
 flowchart TB
     accTitle: Render Workflows: each model request and tool call as its own task run

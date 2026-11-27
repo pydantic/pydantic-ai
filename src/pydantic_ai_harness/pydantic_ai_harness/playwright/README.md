@@ -11,8 +11,6 @@ JavaScript-rendered SPAs, and interactive multi-step flows.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/playwright/)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
-
 > [!NOTE]
 > This README covers driving the browser from the host model: typed,
 > deterministic actions, one tool call at a time. To hand an open-ended goal to

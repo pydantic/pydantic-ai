@@ -80,12 +80,9 @@ slug as `harness/<page>`. When renaming a page, keep its existing `aliases:`.
   H1s use spaced words (`Code Mode`, not `CodeMode`). Allowlisted ClassName exceptions live in the parity test.
 - **Every page links its own source module** on GitHub. A page exposing a public class may end
   with `## API reference` and `::: pydantic_ai_harness.<Class>` autodoc blocks.
-- **Experimental framing only on ACP.** ACP keeps its experimental warning and possible-removal notice.
-  Every other capability page carries the standard version-promise blockquote
-  ("While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, ...")
-  directly before its first `##` heading, linking the
-  [version policy](../../../docs/harness/index.md#version-policy). Copy it verbatim from an existing page;
-  don't improvise variants.
+- **Experimental framing only on ACP.** ACP keeps its experimental warning and possible-removal notice,
+  since the [version policy](../../../docs/harness/index.md#version-policy) excludes it until it graduates.
+  Other capability pages carry no per-page stability notice: the version policy covers them all.
 - **Diagrams**: draw a page's diagram as a `mermaid` fence, byte-identical on the docs page and in the README
   (`tests/harness/test_docs_parity.py` compares them). The docs site and GitHub both render it in light and dark
   themes, so set no fill or text colors. Start with `accTitle:` and `accDescr:`, the text a screen reader gets:

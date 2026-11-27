@@ -51,7 +51,7 @@ def _extras(path: Path) -> dict[str, list[str]]:
 
 
 def _pin(dependencies: list[str], package: str) -> str:
-    """The version pin Pax's dependency on `package` uses, such as `==0.{{ minor }}...`."""
+    """The version pin Pax's dependency on `package` uses, such as `==1.{{ minor }}...`."""
     [requirement] = [dependency for dependency in dependencies if dependency.startswith(f'{package}[')]
     return requirement.partition(']')[2]
 

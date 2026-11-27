@@ -12,8 +12,6 @@ description: "Let a local Pydantic AI agent run Python and call its tools from a
 !!! warning "Not a sandbox: do not serve it from a webserver"
     Model-written code runs as a full Python process with the permissions of the user running the agent: it can read and write files, reach the network, read environment variables and credentials, and start processes. Do not run `IPythonCodeMode` in a webserver, or anywhere it handles untrusted input such as user prompts, documents, or web pages, unless the whole agent runs inside a sandbox (a container or VM with only the access it needs). For production and web-facing agents, use the Monty-based [Code Mode](code-mode.md).
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ```mermaid
 flowchart TB
     accTitle: IPython Code Mode: run_code in a local IPython kernel

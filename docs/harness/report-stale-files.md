@@ -9,8 +9,6 @@ Tell the model when a file it read or wrote has since changed or been deleted in
 
 A coding agent reads `src/config.py`, makes several more tool calls, and meanwhile the user, another agent, or a build step changes or deletes the file. The model can't see that, so it keeps working from what it read. [`FileSystem`](filesystem.md)'s `expected_hash` rejects a stale write, but only once the model writes, and only when it passes the hash. `ReportStaleFiles` tells the model before its next request instead.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ## Usage
 
 ```python

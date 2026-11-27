@@ -5,15 +5,15 @@ build-backend = "hatchling.build"
 [tool.hatch.version]
 source = "uv-dynamic-versioning"
 
-# Harness stays on 0.x and follows pydantic-ai's minor and patch: pydantic-ai 2.51.0 ships
-# pydantic-ai-harness 0.51.0. The dependency templates below pin `pydantic-ai-slim` to the release
+# Harness 1.x follows pydantic-ai's minor and patch: pydantic-ai 2.80.0 ships
+# pydantic-ai-harness 1.80.0. The dependency templates below pin `pydantic-ai-slim` to the release
 # it was built with, spelled out rather than `{{ version }}`, which ignores `bump` once `format-jinja`
 # is set and would not match slim's own off-tag version.
 [tool.uv-dynamic-versioning]
 vcs = "git"
 style = "pep440"
 bump = true
-format-jinja = "0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"
+format-jinja = "1.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"
 
 [project]
 name = "pydantic-ai-harness"

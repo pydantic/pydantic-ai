@@ -28,8 +28,6 @@ flowchart TB
     classDef blocked stroke:#E5533D,stroke-width:2px,stroke-dasharray:4 3
 ```
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ## The problem
 
 A loop that calls a model until a condition it never reaches keeps calling until something stops it. Pydantic AI's [`UsageLimits`][pydantic_ai.usage.UsageLimits] caps tokens, requests and cost for a single `run()`. It does not cover a period longer than one run, a per-tenant share of an allowance, or a counter shared by several workers: with a daily ceiling spread across a queue, each worker sees only its own spend.

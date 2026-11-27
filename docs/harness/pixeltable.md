@@ -13,8 +13,6 @@ the agent's notes sit in the same catalog as the data it searches. Each works wi
 [Catalog source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/pixeltable/)
 and [memory store source](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_harness/pydantic_ai_harness/memory/_pixeltable.py)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ## Usage
 
 Install the `pixeltable` extra (Python 3.11 to 3.14; Pixeltable 0.7.21 or later). The example uses an OpenAI model and OpenAI

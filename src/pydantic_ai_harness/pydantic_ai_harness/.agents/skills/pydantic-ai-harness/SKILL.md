@@ -261,7 +261,7 @@ These mistakes cause confusing errors or wrong behavior at run time.
 - **Harness files live in the workspace.** Shell job logs and tool-output spills go in `.pydantic-ai-harness/` in the workspace's working directory; in a sandbox they are in the sandbox, not on the host.
 - **Code Mode runs a Python subset.** Monty has no third-party imports and a small stdlib; read [Code Mode](./references/CODE-MODE.md#sandbox-restrictions) before debugging generated code.
 - **Provider-native tools bypass harness tool wrappers.** Tools executed by the provider (native web search, native MCP) never reach `CodeMode`, `ToolGuardrail`, or `ToolOutputLimits`.
-- **APIs move between 0.x minors.** Breaking changes ship with deprecation warnings where practical; check the installed version and the capability's docs page when an argument is rejected.
+- **Deprecations warn before removals.** Within 1.x, a renamed or removed API keeps working with a `HarnessDeprecationWarning` until the next Harness major; follow the warning, and check the installed version and the capability's docs page when an argument is rejected.
 
 ## Task-Family References
 

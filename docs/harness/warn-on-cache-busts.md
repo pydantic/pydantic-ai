@@ -7,8 +7,6 @@ description: "Catch prompt cache busts in Pydantic AI: warn when the cached pref
 
 Warn when a conversation's prompt cache hit collapses between model requests, within a run or across the runs that continue it, so a moved cacheable prefix surfaces instead of quietly re-charging tokens the provider could have served from cache.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ```mermaid
 flowchart TB
     accTitle: Warn On Cache Busts: notice when the prompt cache stops hitting

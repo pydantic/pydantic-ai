@@ -9,8 +9,6 @@ Code Mode lets the model call your tools from one sandboxed Python program inste
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/code_mode/)
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ```mermaid
 sequenceDiagram
     accTitle: Code Mode: one program instead of a tool call per step

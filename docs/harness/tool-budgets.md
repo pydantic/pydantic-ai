@@ -7,8 +7,6 @@ description: "Cap how many times a Pydantic AI agent can call each tool, or any 
 
 Cap how many times the model can call each tool, or any tool, in one run, and refuse a call that repeats an earlier one exactly. An over-budget or repeated call is answered with a tool result that tells the model what it hit, and the run continues. Use it to keep an agent from spending a run on one expensive tool, such as web search.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ## Usage
 
 ```bash

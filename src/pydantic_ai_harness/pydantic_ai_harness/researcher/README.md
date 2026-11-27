@@ -3,8 +3,6 @@
 `Researcher` gives a Pydantic AI agent a compact stack for broad web research with source-backed answers.
 It is a regular [combined capability](https://pydantic.dev/docs/ai/capabilities/custom/#composition-and-middleware-semantics) made from the [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) below, so you can use it as-is or take it apart.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](https://pydantic.dev/docs/ai/harness/#version-policy).
-
 ```mermaid
 flowchart TB
     accTitle: Researcher: a ready-made web research stack

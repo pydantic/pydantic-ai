@@ -7,8 +7,6 @@ description: "Add input, output, and tool call guardrails to a Pydantic AI agent
 
 Guardrails run a callable you supply on the user prompt before the model sees it, on each tool call and its result, and on the final output before the caller sees it. Use them to redact secrets or PII, cheaply refuse off-topic prompts, vet or approve tool calls, or require citations. The callable allows, blocks, redacts, retries, or (for tool calls) defers for approval.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ```mermaid
 flowchart TB
     accTitle: Guardrails: check the prompt, the tool calls and the output

@@ -7,8 +7,6 @@ description: "Tell a Pydantic AI agent today's date, or the current hour, in a t
 
 Tell the model today's date, or the current hour, in a time zone you pick. Use it when an agent answers questions that depend on when they are asked, such as "what's due this week", which a model can't work out from its training data.
 
-> While Pydantic AI Harness is on 0.x releases, the API may change between minor releases; when it does, deprecation warnings and release-note migration guidance tell you (or your agent) exactly how to upgrade. See the [version policy](index.md#version-policy).
-
 ## Usage
 
 ```bash
