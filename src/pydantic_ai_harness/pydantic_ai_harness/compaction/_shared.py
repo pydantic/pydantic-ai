@@ -17,6 +17,7 @@ from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, TypeGuard,
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
 from pydantic_ai._utils import is_str_dict
+from pydantic_ai.capabilities import open_span
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
@@ -691,12 +692,12 @@ async def compact_with_span(
     """Run *compact* and emit a `compact_messages` span when it changes the history.
 
     *compact* runs before the span so a no-op compaction (a trigger fired but the history is
-    returned unchanged) emits nothing. The span is started on `ctx.tracer`, which is a no-op
-    tracer unless core's instrumentation is active, so this adds no overhead to a
-    non-instrumented run; the before/after attributes are only computed when the span records.
+    returned unchanged) emits nothing. The span is emitted in the run's trace and is a no-op
+    unless the run is instrumented, so this adds no overhead to a non-instrumented run; the
+    before/after attributes are only computed when the span records.
 
     Args:
-        ctx: Run context whose `tracer` the span is started on.
+        ctx: Run context whose trace the span is emitted in.
         strategy: Strategy name recorded in the `compaction.strategy` attribute.
         messages: The pre-compaction messages, measured for the `*_before` attributes.
         compact: Zero-argument async callable returning the compacted message list.
@@ -718,7 +719,7 @@ async def compact_with_span(
         reset_receipt_scope(token)
     if not _history_changed(messages, compacted):
         return messages
-    with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
+    with open_span(ctx, _SPAN_NAME) as span:
         if span.is_recording():
             span.set_attributes(
                 {
@@ -759,7 +760,7 @@ def record_failed_compaction(
     tokenizer: Callable[[str], int] | None = None,
 ) -> None:
     """Emit a `compact_messages` span recording a compaction attempt that raised *error* and was skipped."""
-    with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
+    with open_span(ctx, _SPAN_NAME) as span:
         span.set_attributes(
             {
                 'compaction.strategy': strategy,
@@ -796,7 +797,7 @@ async def compact_if_smaller(
         tokens_before = estimate_token_count(messages, tokenizer)
         tokens_after = estimate_token_count(compacted, tokenizer)
         if tokens_after >= tokens_before:
-            with ctx.tracer.start_as_current_span(_SPAN_NAME) as span:
+            with open_span(ctx, _SPAN_NAME) as span:
                 span.set_attributes(
                     {
                         'compaction.strategy': strategy,

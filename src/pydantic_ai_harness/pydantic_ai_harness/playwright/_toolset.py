@@ -129,18 +129,21 @@ import warnings
 from collections import deque
 from collections.abc import Awaitable
 from contextlib import AbstractAsyncContextManager
+from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from functools import partial
 from time import monotonic
-from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeVar
+from typing import TYPE_CHECKING, Any, Literal, Protocol, Self, TypeVar
 from urllib.parse import quote, quote_plus, unquote, unquote_plus, urlparse
 
 import anyio
 from opentelemetry import trace
+from opentelemetry.trace import NoOpTracer
 
+from pydantic_ai.capabilities import open_span
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn
-from pydantic_ai.tools import AgentDepsT
+from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai_harness._browser_egress import (
     BLANK_PAGE as _BLANK_PAGE,
@@ -172,6 +175,7 @@ except ImportError as _import_error:
 
 if TYPE_CHECKING:
     from collections.abc import Callable, Coroutine, Iterable, Sequence
+    from contextlib import AbstractContextManager
 
     from opentelemetry.trace import Span, Tracer
     from playwright.async_api import (
@@ -184,6 +188,8 @@ if TYPE_CHECKING:
         StorageState,
         WebSocketRoute as PlaywrightWebSocketRoute,
     )
+
+    from pydantic_ai.toolsets import ToolsetTool
 
 _T = TypeVar('_T')
 
@@ -707,6 +713,37 @@ Inside a run the session takes the run's own tracer, so browser spans land
 wherever the agent's instrumentation settings send its tool calls.
 """
 
+_calling_ctx: ContextVar[RunContext[Any] | None] = ContextVar(
+    'pydantic_ai_harness.playwright.calling_ctx', default=None
+)
+"""The `ctx` of the tool call running in this task, set by `PlaywrightBrowserToolset.call_tool`.
+
+The tools take no `ctx`, and the session can outlive a run, so an operation reads the calling run's
+tracer and content setting from here at call time.
+"""
+
+
+def _traced_calling_ctx() -> tuple[RunContext[Any] | None, bool]:
+    """The calling tool call's `ctx` when its run is traced, else `None`, and whether to record content.
+
+    Outside a run, and in an uninstrumented one, there is no content setting to follow, so the session's
+    tracer records content as it always has.
+    """
+    ctx = _calling_ctx.get()
+    if ctx is None:
+        return None, True
+    try:
+        tracer = ctx.tracer
+    except UserError:
+        # A context rebuilt in a durable unit that didn't carry the tracer raises on reading it, so the span
+        # goes to the session's tracer. The content setting is still the run's, and reads as `False` when it
+        # wasn't carried either.
+        return None, ctx.trace_include_content
+    if isinstance(tracer, NoOpTracer):
+        return None, True
+    return ctx, ctx.trace_include_content
+
+
 _ABORTED_FAILURE = 'net::ERR_FAILED'
 """Failure text Chromium reports for a request the route guard aborted.
 
@@ -911,7 +948,11 @@ class PlaywrightBrowserSession:
         # reconnects and gets new frame objects for the same documents.
         self._admitted_documents: set[tuple[str, bool]] = set()
         self.tracer: Tracer = _FALLBACK_TRACER
-        """Tracer browser operations report to. `PlaywrightBrowser.wrap_run` sets the run's own."""
+        """Tracer browser operations report to when the calling run is not instrumented, or there is none.
+
+        An instrumented run's operations report to that run's tracer instead. `PlaywrightBrowser.wrap_run`
+        sets the run's own, so an uninstrumented run reports nothing.
+        """
         self.events: deque[BrowserEvent] = deque(maxlen=_EVENT_LOG_LIMIT)
         """What the browser did outside the tool calls, newest last."""
         self.events_recorded = 0
@@ -929,6 +970,22 @@ class PlaywrightBrowserSession:
         operation's span cannot be recovered from the OpenTelemetry context there.
         The toolset publishes it here for the length of an operation instead.
         """
+        self._content_free_span: Span | None = None
+        """The toolset's operation span whose run leaves content out of traces, so `record` leaves it out too.
+
+        Bound to the span rather than held as a flag, so a span a caller assigns to `operation_span` itself
+        keeps every event attribute.
+        """
+
+    def _begin_operation(self, span: Span, *, include_content: bool) -> None:
+        """Publish the running operation's span, with whether its run includes content in traces."""
+        self.operation_span = span
+        self._content_free_span = None if include_content else span
+
+    def _end_operation(self) -> None:
+        """Clear what `_begin_operation` published, once the operation ends."""
+        self.operation_span = None
+        self._content_free_span = None
 
     def record(self, event: BrowserEvent) -> None:
         """Log a browser event and attach it to the operation that was running.
@@ -948,7 +1005,12 @@ class PlaywrightBrowserSession:
         self.events_recorded += 1
         span = self.operation_span
         if span is not None and span.is_recording():
-            span.add_event(f'browser.{event.kind}', event.attributes())
+            attributes = event.attributes()
+            if span is self._content_free_span:
+                # The message and URL can quote page text, form values or tokens in a query string.
+                attributes.pop('browser.event.message', None)
+                attributes.pop('url.full', None)
+            span.add_event(f'browser.{event.kind}', attributes)
 
     def failure_since_operation_start(self) -> BrowserEvent | None:
         """The last refused or failed request caused by the running operation, if any.
@@ -1846,6 +1908,19 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         await page.goto(_BLANK_PAGE, timeout=timeout)
         return self._error(f'Error: {action} reached a {reason}: {blocked}')
 
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
+    ) -> Any:
+        """Run the tool with `ctx` published to its operation, which reads the run's tracer and content setting.
+
+        `FunctionToolset.call_tool` awaits the tool in this task, so the tool sees the value.
+        """
+        token = _calling_ctx.set(ctx)
+        try:
+            return await super().call_tool(name, tool_args, ctx, tool)
+        finally:
+            _calling_ctx.reset(token)
+
     async def _in_operation(
         self,
         action: str,
@@ -1880,13 +1955,18 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             # The configured budget, not what is left of it: the error copy tells the
             # model how long the call was allowed, which a countdown would understate.
             reported = deadlines.navigation_ms if governed_by_navigation else deadlines.action_ms
-            with self._session.tracer.start_as_current_span(
-                f'browser {action}',
+            # The session can outlive a run, so the tracer and content setting are the calling run's, read now.
+            ctx, include_content = _traced_calling_ctx()
+            with self._operation_span(
+                ctx,
+                action,
                 # The outcome starts at `ok` and every failure path overwrites it,
                 # because a tool failure is a returned string, not an exception.
-                attributes={'browser.action': action, 'browser.timeout_ms': reported, 'browser.outcome': 'ok'},
+                {'browser.action': action, 'browser.timeout_ms': reported, 'browser.outcome': 'ok'},
             ) as span:
-                self._session.operation_span = span
+                self._session._begin_operation(  # pyright: ignore[reportPrivateUsage]
+                    span, include_content=include_content
+                )
                 self._session.operation_events_mark = self._session.events_recorded
                 page: _Page | None = None
                 try:
@@ -1909,9 +1989,9 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                     # because `tabs` can have moved it, and the span should name the
                     # tab the operation left rather than the one it started on.
                     ended_on = self._session.page if self._session.page is not None else page
-                    if ended_on is not None:
+                    if ended_on is not None and include_content:
                         span.set_attribute('url.full', _without_credentials(ended_on.url))
-                    self._session.operation_span = None
+                    self._session._end_operation()  # pyright: ignore[reportPrivateUsage]
 
     async def _refuse(self, action: str, timeout_ms: int | None, message: str) -> str:
         """Return a bounded refusal without acquiring a page.
@@ -1928,14 +2008,22 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         async with self._operation_lock:
             if (error := self._timeout_error(timeout_ms)) is not None:
                 return error
-            with self._session.tracer.start_as_current_span(
-                f'browser {action}', attributes={'browser.action': action, 'browser.outcome': 'ok'}
-            ) as span:
-                self._session.operation_span = span
-                try:
-                    return self._error(message)
-                finally:
-                    self._session.operation_span = None
+            # No page means no events and no URL, so the span is never published to the session.
+            with self._operation_span(
+                _traced_calling_ctx()[0], action, {'browser.action': action, 'browser.outcome': 'error'}
+            ):
+                return self._truncate_output(message)
+
+    def _operation_span(
+        self, ctx: RunContext[Any] | None, action: str, attributes: dict[str, str | int]
+    ) -> AbstractContextManager[Span]:
+        """Open an operation's span on the traced calling run's tracer, or on the session's `tracer` otherwise.
+
+        Outside a traced run there is no content setting to follow, so the span records as it always has.
+        """
+        if ctx is not None:
+            return open_span(ctx, f'browser {action}', attributes=attributes)
+        return self._session.tracer.start_as_current_span(f'browser {action}', attributes=attributes)
 
     async def _settle(self, page: _Page, action: str, deadlines: _Deadlines) -> str | None:
         """Let the navigation finish, then re-check where it landed.
@@ -2631,8 +2719,8 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         is producing or about to consume.
         """
         async with self._operation_lock:
-            with self._session.tracer.start_as_current_span(
-                f'browser {action}', attributes={'browser.action': action, 'browser.outcome': 'ok'}
+            with self._operation_span(
+                _traced_calling_ctx()[0], action, {'browser.action': action, 'browser.outcome': 'ok'}
             ):
                 return body()
 

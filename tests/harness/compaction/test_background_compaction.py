@@ -161,11 +161,11 @@ def summaries(messages: list[ModelMessage]) -> list[str | None]:
 
 
 @contextmanager
-def traced() -> Generator[InMemorySpanExporter]:
+def traced(*, include_content: bool = True) -> Generator[InMemorySpanExporter]:
     spans = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(spans))
-    Agent.instrument_all(InstrumentationSettings(tracer_provider=provider))
+    Agent.instrument_all(InstrumentationSettings(tracer_provider=provider, include_content=include_content))
     try:
         yield spans
     finally:
@@ -333,6 +333,23 @@ async def test_summary_failure_falls_back_to_blocking_compaction() -> None:
     messages = await compact_after(summarizer, OVER, outcome='failed')
     assert summarizer.calls == 2 and summarizer.finished == 1
     assert summaries(messages) == ['summary 2']
+
+
+@pytest.mark.parametrize('include_content', [False, True])
+async def test_a_failed_summary_records_its_error_message_only_with_content(include_content: bool) -> None:
+    """The error message can quote the conversation, so it is content."""
+    summarizer = Summarizer(failures=1)
+    compaction = chain(summarizer)
+    with traced(include_content=include_content) as spans:
+        history = await start_background(summarizer, compaction)
+        summarizer.release.set()
+        await agent(Main([500]), compaction).run(OVER, message_history=history, conversation_id='c')
+    [background] = named(spans, 'background_compaction')
+    [event] = [event for event in background.events if event.name == 'exception']
+    message = str(ModelHTTPError(status_code=503, model_name='summarizer', body=None))
+    assert background.status.status_code.name == 'ERROR'
+    assert background.status.description == (f'ModelHTTPError: {message}' if include_content else None)
+    assert (event.attributes or {}).get('exception.message') == (message if include_content else None)
 
 
 async def test_cancelled_summary_falls_back_to_blocking_compaction() -> None:

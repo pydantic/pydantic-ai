@@ -191,6 +191,7 @@ def _make_ctx(
         deps: None = None
         conversation_id: str | None = None
         tracer: Tracer = dataclasses.field(default_factory=NoOpTracer)
+        trace_include_content: bool = False
         # A declared field, like the real `RunContext`: a strategy reached from
         # `before_model_request` sees a context rebuilt for the request's model, and an
         # attribute merely assigned onto the fake would not survive that rebuild.

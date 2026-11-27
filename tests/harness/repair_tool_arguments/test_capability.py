@@ -37,6 +37,10 @@ def model_for(respond: Callable[[list[ModelMessage], AgentInfo], ModelResponse])
     return FunctionModel(respond, stream_function=stream)
 
 
+REPAIR_ATTRIBUTES = ('gen_ai.tool.', 'repair_tool_arguments.')
+"""Prefixes of the attributes `RepairToolArguments` sets on its span; core adds others to every span."""
+
+
 @pytest.fixture(params=['standalone', 'coder'])
 def capabilities(request: pytest.FixtureRequest, tmp_path: Path) -> list[AbstractCapability[object]]:
     if request.param == 'coder':
@@ -160,7 +164,7 @@ class TestRepairToolArguments:
             nonlocal calls
             calls += 1
             if calls == 1:
-                return ModelResponse(parts=[ToolCallPart('echo', arguments)])
+                return ModelResponse(parts=[ToolCallPart('echo', arguments, tool_call_id='call-1')])
             return ModelResponse(parts=[TextPart('done')])
 
         agent = Agent(model_for(respond), capabilities=[RepairToolArguments()])
@@ -175,8 +179,42 @@ class TestRepairToolArguments:
         await agent.run('Echo')
         assert received == ['secret']
         spans = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'repair_tool_arguments']
-        assert len(spans) == int(isinstance(arguments, str) and arguments.endswith(',}'))
+        assert [
+            {key: value for key, value in span['attributes'].items() if key.startswith(REPAIR_ATTRIBUTES)}
+            for span in spans
+        ] == (
+            [{'gen_ai.tool.name': 'echo', 'gen_ai.tool.call.id': 'call-1', 'repair_tool_arguments.outcome': 'repaired'}]
+            if isinstance(arguments, str) and arguments.endswith(',}')
+            else []
+        )
         assert 'secret' not in str(spans)
+
+    async def test_failed_repair_span_records_outcome(
+        self, capfire: CaptureLogfire, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        def fail(json_str: str, *, skip_json_loads: bool, ensure_ascii: bool) -> str:
+            raise ValueError('repair failed')
+
+        monkeypatch.setattr(json_repair, 'repair_json', fail)
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('echo', '{"value": "secret",}', tool_call_id='call-1')])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(model_for(respond), capabilities=[RepairToolArguments()])
+        agent.instrument = InstrumentationSettings()
+
+        @agent.tool_plain
+        def echo(value: str) -> str:
+            return value  # pragma: no cover
+
+        await agent.run('Echo')
+        spans = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'] == 'repair_tool_arguments']
+        assert [
+            {key: value for key, value in span['attributes'].items() if key.startswith(REPAIR_ATTRIBUTES)}
+            for span in spans
+        ] == [{'gen_ai.tool.name': 'echo', 'gen_ai.tool.call.id': 'call-1', 'repair_tool_arguments.outcome': 'failed'}]
 
     @pytest.mark.parametrize(
         ('stream', 'item_id'),

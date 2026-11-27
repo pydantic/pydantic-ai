@@ -23,6 +23,7 @@ from typing import Literal, Protocol, get_args
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
 from opentelemetry.sdk.trace import TracerProvider
 from opentelemetry.sdk.trace.export import SimpleSpanProcessor
 from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
@@ -36,6 +37,7 @@ from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.agent.spec import AgentSpec
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.abstract import CapabilityOrdering
+from pydantic_ai.durable_exec import DurableRunContext
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import BinaryContent, ToolReturn, ToolReturnPart
 from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
@@ -59,6 +61,7 @@ from pydantic_ai_harness.playwright import (
     PlaywrightBrowserToolset,
     RequestKind,
 )
+from tests.harness.conftest import Instrumented
 
 _STORAGE_STATE: StorageState = {'cookies': [{'name': 'session', 'value': 'abc', 'domain': 'example.com', 'path': '/'}]}
 
@@ -3956,6 +3959,24 @@ class TestBrowserEvents:
         assert await toolset.console_messages() == 'No console messages recorded.'
         assert await toolset.network_requests() == 'No network requests recorded.'
 
+    async def test_a_span_assigned_to_the_session_keeps_every_event_attribute(self) -> None:
+        # A caller driving the session itself publishes its own span: nothing says to leave content out.
+        session = self._session(_FakePage())
+        tracer, exporter = _recording_tracer()
+        with tracer.start_as_current_span('my operation') as span:
+            session.operation_span = span
+            session.record(
+                toolset_module.BrowserEvent(
+                    kind='console', level='error', message='error: boom', url='https://example.com/page'
+                )
+            )
+            session.operation_span = None
+        (finished,) = exporter.get_finished_spans()
+        (event,) = finished.events
+        assert event.attributes is not None
+        assert event.attributes['browser.event.message'] == 'error: boom'
+        assert event.attributes['url.full'] == 'https://example.com/page'
+
     async def test_operation_span_carries_the_action_and_page_events(self) -> None:
         page = _FakePage()
         session = self._session(page)
@@ -3982,6 +4003,20 @@ class TestBrowserEvents:
         assert event.attributes is not None
         assert event.attributes['browser.event.message'] == 'error: boom'
 
+    async def test_a_durable_call_that_did_not_carry_the_tracer_traces_on_the_session(self) -> None:
+        # Reading an uncarried `tracer` raises, so the operation takes the session's tracer instead of failing.
+        page = _FakePage()
+        session = self._session(page)
+        tracer, exporter = _recording_tracer()
+        session.tracer = tracer
+        toolset = _toolset(page, session=session)
+        tools = await toolset.get_tools(_ctx())
+        # The rebuilt context didn't carry the content setting either, so it reads as `False` and the URL is left out.
+        await toolset.call_tool('get_text', {}, DurableRunContext[None](deps=None), tools['get_text'])
+        (span,) = exporter.get_finished_spans()
+        assert span.name == 'browser get_text'
+        assert span.attributes is not None and 'url.full' not in span.attributes
+
     async def test_network_event_attributes_follow_otel_conventions(self) -> None:
         page = _FakePage()
         session = self._session(page)
@@ -4005,6 +4040,74 @@ class TestBrowserEvents:
         assert event.attributes['http.response.status_code'] == 503
         # A response carries no message, so no empty attribute is emitted for one.
         assert 'browser.event.message' not in event.attributes
+
+    @pytest.mark.parametrize('include_content', [True, False])
+    async def test_page_urls_and_event_text_are_recorded_only_with_content(
+        self, include_content: bool, instrumented: Instrumented
+    ) -> None:
+        # What the page logged and the URLs it touched are content; the event's shape is not.
+        page = _FakePage()
+        session = self._session(page)
+        toolset = _toolset(page, session=session)
+
+        class _BusyPage(_FakePage):
+            async def inner_text(self, selector: str, *, timeout: float | None = None) -> str:
+                session._on_console(_FakeConsoleMessage('error', 'boom'))  # pyright: ignore[reportPrivateUsage]
+                session._on_response(_FakeResponse(url='https://example.com/api', status=503, method='POST'))  # pyright: ignore[reportPrivateUsage]
+                return await super().inner_text(selector, timeout=timeout)
+
+        session.page = _BusyPage()
+
+        tracing, exporter = instrumented(include_content)
+        # Called by the run, so the operation follows that run's tracer and content setting.
+        agent = Agent(
+            TestModel(call_tools=['get_text']), deps_type=type(None), toolsets=[toolset], capabilities=[tracing]
+        )
+
+        await agent.run('read the page')
+        (span,) = [span for span in exporter.get_finished_spans() if span.name.startswith('browser ')]
+        # Everything exported is pinned, so a content-bearing attribute added later fails here.
+        exported = (dict(span.attributes or {}), [dict(event.attributes or {}) for event in span.events])
+        if include_content:
+            assert exported == snapshot(
+                (
+                    {
+                        'browser.action': 'get_text',
+                        'browser.timeout_ms': 5000,
+                        'browser.outcome': 'ok',
+                        'url.full': 'https://example.com/',
+                    },
+                    [
+                        {
+                            'browser.event.kind': 'console',
+                            'browser.event.level': 'error',
+                            'browser.event.message': 'error: boom',
+                        },
+                        {
+                            'browser.event.kind': 'response',
+                            'browser.event.level': 'error',
+                            'url.full': 'https://example.com/api',
+                            'http.request.method': 'POST',
+                            'http.response.status_code': 503,
+                        },
+                    ],
+                )
+            )
+        else:
+            assert exported == snapshot(
+                (
+                    {'browser.action': 'get_text', 'browser.timeout_ms': 5000, 'browser.outcome': 'ok'},
+                    [
+                        {'browser.event.kind': 'console', 'browser.event.level': 'error'},
+                        {
+                            'browser.event.kind': 'response',
+                            'browser.event.level': 'error',
+                            'http.request.method': 'POST',
+                            'http.response.status_code': 503,
+                        },
+                    ],
+                )
+            )
 
     async def test_failed_operation_is_marked_on_the_span(self) -> None:
         page = _FakePage(click_error=PlaywrightTimeoutError('Timeout 5000ms exceeded.'))

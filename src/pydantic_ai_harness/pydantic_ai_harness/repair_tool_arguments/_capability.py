@@ -13,7 +13,7 @@ except ImportError as _import_error:
     ) from _import_error
 
 from pydantic_ai import RunContext
-from pydantic_ai.capabilities import AbstractCapability, RawToolArgs
+from pydantic_ai.capabilities import AbstractCapability, RawToolArgs, open_span
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import AgentDepsT, ToolDefinition
 
@@ -45,11 +45,14 @@ class RepairToolArguments(AbstractCapability[AgentDepsT]):
         try:
             json.loads(args)
         except (json.JSONDecodeError, RecursionError):
-            with ctx.tracer.start_as_current_span('repair_tool_arguments'):
+            attributes = {'gen_ai.tool.name': call.tool_name, 'gen_ai.tool.call.id': call.tool_call_id}
+            with open_span(ctx, 'repair_tool_arguments', attributes=attributes) as span:
                 try:
                     repaired = json_repair.repair_json(args, skip_json_loads=True, ensure_ascii=False)
                 except (ValueError, RecursionError):
+                    span.set_attribute('repair_tool_arguments.outcome', 'failed')
                     return args
+                span.set_attribute('repair_tool_arguments.outcome', 'repaired')
             _write_back(call, original=args, repaired=repaired)
             return repaired
         return args

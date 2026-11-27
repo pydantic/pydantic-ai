@@ -25,7 +25,7 @@ from pydantic import BaseModel, Field
 from pydantic_ai import Agent
 from pydantic_ai._framing import neutralize_tags, second_model_prompt
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, durable_operation, open_span
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
@@ -357,7 +357,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         if not steps:
             return messages
 
-        with ctx.tracer.start_as_current_span('select compaction steps') as span:
+        with open_span(ctx, 'select compaction steps') as span:
             judgements = await self._judge_steps(
                 ctx,
                 _clamp_middle(self._task(messages), self.judge_context_tokens),

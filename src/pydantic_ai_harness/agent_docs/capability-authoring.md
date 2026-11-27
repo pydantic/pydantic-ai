@@ -449,7 +449,9 @@ what happened uses the words the capability's API already uses for it, such as t
 operator reading a trace and a developer reading the code name the same outcome the same way.
 
 Code that still calls `ctx.tracer.start_span` or `start_as_current_span` predates these functions and
-moves onto them in follow-ups; don't copy it.
+moves onto them in follow-ups; don't copy it. Smart search (`smart_search/_toolset.py`) keeps its own
+span on purpose: the span records no failure and leaves it to the enclosing tool span, which redacts it
+by `include_content`.
 
 Document the spans and their attributes in both the capability README and the docs page, and cover
 them in tests like any other public behavior.

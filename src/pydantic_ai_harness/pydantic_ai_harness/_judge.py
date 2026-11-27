@@ -18,6 +18,7 @@ from opentelemetry.trace import Span
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai._framing import neutralize_tags
+from pydantic_ai.capabilities import open_span
 from pydantic_ai.messages import (
     ModelMessage,
     ModelRequestPart,
@@ -199,10 +200,13 @@ def judge_span(
     ctx: RunContext[Any], name: str, prefix: str, call: ToolCallPart, args: dict[str, Any]
 ) -> AbstractContextManager[Span]:
     """Open the span for judging one call; its arguments are recorded only when the run traces content."""
-    attributes = {f'{prefix}.tool': call.tool_name, f'{prefix}.tool_call_id': call.tool_call_id}
-    if ctx.trace_include_content:
-        attributes[f'{prefix}.arguments'] = json.dumps(args, default=str)
-    return ctx.tracer.start_as_current_span(name, attributes=attributes)
+    content = {f'{prefix}.arguments': json.dumps(args, default=str)} if ctx.trace_include_content else None
+    return open_span(
+        ctx,
+        name,
+        attributes={f'{prefix}.tool': call.tool_name, f'{prefix}.tool_call_id': call.tool_call_id},
+        content=content,
+    )
 
 
 async def ask_claimed(
