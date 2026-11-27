@@ -90,6 +90,41 @@
       ]
     }
   },
+  "pydantic_ai_slim/pydantic_ai/_compaction_requests.py": {
+    "CompactionRequests": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
+      ]
+    },
+    "CompactionRequests.request": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::CompactionRequestGuard.request"
+      ]
+    },
+    "RequestedCompaction": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "annotation_only"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
+      ]
+    }
+  },
   "pydantic_ai_slim/pydantic_ai/_deferred.py": {
     "DeferredToolResults": {
       "engines": [
@@ -186,7 +221,19 @@
         "annotation_only"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::<module>"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
+      ]
+    },
+    "FunctionSchema.dump_json_parameters": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::dump_json_function_args"
       ]
     },
     "FunctionSchema.function": {
@@ -221,7 +268,7 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._bind_capability_operations.handler",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::bind_arguments",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_validating_function_schema"
       ]
     },
     "extract_return_schema_type": {
@@ -553,6 +600,21 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field"
+      ]
+    },
+    "RunContext._compaction_requests": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.restore",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::guard_run_context"
       ]
     },
     "RunContext._deferred_capability_ids": {
@@ -1152,6 +1214,7 @@
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_request_stream_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
@@ -1172,6 +1235,7 @@
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_request_stream_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
@@ -1429,6 +1493,17 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/azure_durable_task/_operation_backend.py::<module>"
       ]
     },
+    "get_current_request_attempt": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>"
+      ]
+    },
     "get_current_run_context": {
       "engines": [
         "durable_exec",
@@ -1492,6 +1567,17 @@
     }
   },
   "pydantic_ai_slim/pydantic_ai/_unsupported_settings.py": {
+    "raised_for_fallback": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>"
+      ]
+    },
     "suppress_warnings": {
       "engines": [
         "durable_exec"
@@ -1783,6 +1869,7 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_runtime_toolsets.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
@@ -2001,6 +2088,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability.from_agent",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.restore",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::_restore_workspace",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_runtime_toolsets.py::reject_durable_unsupported_capabilities",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::agent_instrumentation_settings",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._bind_to_agent",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::TemporalDurability._bind_to_agent",
@@ -2150,6 +2238,21 @@
       ]
     },
     "AgentRunEvents": {
+      "engines": [
+        "dbos",
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "annotation_only"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::<module>"
+      ]
+    },
+    "CompactionOptions": {
       "engines": [
         "dbos",
         "prefect",
@@ -2530,6 +2633,17 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_operation_capability_id"
+      ]
+    },
+    "AbstractCapability._durable_unsupported_reason": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_runtime_toolsets.py::reject_durable_unsupported_capabilities"
       ]
     },
     "AbstractCapability._get_default_run_id_for_inputs": {
@@ -3049,6 +3163,7 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_runtime_toolsets.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::<module>",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_capability.py::<module>"
@@ -3756,6 +3871,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
       ]
     },
+    "UnsupportedSettingWarning": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model_errors.py::<module>"
+      ]
+    },
     "UsageLimitExceeded": {
       "engines": [
         "prefect",
@@ -4282,6 +4408,28 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>"
       ]
     },
+    "CompactionEndEvent.event_kind": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._call_event_stream_handler_activity"
+      ]
+    },
+    "CompactionStartEvent.event_kind": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._call_event_stream_handler_activity"
+      ]
+    },
     "CustomEvent": {
       "engines": [
         "durable_exec",
@@ -4563,6 +4711,61 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._withdraw_unreturned_response"
+      ]
+    },
+    "ModelResponseOrigin": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
+      ]
+    },
+    "ModelResponseOrigin.attempt": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_request_stream_operation"
+      ]
+    },
+    "ModelResponseOrigin.execution_attempt": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_request_stream_operation"
+      ]
+    },
+    "ModelResponseOrigin.run_id": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_request_stream_operation"
+      ]
+    },
+    "ModelResponseOrigin.run_step": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_request_stream_operation"
       ]
     },
     "ModelResponsePart": {
@@ -5417,10 +5620,14 @@
         "projected_field"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model.request_segment",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._build_durable_model.request_stream_segment",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.apply",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.attempt",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.build_context",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.from_context"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::ModelRequestContextProjection.from_context",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream"
       ]
     },
     "ModelRequestContext.messages": {
@@ -5956,6 +6163,21 @@
       ]
     }
   },
+  "pydantic_ai_slim/pydantic_ai/models/_unwrap.py": {
+    "unwrap_model": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "annotation_only",
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>"
+      ]
+    }
+  },
   "pydantic_ai_slim/pydantic_ai/models/instrumented.py": {
     "InstrumentationSettings": {
       "engines": [
@@ -6372,7 +6594,6 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream.replay_request_parameters",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::reject_serving_wrapper",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::unwrap_model",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel.__init__.wrapped_request_stream_step",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.__init__.request_stream_task",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.cancel_suspended_response",
@@ -6779,7 +7000,7 @@
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_validating_function_schema"
       ]
     },
     "ToolDefinition": {
@@ -6871,7 +7092,7 @@
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_validating_function_schema",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::run_args_validator"
       ]
     },
@@ -7337,6 +7558,7 @@
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_validating_function_schema",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::call_dynamic_tool",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::validate_tool_args"
@@ -7374,8 +7596,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._durable_opts_out",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::DurableDynamicToolset.call_tool",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_dynamic_tool",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_validating_function_schema",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::resolve_tool_durable_config",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::run_args_validator",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._register_child_workflow.call_tool_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::_child_workflow_config",
@@ -7541,8 +7763,8 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::toolset_selects_child_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_runtime_toolsets.py::_all_tools_opt_out",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_validating_function_schema",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::holds_tool_instance_defaults",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args",
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_operation_backend.py::RenderOperationBackend._validate_tool_options"
       ]
     },
@@ -7598,7 +7820,7 @@
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::revalidate_function_args",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::_validating_function_schema",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._register_child_workflow.call_tool_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_function_toolset.py::temporalize_function_toolset.call_tool_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::_FunctionCallTransport.dump",

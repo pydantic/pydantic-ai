@@ -47,6 +47,7 @@ import pydantic_core
 from genai_prices import types as genai_types
 from pydantic.alias_generators import to_snake
 from pydantic.dataclasses import dataclass as pydantic_dataclass
+from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import PydanticCustomError
 from typing_extensions import TypeAliasType, TypedDict, TypeVar, deprecated
 
@@ -1325,6 +1326,16 @@ class _OwnSerializer:
             pydantic.TypeAdapter(owner).core_schema, pydantic_core.core_schema.CoreConfig(ser_json_bytes='base64')
         )
         return serializer
+
+
+class _SerializesItself:
+    """Serializes with the class's own pydantic serializer, also when serialized by inference.
+
+    `pydantic_core.to_json` and Temporal's payload converter otherwise serialize a plain dataclass field by field,
+    ignoring `Field(exclude=True)`: for `CompactionRecord.replaced`, the whole history a compaction replaced.
+    """
+
+    __pydantic_serializer__: ClassVar[Any] = _OwnSerializer()
 
 
 class _RecordsContentFiles:
@@ -6173,12 +6184,13 @@ class ModelResponse:
         ```
 
         Raises:
-            ValueError: If the response omitted usage (`usage.unmeasured_requests` is non-zero) or contains
-                inconsistent usage counts.
+            ValueError: If the response has no `model_name`, omitted usage (`usage.unmeasured_requests` is non-zero)
+                or contains inconsistent usage counts.
             LookupError: If `genai-prices` has no pricing data for the provider or model — for example, on a custom
                 OpenAI-compatible endpoint whose provider `genai-prices` can't infer.
         """
-        assert self.model_name, 'Model name is required to calculate price'
+        if not self.model_name:
+            raise ValueError('Model name is required to calculate price')
         if self.usage.unmeasured_requests:
             raise ValueError(
                 'Cannot calculate the price of a response that omitted usage information '
@@ -8205,12 +8217,84 @@ ModelResponsePartDelta = Annotated[
 """A partial update (delta) for any model response part."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class ModelResponseOrigin:
+    """Which execution of which model response produced a model-stream event.
+
+    One request step can stream more than one response: a capability like
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] or
+    [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] attempts the model again, or a
+    `wrap_model_request` hook streams a response of its own in place of the one it stopped. Under durable
+    execution, the engine can also run the same attempt again, like a Temporal activity that is retried
+    after it streamed part of a response. An agent run's model-stream events carry the origin they came
+    from, so a consumer can tell these apart.
+
+    A consumer that renders the stream keeps the latest origin it has seen for each `(run_id, run_step)`,
+    and drops the events of any origin a later one [`supersedes`][pydantic_ai.messages.ModelResponseOrigin.supersedes],
+    as their response was replaced. A superseded origin's events can still arrive after its successor's,
+    for instance from a durable unit that timed out but keeps publishing, so check every event, not only the
+    first one of an origin.
+    """
+
+    run_id: str
+    """The [`run_id`][pydantic_ai.messages.ModelResponse.run_id] of the agent run the response belongs to."""
+
+    run_step: int
+    """The request step the response answers, as [`RunContext.run_step`][pydantic_ai.tools.RunContext.run_step]."""
+
+    attempt: int = 1
+    """Which attempt at the request step streamed the response, starting at `1`.
+
+    This is the request context's [`attempt`][pydantic_ai.models.ModelRequestContext.attempt], which goes up when a
+    capability raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] to attempt the model again.
+    A `wrap_model_request` hook that stops the stream and streams a response of its own instead streams it as the
+    next attempt. The agent graph counts attempts, so a replayed durable run streams the same ones.
+    """
+
+    execution_attempt: int = 1
+    """Which execution of the attempt's durable unit streamed the response, starting at `1`.
+
+    It goes up when the durable execution engine runs the same attempt again, like a retried Temporal activity.
+    Outside durable execution, and for engines that don't report it, it's `1`.
+    """
+
+    @property
+    def response_id(self) -> str:
+        """The identifier of the response the events build, the same for every execution of one attempt.
+
+        It's made of `run_id`, `run_step` and `attempt`, so a durable unit that runs again streams under the same
+        `response_id`, and a consumer can key the response it renders by it.
+        """
+        return f'{self.run_id}:{self.run_step}:{self.attempt}'
+
+    def supersedes(self, other: ModelResponseOrigin) -> bool:
+        """Whether this origin's response replaces `other`'s: a later attempt or execution of the same request step."""
+        return (self.run_id, self.run_step) == (other.run_id, other.run_step) and (
+            self.attempt,
+            self.execution_attempt,
+        ) > (other.attempt, other.execution_attempt)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_ModelResponseOriginField = Annotated[
+    ModelResponseOrigin | None, pydantic.Field(exclude_if=lambda origin: origin is None)
+]
+"""An event's `origin`, left out of its serialized form when it's `None`, so such events serialize as they did before.
+
+Equality and `repr()` leave it out too: it says where the event came from rather than what it is, so events compare
+and print as they did before it existed, and identical streams of two runs compare equal although their `run_id`s
+differ.
+"""
+
+
 @dataclass(repr=False, kw_only=True)
 class PartStartEvent:
     """An event indicating that a new part has started.
 
-    If multiple `PartStartEvent`s are received with the same index,
-    the new one should fully replace the old one.
+    If multiple `PartStartEvent`s are received with the same index and [`origin`][pydantic_ai.messages.PartStartEvent.origin],
+    the new one should fully replace the old one. A start at the same index with another origin belongs to
+    another response: see [`ModelResponseOrigin`][pydantic_ai.messages.ModelResponseOrigin].
     """
 
     index: int
@@ -8243,6 +8327,14 @@ class PartStartEvent:
     This lets UI event streams send it to the frontend alongside the part, so it survives a round trip through the client.
     """
 
+    origin: _ModelResponseOriginField = field(default=None, compare=False, repr=False)
+    """Which execution of which model response the event came from, set on the events of an agent run's model stream.
+
+    `None` for events that don't come from one, like those of [`Model.request_stream`][pydantic_ai.models.Model.request_stream]
+    used directly. See [`ModelResponseOrigin`][pydantic_ai.messages.ModelResponseOrigin] for dropping a replaced response's events.
+    Equality and `repr()` leave it out, so read it from the event.
+    """
+
     event_kind: Literal['part_start'] = 'part_start'
     """Event type identifier, used as a discriminator."""
 
@@ -8258,6 +8350,14 @@ class PartDeltaEvent:
 
     delta: ModelResponsePartDelta
     """The delta to apply to the specified part."""
+
+    origin: _ModelResponseOriginField = field(default=None, compare=False, repr=False)
+    """Which execution of which model response the event came from, set on the events of an agent run's model stream.
+
+    `None` for events that don't come from one, like those of [`Model.request_stream`][pydantic_ai.models.Model.request_stream]
+    used directly. See [`ModelResponseOrigin`][pydantic_ai.messages.ModelResponseOrigin] for dropping a replaced response's events.
+    Equality and `repr()` leave it out, so read it from the event.
+    """
 
     event_kind: Literal['part_delta'] = 'part_delta'
     """Event type identifier, used as a discriminator."""
@@ -8299,6 +8399,14 @@ class PartEndEvent:
     A part's `provider_name` can arrive in a delta, so this can be set when the part's `PartStartEvent.canonical_system` wasn't.
     """
 
+    origin: _ModelResponseOriginField = field(default=None, compare=False, repr=False)
+    """Which execution of which model response the event came from, set on the events of an agent run's model stream.
+
+    `None` for events that don't come from one, like those of [`Model.request_stream`][pydantic_ai.models.Model.request_stream]
+    used directly. See [`ModelResponseOrigin`][pydantic_ai.messages.ModelResponseOrigin] for dropping a replaced response's events.
+    Equality and `repr()` leave it out, so read it from the event.
+    """
+
     event_kind: Literal['part_end'] = 'part_end'
     """Event type identifier, used as a discriminator."""
 
@@ -8320,6 +8428,14 @@ class FinalResultEvent:
     """The name of the output tool that was called. `None` if the result is from text content and not from a tool."""
     tool_call_id: str | None
     """The tool call ID, if any, that this result is associated with."""
+    origin: _ModelResponseOriginField = field(default=None, compare=False, repr=False)
+    """Which execution of which model response the event came from, set on the events of an agent run's model stream.
+
+    `None` for events that don't come from one, like those of [`Model.request_stream`][pydantic_ai.models.Model.request_stream]
+    used directly. See [`ModelResponseOrigin`][pydantic_ai.messages.ModelResponseOrigin] for dropping a replaced response's events.
+    Equality and `repr()` leave it out, so read it from the event.
+    """
+
     event_kind: Literal['final_result'] = 'final_result'
     """Event type identifier, used as a discriminator."""
 
@@ -8799,6 +8915,208 @@ HandleResponseEvent = Annotated[
     pydantic.Discriminator('event_kind'),
 ]
 """An event yielded when handling a model response, indicating tool calls and results."""
+
+
+CompactionReason: TypeAlias = (
+    Literal['threshold', 'cache_expiry', 'manual', 'model_requested', 'model_switch', 'context_overflow'] | str
+)
+"""Why the message history is being compacted.
+
+- `'threshold'`: the history grew past a size threshold.
+- `'cache_expiry'`: the provider's prompt cache is about to expire, so compacting now still reads it.
+- `'manual'`: the user or the application asked for it, like a `/compact` command.
+- `'model_requested'`: the model asked for it, like with a tool that requests compaction.
+- `'model_switch'`: the model serving the next request can't use the history's existing compaction.
+- `'context_overflow'`: the model rejected the request for exceeding its context window, so it's compacted and
+  sent to the same model once more.
+
+Any other string is passed through as is, for a reason of your own. When a request is made while another is pending,
+they're merged, and the merged one keeps the more important reason: `'manual'`, then `'model_requested'`,
+`'context_overflow'`, `'model_switch'`, `'threshold'` and `'cache_expiry'`, then a reason of your own; see
+[`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction].
+"""
+
+
+@dataclass(repr=False, kw_only=True)
+class CompactionStartEvent:
+    """Emitted before a model request attempt runs the capabilities' [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hooks.
+
+    It's emitted when compaction was requested with
+    [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction], or when a model rejected the
+    request for exceeding its context window, with reason `'context_overflow'`. It's dispatched immediately:
+    capability listeners ([`@on_event`][pydantic_ai.capabilities.on_event], `hooks.on.event`) run before the
+    hooks do, and any of them can [`cancel()`][pydantic_ai.messages.CompactionStartEvent.cancel] it, for example
+    a capability that needs the full history for one more turn. Cancelling skips compaction for this attempt
+    and drops the request; whatever asked for it can ask again. Under durable execution, an
+    `event_stream_handler` runs in its own activity or step, so it only observes the event; cancel it from a
+    capability listener instead.
+
+    A [`CompactionEndEvent`][pydantic_ai.messages.CompactionEndEvent] follows once the history was compacted.
+    None follows when the event was cancelled, no capability compacted, or the compaction failed.
+    """
+
+    reason: CompactionReason
+    """Why compaction was requested."""
+
+    model_name: str
+    """The name of the model that will serve the request the compacted history is sent with."""
+
+    provider_name: str
+    """The provider of that model."""
+
+    messages_before: int
+    """The number of messages in the history to compact."""
+
+    focus: str | None = None
+    """What the compaction should keep, if the request said."""
+
+    tokens_before: int | None = None
+    """The context size the latest response in the history reported, or `None` without one."""
+
+    cancelled: bool = False
+    """Whether a listener cancelled this compaction."""
+
+    cancel_reason: str | None = None
+    """The reason the cancelling listener gave, if any."""
+
+    event_kind: Literal['compaction_start'] = 'compaction_start'
+    """Event type identifier, used as a discriminator."""
+
+    event_dispatch: ClassVar[Literal['immediate']] = 'immediate'
+    """Listeners run before the compaction does, so they can cancel it."""
+
+    def cancel(self, reason: str | None = None) -> None:
+        """Skip this compaction.
+
+        Args:
+            reason: An optional human-readable reason, stored on
+                [`cancel_reason`][pydantic_ai.messages.CompactionStartEvent.cancel_reason].
+        """
+        self.cancelled = True
+        self.cancel_reason = reason
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class CompactionRecord(_SerializesItself):
+    """A compaction a run kept, on [`AgentRunResult.compactions`][pydantic_ai.agent.AgentRunResult.compactions].
+
+    The run's message history only shows the compacted history, so this is how you tell what a compaction
+    replaced, for example to store a conversation's full log next to the history the model sees. The compacted
+    history is `messages_after` messages long: the ones up to `kept_from` hold the summary, and the ones from
+    `kept_from` on are the last messages of the history it replaced, kept as they were. So the messages it
+    summarized are the history it replaced without that tail; see
+    [`summarized`][pydantic_ai.messages.CompactionRecord.summarized].
+
+    [`replaced`][pydantic_ai.messages.CompactionRecord.replaced] and `summarized` are held in memory only. Every
+    other field is serialized, so a store that recorded the history before the compaction can rebuild what was
+    summarized from a loaded record: the first `messages_before - (messages_after - kept_from)` messages of the
+    history it recorded. [`part_message_index`][pydantic_ai.messages.CompactionRecord.part_message_index] and
+    [`part_index`][pydantic_ai.messages.CompactionRecord.part_index] locate the compaction in the compacted history.
+    """
+
+    part: CompactionPart
+    """The part that marks where the compacted history starts."""
+
+    handler: str
+    """The stable identifier of the capability that compacted, from
+    [`CompactionResult.handler`][pydantic_ai.capabilities.CompactionResult.handler]."""
+
+    reason: CompactionReason
+    """Why the history was compacted."""
+
+    model_name: str
+    """The name of the model the compaction was made for, which served the request it was sent with."""
+
+    provider_name: str
+    """The provider of that model."""
+
+    messages_before: int
+    """The number of messages in the history that was compacted."""
+
+    messages_after: int
+    """The number of messages in the history that replaced it."""
+
+    kept_from: int
+    """The index in the compacted history where the messages kept as they were start.
+
+    The compacted history's messages from this index on are the last `messages_after - kept_from` messages of the
+    history it replaced.
+    """
+
+    part_message_index: int
+    """The index in the compacted history of the message holding [`part`][pydantic_ai.messages.CompactionRecord.part].
+
+    A [`ModelRequest`][pydantic_ai.messages.ModelRequest] for a summary a capability wrote, or the
+    [`ModelResponse`][pydantic_ai.messages.ModelResponse] a provider's compaction arrived in, which can come after a
+    request holding the standing system prompt.
+    """
+
+    part_index: int
+    """The index of [`part`][pydantic_ai.messages.CompactionRecord.part] in that message's `parts`."""
+
+    replaced: Annotated[SkipJsonSchema[list[ModelMessage] | None], pydantic.Field(exclude=True)] = field(
+        default=None, compare=False
+    )
+    """The run's persistent history the compaction replaced, ending with the request being answered.
+
+    It's the history itself, not the request's view the handler was given: what a hook only changed for that request
+    isn't in it.
+
+    It's held in memory only, by reference, and isn't serialized: a record loaded from a serialized
+    [`AgentRunResult`][pydantic_ai.agent.AgentRunResult] has `None` here.
+    """
+
+    metadata: dict[str, Any] | None = None
+    """Additional data about the compaction, from [`CompactionResult.metadata`][pydantic_ai.capabilities.CompactionResult.metadata]."""
+
+    @property
+    def summarized(self) -> list[ModelMessage] | None:
+        """The messages of [`replaced`][pydantic_ai.messages.CompactionRecord.replaced] the compaction summarized: all but the kept tail.
+
+        `None` when `replaced` isn't available, on a record loaded from a serialized result.
+        """
+        if self.replaced is None:
+            return None
+        return self.replaced[: self.messages_before - (self.messages_after - self.kept_from)]
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+@dataclass(repr=False, kw_only=True)
+class CompactionEndEvent(_SerializesItself):
+    """Emitted after a capability's [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hook compacted the history.
+
+    The compacted history is sent with the attempt it was made for. If that attempt fails and the request moves
+    on to another model, the compaction is discarded, and the next attempt may compact again, with events of its
+    own. Once an attempt is kept, its [`record`][pydantic_ai.messages.CompactionEndEvent.record] is the object on
+    [`AgentRunResult.compactions`][pydantic_ai.agent.AgentRunResult.compactions].
+    """
+
+    record: CompactionRecord
+    """What the compaction did: the reason, the handler, the model it was for and where the kept messages start.
+
+    Its [`replaced`][pydantic_ai.messages.CompactionRecord.replaced] history isn't serialized with the event either.
+    """
+
+    tokens_before: int | None = None
+    """The context size the latest response in the history reported before compaction, or `None` without one."""
+
+    summary_tokens: int | None = None
+    """The size of the summary the compaction produced: the output tokens it reported, or `None` when it reported none.
+
+    That's not the size of the compacted history, which can also keep recent messages: the context size is only
+    known again from the next response.
+    """
+
+    usage: RequestUsage = field(default_factory=RequestUsage)
+    """What the compaction cost, which is counted in the run's usage."""
+
+    event_kind: Literal['compaction_end'] = 'compaction_end'
+    """Event type identifier, used as a discriminator."""
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
 
 
 CUSTOM_EVENT_TYPES: dict[str, type[CustomEvent]] = _EventRegistry[type['CustomEvent']]()
@@ -9309,6 +9627,8 @@ AgentStreamEvent = Annotated[
     ModelResponseStreamEvent
     | EnqueuedMessagesEvent
     | HandleResponseEvent
+    | CompactionStartEvent
+    | CompactionEndEvent
     | RealtimeSessionEvent
     | CustomEvent
     | CapabilityEvent,

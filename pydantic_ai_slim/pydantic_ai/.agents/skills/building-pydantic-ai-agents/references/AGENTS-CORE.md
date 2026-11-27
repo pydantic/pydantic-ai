@@ -293,6 +293,8 @@ Pick a run method based on the interaction pattern:
 
 Use `event_stream_handler=` with `run()` or `run_stream()` when the user wants progress updates without manually consuming the event stream. The stream includes model deltas, tool call/result events, and framework events such as `EnqueuedMessagesEvent` when queued messages enter run history.
 
+One request step can stream more than one response: `ModelFallback` or `RetryOnModelErrors` attempting the model again, a `wrap_model_request` hook that replaces the stream it stopped, or a durable engine retrying a model request. Model-stream events carry the `ModelResponseOrigin` they came from as `origin`, so a consumer that renders the stream keeps the latest origin per `(run_id, run_step)` and drops the events of any origin a later one `supersedes()`. Equality and `repr()` ignore `origin`, so read it from the event. See [Replaced responses](https://pydantic.dev/docs/ai/core-concepts/agent/#replaced-responses).
+
 Realtime sessions do not use `event_stream_handler`; iterate the session to consume realtime-only `RealtimeEvent` members.
 
 ```python
@@ -373,6 +375,11 @@ Good defaults:
 - `model_settings={'max_retries': 0}` on the agent, or on every candidate but the last, so the provider SDK's own
   retries (2 by default on OpenAI, Anthropic, Groq and Cohere) don't hold up the fallback; Bedrock and xAI ignore it
   with an `UnsupportedSettingWarning`, so with one of those in the chain set it on the other candidates' `settings`
+- `fallback_on=(ModelAPIError, ContentFilterError, OutputTokenLimitExceeded, UnsupportedSettingWarning)` (the default plus
+  the warning) to skip a candidate that would ignore a setting the request relies on (like `stop_sequences`) instead
+  of sending the request without it; settings on the agent or run reach
+  every candidate, so put a guarantee setting only some candidates honor (like `max_retries` with Bedrock or xAI in
+  the chain) on those candidates' own `settings`, or every request skips the candidates that don't honor it
 
 The answering response's `failed_attempts` lists the attempts the fallback moved on from (model, provider,
 `'error'` or `'rejected'` outcome, error, start time, duration, usage); when every model fails they're on

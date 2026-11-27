@@ -33,6 +33,7 @@ from pydantic_ai import (
     DocumentCitationSource,
     DocumentUrl,
     FilePart,
+    FinalResultEvent,
     ImageUrl,
     InstructionPart,
     InstrumentationSettings,
@@ -41,11 +42,14 @@ from pydantic_ai import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    ModelResponseOrigin,
     ModelRetry,
     MultiModalContent,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
+    PartEndEvent,
+    PartStartEvent,
     RequestUsage,
     RunUsage,
     SpeechPart,
@@ -4348,3 +4352,62 @@ async def test_agent_run_rejects_non_sequence_user_prompt():
     agent = Agent(TestModel())
     with pytest.raises(ValueError, match='must be a `str` or a sequence of `UserContent` items, got `dict`'):
         await agent.run(cast(Any, {'name': 'John'}))
+
+
+_STREAM_EVENTS: TypeAdapter[AgentStreamEvent] = TypeAdapter(AgentStreamEvent)
+
+
+@pytest.mark.parametrize(
+    'event',
+    [
+        PartStartEvent(index=0, part=TextPart(content='Hi')),
+        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' there')),
+        PartEndEvent(index=0, part=TextPart(content='Hi there')),
+        FinalResultEvent(tool_name=None, tool_call_id=None),
+    ],
+    ids=lambda event: event.event_kind,
+)
+def test_origin_round_trips(event: PartStartEvent | PartDeltaEvent | PartEndEvent | FinalResultEvent):
+    """An event with an `origin` round-trips through `AgentStreamEvent`, and one without serializes without the key."""
+    assert 'origin' not in _STREAM_EVENTS.dump_python(event, mode='json')
+
+    event = replace(event, origin=ModelResponseOrigin(run_id='run', run_step=3, attempt=2, execution_attempt=4))
+    serialized = _STREAM_EVENTS.dump_python(event, mode='json')
+    assert serialized['origin'] == {'run_id': 'run', 'run_step': 3, 'attempt': 2, 'execution_attempt': 4}
+    decoded = _STREAM_EVENTS.validate_python(serialized)
+    assert isinstance(decoded, type(event))
+    assert decoded.origin == event.origin
+
+
+def test_origin_is_left_out_of_equality_and_repr():
+    """Events compare and print as they did before `origin` existed, so identical streams of two runs compare equal."""
+    event = PartStartEvent(index=0, part=TextPart(content='Hi'))
+    stamped = replace(event, origin=ModelResponseOrigin(run_id='run', run_step=1))
+    assert stamped == event
+    assert repr(stamped) == repr(event) == "PartStartEvent(index=0, part=TextPart(content='Hi'))"
+
+
+def test_events_without_origin_serialize_as_before():
+    """An event without an `origin` serializes byte for byte as it did before the field existed."""
+    assert _STREAM_EVENTS.dump_json(PartStartEvent(index=0, part=TextPart(content='Hi'))) == snapshot(
+        b'{"index":0,"part":{"content":"Hi","id":null,"provider_name":null,"provider_details":null,"citations":null,"part_kind":"text"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
+    )
+    assert _STREAM_EVENTS.dump_json(FinalResultEvent(tool_name=None, tool_call_id=None)) == snapshot(
+        b'{"tool_name":null,"tool_call_id":null,"event_kind":"final_result"}'
+    )
+
+
+def test_supersedes():
+    """A later attempt or execution of the same request step supersedes an earlier one, and nothing else does."""
+    first = ModelResponseOrigin(run_id='run', run_step=1)
+    re_executed = ModelResponseOrigin(run_id='run', run_step=1, execution_attempt=2)
+    next_attempt = ModelResponseOrigin(run_id='run', run_step=1, attempt=2)
+
+    assert re_executed.supersedes(first)
+    assert re_executed.response_id == first.response_id == 'run:1:1'
+    assert next_attempt.supersedes(re_executed)
+    assert next_attempt.response_id == 'run:1:2'
+    assert not first.supersedes(re_executed)
+    assert not first.supersedes(first)
+    assert not ModelResponseOrigin(run_id='run', run_step=2).supersedes(first)
+    assert not ModelResponseOrigin(run_id='other', run_step=1, attempt=2).supersedes(first)
