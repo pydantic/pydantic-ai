@@ -8,7 +8,7 @@ from dataclasses import KW_ONLY, dataclass, replace
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
-from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, ValidatedToolArgs
+from pydantic_ai.capabilities import AbstractCapability, AutoCachePolicy, CombinedCapability, ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
 from pydantic_ai.messages import InstructionPart, ToolCallPart
 from pydantic_ai.models.fallback import FallbackModel
@@ -54,14 +54,16 @@ class _BoundToolOutputs(ToolOutputLimits[AgentDepsT]):
 
 @dataclass
 class _DefaultCaching(AbstractCapability[AgentDepsT]):
-    """`Caching()` that yields to a `cache` value set before it, by the model, the agent, or a capability.
+    """`Caching()` (the `'auto'` retention policy) that yields to a `cache` value set before it, by the model, the agent, or a capability.
 
     Without `Caching`'s fixed id, so a `Caching` bound next to `Coder` is not combined away.
     """
 
     def get_model_settings(self) -> Callable[[RunContext[AgentDepsT]], ModelSettings]:
         def unless_configured(ctx: RunContext[AgentDepsT]) -> ModelSettings:
-            return ModelSettings() if 'cache' in (ctx.model_settings or {}) else ModelSettings(cache=True)
+            if 'cache' in (ctx.model_settings or {}):
+                return ModelSettings()
+            return ModelSettings(cache=AutoCachePolicy().retention(ctx))
 
         return unless_configured
 
