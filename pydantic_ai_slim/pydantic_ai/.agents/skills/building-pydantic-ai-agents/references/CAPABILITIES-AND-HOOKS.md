@@ -216,6 +216,8 @@ Reach for a custom capability when:
 
 Keep custom capabilities focused. If the user only needs one tool or one hook, do not introduce a capability.
 
+To show what a capability does in the run's trace, use `open_span` (work that takes time and can fail), `record_decision` (a choice that changed the run, such as a refusal) and `tool_call_span` (the tool call's span, to add attributes to, in tool hooks and tool bodies) from `pydantic_ai.capabilities`, passing the hook's `ctx`. Pass anything that can quote run data (arguments, prompts, paths, error messages) as `content=`: it is recorded only when the run's `include_content` allows it. Set such an attribute on `tool_call_span(ctx)` only `if ctx.trace_include_content`. Prefer the helpers to `ctx.tracer.start_span(...)` with a hand-written `ctx.trace_include_content` check: they do nothing in an uninstrumented run, record `content=` only when the run allows it, and record an error's type but not its message when content is off.
+
 Give a capability an `id` when its instructions should be addressable. You declare `InstructionPart.name`; the framework issues `InstructionPart.id` as an `InstructionId`, whose source identifies the agent, toolset, or capability and whose optional name identifies one named part. It renders and serializes as `agent`, `toolset:<id>`, `capability:<id>`, or one of those followed by `:<name>`. Compare the structured source and name in Python; use `str(part.id)` only when a persisted string key is required. Naming a part whose source has no `id` of its own leaves `id` as `None`: the name still travels with the part, but nothing addresses it.
 
 ### Isolate Mutable State Per Run

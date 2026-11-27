@@ -23,8 +23,9 @@ Verify that the PR links an issue.
 - The implementation uses Pydantic AI hooks/toolsets instead of duplicating core
   runtime behavior.
 - The change states what it emits to OpenTelemetry. A decision point an operator
-  needs (a refusal, a budget stop, a rewritten history) carries a span on
-  `ctx.tracer`; emitting nothing is documented with its reason. See
+  needs (a refusal, a budget stop, a rewritten history) carries a span from
+  `record_decision` or `open_span` in `pydantic_ai.capabilities`, not from
+  `ctx.tracer` directly; emitting nothing is documented with its reason. See
   `capability-authoring.md` "Telemetry".
 - Capability ordering is justified when present.
 - Dependency changes are required, linked to an issue, and made through `uv`.

@@ -39,6 +39,7 @@ from pydantic_ai._instrumentation import (
     track_top_level_conversation,
 )
 from pydantic_ai._output import build_retried_tool_return
+from pydantic_ai._telemetry import bind_tool_call_span
 from pydantic_ai._utils import UNSET, Unset
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -660,7 +661,7 @@ class Instrumentation(AbstractCapability[Any]):
         *,
         span_name: str,
         attributes: dict[str, Any],
-        action: Callable[[], Awaitable[Any]],
+        action: Callable[[Span], Awaitable[Any]],
         serialize_result: Callable[[Any], str],
         run_context: RunContext[Any],
         handle_tool_control_flow: bool = False,
@@ -693,7 +694,7 @@ class Instrumentation(AbstractCapability[Any]):
             set_status_on_exception=False,
         ) as span:
             try:
-                result = await action()
+                result = await action(span)
             except (CallDeferred, ApprovalRequired) as exc:
                 if not handle_tool_control_flow:
                     _record_exception(span, exc, include_content=include_content)
@@ -771,10 +772,17 @@ class Instrumentation(AbstractCapability[Any]):
             # backends can recognize the session tree; the tool span is shared with classic runs,
             # which stay unmarked.
             attributes['pydantic_ai.realtime'] = True
+
+        async def call_with_bound_span(span: Span) -> Any:
+            # The span `_run_tool_span` opened, not the current span: a no-op tracer on some
+            # `opentelemetry-api` versions leaves an enclosing run's span current.
+            with bind_tool_call_span(span, run_id=ctx.run_id):
+                return await handler(args)
+
         return await self._run_tool_span(
             span_name=self._instrumentation_names.get_tool_span_name(call.tool_name),
             attributes=attributes,
-            action=lambda: handler(args),
+            action=call_with_bound_span,
             serialize_result=lambda value: tool_return_ta.dump_json(
                 redact_binary_content(value, self.settings)
             ).decode(),
@@ -845,7 +853,7 @@ class Instrumentation(AbstractCapability[Any]):
         return await self._run_tool_span(
             span_name=names.get_output_tool_span_name(span_target),
             attributes=attributes,
-            action=lambda: handler(output),
+            action=lambda _span: handler(output),
             serialize_result=lambda value: safe_to_json(
                 serialize_any(redact_binary_content(value, self.settings))
             ).decode(),

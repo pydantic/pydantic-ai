@@ -43,7 +43,7 @@ from pydantic_ai import (
     ImageGenerator,
 )
 from pydantic_ai._cache_health import ConversationCacheMarkStore
-from pydantic_ai.capabilities import instrumentation as instrumentation_capability
+from pydantic_ai.capabilities import Instrumentation, instrumentation as instrumentation_capability
 from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     DocumentUrl,
@@ -66,6 +66,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import Model
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import NATIVE_TOOL_TYPES, AbstractNativeTool
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.toolsets import AbstractToolset
@@ -942,6 +943,28 @@ def try_import() -> Generator[Callable[[], bool]]:
         pass
     else:
         import_success = True
+
+
+with try_import():
+    from opentelemetry.sdk.trace import TracerProvider
+    from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+    from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
+
+Instrumented: TypeAlias = 'Callable[[bool], tuple[Instrumentation, InMemorySpanExporter]]'
+"""The `instrumented` fixture: builds an `Instrumentation` and the exporter its spans go to, by `include_content`."""
+
+
+@pytest.fixture
+def instrumented() -> Instrumented:
+    def factory(include_content: bool) -> tuple[Instrumentation, InMemorySpanExporter]:
+        exporter = InMemorySpanExporter()
+        tracer_provider = TracerProvider()
+        tracer_provider.add_span_processor(SimpleSpanProcessor(exporter))
+        return Instrumentation(
+            settings=InstrumentationSettings(tracer_provider=tracer_provider, include_content=include_content)
+        ), exporter
+
+    return factory
 
 
 @pytest.fixture(scope='session', autouse=True)

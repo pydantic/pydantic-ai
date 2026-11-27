@@ -1334,6 +1334,65 @@ Multiple capabilities can each handle a subset: dispatch accumulates results acr
 
 For application code that just needs to plug in a handler, use the dedicated [`HandleDeferredToolCalls`][pydantic_ai.capabilities.HandleDeferredToolCalls] capability — see [Resolving deferred calls with a handler](../deferred-tools.md#resolving-deferred-calls-with-a-handler).
 
+## Tracing what your capability does {#tracing}
+
+When a run is [instrumented](../logfire.md), its trace shows each model request and tool call. To add what your capability does, such as a check that blocked a call or slow work it ran, use [`record_decision`][pydantic_ai.capabilities.record_decision] for a choice that changed the run, and [`open_span`][pydantic_ai.capabilities.open_span] around work that takes time. Each takes the run's `ctx`, so it uses the run's tracer and does nothing when the run isn't instrumented. Pass anything that can quote the run's data, such as tool arguments, prompts, paths or error messages, as `content`: it is recorded only when the run's [`include_content`][pydantic_ai.models.instrumented.InstrumentationSettings.include_content] setting allows it.
+
+```python {title="tracing_capability.py"}
+from dataclasses import dataclass
+from typing import Any
+
+from pydantic_ai import Agent, RunContext, ToolDefinition
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    WrapToolExecuteHandler,
+    open_span,
+    record_decision,
+)
+from pydantic_ai.messages import ToolCallPart
+from pydantic_ai.models.test import TestModel
+
+
+@dataclass
+class NoDeletes(AbstractCapability[Any]):
+    """Refuses `delete_*` tools, and times every other tool call."""
+
+    async def wrap_tool_execute(
+        self,
+        ctx: RunContext[Any],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: dict[str, Any],
+        handler: WrapToolExecuteHandler,
+    ) -> Any:
+        if call.tool_name.startswith('delete_'):
+            record_decision(
+                ctx,
+                'no_deletes refused call',
+                attributes={'no_deletes.tool': call.tool_name},
+                content={'no_deletes.arguments': repr(args)},
+            )
+            return 'Deleting is not allowed.'
+        with open_span(ctx, 'no_deletes checked call', attributes={'no_deletes.tool': call.tool_name}):
+            return await handler(args)
+
+
+agent = Agent(TestModel(), capabilities=[NoDeletes()])
+
+
+@agent.tool_plain
+def delete_file(path: str) -> str:
+    return f'deleted {path}'
+
+
+result = agent.run_sync('Delete notes.txt')
+print(result.output)
+#> {"delete_file":"Deleting is not allowed."}
+```
+
+With the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability or [Logfire](../logfire.md) set up, the trace shows `no_deletes refused call` for the `delete_file` call, with its arguments only when content is allowed. [`open_span`][pydantic_ai.capabilities.open_span] marks the span as failed if the work raises, sets `error.type`, and records the error's message only when content is allowed. A cancellation, a deferral, an approval request or a skip (`CallDeferred`, `ApprovalRequired`, `SkipToolExecution`, `SkipModelRequest`) is not a failure and leaves the span unmarked. In `before_tool_execute`, `after_tool_execute`, a `wrap_tool_execute` ordered inside `Instrumentation` (the default, as `Instrumentation` is outermost), a tool or a toolset's `call_tool`, [`tool_call_span(ctx)`][pydantic_ai.capabilities.tool_call_span] returns the tool call's `execute_tool` span, so you can add attributes to it instead of opening a new one. Set an attribute that can quote content only `if ctx.trace_include_content`.
+
 ## Durable capability operations {#durable-capability-operations}
 
 A capability can move I/O or other non-deterministic work from workflow code into a durable activity, step, or task with [`durable_operation`][pydantic_ai.capabilities.durable_operation]. Give the capability a stable [`id`][pydantic_ai.capabilities.AbstractCapability.id], because engines use the capability ID and operation name to recover and replay persisted work.

@@ -19,7 +19,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import RequestUsage
-from tests.conftest import try_import
+from tests.conftest import Instrumented, try_import
 
 with try_import() as openai_imports_successful:
     from openai.types import responses
@@ -58,6 +58,7 @@ __all__ = (
     'IsPartialDict',
     'IsStr',
     'agent_run_names',
+    'Instrumented',
     'openai_imports_successful',
     'openai_without_token_counting',
 )
