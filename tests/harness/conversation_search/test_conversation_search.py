@@ -20,7 +20,7 @@ import pytest
 from inline_snapshot import snapshot
 from pydantic_core import ErrorDetails
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, ModelRetry
 from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import (
     AgentInstructionSource,
@@ -121,6 +121,7 @@ async def _search(
     context_lines: int = 5,
     scope: SearchScope = 'all',
     conversation_id: str | None = None,
+    max_scanned_messages: int = 2_000,
 ) -> str:
     """Invoke the search tool directly against a source."""
     toolset: ConversationSearchToolset[None] = ConversationSearchToolset(
@@ -131,6 +132,7 @@ async def _search(
         bm25_k1=1.5,
         bm25_b=0.75,
         scope=scope,
+        max_scanned_messages=max_scanned_messages,
     )
     return await toolset.search_conversation_history(_run_context(conversation_id), query, run_id=run_id)
 
@@ -1248,6 +1250,156 @@ class TestConfigValidation:
         await _seed_run(store, 'r1', [_user(f'needle entry {i} filler') for i in range(5)])
         with pytest.raises(ValueError, match='max_matches must be non-negative'):
             await _search(SnapshotHistorySource(store), 'needle', max_matches=-1)
+
+
+def _tool_returns(messages: list[ModelMessage]) -> list[str]:
+    return [
+        str(part.content)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolReturnPart) and part.tool_name == 'search_conversation_history'
+    ]
+
+
+class TestSearchBounds:
+    """Ranking runs on the event loop, so the query and the scanned corpus are both bounded."""
+
+    async def test_an_over_long_query_is_retried(self) -> None:
+        store = InMemoryStepStore()
+        await _seed_run(store, 'r1', [_user('the needle target')])
+        with pytest.raises(ModelRetry, match=re.escape('Search queries must be at most 1000 characters.')):
+            await _search(SnapshotHistorySource(store), 'needle ' + 'x' * 994)
+
+    async def test_a_query_with_too_many_unique_terms_is_retried(self) -> None:
+        store = InMemoryStepStore()
+        await _seed_run(store, 'r1', [_user('the needle target')])
+        query = ' '.join(f'term{i}' for i in range(33))
+        with pytest.raises(ModelRetry, match=re.escape('Search queries must contain at most 32 unique terms.')):
+            await _search(SnapshotHistorySource(store), query)
+
+    async def test_a_query_at_the_bounds_is_searched(self) -> None:
+        store = InMemoryStepStore()
+        await _seed_run(store, 'r1', [_user('the needle target')])
+        # 32 unique terms; repeats and case variants of a term count once.
+        query = ' '.join(['needle', 'NEEDLE', *(f'term{i}' for i in range(31))])
+        query = query.ljust(1_000, ' ')
+        assert len(query) == 1_000
+        rendered = await _search(SnapshotHistorySource(store), query)
+        assert 'needle target' in rendered
+
+    async def test_an_out_of_bounds_query_is_retried_before_the_store_is_read(self) -> None:
+        class _UnreadableSource(_StubSource):
+            async def list_runs(self) -> list[RunRecord]:
+                raise AssertionError('the store must not be read for a rejected query')  # pragma: no cover
+
+        with pytest.raises(ModelRetry):
+            await _search(_UnreadableSource({}), 'x' * 1_001)
+
+    async def test_the_model_is_told_the_bound_and_can_retry(self) -> None:
+        store = InMemoryStepStore()
+        await _seed_run(store, 'r1', [_user('the ZEBRA passphrase is secret')], conversation_id='conv')
+        queries = [' '.join(f'term{i}' for i in range(40)), 'ZEBRA']
+        seen: list[str] = []
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append(' '.join(str(part) for part in messages[-1].parts))
+            if queries:
+                return ModelResponse(parts=[ToolCallPart('search_conversation_history', {'query': queries.pop(0)})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            capabilities=[ConversationSearch(SnapshotHistorySource(store), scope='conversation')],
+        )
+        result = await agent.run('find it', conversation_id='conv')
+        assert 'at most 32 unique terms' in seen[1]
+        assert any('ZEBRA passphrase' in returned for returned in _tool_returns(result.all_messages()))
+
+    async def test_the_echoed_query_is_truncated(self) -> None:
+        store = InMemoryStepStore()
+        await _seed_run(store, 'r1', [_user('the needle target')])
+        source = SnapshotHistorySource(store)
+        long_miss = 'zzzmissing ' + 'q' * 900
+        rendered = await _search(source, long_miss)
+        assert rendered == f"No matches for '{long_miss[:200]}...' in 1 persisted messages."
+
+        long_hit = 'needle ' + 'q' * 900
+        rendered = await _search(source, long_hit)
+        assert rendered.startswith(f"Found 1 match(es) for '{long_hit[:200]}...' in 1 persisted messages:")
+        assert long_hit not in rendered
+
+    async def test_a_short_query_is_echoed_whole(self) -> None:
+        store = InMemoryStepStore()
+        await _seed_run(store, 'r1', [_user('the needle target')])
+        query = 'needle ' + 'q' * 193
+        assert len(query) == 200
+        rendered = await _search(SnapshotHistorySource(store), query)
+        assert rendered.startswith(f"Found 1 match(es) for '{query}' in 1 persisted messages:")
+
+    async def test_only_the_newest_messages_are_scanned_and_the_result_says_so(self) -> None:
+        store = InMemoryStepStore()
+        await _seed_run(store, 'r1', [_user('needle oldest'), _user('needle second')])
+        await _seed_run(store, 'r2', [_user('needle third'), _user('needle fourth'), _user('needle newest')])
+        rendered = await _search(SnapshotHistorySource(store), 'needle', context_lines=0, max_scanned_messages=4)
+        assert rendered.startswith(
+            "Found 4 match(es) for 'needle' in the newest 4 of 5 persisted messages; older messages were not searched:"
+        )
+        assert 'oldest' not in rendered
+        # The cut run keeps its record's numbering.
+        assert '[1] User: needle second' in rendered
+        assert '[2] User: needle newest' in rendered
+
+    async def test_a_capped_search_without_matches_says_what_it_skipped(self) -> None:
+        store = InMemoryStepStore()
+        await _seed_run(store, 'r1', [_user('needle oldest')])
+        await _seed_run(store, 'r2', [_user('filler one'), _user('filler two')])
+        rendered = await _search(SnapshotHistorySource(store), 'needle', max_scanned_messages=2)
+        assert rendered == (
+            "No matches for 'needle' in the newest 2 of 3 persisted messages; older messages were not searched."
+        )
+        # The skipped run stays reachable on its own.
+        assert 'needle oldest' in await _search(
+            SnapshotHistorySource(store), 'needle', run_id='r1', max_scanned_messages=2
+        )
+
+    async def test_a_corpus_at_the_cap_is_scanned_whole(self) -> None:
+        store = InMemoryStepStore()
+        await _seed_run(store, 'r1', [_user('needle oldest'), _user('filler')])
+        rendered = await _search(SnapshotHistorySource(store), 'needle', max_scanned_messages=2)
+        assert rendered.startswith("Found 1 match(es) for 'needle' in 2 persisted messages:")
+
+    async def test_raising_the_capability_cap_scans_further_back(self) -> None:
+        store = InMemoryStepStore()
+        history: list[ModelMessage] = [_user('the ZEBRA passphrase'), *(_user(f'filler {i}') for i in range(2_000))]
+        await _seed_run(store, 'r1', history, conversation_id='conv')
+
+        def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('search_conversation_history', {'query': 'ZEBRA'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        async def search(agent: Agent[None, str]) -> str:
+            result = await agent.run('find it', conversation_id='conv')
+            [returned] = _tool_returns(result.all_messages())
+            return returned
+
+        source = SnapshotHistorySource(store)
+        default: Agent[None, str] = Agent(
+            FunctionModel(model_fn), capabilities=[ConversationSearch(source, scope='conversation')]
+        )
+        assert await search(default) == (
+            "No matches for 'ZEBRA' in the newest 2000 of 2001 persisted messages; older messages were not searched."
+        )
+        raised: Agent[None, str] = Agent(
+            FunctionModel(model_fn),
+            capabilities=[ConversationSearch(source, scope='conversation', max_scanned_messages=2_001)],
+        )
+        assert 'ZEBRA passphrase' in await search(raised)
+
+    def test_a_non_positive_cap_is_rejected(self) -> None:
+        source = SnapshotHistorySource(InMemoryStepStore())
+        with pytest.raises(ValueError, match=re.escape('max_scanned_messages must be positive, got 0.')):
+            ConversationSearch(source, scope='conversation', max_scanned_messages=0).get_toolset()
 
 
 class TestCapabilityPartsAreSearchable:
