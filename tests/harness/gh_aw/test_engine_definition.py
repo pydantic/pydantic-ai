@@ -155,6 +155,7 @@ class _Execution(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
     protected_session_capture: bool = Field(alias='protected-session-capture')
+    command_name: str = Field(alias='command-name')
 
 
 class _Behaviors(BaseModel):
@@ -359,6 +360,11 @@ def test_threat_detection_runs_on_a_built_in_engine() -> None:
 
 def test_engine_requires_protected_session_capture() -> None:
     assert behaviors().execution.protected_session_capture is True
+
+
+def test_engine_invokes_pax() -> None:
+    # The launcher tests pass their own command name, so only this pins the one compiled workflows run.
+    assert behaviors().execution.command_name == 'pax'
 
 
 def test_harness_rejects_a_runtime_without_protected_capture(tmp_path: Path) -> None:
