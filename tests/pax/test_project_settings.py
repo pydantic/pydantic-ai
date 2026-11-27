@@ -874,7 +874,10 @@ def test_the_banner_prints_a_project_path_as_written(tmp_path: Path) -> None:
 
 
 def test_the_welcome_ends_with_a_blank_line(tmp_path: Path) -> None:
-    """The first prompt is set off from the welcome, the project report included."""
+    """The first prompt is set off from the welcome, the project report included.
+
+    Not a VCR test: the welcome is local console output, printed before any model request.
+    """
     output = io.StringIO()
     print_welcome(ProjectSettings(path=tmp_path / PROJECT_FILE), Console(file=output, width=300))
     assert output.getvalue().endswith(f'Project settings: {tmp_path / PROJECT_FILE}\n\n')
