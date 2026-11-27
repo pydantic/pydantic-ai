@@ -35,22 +35,27 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelMessagesTypeAdapter,
     ModelRequest,
-    ModelResponse,
     OperatorSource,
     OperatorText,
-    TextPart,
     ToolCallPart,
     ToolResultAttachment,
-    ToolResultSource,
     ToolReturnPart,
 )
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import BackgroundTools, CodeMode, SubAgent, SubAgents, ToolBridge
 from pydantic_ai_harness.background_tools import BackgroundToolResultPart
 
 from .. import capability_cases as core
-from ..append_only import ToolArgs, ToolCall, discover_capabilities, drain_events, run_through_ui, ui_imports_successful
+from ..append_only import (
+    OneCallPerResponse,
+    ToolArgs,
+    ToolCall,
+    discover_capabilities,
+    drain_events,
+    run_through_ui,
+    ui_imports_successful,
+)
 from ..capability_cases import CORE_CAPABILITY_PACKAGES, Calls, CapabilityCase
 from ..conftest import try_import
 from .capability_cases import CASES as HARNESS_CASES, HARNESS_CAPABILITY_PACKAGES
@@ -189,9 +194,7 @@ def _said(content: object) -> object:
     return content
 
 
-def _seen(part: object, *, with_content: bool) -> Seen:
-    if not isinstance(part, CapabilityPart):
-        return Seen(type(part).__name__)
+def _seen(part: CapabilityPart, *, with_content: bool) -> Seen:
     return Seen(
         part.kind,
         part.source,
@@ -210,36 +213,23 @@ _CARRIERS = (ToolReturnPart, BackgroundToolResultPart)
 def _attachments_seen(attachments: Sequence[ToolResultAttachment], *, with_content: bool) -> Iterator[Seen]:
     """What the model sees of a tool result's attachments, which are always data.
 
-    Each run of items one producer made reaches the model as one framed part: content its capability would enqueue at
-    `'none'` when a capability contributed the tool, and the tool's content, behind a note naming it, otherwise.
+    Each run of items one call made reaches the model as one framed part: content the capability that contributed the
+    tool would enqueue at `'none'`. Every case's tools come from a capability.
     """
-    for (tool_call_id, tool_name, capability_id), group in groupby(
+    for (_, _, capability_id), group in groupby(
         attachments, key=lambda attachment: (attachment.tool_call_id, attachment.tool_name, attachment.capability_id)
     ):
+        assert capability_id is not None
         items = [attachment.content for attachment in group]
-        content = _said(items) if with_content else None
-        if capability_id is None:
-            source = ToolResultSource(tool_name=tool_name, tool_call_id=tool_call_id)
-            yield Seen(
-                'pydantic_ai.tool_content',
-                source,
-                None,
-                source.authority,
-                ('data', 'tool_content'),
-                'conversation',
-                content,
-            )
-        else:
-            source = CapabilitySource(capability_id, authority='none')
-            yield Seen(
-                'pydantic_ai.capability_content',
-                source,
-                capability_id,
-                'none',
-                ('data', 'capability_content'),
-                'conversation',
-                content,
-            )
+        yield Seen(
+            'pydantic_ai.capability_content',
+            CapabilitySource(capability_id, authority='none'),
+            capability_id,
+            'none',
+            ('data', 'capability_content'),
+            'conversation',
+            _said(items) if with_content else None,
+        )
 
 
 def _parts_seen(part: object, *, with_content: bool) -> Iterator[Seen]:
@@ -247,6 +237,8 @@ def _parts_seen(part: object, *, with_content: bool) -> Iterator[Seen]:
     if isinstance(part, ToolReturnPart):
         yield from _attachments_seen(part.attachments, with_content=with_content)
     elif not isinstance(part, _CARRIERS):
+        # Besides the prompt and the carriers, the calls put only capability parts in the history.
+        assert isinstance(part, CapabilityPart), part
         yield _seen(part, with_content=with_content)
 
 
@@ -280,41 +272,6 @@ class _Observer(AbstractCapability[None]):
     async def after_run(self, ctx: RunContext[None], *, result: AgentRunResult[object]) -> AgentRunResult[object]:
         self.histories.append(result.all_messages())
         return result
-
-
-@dataclass
-class _Script:
-    """A model that makes the calls in order, one per response, then answers.
-
-    With `wrap`, a call to a tool the model isn't offered directly goes through the route's dispatcher.
-    """
-
-    calls: Sequence[ToolCall]
-    wrap: Callable[[str, ToolArgs, AgentInfo], ToolCall] | None = None
-    wrapped: int = 0
-
-    def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        step = sum(isinstance(message, ModelResponse) for message in messages)
-        if step >= len(self.calls):
-            return ModelResponse(parts=[TextPart('done')])
-        name, args = self.calls[step]
-        if self.wrap is not None and name not in {tool.name for tool in info.function_tools}:
-            self.wrapped += 1
-            name, args = self.wrap(name, args, info)
-        return ModelResponse(parts=[ToolCallPart(name, args, tool_call_id=f'call_{step}')])
-
-    async def stream(self, messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        # Streamed, so a tool that emits a capability event has a handler to deliver it to.
-        [part] = self.respond(messages, info).parts
-        if isinstance(part, TextPart):
-            yield part.content
-        else:
-            assert isinstance(part, ToolCallPart)
-            yield {0: DeltaToolCall(part.tool_name, part.args_as_json_str(), tool_call_id=part.tool_call_id)}
-
-    @property
-    def model(self) -> FunctionModel:
-        return FunctionModel(self.respond, stream_function=self.stream)
 
 
 async def _rebuild_definitions(ctx: RunContext[None], tool_defs: list[ToolDefinition]) -> list[ToolDefinition]:
@@ -371,7 +328,11 @@ def _ran(calls: Calls, observer: _Observer) -> list[str]:
 
 async def _native(calls: Calls, directory: Path) -> RouteRun:
     capabilities, observer = await _built(calls, directory)
-    agent = Agent(_Script(calls.made).model, deps_type=type(None), capabilities=[*capabilities, observer])
+    agent = Agent(
+        OneCallPerResponse(calls.made, unstreamed=True).model,
+        deps_type=type(None),
+        capabilities=[*capabilities, observer],
+    )
     result = await agent.run('go', event_stream_handler=drain_events)
     return RouteRun(result.all_messages(), _ran(calls, observer))
 
@@ -383,7 +344,7 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
         loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(native.messages))
         return RouteRun(loaded, native.ran)
     capabilities, observer = await _built(calls, directory)
-    script = _Script(calls.made, _WRAPS.get(route))
+    script = OneCallPerResponse(calls.made, wrap=_WRAPS.get(route), unstreamed=True)
     if route in ('vercel_ai', 'ag_ui'):
         agent = Agent(script.model, deps_type=type(None), capabilities=[*capabilities, observer])
         protocol: Literal['vercel', 'agui'] = 'vercel' if route == 'vercel_ai' else 'agui'
@@ -394,7 +355,7 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
     if route == 'sub_agent':
         child = Agent(script.model, deps_type=type(None), name='child', capabilities=[observer])
         parent = Agent(
-            _Script([('delegate_task', {'agent_name': 'child', 'task': 'go'})]).model,
+            OneCallPerResponse([('delegate_task', {'agent_name': 'child', 'task': 'go'})], unstreamed=True).model,
             deps_type=type(None),
             capabilities=[SubAgents(agents=[SubAgent(child)], shared_capabilities=capabilities)],
         )

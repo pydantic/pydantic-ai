@@ -43,7 +43,6 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
-    UserContent,
 )
 from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.tools import (
@@ -188,16 +187,9 @@ def _format_background_result(tool_name: str, task_id: str, result: Any) -> Back
     return_part = ToolReturnPart(tool_name=tool_name, tool_call_id=task_id, content=return_value)
     # The frame's attributes name the call the "running in background" reply announced, so the result needs no
     # preamble.
-    content: list[UserContent] = [return_part.model_response_str(), *return_part.files]
-    # Adjacent text goes on separate lines, as one item.
-    merged: list[UserContent] = []
-    for item in content:
-        if isinstance(item, str) and merged and isinstance(merged[-1], str):
-            merged[-1] = f'{merged[-1]}\n{item}'
-        else:
-            merged.append(item)
-    body = merged[0] if len(merged) == 1 and isinstance(merged[0], str) else merged
-    return make_background_result(tool_name, task_id, body)
+    text = return_part.model_response_str()
+    files = return_part.files
+    return make_background_result(tool_name, task_id, [text, *files] if files else text)
 
 
 @dataclass

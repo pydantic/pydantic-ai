@@ -971,6 +971,27 @@ class TestComposition:
         assert kinds == ['question']
         assert json.loads(result.output) == {'Approach': ['Patch'], 'Targets': ['ui.py']}
 
+    async def test_a_handler_answer_wrapped_without_notes_is_kept_as_is(self) -> None:
+        """A `ToolReturn` with empty content carries no notes, so nothing reaches the user channel."""
+
+        def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
+            (call,) = requests.calls
+            return requests.build_results(
+                calls={call.tool_call_id: ToolReturn(return_value={'Approach': ['Patch']}, content=[])}
+            )
+
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=None), HandleDeferredToolCalls[None](ask)],
+        )
+        result = await agent.run('go')
+
+        assert json.loads(result.output) == {'Approach': ['Patch']}
+        (tool_part,) = result.all_messages()[-2].parts
+        assert isinstance(tool_part, ToolReturnPart)
+        assert tool_part.attachments == ()
+
 
 class _ImmediateBackend(JournalCallableOperationBackend[None]):
     def __init__(self, agent_name: str, default_model_id: str | None) -> None:
