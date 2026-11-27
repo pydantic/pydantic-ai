@@ -4110,7 +4110,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     counted_usage,
                     model_name=model.model_name,
                     provider_api_url=model.base_url,
-                    provider_name=model.system,
+                    provider_name=model._pricing_provider_stamp or model.system,  # pyright: ignore[reportPrivateUsage]
                 )
                 counted_usage.cost = counted_price.total_price if counted_price is not None else None
                 usage.incr(counted_usage)  # usage-attribution: a deepcopy, to check a limit before the request

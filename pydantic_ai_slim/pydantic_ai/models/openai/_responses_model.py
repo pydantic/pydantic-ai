@@ -865,6 +865,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             canonical_system=self._canonical_system_stamp,
+            pricing_provider=self._pricing_provider_stamp,
         )
 
     async def _responses_compact(
@@ -1272,6 +1273,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             canonical_system=self._canonical_system_stamp,
+            pricing_provider=self._pricing_provider_stamp,
             finish_reason=finish_reason,
             state=state,
             provider_details=provider_details or None,
@@ -1492,6 +1494,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _process_provider_details=self._process_provider_details,
         )
         streamed_response.canonical_system = self._canonical_system_stamp
+        streamed_response.pricing_provider = self._pricing_provider_stamp
         if tool_call_ids_are_response_scoped:
             # Response-scoped tool-call IDs are qualified with the response ID as chunks arrive, so the
             # ID must be known before iteration. This is only needed (and only set eagerly) for the

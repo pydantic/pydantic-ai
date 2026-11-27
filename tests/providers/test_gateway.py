@@ -1,3 +1,4 @@
+import json
 import os
 import re
 from decimal import Decimal
@@ -10,7 +11,7 @@ import httpx
 import httpx2
 import pytest
 
-from pydantic_ai import Agent, UserError
+from pydantic_ai import Agent, ModelMessagesTypeAdapter, ModelResponse, UserError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.models import infer_model
 
@@ -216,6 +217,76 @@ async def test_init_with_http_client_replaces_existing_gateway_hook():
 
         assert request.headers['X-Existing-Request-Hook'] == 'kept'
         assert request.headers['Authorization'] == 'Bearer second'
+
+
+def _chat_completion(request: httpx2.Request) -> httpx2.Response:
+    """A Chat Completions response with usage and no Gateway-reported cost, so the cost is estimated locally."""
+    body = json.loads(request.content)
+    message = {'role': 'assistant', 'content': 'Paris.'}
+    usage = {'prompt_tokens': 100, 'completion_tokens': 50, 'total_tokens': 150}
+    if not body.get('stream'):
+        return httpx2.Response(
+            200,
+            json={
+                'id': 'chatcmpl-1',
+                'object': 'chat.completion',
+                'created': 0,
+                'model': body['model'],
+                'choices': [{'index': 0, 'message': message, 'finish_reason': 'stop'}],
+                'usage': usage,
+            },
+        )
+    chunks = [
+        {'choices': [{'index': 0, 'delta': message, 'finish_reason': None}]},
+        {'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}], 'usage': usage},
+    ]
+    events = ''.join(
+        f'data: {json.dumps({"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 0, "model": body["model"], **chunk})}\n\n'
+        for chunk in chunks
+    )
+    return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=f'{events}data: [DONE]\n\n')
+
+
+@pytest.mark.vcr(ignore_hosts=['*'])
+@pytest.mark.parametrize('stream', [False, True])
+async def test_gateway_route_for_another_providers_models_is_priced_as_that_provider(
+    allow_model_requests: None, stream: bool
+):
+    """A response from the OpenAI-compatible `doubleword` route keeps `openai` as its provider, and is priced as Doubleword.
+
+    Not a cassette test: pricing is local, and what matters is what the response records, which any Chat Completions
+    reply shows. `ignore_hosts` lets the request reach the mock transport.
+    """
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(_chat_completion)) as http_client:
+        provider = gateway_provider('doubleword', http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL)
+        agent = Agent(OpenAIChatModel('deepseek-ai/DeepSeek-V4.1-Flash', provider=provider))
+        if stream:
+            async with agent.run_stream('What is the capital of France?') as result:
+                await result.get_output()
+            messages = result.all_messages()
+        else:
+            messages = (await agent.run('What is the capital of France?')).all_messages()
+
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    assert (response.provider_name, response.pricing_provider) == ('openai', 'doubleword')
+    price = response.cost()
+    assert price.provider.id == 'doubleword'
+    assert response.usage.cost == price.total_price > 0
+    # It survives a round-trip through stored history.
+    [stored] = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python([response]))
+    assert isinstance(stored, ModelResponse) and stored.pricing_provider == 'doubleword'
+
+
+def test_gateway_route_for_its_own_provider_sets_no_pricing_provider():
+    """A route that serves its own provider's models, or a custom route named for no upstream, is priced by name."""
+    for provider in (
+        gateway_provider('openai', api_key='gw-key', base_url=GATEWAY_BASE_URL),
+        gateway_provider('openai', route='my-endpoint', api_key='gw-key', base_url=GATEWAY_BASE_URL),
+    ):
+        assert OpenAIChatModel('gpt-5', provider=provider)._pricing_provider_stamp is None  # pyright: ignore[reportPrivateUsage]
+    custom = gateway_provider('doubleword', route='my-endpoint', api_key='gw-key', base_url=GATEWAY_BASE_URL)
+    assert OpenAIChatModel('deepseek-ai/DeepSeek-V4.1-Flash', provider=custom)._pricing_provider_stamp == 'doubleword'  # pyright: ignore[reportPrivateUsage]
 
 
 @pytest.mark.vcr(ignore_hosts=['*'])

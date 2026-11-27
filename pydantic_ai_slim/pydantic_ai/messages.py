@@ -5954,6 +5954,15 @@ class ModelResponse:
     provider_url: str | None = None
     """The base URL of the LLM provider that generated the response."""
 
+    pricing_provider: str | None = None
+    """The [`genai-prices`](https://github.com/pydantic/genai-prices) provider to price this response as, when it isn't `provider_name`.
+
+    Set by the model when its provider's prices are another provider's, such as a Pydantic AI Gateway route that
+    serves Doubleword models over the OpenAI API (`gateway/doubleword:...`): `provider_name` stays `'openai'`, which
+    history replay keys on, and [`cost()`][pydantic_ai.messages.ModelResponse.cost] looks the model up under
+    `'doubleword'`.
+    """
+
     canonical_system: str | None = None
     """The system whose keys verify the stateless signed or encrypted data in this response, when it isn't evident from `provider_name`.
 
@@ -6179,7 +6188,7 @@ class ModelResponse:
             self.usage,
             model_name=self.model_name,
             provider_api_url=self.provider_url,
-            provider_name=self.provider_name,
+            provider_name=self.pricing_provider or self.provider_name,
             genai_request_timestamp=self.timestamp,
             price_context=self.provider_details,
         )

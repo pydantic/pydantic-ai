@@ -819,6 +819,7 @@ def test_call_tool_result_carries_every_tool_manager_control_flow_exception() ->
                 'kind': 'response',
                 'provider_name': None,
                 'provider_url': None,
+                'pricing_provider': None,
                 'canonical_system': None,
                 'provider_details': None,
                 'provider_response_id': None,
