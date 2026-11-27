@@ -492,13 +492,13 @@ async def load_skill_libraries(
     libraries, skipped = await _libraries(workspace, directories, missing_directories)
     discovered, unreadable = await _discover_skills(workspace, libraries)
     # An unreadable skill directory still names a skill, so selecting it reports it as skipped, not unknown.
-    unreadable_by_name = {_normalize_name(posixpath.basename(entry.path)): entry for entry in unreadable}
-    available_names = frozenset(name for name, _ in discovered).union(unreadable_by_name)
+    unreadable_named = [(_normalize_name(posixpath.basename(entry.path)), entry) for entry in unreadable]
+    available_names = frozenset(name for name, _ in discovered).union(name for name, _ in unreadable_named)
     selected_names = _selected_names(
         available_names, include=include, exclude=exclude, unknown_names=unknown_names, skipped=[*skipped, *unreadable]
     )
     # Like an invalid `SKILL.md` below, an unreadable skill the user left out stays quiet.
-    skipped.extend(entry for name, entry in unreadable_by_name.items() if name in selected_names)
+    skipped.extend(entry for name, entry in unreadable_named if name in selected_names)
 
     by_name: dict[str, SkillDefinition] = {}
     for name, skill_file in discovered:

@@ -1260,6 +1260,25 @@ class TestSkillLibraryLayering:
         assert catalog.skipped == (SkippedSkill(path=path, reason='unreadable', message=message),)
 
     @requires_posix_permissions
+    async def test_unreadable_skills_with_the_same_name_in_two_libraries_are_each_skipped(self, tmp_path: Path) -> None:
+        # `pax` searches several folders, so the same skill name in two of them is common.
+        _write_skill(tmp_path / '.agents' / 'skills', 'deploy')
+        _write_skill(tmp_path / '.claude' / 'skills', 'deploy')
+        _write_skill(tmp_path / '.claude' / 'skills', 'review')
+        locked = [tmp_path / '.agents' / 'skills' / 'deploy', tmp_path / '.claude' / 'skills' / 'deploy']
+        skills: Skills[None] = Skills(['.agents/skills', '.claude/skills'])
+        for path in locked:
+            path.chmod(0)
+        try:
+            catalog = await skills.load(LocalWorkspaceBackend(tmp_path))
+        finally:
+            for path in locked:
+                path.chmod(0o755)
+
+        assert [skill.name for skill in catalog.skills] == ['review']
+        assert [entry.path for entry in catalog.skipped] == [str(path.resolve()) for path in locked]
+
+    @requires_posix_permissions
     async def test_an_included_unreadable_skill_is_skipped_not_unknown(self, tmp_path: Path) -> None:
         _write_skill(tmp_path / 'skills', 'deploy')
         _write_skill(tmp_path / 'skills', 'review')
