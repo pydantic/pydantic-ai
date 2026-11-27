@@ -3683,8 +3683,7 @@ async def test_a_next_pass_starts_over_from_the_step_model_s_id():
     resolved: list[str] = []
 
     def resolve(ctx: ModelResolutionContext[None], model_id: str) -> Model | None:
-        if model_id != 'my-primary':
-            return None
+        assert model_id == 'my-primary'
         resolved.append(model_id)
         return _fails_then_answers('primary', 1, calls)
 
