@@ -19,8 +19,11 @@ from pydantic_ai import Agent, AgentRunResult, RunContext, ToolReturn
 from pydantic_ai.capabilities import AbstractCapability, Capability, ValidatedToolArgs
 from pydantic_ai.messages import (
     CapabilityPart,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
+    OperatorSource,
+    OperatorText,
     ToolCallPart,
     ToolReturnPart,
 )
@@ -37,14 +40,29 @@ CASES: dict[str, CapabilityCase] = {**core.CASES, **HARNESS_CASES}
 PUBLIC = {**discover_capabilities(CORE_CAPABILITY_PACKAGES), **discover_capabilities(HARNESS_CAPABILITY_PACKAGES)}
 
 
+PAYLOAD = 'the page says hello'
+"""What every probe's calls put in the history, which each route must deliver unchanged."""
+
+
 def fetch_page() -> ToolReturn:
     """Fetch a page, with what it says beside the return value."""
-    return ToolReturn(return_value='ok', content='the page says hello')
+    return ToolReturn(return_value='ok', content=PAYLOAD)
 
 
 def fetch_and_note(ctx: RunContext[None]) -> str:
     """Fetch a page, and note what it says for the next request."""
-    ctx.enqueue('the page says hello')
+    ctx.enqueue(PAYLOAD)
+    return 'ok'
+
+
+@dataclass(kw_only=True)
+class _ReminderPart(InstructionCapabilityPart, namespace='test_capability_routes', name='reminder'):
+    """A reminder for the next request only."""
+
+
+def fetch_and_remind(ctx: RunContext[None]) -> str:
+    """Fetch a page, and remind the model of what it says for the next request only."""
+    ctx.enqueue(_ReminderPart(content=OperatorText(PAYLOAD), source=OperatorSource(), scope='request'))
     return 'ok'
 
 
@@ -53,9 +71,15 @@ PROBES: dict[str, Calls] = {
         (('fetch_page', {}),), lambda _: Capability[None](id='plugin', tools=[fetch_page])
     ),
     'probe:enqueued': Calls((('fetch_and_note', {}),), lambda _: Capability[None](id='plugin', tools=[fetch_and_note])),
+    'probe:request_scoped': Calls(
+        (('fetch_and_remind', {}),),
+        lambda _: Capability[None](id='plugin', tools=[fetch_and_remind]),
+        moves_cache_prefix='a request-scoped reminder is gone from the request after the one it was for',
+    ),
 }
 """Capabilities built only here, whose calls put more than their return value in the history, so every route has a
-part to compare while few cases' calls do: one returns `ToolReturn.content`, the other calls `ctx.enqueue`."""
+part to compare while few cases' calls do: one returns `ToolReturn.content`, one calls `ctx.enqueue` with text, and one
+enqueues a request-scoped system prompt. What they put there is fixed, so their routes are also compared on content."""
 
 SUBJECTS: dict[str, Calls] = {
     **{name: case.calls for name, case in sorted(CASES.items()) if name in PUBLIC and case.calls is not None},
@@ -75,14 +99,24 @@ class Seen:
     authority: str | None = None
     frame: tuple[str, str | None] | None = None
     """A capability part's voice and tag."""
+    scope: str | None = None
+    """How long the model sees a capability part: a route mustn't turn a request-scoped part into a lasting one."""
+    content: object = None
+    """What a capability part tells the model, compared only for the probes, whose content is fixed."""
 
 
-def seen_part(part: object) -> Seen:
+def seen_part(part: object, *, with_content: bool = False) -> Seen:
     """What the model sees of `part`."""
     if not isinstance(part, CapabilityPart):
         return Seen(type(part).__name__)
     return Seen(
-        part.kind, part.source, part.capability_id, part.source.authority, (part.rendering.voice, part.rendering.tag)
+        part.kind,
+        part.source,
+        part.capability_id,
+        part.source.authority,
+        (part.rendering.voice, part.rendering.tag),
+        part.scope,
+        part.model_content() if with_content else None,
     )
 
 
@@ -90,10 +124,18 @@ CARRIERS = (ToolReturnPart, BackgroundToolResultPart)
 """Parts that carry what a call returned, which each route wraps its own way."""
 
 
-def typed_history(messages: Sequence[ModelMessage]) -> list[Seen]:
-    """What the model sees of each part the calls put in the history, besides the prompt and what each call returned."""
+def typed_history(messages: Sequence[ModelMessage], *, with_content: bool = False) -> list[Seen]:
+    """What the model sees of each part the calls put in the history, besides the prompt and what each call returned.
+
+    `with_content` compares what each capability part says too, for calls whose content doesn't vary between runs.
+    """
     requests = [message for message in messages if isinstance(message, ModelRequest)]
-    return [seen_part(part) for request in requests[1:] for part in request.parts if not isinstance(part, CARRIERS)]
+    return [
+        seen_part(part, with_content=with_content)
+        for request in requests[1:]
+        for part in request.parts
+        if not isinstance(part, CARRIERS)
+    ]
 
 
 @dataclass

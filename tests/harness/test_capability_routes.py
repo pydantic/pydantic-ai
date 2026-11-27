@@ -33,6 +33,7 @@ from ..append_only import OneCallPerResponse, ToolArgs, ToolCall, drain_events, 
 from ..capability_cases import Calls
 from ..conftest import try_import
 from .capability_runs import (
+    PAYLOAD,
     PROBES,
     SUBJECTS,
     RouteRun,
@@ -138,6 +139,7 @@ async def _rebuild_definitions(ctx: RunContext[None], tool_defs: list[ToolDefini
             with_native=tool_def.with_native,
             return_schema=tool_def.return_schema,
             include_return_schema=tool_def.include_return_schema,
+            ui_visibility=tool_def.ui_visibility,
         )
         for tool_def in tool_defs
     ]
@@ -205,7 +207,9 @@ async def _assert_same(name: str, route: Route, directory: Path, kernel: IPython
     native = await run_native(calls, directory / 'native')
     assert native.ran, 'the calls ran no tool'
     routed = await _through(route, calls, directory / route, kernel)
-    expected, actual = typed_history(native.messages), typed_history(routed.messages)
+    with_content = name in PROBES
+    expected = typed_history(native.messages, with_content=with_content)
+    actual = typed_history(routed.messages, with_content=with_content)
     if route == 'background_tools':
         # Background tasks run concurrently, so they end, and report, in any order.
         native.ran.sort()
@@ -251,10 +255,12 @@ def test_every_known_entry_names_a_case_and_route() -> None:
 
 
 async def test_the_native_route_attributes_the_probes(tmp_path: Path) -> None:
-    """The baseline the probes' routes are compared with: framed data, which `plugin` wrote at `'none'`."""
+    """The baseline the probes' routes are compared with: `plugin`'s content at `'none'`, as written."""
     for name, calls in PROBES.items():
-        [seen] = typed_history((await run_native(calls, tmp_path / name)).messages)
-        assert (seen.source, seen.frame) == (
-            CapabilitySource('plugin', authority='none'),
-            ('data', 'capability_content'),
-        )
+        [seen] = typed_history((await run_native(calls, tmp_path / name)).messages, with_content=True)
+        assert seen.content == PAYLOAD
+        assert seen.scope == ('request' if name == 'probe:request_scoped' else 'conversation')
+        assert seen.source == CapabilitySource('plugin', authority='none')
+        # A reminder keeps its instruction voice, rendered with a note that it has no authority; the others are data.
+        expected_frame = ('instruction', None) if name == 'probe:request_scoped' else ('data', 'capability_content')
+        assert seen.frame == expected_frame
