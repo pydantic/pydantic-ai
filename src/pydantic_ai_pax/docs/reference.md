@@ -2392,6 +2392,46 @@ at the end of the first turn after the task finishes. A summary that is never us
 it counts toward the usage of the turn that started it, even when it finishes after that turn. It
 only applies with the `summarization` strategy.
 
+### Loop detection
+
+The built-in `detect_loops` plugin is on by default. It is harness
+[Detect Loops](../../../docs/harness/detect-loops.md) with `action='nudge'`: when the model
+repeats itself without making progress, Pax adds a short note asking it to change its approach or
+say what is blocking it, and the turn goes on. Until it finds a loop it adds nothing to a request,
+no instructions and no tools, so a turn without one sends what it would without the plugin.
+
+It looks for:
+
+| Loop | Found when |
+|---|---|
+| the same result | the same tool call (same tool, same arguments) returned the same result 3 times in a row |
+| two calls in turn | two tool calls alternated, A-B-A-B, for 3 cycles |
+| the same call | the same tool call was made 5 times within the last 10 tool calls |
+| the same answer | 3 responses in a row without tool calls had the same text |
+| the same call at once | one response made the same tool call 5 times |
+| repeated text | a response's text or thinking repeated the same passage back to back, past about 2,000 characters |
+
+The note joins the next request after the tool results, and stays in the conversation from then
+on; nothing earlier is rewritten. For repeated text or thinking, Pax instead stops that response and
+asks again with the note on that one request, which counts as one of the turn's output retries: a model that loops a
+second time ends the turn with `Exceeded maximum output retries`. Tool call arguments are not
+checked for repeated passages, so writing a file with many identical rows works as usual.
+
+Only this turn's responses count, so a loop has to build up again after a new prompt or a resume.
+In code mode (`run.code_mode`, on by default) the model calls tools from inside `run_code`, and
+Pax compares the `run_code` calls themselves: running the same code again counts, but calling one
+tool the same way from code that differs each time does not.
+
+A note does not stop a model that ignores it; `run.request_limit` does. A tool polled on purpose
+until a job finishes, with the same arguments and status each time, gets a note after 3 polls.
+`/plugins disable detect_loops` turns it off. To change the thresholds, replace the built-in with
+your own declaration of the harness capability under the same id, with the settings from its
+page:
+
+```text
+/plugins add detect_loops pydantic_ai_harness.detect_loops:DetectLoops '{"repeated_result_threshold": 5, "stream_channels": ["thinking", "text"]}'
+```
+
 ### Task delegation
 
 The stock `coder` plugin exposes `delegate_task`, which starts a fresh conversation

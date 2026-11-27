@@ -1178,6 +1178,7 @@ settings using the former import paths are redirected to the new modules.
 | `persistence` | `pydantic_ai_pax.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_ai_pax.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `refinement` | `pydantic_ai_pax.builtin_plugins.refinement` | `{}` | `/refine`: the model reviews and revises its last answer |
+| `detect_loops` | `pydantic_ai_pax.builtin_plugins.detect_loops` | `{}` | nudges the model to change its approach when it repeats the same tool calls or responses; see [Loop detection](docs/reference.md#loop-detection) |
 | `hooks` | `pydantic_ai_pax.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
 | `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; `/computer-use` lets the model use its desktop; see [Sandboxes](docs/reference.md#sandboxes-sandbox) and [Computer use](docs/reference.md#computer-use-computer-use) |
 | `slack` (off until enabled) | `pydantic_ai_pax.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |

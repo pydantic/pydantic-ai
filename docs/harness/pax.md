@@ -153,6 +153,7 @@ These are on from the start:
 - `repo_context`: reads `AGENTS.md` or `CLAUDE.md` from the folder, its parents, and subfolders
 - `compaction`: summarises older messages, and `/compact`
 - `refinement`: `/refine`, which has the model review and revise its last answer
+- `detect_loops`: a nudge to change approach when the model repeats the same tool calls or responses
 - `persistence`: extra checkpoints so an interrupted session can recover
 - `mcp`: MCP servers, managed with `/mcp`
 - `notifications`: a desktop notification when a turn finishes
