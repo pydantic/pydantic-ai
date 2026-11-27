@@ -3,6 +3,8 @@
 from __future__ import annotations
 
 import json
+import os
+import subprocess
 import sys
 from pathlib import Path
 
@@ -92,3 +94,63 @@ def test_main_fails_closed_without_github_output(tmp_path: Path, monkeypatch: py
     with pytest.raises(SystemExit) as raised:
         main()
     assert raised.value.code == 1
+
+
+_SCRIPT = Path(__file__).parent / 'douwebot_usage_limit.py'
+
+
+def _run_script(execution_path: Path, output_path: Path) -> subprocess.CompletedProcess[str]:
+    return subprocess.run(
+        [sys.executable, str(_SCRIPT)],
+        env={**os.environ, 'EXECUTION_FILE': str(execution_path), 'GITHUB_OUTPUT': str(output_path)},
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+
+def test_no_signature_zero_field_api_failure_enriches_error_line_fail_closed(tmp_path: Path) -> None:
+    result_message: dict[str, object] = {'type': 'result', 'is_error': True, 'num_turns': 1}
+    execution = tmp_path / 'claude-execution-output.json'
+    execution.write_text(json.dumps([result_message]), encoding='utf-8')
+    output = tmp_path / 'github-output.txt'
+
+    completed = _run_script(execution, output)
+
+    assert completed.returncode == 1
+    assert completed.stderr.startswith(
+        '::error::Claude Code failed without the subscription-limit signature; not falling back to OpenCode.'
+    )
+    assert 'session failed; no API-error fields were recorded in the execution file' in completed.stderr
+    assert 'is_error=true' in completed.stderr
+    assert 'num_turns=1' in completed.stderr
+    assert '\n' not in completed.stderr.rstrip('\n')
+    assert not output.exists()  # fail closed: the script exits before writing GITHUB_OUTPUT
+
+
+def test_no_signature_api_error_fields_surfaced_in_error_line_fail_closed(tmp_path: Path) -> None:
+    result_message: dict[str, object] = {
+        'type': 'result',
+        'is_error': True,
+        'num_turns': 1,
+        'api_error_status': 401,
+        'api_error': 'Invalid API key provided\n%invalid-key%',
+        'terminal_reason': 'Unrecoverable API error',
+    }
+    execution = tmp_path / 'claude-execution-output.json'
+    execution.write_text(json.dumps([result_message]), encoding='utf-8')
+    output = tmp_path / 'github-output.txt'
+
+    completed = _run_script(execution, output)
+
+    assert completed.returncode == 1
+    annotation = completed.stderr.rstrip('\n')
+    assert annotation.startswith(
+        '::error::Claude Code failed without the subscription-limit signature; not falling back to OpenCode.'
+    )
+    assert 'api_error_status=401' in annotation
+    assert 'api_error=Invalid API key provided%0A%25invalid-key%25' in annotation
+    assert 'terminal_reason=Unrecoverable API error' in annotation
+    assert annotation.count('::error::') == 1
+    assert '\n' not in annotation
+    assert not output.exists()  # fail closed: the script exits before writing GITHUB_OUTPUT
