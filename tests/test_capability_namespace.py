@@ -122,10 +122,20 @@ def test_entry_points_with_two_targets_for_one_name_raise(write_module: ModuleWr
         (dist_info / 'entry_points.txt').write_text(f'[pydantic_ai_tests.clash]\nGreeting = {module}:Greeting\n')
     importlib.invalidate_caches()
 
+    # Installed packages fill this tier, so the clash breaks only a spec that uses the name.
+    registry = get_capability_registry(namespace=CapabilityNamespace(entry_points='pydantic_ai_tests.clash'))
+    assert registry['Thinking'] is Thinking
+
     with pytest.raises(
         ValueError, match=r"Two different capabilities are named 'Greeting' in the `pydantic_ai_tests\.clash`"
     ):
-        get_capability_registry(namespace=CapabilityNamespace(entry_points='pydantic_ai_tests.clash'))
+        Agent.from_spec(
+            _spec('Greeting'), capability_namespace=CapabilityNamespace(entry_points='pydantic_ai_tests.clash')
+        )
+
+    # A higher tier settles it.
+    settled = CapabilityNamespace(entry_points='pydantic_ai_tests.clash', names={'Greeting': f'{module}:Greeting'})
+    assert get_capability_registry(namespace=settled)['Greeting'].__module__ == module
 
 
 def test_modules_make_their_capabilities_available(write_module: ModuleWriter):
@@ -190,8 +200,38 @@ def test_modules_without_all_offer_their_public_capabilities(write_module: Modul
     registry = get_capability_registry(namespace=CapabilityNamespace(modules=[module]))
 
     assert registry['Greeting'].__module__ == module
-    assert {'_Private', 'NotADataclass', 'OptedOut'}.isdisjoint(registry)
+    # Imported classes are not the module's own: `AbstractCapability` would otherwise become a spec name.
+    assert {'_Private', 'NotADataclass', 'OptedOut', 'AbstractCapability'}.isdisjoint(registry)
     assert registry['Thinking'] is Thinking
+
+
+def test_a_module_that_imports_a_built_in_does_not_clash_with_one_that_overrides_it(write_module: ModuleWriter):
+    overriding = _capability_module(write_module, 'ns_modules_override', class_name='Thinking')
+    wrapping = write_module(
+        'ns_modules_wrapping',
+        """
+        from dataclasses import dataclass
+
+        from pydantic_ai.capabilities import AbstractCapability, Thinking
+
+
+        @dataclass
+        class Careful(AbstractCapability):
+            thinking: Thinking | None = None
+        """,
+    )
+
+    registry = get_capability_registry(namespace=CapabilityNamespace(modules=[overriding, wrapping]))
+
+    assert registry['Thinking'].__module__ == overriding
+    assert registry['Careful'].__module__ == wrapping
+
+
+def test_a_module_that_cannot_be_imported_says_where_it_came_from():
+    with pytest.raises(
+        ValueError, match='Capability module `ns_no_such_module` could not be imported: No module named'
+    ):
+        get_capability_registry(namespace=CapabilityNamespace(modules=['ns_no_such_module']))
 
 
 def test_modules_with_two_classes_for_one_name_raise(write_module: ModuleWriter):

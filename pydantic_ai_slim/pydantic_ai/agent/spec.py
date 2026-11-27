@@ -283,7 +283,8 @@ class CapabilityNamespace:
     path, so the caller decides which class each name means. A name resolves in the first of these
     tiers that has it, in this order: `types`, `names`, `entry_points`, `modules`, then the built-in
     capabilities. A higher tier therefore deliberately overrides a lower one, including a built-in,
-    while two different classes for one name within a single tier raise an error.
+    while two different classes for one name within a single tier raise an error: for
+    `entry_points`, which installed packages fill, only when a spec uses that name.
 
     `names` and `entry_points` only point at a `module:attribute` target, and nothing is imported
     until a spec actually uses that name. `modules` are imported when the namespace is used, since
@@ -304,11 +305,18 @@ class CapabilityNamespace:
 
     modules: Sequence[str] = ()
     """Modules whose capability classes are all made available: those listed in the module's
-    `__all__`, or else its public attributes."""
+    `__all__`, or else the public ones it defines itself."""
 
 
-_Target = Union['type[AbstractCapability[Any]]', str]
-"""A registry entry: a class, or the `module:attribute` target it is imported from on first use."""
+@dataclass(frozen=True)
+class _Clash:
+    """Two different installed capabilities under one name: an error only for a spec that uses the name."""
+
+    message: str
+
+
+_Target = Union['type[AbstractCapability[Any]]', str, _Clash]
+"""A registry entry: a class, the `module:attribute` target it is imported from on first use, or a clash."""
 
 
 class _CapabilityRegistry(Mapping[str, 'type[AbstractCapability[Any]]']):
@@ -319,6 +327,8 @@ class _CapabilityRegistry(Mapping[str, 'type[AbstractCapability[Any]]']):
 
     def __getitem__(self, name: str) -> type[AbstractCapability[Any]]:
         entry = self._entries[name]
+        if isinstance(entry, _Clash):
+            raise ValueError(entry.message)
         if isinstance(entry, str):
             entry = _resolve_capability_target(name, entry)
             self._entries[name] = entry
@@ -361,11 +371,21 @@ def _resolve_capability_target(name: str, target: str) -> type[AbstractCapabilit
 def _module_capability_types(module_name: str) -> list[type[AbstractCapability[Any]]]:
     from pydantic_ai.capabilities.abstract import AbstractCapability
 
-    module = importlib.import_module(module_name)
+    try:
+        module = importlib.import_module(module_name)
+    except ImportError as e:
+        raise ValueError(f'Capability module `{module_name}` could not be imported: {e}') from e
     exported: Sequence[str] | None = getattr(module, '__all__', None)
-    # An empty `__all__` exports nothing; only a missing one falls back to the public attributes.
+    # An empty `__all__` exports nothing. Without one, only the public classes the module defines count:
+    # one it imports, like a built-in it wraps, is another module's to offer.
     attribute_names: list[str] = list(
-        exported if exported is not None else (n for n in vars(module) if not n.startswith('_'))
+        exported
+        if exported is not None
+        else (
+            n
+            for n, value in vars(module).items()
+            if not n.startswith('_') and getattr(value, '__module__', None) == module.__name__
+        )
     )
     found: dict[type[AbstractCapability[Any]], None] = {}
     for attribute_name in attribute_names:
@@ -380,12 +400,18 @@ def _module_capability_types(module_name: str) -> list[type[AbstractCapability[A
     return list(found)
 
 
-def _named_tier(items: Sequence[tuple[str, _Target]], label: str) -> dict[str, _Target]:
+def _named_tier(items: Sequence[tuple[str, _Target]], label: str, *, lazy: bool = False) -> dict[str, _Target]:
+    """One tier's entries by name. Two different ones under a name raise, or with `lazy`, raise on lookup."""
     tier: dict[str, _Target] = {}
     for name, entry in items:
-        if name in tier and tier[name] != entry:
-            raise ValueError(f'Two different capabilities are named {name!r} in {label}: `{tier[name]}` and `{entry}`')
-        tier[name] = entry
+        existing = tier.get(name)
+        if existing is None or existing == entry or isinstance(existing, _Clash):
+            tier.setdefault(name, entry)
+            continue
+        message = f'Two different capabilities are named {name!r} in {label}: `{existing}` and `{entry}`'
+        if not lazy:
+            raise ValueError(message)
+        tier[name] = _Clash(message)
     return tier
 
 
@@ -427,6 +453,8 @@ def get_capability_registry(
                     for ep in importlib.metadata.entry_points(group=namespace.entry_points)
                 ],
                 f'the `{namespace.entry_points}` entry points',
+                # Installed packages fill this tier, not the caller, so a clash breaks only specs that use the name.
+                lazy=True,
             )
         )
     entries.update(namespace.names)
