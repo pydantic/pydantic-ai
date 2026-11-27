@@ -1233,7 +1233,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 yield event
 
     def _close_deferred_calls(self) -> Iterator[_messages.FunctionToolResultEvent]:
-        """Give each call a tool deferred while running a result, as the run ended on a final result instead.
+        """Give a result to each call its tool deferred while running, since the run ended on a final result instead.
 
         Every tool call needs a result in the history. Unlike a call skipped for the final result, these ran
         and emitted their `FunctionToolCallEvent` then, so only the result event is emitted here.
