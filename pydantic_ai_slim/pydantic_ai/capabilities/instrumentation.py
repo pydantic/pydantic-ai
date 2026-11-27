@@ -417,7 +417,7 @@ class Instrumentation(AbstractCapability[Any]):
 
         if new_messages is None:
             # A failed run keeps the boundary counted when it started, in `ModelMessage`s rather than
-            # `pydantic_ai.all_messages` entries, so it can be off: FOLLOWUP_ISSUE.
+            # `pydantic_ai.all_messages` entries, so it can be off: https://github.com/pydantic/pydantic-ai/issues/14963
             new_message_index = self._new_message_index
         else:
             # Counted in `pydantic_ai.all_messages` entries, not `ModelMessage`s: a request makes one entry

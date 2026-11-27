@@ -5684,8 +5684,9 @@ RUN_SPAN_INDEX_CASES = [
         ),
         expected_index=3,
     ),
-    # A failed run keeps the index it had when it started, which FOLLOWUP_ISSUE tracks.
-    # The two cases below pin failed runs where that index is right, which a fix there has to keep.
+    # A failed run keeps the index it had when it started, which can be off:
+    # https://github.com/pydantic/pydantic-ai/issues/14963. The two cases below pin failed runs where
+    # that index is right, which a fix there has to keep.
     RunSpanIndexCase(
         # The resumed request is the history the run was given, so the run added nothing.
         id='resumed-without-prompt-model-fails',
