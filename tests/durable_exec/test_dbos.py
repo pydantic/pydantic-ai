@@ -69,7 +69,9 @@ from pydantic_ai.capabilities import (
     PrepareTools,
     SetToolMetadata,
     ToolSearch,
+    ValidatedToolArgs,
     WrapperCapability,
+    WrapToolExecuteHandler,
     durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
@@ -7134,7 +7136,13 @@ async def test_dbos_child_workflow_tool_executed_again_by_capability(dbos: DBOS)
 
     class RetryOnce(AbstractCapability[object]):
         async def wrap_tool_execute(
-            self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, handler: Any
+            self,
+            ctx: RunContext[object],
+            *,
+            call: ToolCallPart,
+            tool_def: ToolDefinition,
+            args: ValidatedToolArgs,
+            handler: WrapToolExecuteHandler,
         ) -> Any:
             try:
                 return await handler(args)
@@ -7173,8 +7181,8 @@ class _ReorderChildStarts(AbstractCapability[object]):
     moon_researched: asyncio.Event = field(default_factory=asyncio.Event)
 
     async def before_tool_execute(
-        self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any
-    ) -> Any:
+        self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+    ) -> ValidatedToolArgs:
         self.arrived.add(call.tool_call_id)
         if len(self.arrived) == 2:
             self.both_arrived.set()
@@ -7196,7 +7204,13 @@ class _ReorderChildStarts(AbstractCapability[object]):
         return args
 
     async def on_tool_execute_error(
-        self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: Any, error: Exception
+        self,
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        error: Exception,
     ) -> Any:
         return f'failed: {error}'
 
