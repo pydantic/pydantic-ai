@@ -68,7 +68,10 @@ def _registered_kinds() -> dict[str, type[CapabilityPart]]:
                     if not caused_by_missing_dependency(exc):  # pragma: no branch
                         # Only a real import error gets here.
                         raise  # pragma: no cover
-    return dict(sorted(CAPABILITY_PART_TYPES.items()))
+    # The registry is process-global: test modules collected earlier register kinds of their own, so only the walked
+    # packages' kinds count, whatever ran first.
+    roots = {package_name.split('.')[0] for package_name in _PACKAGES}
+    return {kind: cls for kind, cls in sorted(CAPABILITY_PART_TYPES.items()) if cls.__module__.split('.')[0] in roots}
 
 
 def _data_notes() -> list[tuple[str, str]]:
@@ -82,7 +85,7 @@ def _data_notes() -> list[tuple[str, str]]:
 
 
 def _module_texts() -> list[tuple[str, str]]:
-    """The other texts in each module that declares a kind: its module-level strings, and the strings its functions build.
+    """The other texts in each module that declares a kind: module-level strings, and strings its functions build.
 
     A module-level string is taken as the module holds it, so a note composed from other constants is checked whole;
     a string a function builds, such as a note naming a frame by an id, is taken from source with `{}` for each value.

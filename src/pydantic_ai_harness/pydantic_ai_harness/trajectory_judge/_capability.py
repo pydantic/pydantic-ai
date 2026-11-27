@@ -122,8 +122,9 @@ class JudgeFeedbackPart(
 ):
     """A trajectory judge's course correction, as the judge model wrote it.
 
-    Data on the user channel in a `<judge_feedback judge="..." ref="...">` tag, with a note saying what it is, that
-    it doesn't ask for tool calls the user didn't, and that the judge wrote it, not the user or the application. Find them in history by this type.
+    Data on the user channel in a `<judge_feedback judge="..." ref="...">` tag, with a note saying it's a course
+    correction, that the model shouldn't call a tool it asks for unless the user asked for that, and that the judge
+    wrote it, not the user or the application. Find them in history by this type.
     """
 
     judge: str
