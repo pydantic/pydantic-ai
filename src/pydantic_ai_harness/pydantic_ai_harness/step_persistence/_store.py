@@ -787,9 +787,8 @@ class FileStepStore:
         snap_dir = run_dir / 'snapshots'
         snap_dir.mkdir(parents=True, exist_ok=True)
         key_path = run_dir / 'snapshot-keys.jsonl'
-        index = self._key_index(run_dir)
         if snapshot.idempotency_key is not None and self._snapshot_key_saved(
-            index, key_path, snap_dir, snapshot.idempotency_key
+            self._key_index(run_dir), key_path, snap_dir, snapshot.idempotency_key
         ):
             return
         payload: dict[str, object] = {
@@ -805,9 +804,11 @@ class FileStepStore:
         }
         seq = self._next_snapshot_seq(snap_dir)
         stat = _atomic_write_text(snap_dir / f'{seq}.json', json.dumps(payload))
-        with index.lock:
-            index.snapshot_keys[(f'{seq}.json', stat.st_ino, stat.st_mtime_ns)] = snapshot.idempotency_key
         if snapshot.idempotency_key is not None:
+            # Only keyed saves are indexed: they also drop the entries of pruned files, which keeps the index bounded.
+            index = self._key_index(run_dir)
+            with index.lock:
+                index.snapshot_keys[(f'{seq}.json', stat.st_ino, stat.st_mtime_ns)] = snapshot.idempotency_key
             with key_path.open('a', encoding='utf-8') as file:
                 file.write(json.dumps(snapshot.idempotency_key) + '\n')
         self._sync_prune_snapshots(snap_dir)
