@@ -1,5 +1,5 @@
 {
-  "against": "v2.75.0",
+  "against": "v2.76.0",
   "reason": "Harness 0.x: `AzureDurableTaskDurability.engine_spec` sets the two new `DurabilityEngineSpec` fields, `replays_orchestrator_code=True` and `thread_wakeable_loop=False`, so `CodeMode` and `DynamicWorkflow` read from the spec the portal and timer behaviour they chose by engine name before; every existing field and value is unchanged.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14855"
 }

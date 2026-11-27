@@ -176,7 +176,7 @@ _ORCHESTRATOR_SPEC = DurabilityEngineSpec(
 def in_orchestrator_code(monkeypatch: pytest.MonkeyPatch) -> None:
     """Run `run_code` as in `_ORCHESTRATOR_SPEC`'s workflow code, without a server."""
 
-    def engine_spec(ctx: RunContext[Any]) -> DurabilityEngineSpec:
+    def engine_spec(ctx: RunContext[object]) -> DurabilityEngineSpec:
         return _ORCHESTRATOR_SPEC
 
     monkeypatch.setattr('pydantic_ai_harness.code_mode._toolset.durable_engine_spec', engine_spec)

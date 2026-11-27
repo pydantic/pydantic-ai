@@ -9,17 +9,14 @@ from __future__ import annotations
 
 import threading
 from collections.abc import Callable
-from datetime import datetime
-from typing import Any
 
 import pytest
-from pydantic_monty import OsFunction
 
 from pydantic_ai import Agent
 from pydantic_ai.durable_exec import DurabilityEngineSpec
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai_harness.code_mode import CodeMode, CodeModeOS, CodeModeResourceLimits
+from pydantic_ai_harness.code_mode import CodeMode, CodeModeResourceLimits
 from tests.conftest import try_import
 
 from .._recording_durability import RecordingDurability, ReplayingDurability, UnwakeableLoopDurability
@@ -45,33 +42,46 @@ _BUSY = 'total = 0\nfor item in range(100_000):\n    total += item\ntotal'
 """A snippet that runs far longer than a 1 µs elapsed-time limit."""
 
 
-def add(a: int, b: int) -> int:
-    """Add two numbers."""
-    return a + b
+def _portal_threads() -> list[str]:
+    """Names of the live `anyio` blocking-portal threads.
+
+    `anyio` names them `asyncio-portal-<id>`, or `Thread-<n> (run_blocking_portal)` in older versions.
+    """
+    return [thread.name for thread in threading.enumerate() if 'portal' in thread.name]
 
 
 async def _run_code(
     code: str,
     durability: RecordingDurability | None,
     *,
-    os_access: CodeModeOS | None = None,
     resource_limits: CodeModeResourceLimits | None = None,
+    portals: list[list[str]] | None = None,
 ) -> ToolReturnPart:
-    """Run `code` once through `run_code`, in `durability`'s workflow code if given, and return what the model got back."""
+    """Run `code` once through `run_code`, in `durability`'s workflow code if given, and return what the model got back.
+
+    The snippet can call `probe()`, which appends the portal threads open while the snippet waits on it to `portals`.
+    """
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
         return ModelResponse(parts=[TextPart('done')])
 
-    code_mode = CodeMode[None](os_access=os_access, resource_limits=resource_limits)
+    code_mode = CodeMode[None](resource_limits=resource_limits)
     agent = Agent(
         FunctionModel(model),
         name='engine_spec',
         deps_type=type(None),
         capabilities=[code_mode] if durability is None else [code_mode, durability],
     )
-    agent.tool_plain(add)
+
+    @agent.tool_plain
+    def probe() -> str:
+        """Report the portal threads open while the snippet waits on this call."""
+        if portals is not None:
+            portals.append(_portal_threads())
+        return 'probed'
+
     result = await agent.run('go')
     request = result.all_messages()[2]
     assert isinstance(request, ModelRequest)
@@ -80,17 +90,13 @@ async def _run_code(
     return part
 
 
-async def _handler_threads(durability: RecordingDurability | None) -> list[threading.Thread]:
-    """The threads a plain `os_access` handler ran on: the run's own one through the portal, Monty's otherwise."""
-    threads: list[threading.Thread] = []
-
-    def handler(*, name: OsFunction, args: tuple[Any, ...], kwargs: dict[str, Any], **_: Any) -> Any:
-        threads.append(threading.current_thread())
-        return datetime(2026, 9, 26)
-
-    part = await _run_code('import datetime\ndatetime.datetime.now().year', durability, os_access=handler)
+async def _through_portal(durability: RecordingDurability | None) -> bool:
+    """Whether the snippet's Monty calls went through a portal, which is open while a nested tool runs."""
+    portals: list[list[str]] = []
+    part = await _run_code('await probe()', durability, portals=portals)
     assert part.outcome != 'retried'
-    return threads
+    assert len(portals) == 1
+    return bool(portals[0])
 
 
 class TestCodeModeEngineSpec:
@@ -104,10 +110,7 @@ class TestCodeModeEngineSpec:
     async def test_an_unwakeable_loop_calls_monty_through_the_portal(
         self, durability_type: type[RecordingDurability], through_portal: bool
     ) -> None:
-        threads = await _handler_threads(durability_type())
-
-        assert len(threads) == 1
-        assert (threads[0] is threading.current_thread()) is through_portal
+        assert await _through_portal(durability_type()) is through_portal
 
     @pytest.mark.parametrize(
         ('durability_type', 'time_limited'),
@@ -137,7 +140,7 @@ class TestCodeModeEngineSpec:
             'pydantic_ai_harness._monty_exec.in_durable_task_orchestration', in_durable_task_orchestration
         )
 
-        assert await _handler_threads(None) == [threading.current_thread()]
+        assert await _through_portal(None)
         part = await _run_code(_BUSY, None, resource_limits={'max_duration_seconds': 1e-6})
         assert part.outcome != 'retried'
 
