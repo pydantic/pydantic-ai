@@ -5,7 +5,8 @@ transformation in `TRANSFORMS` then turns that history into the one it hands on 
 history a resumed sub-agent starts from), and three checks compare the two by each request part's `signature`:
 
 1. every part the transformation doesn't drop is still there, with the same type, source, authority and frame;
-2. a part of a kind it may create has no more authority than the lowest of the parts it replaces;
+2. a part of a kind it may create has no more authority than the lowest of the parts it replaces, unless it's the
+   transformation's own fixed note (`Transform.notes`), which holds none of their text;
 3. nothing else appears.
 
 A guard keeps the registry complete: every function in Pydantic AI and Pydantic AI Harness that returns
@@ -121,6 +122,11 @@ class Transform:
     """Which output parts it created, when a created part can be of the same kind as a kept one: a compaction receipt
     is a `UserPromptPart`, like the prompts it keeps. When set, it replaces `creates` in telling a created part from a
     kept one, for the authority check and the nothing-new check."""
+    notes: Callable[[ModelRequestPart], bool] = lambda _: False
+    """Which created parts are the transformation's own fixed note, such as a compaction receipt saying the history
+    before it was summarized or dropped. A note replaces nothing, so the authority check doesn't cap it at the authority
+    of what it replaces; instead it fails if the note holds any of the replaced parts' text. A note still counts as
+    created for the nothing-new check."""
     exempt: Mapping[str, Exempt] = field(default_factory=dict[str, Exempt])
     """Case name -> reason with issue link, as C1: the case's checks are a strict `xfail`.
 
@@ -336,6 +342,16 @@ def _matrix(check: Check) -> Iterator[ParameterSet]:
             yield pytest.param(name, transformation, marks=marks, id=f'{name}-{transformation}')
 
 
+_MIN_CARRIED_TEXT = 20
+"""The shortest replaced text a note is checked for: shorter text, like a one-word reply, can match by chance."""
+
+
+def _text(part: ModelRequestPart) -> str:
+    """The text a part carries, for checking that a note holds none of what it replaces."""
+    content = getattr(part, 'content', None)
+    return content if isinstance(content, str) else str(content or '')
+
+
 @dataclass
 class _Compared:
     native: list[ModelRequestPart]
@@ -373,7 +389,20 @@ class _Compared:
         ceiling: Authority = min(
             (authority for _, _, authority, _ in replaced), key=lambda authority: _RANK.index(authority)
         )
-        return [part for part in self.created if _RANK.index(_authority(part)) > _RANK.index(ceiling)]
+        replaced_texts = {
+            text
+            for part in self.native
+            if signature(part) in replaced and len(text := _text(part)) >= _MIN_CARRIED_TEXT
+        }
+        return [
+            part
+            for part in self.created
+            if (
+                any(text in _text(part) for text in replaced_texts)
+                if self.transform.notes(part)
+                else _RANK.index(_authority(part)) > _RANK.index(ceiling)
+            )
+        ]
 
     def new(self) -> Counter[Signature]:
         """The output parts that aren't created and have no native counterpart."""
@@ -625,14 +654,16 @@ TRANSFORM_EXEMPT: dict[str, str] = {
     **dict.fromkeys(
         [
             'pydantic_ai._agent_graph._repair_interrupted_tail',
+            'pydantic_ai._capability_loads.keep_capability_loads',
+            'pydantic_ai._capability_loads.keep_tool_discoveries',
+            'pydantic_ai._capability_loads.keep_loaded_state',
+            'pydantic_ai._compaction_view.CompactionView.committed',
+            'pydantic_ai._compaction_view.CompactionView.sent',
             'pydantic_ai.capabilities.reinject_system_prompt._without_parts',
             'pydantic_ai.capabilities.reinject_system_prompt._reinject_system_prompt',
             'pydantic_ai.run.AgentRunResult._set_output_tool_return',
             'pydantic_ai_harness.compaction._background.BackgroundCompaction.applied_to',
             'pydantic_ai_harness.compaction._background._compact_traced',
-            'pydantic_ai_harness.compaction._capability_loads.keep_capability_loads',
-            'pydantic_ai_harness.compaction._capability_loads.keep_tool_discoveries',
-            'pydantic_ai_harness.compaction._capability_loads.keep_loaded_state',
             'pydantic_ai_harness.compaction._clamp_oversized_messages.ClampOversizedMessages.compact',
             'pydantic_ai_harness.compaction._clear_tool_results.ClearToolResults.compact',
             'pydantic_ai_harness.compaction._compact_on_request.CompactOnRequest._compact',
