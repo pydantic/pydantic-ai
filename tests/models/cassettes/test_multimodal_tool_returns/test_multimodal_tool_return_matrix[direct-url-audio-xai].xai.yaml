@@ -7,7 +7,7 @@ interactions:
         - text: Use the get_file tool now to retrieve a audio file, then describe
             what you received.
         role: ROLE_USER
-      model: grok-4-1-fast-non-reasoning
+      model: grok-4.3
       tools:
       - function:
           name: get_file
@@ -16,34 +16,41 @@ interactions:
         mode: TOOL_MODE_AUTO
     raw: !!binary |
       CloKVgpUVXNlIHRoZSBnZXRfZmlsZSB0b29sIG5vdyB0byByZXRyaWV2ZSBhIGF1ZGlvIGZpbGUs
-      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAESG2dyb2stNC0xLWZhc3Qtbm9uLXJl
-      YXNvbmluZ4oBUQpPCghnZXRfZmlsZSJDeyJhZGRpdGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAi
-      cHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmplY3QifZIBAggB
+      IHRoZW4gZGVzY3JpYmUgd2hhdCB5b3UgcmVjZWl2ZWQuEAESCGdyb2stNC4zigFRCk8KCGdldF9m
+      aWxlIkN7ImFkZGl0aW9uYWxQcm9wZXJ0aWVzIjogZmFsc2UsICJwcm9wZXJ0aWVzIjoge30sICJ0
+      eXBlIjogIm9iamVjdCJ9kgECCAE=
   response_sample:
     json:
-      id: 519600d4-352f-e395-ff81-5c4e8b2ebdbc
+      id: e1524599-70f2-9fc0-93b1-dae158e737e5
       outputs:
       - finish_reason: REASON_TOOL_CALLS
         message:
           role: ROLE_ASSISTANT
           tool_calls:
-          - id: call_53777427
+          - id: call-56f00ed8-8151-4978-ac8e-b93ca00daee4-0
             type: TOOL_CALL_TYPE_CLIENT_SIDE_TOOL
             status: TOOL_CALL_STATUS_COMPLETED
             function:
               name: get_file
               arguments: '{}'
-      created: '2026-02-09T18:43:03.891455743Z'
-      model: grok-4-1-fast-non-reasoning
-      system_fingerprint: fp_9bb3d5b553
+          reasoning_content: 'Retrieving an audio file via the get_file tool.
+
+
+            The get_file tool has no parameters. I will call it directly.'
+      created: '2026-11-27T18:20:32.134181696Z'
+      model: grok-4.3
+      system_fingerprint: fp_eb3c003fc66c14ed
       usage:
-        completion_tokens: 15
-        prompt_tokens: 359
-        total_tokens: 374
-        prompt_text_tokens: 359
-        cached_prompt_text_tokens: 158
+        completion_tokens: 6
+        prompt_tokens: 271
+        total_tokens: 534
+        prompt_text_tokens: 271
+        reasoning_tokens: 257
+        cached_prompt_text_tokens: 128
+        cost_in_usd_ticks: '8618500'
       settings:
         parallel_tool_calls: true
+        reasoning_effort: EFFORT_LOW
         temperature: 0.7
         tool_choice:
           mode: TOOL_MODE_AUTO
@@ -54,8 +61,11 @@ interactions:
               "object"}'
         top_p: 0.95
     raw: !!binary |
-      CiQ1MTk2MDBkNC0zNTJmLWUzOTUtZmY4MS01YzRlOGIyZWJkYmMSKwgEGicQAhojCg1jYWxsXzUz
-      Nzc3NDI3EAEYAVIOCghnZXRfZmlsZRICe30qDAi31ajMBhD/kYqpAzIbZ3Jvay00LTEtZmFzdC1u
-      b24tcmVhc29uaW5nOg1mcF85YmIzZDViNTUzShIIDxDnAhj2AiDnAjieAVjg9yFaYxABLTMzMz86
-      AggBQlEKTwoIZ2V0X2ZpbGUiQ3siYWRkaXRpb25hbFByb3BlcnRpZXMiOiBmYWxzZSwgInByb3Bl
-      cnRpZXMiOiB7fSwgInR5cGUiOiAib2JqZWN0In1NMzNzPw==
+      CiRlMTUyNDU5OS03MGYyLTlmYzAtOTNiMS1kYWUxNThlNzM3ZTUSvAEIBBq3ARACGkEKK2NhbGwt
+      NTZmMDBlZDgtODE1MS00OTc4LWFjOGUtYjkzY2EwMGRhZWU0LTAQARgBUg4KCGdldF9maWxlEgJ7
+      fSJuUmV0cmlldmluZyBhbiBhdWRpbyBmaWxlIHZpYSB0aGUgZ2V0X2ZpbGUgdG9vbC4KClRoZSBn
+      ZXRfZmlsZSB0b29sIGhhcyBubyBwYXJhbWV0ZXJzLiBJIHdpbGwgY2FsbCBpdCBkaXJlY3RseS44
+      ASoLCPCTp9gGEMDm/T8yCGdyb2stNC4zOhNmcF9lYjNjMDAzZmM2NmMxNGVkSh4IBhCPAhiWBCCP
+      AjCBAjiAAViEhI4EkAGPApgBiwJaaRABIAEtMzMzPzoCCAFCUQpPCghnZXRfZmlsZSJDeyJhZGRp
+      dGlvbmFsUHJvcGVydGllcyI6IGZhbHNlLCAicHJvcGVydGllcyI6IHt9LCAidHlwZSI6ICJvYmpl
+      Y3QifU0zM3M/egIIAQ==

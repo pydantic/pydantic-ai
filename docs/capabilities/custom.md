@@ -458,7 +458,7 @@ A capability can cap the authority of everything it enqueues with its [`authorit
 
 To lower one instance rather than a whole class, call [`with_authority()`][pydantic_ai.capabilities.AbstractCapability.with_authority], which returns a lowered copy: with two instances of the reviewer above in one agent, one of them lowered with `.with_authority('none')`, only what that one enqueues is framed as data. `with_authority('operator')` on a capability whose class sets `'none'` leaves it at `'none'`.
 
-The ceiling covers what the capability sends mid-conversation, wherever its code runs: a hook, a tool, `for_run`, a `DynamicCapability` factory, or a function it returns for its toolset, instructions, model settings or description. It also covers the capability's [instructions](#lowered-instructions). It doesn't cap its tool names and descriptions or its tools' return values, which reach the model as the application configured them: review or leave those out yourself. Content the application enqueues itself, from [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] or a [`Hooks`](../hooks.md) function, keeps its voice.
+The ceiling covers what the capability enqueues mid-conversation, wherever its code runs: a hook, a tool, `for_run`, a `DynamicCapability` factory, or a function it returns for its toolset, instructions, model settings or description. It also covers the capability's [instructions](#lowered-instructions). It doesn't cap its tool names and descriptions or its tools' return values, which reach the model as the application configured them: review or leave those out yourself. Content the application enqueues itself, from [`AgentRun.enqueue`][pydantic_ai.run.AgentRun.enqueue] or a [`Hooks`](../hooks.md) function, keeps its voice.
 
 Below `'operator'`, `ctx.enqueue` treats what the capability sends by kind, so nothing reaches the model as the application's or the user's words:
 
@@ -466,8 +466,9 @@ Below `'operator'`, `ctx.enqueue` treats what the capability sends by kind, so n
 - A `SystemPromptPart` goes out as an instruction part lowered to the ceiling.
 - User content or a `UserPromptPart` from a capability at `'none'` goes out as data in a `<capability_content>` frame whose note names the capability.
 - Retry feedback, which would otherwise say the application's validation failed, goes out as the capability's own text: plain user text at `'user'`, and data at `'none'`.
-- The [`ToolReturn.content`][pydantic_ai.messages.ToolReturn.content] of a tool the capability contributes goes out as `<capability_content>` data at `'none'`, rather than as user text.
 - A plain `ToolReturnPart` is tool output whoever sends it, so it's kept as it is.
+
+The [`ToolReturn.content`][pydantic_ai.messages.ToolReturn.content] of a tool the capability contributes needs no ceiling: it's part of the tool's result, so it goes out as `<capability_content>` data whose note names the capability, whatever the capability's `authority`, and also when the tool is called through [Code Mode](../harness/code-mode.md), [`ToolBridge`](../harness/tool-bridge.md) or [`BackgroundTools`](../harness/background-tools.md). For content the model should read as the user's or the application's words, the tool calls `ctx.enqueue` instead, which the ceiling applies to.
 
 Anything else raises `UserError` in `ctx.enqueue`:
 

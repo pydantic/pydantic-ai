@@ -23,6 +23,7 @@ from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
     ToolCallPart,
+    ToolResultAttachment,
     ToolReturn,
     ToolReturnContent,
     ToolSearchReturnPart,
@@ -399,9 +400,11 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return original
 
         metadata: object
+        attachments: Sequence[ToolResultAttachment] = ()
         if isinstance(result, ToolReturn):
             return_value: ToolReturnContent = result.return_value
             content = result.content
+            attachments = result.attachments
             metadata = result.metadata
             wrapped = True
         else:
@@ -430,6 +433,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             wrapped=wrapped,
             return_value=return_value,
             content=content,
+            attachments=attachments,
             metadata=metadata,
             new_value=new_value,
             value_handle=value_handle,
@@ -469,6 +473,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         wrapped: bool,
         return_value: ToolReturnContent,
         content: str | Sequence[UserContent] | None,
+        attachments: Sequence[ToolResultAttachment],
         metadata: object,
         new_value: object | None,
         value_handle: str | None,
@@ -484,6 +489,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             wrapped_out: ToolReturn[object] = ToolReturn(
                 return_value=new_value if new_value is not None else return_value,
                 content=content_text if content_text is not None else content,
+                attachments=attachments,
                 metadata=new_metadata,
             )
             return wrapped_out

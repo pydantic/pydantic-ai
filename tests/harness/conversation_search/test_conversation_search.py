@@ -25,6 +25,7 @@ from pydantic_ai.capabilities import Capability
 from pydantic_ai.messages import (
     AgentInstructionSource,
     BinaryContent,
+    CachePoint,
     CompactionPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
@@ -44,6 +45,7 @@ from pydantic_ai.messages import (
     ThinkingPart,
     ToolAvailabilityDeltaPart,
     ToolCallPart,
+    ToolResultAttachment,
     ToolResultSource,
     ToolReturnPart,
     UserPromptPart,
@@ -1456,6 +1458,27 @@ Found 1 match(es) for 'READY' in 1 persisted messages:
 [0] Tool [render]: chart READY See file chart.png.\
 """)
         assert await _search(source, 'x00') == snapshot("No matches for 'x00' in 1 persisted messages.")
+
+    async def test_tool_return_attachments_follow_the_content_with_files_named(self) -> None:
+        """An attachment's text and files read after the return value, and an item with neither adds nothing."""
+        file = BinaryContent(data=b'\x89PNG\r\n' + b'\x00' * 4096, media_type='image/png', identifier='chart.png')
+        part = ToolReturnPart(
+            tool_name='render',
+            content='READY',
+            tool_call_id='c1',
+            attachments=[
+                ToolResultAttachment(content=TextContent('the chart:'), tool_call_id='c1', tool_name='render'),
+                ToolResultAttachment(content=file, tool_call_id='c1', tool_name='render'),
+                ToolResultAttachment(content=CachePoint(), tool_call_id='c1', tool_name='render'),
+            ],
+        )
+        source = _StubSource({'r1': [ModelRequest(parts=[part])]})
+        assert await _search(source, 'READY') == snapshot("""\
+Found 1 match(es) for 'READY' in 1 persisted messages:
+
+[score: 0.3 | run: r1]
+[0] Tool [render]: READY the chart: See file chart.png.\
+""")
 
     async def test_retry_prompt_excerpt_is_clipped(self) -> None:
         source = _StubSource(

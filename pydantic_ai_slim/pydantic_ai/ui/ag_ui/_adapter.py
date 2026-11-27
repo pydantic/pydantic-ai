@@ -54,6 +54,7 @@ from ...messages import (
     ToolAvailabilityDeltaPart,
     ToolCallPart,
     ToolPartKind,
+    ToolResultAttachment,
     ToolReturnContent,
     ToolReturnPart,
     ToolUIVisibility,
@@ -148,6 +149,7 @@ try:
         parse_encrypted_retry_feedback,
         parse_encrypted_structured_content,
         parse_encrypted_tool_kind,
+        parse_encrypted_tool_result_attachments,
         parse_encrypted_tool_retry,
         rehydrate_tool_return_content,
         retry_feedback_encrypted_value_kwargs,
@@ -1046,6 +1048,9 @@ def _load_tool_message(tool_msg: ToolMessage, context: _LoadMessagesContext) -> 
     # keeps the return from reloading as `'success'`, which would change how it
     # serializes to the provider.
     encrypted_tool_kind = parse_encrypted_tool_kind(tool_msg.encrypted_value) if context.use_encrypted_value else None
+    attachments = (
+        parse_encrypted_tool_result_attachments(tool_msg.encrypted_value) if context.use_encrypted_value else ()
+    )
     tool_kind = encrypted_tool_kind or context.tool_kinds.get(tool_call_id)
     outcome: Literal['success', 'failed', 'denied', 'interrupted', 'retried'] = 'success'
     encrypted_outcome = parse_encrypted_outcome(tool_msg.encrypted_value) if context.use_encrypted_value else None
@@ -1083,6 +1088,7 @@ def _load_tool_message(tool_msg: ToolMessage, context: _LoadMessagesContext) -> 
                 tool_kind=tool_kind,
                 outcome=outcome,
                 retry=retry,
+                attachments=attachments,
             )
         )
 
@@ -1280,14 +1286,36 @@ def _dump_tool_return_part(part: ToolReturnPart, context: _DumpRequestContext) -
             tool_call_id=part.tool_call_id,
             error=client_error_text(part) if part.outcome in ERROR_OUTCOMES or part.outcome == 'denied' else None,
             **tool_kind_encrypted_value_kwargs(
-                part.tool_kind, outcome=part.outcome, retry=part.retry, supported=context.use_encrypted_value
+                part.tool_kind,
+                outcome=part.outcome,
+                retry=part.retry,
+                attachments=_client_attachments(part.attachments, context),
+                supported=context.use_encrypted_value,
             ),
         )
     )
+    if not context.use_encrypted_value:
+        # Below the carrier's floor the attachments dump as the user message they were before they rode the
+        # tool result, so their content isn't lost; it reloads as a user prompt.
+        for attachment in part.attachments:
+            _dump_user_content_item(attachment.content, context)
     if (app := get_mcp_app_tool_result(part.metadata)) is not None:
         context.result.append(
             ActivityMessage(id=_new_message_id(), activity_type=MCP_APPS_UI_TYPE, content=mcp_app_ui_payload(app))
         )
+
+
+def _client_attachments(
+    attachments: Sequence[ToolResultAttachment], context: _DumpRequestContext
+) -> Sequence[ToolResultAttachment]:
+    """The attachments a tool return sends the client: an `UploadedFile` only with `preserve_file_data=True`.
+
+    Its `file_id` is a provider-held reference the server's credentials can use, which a dumped user message also
+    leaves out by default.
+    """
+    if context.preserve_file_data:
+        return attachments
+    return [attachment for attachment in attachments if not isinstance(attachment.content, UploadedFile)]
 
 
 # TODO(v3): remove `RetryPromptPart`

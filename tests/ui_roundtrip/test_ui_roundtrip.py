@@ -727,11 +727,23 @@ def _image_tools(agent: Agent[None, str]) -> None:
         return _PNG
 
 
+def _tool_content_tools(agent: Agent[None, str]) -> None:
+    @agent.tool_plain
+    def take_picture() -> ToolReturn:
+        return ToolReturn('A picture of the page.', content=['The page as rendered:', _PNG])
+
+
 _AGUI_ACTIVITY = (
     '`@ag-ui/client` leaves `activity` messages out of every request it sends (`prepareRunAgentInput`), '
     'so records the adapter carries as activities never come back; documented in #10569, carrier design pending. '
     "With `framing_announcement='when_needed'`, a dropped mid-conversation system prompt also takes the framing "
     "announcement out of the standing prompt on the next turn; accepted, and documented: UI apps set `'always'`"
+)
+_STREAMED_ATTACHMENTS = (
+    "neither stream has a carrier for a tool result's `attachments` (the AI SDK's `tool-output-available` chunk and "
+    "AG-UI's `ToolCallResultEvent` have no metadata slot), so a history the client rebuilds from the stream loses "
+    "the tool's `ToolReturn.content`; it never carried the sibling user prompt this content used to be either. "
+    '`dump_messages` carries them; no issue yet'
 )
 _AGUI_FILE_IDENTIFIER = "`AGUIAdapter.dump_messages` doesn't carry a user file's custom `identifier`; #14284"
 _RETRY = (
@@ -984,6 +996,21 @@ SCENARIOS = [
         agent_kwargs={'capabilities': [_RequestScopedReminder()]},
     ),
     Scenario(id='multimodal_tool_return', script=_image_script, setup=_image_tools),
+    # The tool's `ToolReturn.content` rides its result as attachments the model is sent as data.
+    Scenario(
+        id='tool_return_content',
+        script=_image_script,
+        setup=_tool_content_tools,
+        gaps=_gaps(
+            _STREAMED_ATTACHMENTS,
+            ('load', 'stream', 'vercel'),
+            ('load', 'stream', 'agui'),
+            ('wire', 'stream', 'vercel', 'anthropic'),
+            ('wire', 'stream', 'vercel', 'openai'),
+            ('wire', 'stream', 'agui', 'anthropic'),
+            ('wire', 'stream', 'agui', 'openai'),
+        ),
+    ),
     Scenario(
         id='custom_file_identifiers',
         script=_text_script,
@@ -1624,5 +1651,6 @@ def test_server_held_history_has_none_of_the_client_round_trip_gaps() -> None:
             'output_validation_feedback',
             'structured_content',
             'tool_availability_delta',
+            'tool_return_content',
         ]
     )

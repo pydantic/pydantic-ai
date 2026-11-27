@@ -13,6 +13,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass, replace
 from datetime import datetime
+from itertools import groupby
 
 from typing_extensions import TypedDict
 
@@ -37,6 +38,7 @@ from .messages import (
     CapabilityPartSource,
     CapabilitySource,
     CompactionPart,
+    DataCapabilityPart,
     InstructionBaselinePart,
     InstructionDeltaPart,
     ModelMessage,
@@ -52,14 +54,18 @@ from .messages import (
     SystemPromptPart,
     TextContent,
     ToolAvailabilityDeltaPart,
+    ToolResultAttachment,
     ToolResultSource,
     ToolReturnPart,
     UserContent,
     UserPromptPart,
     UserSource,
     WorkspaceSource,
+    _CapabilityContentPart,  # pyright: ignore[reportPrivateUsage]
     _CapabilityInstructionsPart,  # pyright: ignore[reportPrivateUsage]
+    _is_tool_result_part,  # pyright: ignore[reportPrivateUsage]
     _lower_authority,  # pyright: ignore[reportPrivateUsage]
+    _ToolContentPart,  # pyright: ignore[reportPrivateUsage]
 )
 
 
@@ -400,11 +406,83 @@ def _lookalike_naming(source: CapabilityPartSource, tag: str) -> LookalikeNaming
     return naming
 
 
+def tool_result_attachment_parts(
+    attachments: Sequence[ToolResultAttachment], *, timestamp: datetime
+) -> list[DataCapabilityPart]:
+    """The data parts `attachments` reach the model as: one frame for each run of items a call produced.
+
+    Nothing on an attachment says how much authority it has, so a stored, forged or replaced one can only name the
+    wrong producer. A capability's tool's items are framed as content the capability would enqueue at `'none'`, with
+    a note naming the capability; any other tool's items are framed with a note naming the tool.
+    """
+    parts: list[DataCapabilityPart] = []
+    for (tool_call_id, tool_name, capability_id), run in groupby(
+        attachments, key=lambda attachment: (attachment.tool_call_id, attachment.tool_name, attachment.capability_id)
+    ):
+        content = [attachment.content for attachment in run]
+        if capability_id is not None:
+            parts.append(
+                _CapabilityContentPart(
+                    content=content,
+                    source=CapabilitySource(capability_id, authority='none'),
+                    capability_id=capability_id,
+                    timestamp=timestamp,
+                )
+            )
+        else:
+            parts.append(
+                _ToolContentPart(
+                    content=content,
+                    source=ToolResultSource(tool_name=tool_name, tool_call_id=tool_call_id),
+                    tool_name=tool_name,
+                    timestamp=timestamp,
+                )
+            )
+    return parts
+
+
+def with_tool_result_attachments(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """`messages` with each tool result's [`attachments`][pydantic_ai.messages.ToolReturnPart.attachments] rendered as data parts.
+
+    They go after the request's tool results, and the tool-availability records that follow them, in the order of
+    the results that held them. The results are left without attachments, so rendering again adds nothing. Returns
+    `messages` itself when no result has any.
+    """
+    if not any(isinstance(message, ModelRequest) and _has_attachments(message) for message in messages):
+        return messages
+    return [
+        request_with_attachment_parts(message) if isinstance(message, ModelRequest) else message for message in messages
+    ]
+
+
+def _has_attachments(request: ModelRequest) -> bool:
+    return any(isinstance(part, ToolReturnPart) and part.attachments for part in request.parts)
+
+
+def request_with_attachment_parts(request: ModelRequest) -> ModelRequest:
+    """`request` with its tool results' attachments rendered, as `with_tool_result_attachments` does, or itself."""
+    if not _has_attachments(request):
+        return request
+    parts: list[ModelRequestPart] = []
+    attached: list[ModelRequestPart] = []
+    position = 0
+    for part in request.parts:
+        if isinstance(part, ToolReturnPart) and part.attachments:
+            attached.extend(tool_result_attachment_parts(part.attachments, timestamp=part.timestamp))
+            part = replace(part, attachments=())
+        parts.append(part)
+        if _is_tool_result_part(part) or (isinstance(part, ToolAvailabilityDeltaPart) and position == len(parts) - 1):
+            position = len(parts)
+    return replace(request, parts=[*parts[:position], *attached, *parts[position:]])
+
+
 def render_capability_parts(messages: list[ModelMessage]) -> list[ModelMessage]:
     """`messages` with every capability part rendered in place, with no lookalike notes, or `messages` itself when there's none.
 
     For the paths with no lookalike pass: a second model reading a transcript, and a realtime session's seeded history.
+    Tool result attachments are rendered as the capability parts they reach the model as first.
     """
+    messages = with_tool_result_attachments(messages)
     if not has_capability_parts(messages):
         return messages
     return [
@@ -425,6 +503,7 @@ def render_capability_parts_for_live_channel(messages: list[ModelMessage]) -> li
 
     TODO(#12507): give the live channel lookalike notes instead, and send these bodies as written.
     """
+    messages = with_tool_result_attachments(messages)
     if not has_capability_parts(messages):
         return messages
     return render_capability_parts(

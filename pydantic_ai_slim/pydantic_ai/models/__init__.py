@@ -66,6 +66,7 @@ from .._capability_parts import (
     lowered_instruction_statement,
     render_capability_part,
     render_capability_parts,
+    with_tool_result_attachments,
 )
 from .._file_input import (
     KNOWN_DOCUMENT_MEDIA_TYPES,
@@ -168,6 +169,7 @@ from ..messages import (
     ToolCallPart,
     ToolKind,
     ToolKindLike,
+    ToolResultSource,
     ToolReturnPart,
     ToolSearchCallPart,
     ToolSearchReturnPart,
@@ -186,6 +188,7 @@ from ..messages import (
     _StatelessArtifactPredicate,  # pyright: ignore[reportPrivateUsage]
     _tagged_append_parts,  # pyright: ignore[reportPrivateUsage]
     _tool_results_first_sort_key,  # pyright: ignore[reportPrivateUsage]
+    _ToolContentPart,  # pyright: ignore[reportPrivateUsage]
     _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool, ComputerTool
@@ -2086,6 +2089,10 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         Drops [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart]s: the
         model sees a capability's load as its instructions and tools, not as the record that loads it.
 
+        Sends each tool result's [`attachments`][pydantic_ai.messages.ToolReturnPart.attachments] after the
+        request's tool results as data framed on the user channel, one frame per call, behind a note naming the tool
+        that produced it, or the capability that contributed the tool. Nothing on an attachment raises it above data.
+
         Renders each [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] into the parts every adapter maps: an
         instruction part as a mid-conversation `SystemPromptPart`, a data part as its content in its tag on the user
         channel, behind its note. They're rendered in the lookalike pass, from the part's own fields, so an override
@@ -2155,6 +2162,8 @@ class Model(AbstractModel, Generic[InterfaceClient]):
                 prefix=model_request_parameters.instruction_parts if model_request_parameters is not None else None,
             )
         messages = _drop_capability_load_deltas(messages)
+        # Typed data parts from here on, so the lookalike pass below renders and notes them like any capability part.
+        messages = with_tool_result_attachments(messages)
 
         messages = _render_system_prompt_contexts(
             messages,
@@ -5769,7 +5778,7 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
             isinstance(part, ToolReturnPart) and (replacement := fit(part.tool_call_id)) != part.tool_call_id
         ):
             return replace(part, tool_call_id=replacement)
-        return part
+        return _with_fitted_attachment_call_id(part, replacements)
 
     def fit_response_part(part: ModelResponsePart) -> ModelResponsePart:
         if isinstance(part, ToolCallPart) and (replacement := fit(part.tool_call_id)) != part.tool_call_id:
@@ -5787,6 +5796,24 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 
     new_messages = [fit_message(message) for message in messages]
     return new_messages if any(new is not old for new, old in zip(new_messages, messages)) else messages
+
+
+def _with_fitted_attachment_call_id(part: ModelRequestPart, replacements: Mapping[str, str]) -> ModelRequestPart:
+    """`part`, when it's a tool's rendered attachments, naming its call by the ID the call's result carries on the wire.
+
+    So the lookalike note names the call as the wire does. Any other part is returned as is. Only a call on the
+    wire has a fitted ID: a nested one, such as a Code Mode call's, keeps the stored one it's known by.
+    """
+    if (
+        not isinstance(part, _ToolContentPart)
+        or not isinstance(source := part.source, ToolResultSource)
+        or source.tool_call_id is None
+    ):
+        return part
+    replacement = replacements.get(source.tool_call_id, source.tool_call_id)
+    if replacement == source.tool_call_id:
+        return part
+    return replace(part, source=replace(source, tool_call_id=replacement))
 
 
 # TODO(v3): remove `RetryPromptPart`

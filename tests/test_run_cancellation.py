@@ -59,6 +59,7 @@ from pydantic_ai.messages import (
     PartStartEvent,
     TextPart,
     ToolCallPart,
+    ToolResultAttachment,
     ToolReturn,
     ToolReturnPart,
     UserPromptPart,
@@ -205,8 +206,15 @@ def _approval_required() -> str:
         pytest.param(
             lambda: ToolReturn(return_value='fast result', content='extra context'),
             [
-                ToolReturnPart('fast_tool', 'fast result', tool_call_id='call_fast', timestamp=IsNow(tz=UTC)),
-                UserPromptPart('extra context', timestamp=IsNow(tz=UTC)),
+                ToolReturnPart(
+                    'fast_tool',
+                    'fast result',
+                    tool_call_id='call_fast',
+                    timestamp=IsNow(tz=UTC),
+                    attachments=[
+                        ToolResultAttachment(content='extra context', tool_call_id='call_fast', tool_name='fast_tool')
+                    ],
+                )
             ],
             id='tool-return-with-content',
         ),

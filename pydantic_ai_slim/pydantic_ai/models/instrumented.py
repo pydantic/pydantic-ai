@@ -31,7 +31,7 @@ from pydantic_ai._instrumentation import (
 )
 
 from .. import _otel_messages
-from .._capability_parts import effective_authority
+from .._capability_parts import effective_authority, request_with_attachment_parts
 from .._run_context import RunContext
 from .._warnings import PydanticAIDeprecationWarning
 from ..messages import (
@@ -272,6 +272,8 @@ class InstrumentationSettings:
 
         Shared by `messages_to_otel_messages` and `_span_input_messages`, which lines its result up with this.
         """
+        # A tool result's attachments are traced as the data parts the model is sent after the results.
+        message = request_with_attachment_parts(message)
         # A baseline records what the request's instructions were and contributes nothing to a trace,
         # so it's left out before grouping rather than becoming an empty system message.
         request_parts = [part for part in message.parts if not isinstance(part, InstructionBaselinePart)]

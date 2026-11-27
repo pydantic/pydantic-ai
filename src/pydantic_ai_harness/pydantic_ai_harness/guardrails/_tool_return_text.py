@@ -8,10 +8,12 @@ the public detectors that use it.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from dataclasses import replace
+from itertools import groupby
 from typing import TypeGuard
 
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import CachePoint, TextContent, ToolReturn, UserContent
+from pydantic_ai.messages import CachePoint, TextContent, ToolResultAttachment, ToolReturn, UserContent
 from pydantic_ai_harness._message_text import with_text
 from pydantic_ai_harness.guardrails._shared import GuardrailResult, TextDetector
 
@@ -155,4 +157,30 @@ def detect_tool_return_content(
         run = []
         if part is not None:
             rewritten.append(part)
+    return None, rewritten if replaced else None
+
+
+def detect_tool_return_attachments(
+    detector: TextDetector, attachments: Sequence[ToolResultAttachment]
+) -> tuple[GuardrailResult | None, Sequence[ToolResultAttachment] | None]:
+    """Run `detector` over the text of `ToolReturn.attachments`, the content of the tools this tool called.
+
+    Each call's run of attachments is scanned as one `content`, since the model reads it behind one note, and a
+    rewritten item stays attributed to the call that produced it.
+
+    Returns the first terminal verdict, or the rewritten attachments -- `None` when none was redacted.
+    """
+    rewritten: list[ToolResultAttachment] = []
+    replaced = False
+    for _, group in groupby(attachments, key=lambda a: (a.tool_call_id, a.tool_name, a.capability_id)):
+        run = list(group)
+        verdict, content = detect_tool_return_content(detector, [attachment.content for attachment in run])
+        if verdict is not None:
+            return verdict, None
+        if content is None:
+            rewritten.extend(run)
+            continue
+        assert not isinstance(content, str)  # A list in gives a list out.
+        replaced = True
+        rewritten.extend(replace(run[0], content=item) for item in content)
     return None, rewritten if replaced else None

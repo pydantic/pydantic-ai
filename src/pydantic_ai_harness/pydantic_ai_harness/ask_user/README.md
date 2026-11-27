@@ -151,7 +151,7 @@ metadata is dropped so notes cannot claim framework provenance. The answered eve
 the original response before validation, so observers must treat its note metadata as user input.
 
 With notes, `ask_user_result` returns a `ToolReturn`: `return_value` is the unchanged answer
-dictionary, and `content` sends the notes as `UserPromptPart` content rather than tool data.
+dictionary, and `content` carries the notes. They are the user's own words, so they reach the model in the user's voice, as a `UserPromptPart` right after the answer, rather than as tool data: `AskUser` enqueues them when the answer arrives during the run, and an answer passed in `DeferredToolResults` to a later run is supplied from outside the run, whose `ToolReturn.content` keeps the user's voice.
 Each note is framed by `<answer_note header="...">` and `</answer_note>` text items. Headers and
 framing tags inside text are escaped; images remain multimodal items between those boundaries.
 The boundary items are `TextContent` with `metadata` containing

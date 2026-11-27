@@ -57,8 +57,8 @@ where to continue ([Querying a spill](#querying-a-spill)).
 
 ### Return-value and content handling
 
-A `ToolReturn` carries a `return_value` and an optional `content` that core renders as a
-separate, model-visible part which also persists in history. This capability measures and
+A `ToolReturn` carries a `return_value` and an optional `content` that core keeps with the
+tool's result in history and sends to the model as data after it. This capability measures and
 reduces both with the same bands, and they spill to distinct handles.
 
 A return value that holds files, such as the `[header, BinaryContent]` that `read_file` returns
@@ -66,7 +66,9 @@ for an image or PDF, reaches the model with its files as they are. A lone data i
 measured as itself, and several as one JSON list. When a band
 applies, the reduced text replaces that data, ahead of the files. Text `content` is reduced the
 same way whatever the return value holds. Non-text `content` that overflows is left unreduced
-with a `warnings.warn`.
+with a `warnings.warn`. `ToolReturn.attachments`, the content of the tools a tool called (such
+as Code Mode's nested calls), is kept as it is and not reduced: scope the capability to those
+tools to bound it.
 
 ### `ToolReturn.metadata` is preserved
 

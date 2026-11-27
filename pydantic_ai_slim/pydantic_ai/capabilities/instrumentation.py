@@ -33,6 +33,7 @@ from pydantic_ai._instrumentation import (
     record_exception as _record_exception,
     record_uncaught_errors as _record_uncaught_errors,
     redact_binary_content,
+    redact_mcp_attachment_ids,
     root_conversation_attributes,
     safe_to_json,
     serialize_any,
@@ -794,7 +795,7 @@ class Instrumentation(AbstractCapability[Any]):
             attributes=attributes,
             action=lambda: handler(args),
             serialize_result=lambda value: tool_return_ta.dump_json(
-                redact_binary_content(value, self.settings)
+                redact_binary_content(redact_mcp_attachment_ids(value, ctx.capabilities.values()), self.settings)
             ).decode(),
             run_context=ctx,
             handle_tool_control_flow=True,

@@ -148,7 +148,7 @@ from pydantic_ai_harness.guardrails.detectors import for_tool_result_text, redac
 ToolGuardrail(result_guard=for_tool_result_text(redact_secrets))
 ```
 
-It checks a string `return_value` and all text in `content`, which core sends as a separate user-prompt part. Adjacent text parts are also scanned joined, so a secret split across two parts is caught; a `CachePoint` does not separate parts, an image or document does. If sanitizing the joined text differs from sanitizing each part, the span becomes one part with the first part's metadata, and a `CachePoint` between merged parts moves ahead of it; otherwise each part keeps its metadata. `ToolReturn` metadata, kind, and non-text parts are kept.
+It checks a string `return_value`, all text in `content`, which core sends after the tool result as the tool's data, and all text in `attachments`, the content of the tools it called (such as Code Mode's nested calls), each call's run scanned like `content` and kept attributed to that call. Adjacent text parts are also scanned joined, so a secret split across two parts is caught; a `CachePoint` does not separate parts, an image or document does. If sanitizing the joined text differs from sanitizing each part, the span becomes one part with the first part's metadata, and a `CachePoint` between merged parts moves ahead of it; otherwise each part keeps its metadata. `ToolReturn` metadata, kind, and non-text parts are kept.
 
 A non-text result raises by default. `on_other='allow'` skips the whole result, including the `content` of a `ToolReturn` whose `return_value` is not a string; if that `content` may be sensitive, keep the default and apply the detector to a field instead.
 

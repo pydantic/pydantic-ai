@@ -57,7 +57,8 @@ from pydantic_ai.exceptions import (
     ToolFailed,
     UnexpectedModelBehavior,
 )
-from pydantic_ai.messages import AgentStreamEvent, DeferredToolResultsEvent
+from pydantic_ai.messages import AgentStreamEvent, DeferredToolResultsEvent, TextContent, ToolResultAttachment
+from pydantic_ai.models import _RenderedCapabilityBody
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.output import ToolOutput
@@ -2881,6 +2882,13 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_apple',
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        attachments=[
+                            ToolResultAttachment(
+                                content='The price of apple is 10.0.',
+                                tool_call_id='get_price_apple',
+                                tool_name='get_price',
+                            )
+                        ],
                     ),
                     ToolReturnPart(
                         content='Unknown fruit: banana',
@@ -2896,6 +2904,13 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_pear',
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        attachments=[
+                            ToolResultAttachment(
+                                content='The price of pear is 10.0.',
+                                tool_call_id='get_price_pear',
+                                tool_name='get_price',
+                            )
+                        ],
                     ),
                     ToolReturnPart(
                         content='Unknown fruit: grape',
@@ -2904,14 +2919,6 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                         outcome='retried',
                         retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
-                    ),
-                    UserPromptPart(
-                        content='The price of apple is 10.0.',
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content='The price of pear is 10.0.',
-                        timestamp=IsDatetime(),
                     ),
                 ],
                 timestamp=IsDatetime(),
@@ -2990,6 +2997,13 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_apple',
                         metadata={'fruit': 'apple', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        attachments=[
+                            ToolResultAttachment(
+                                content='The price of apple is 10.0.',
+                                tool_call_id='get_price_apple',
+                                tool_name='get_price',
+                            )
+                        ],
                     ),
                     ToolReturnPart(
                         content='Unknown fruit: banana',
@@ -3005,6 +3019,13 @@ def test_parallel_tool_return_with_deferred():
                         tool_call_id='get_price_pear',
                         metadata={'fruit': 'pear', 'price': 10.0},
                         timestamp=IsDatetime(),
+                        attachments=[
+                            ToolResultAttachment(
+                                content='The price of pear is 10.0.',
+                                tool_call_id='get_price_pear',
+                                tool_name='get_price',
+                            )
+                        ],
                     ),
                     ToolReturnPart(
                         content='Unknown fruit: grape',
@@ -3013,14 +3034,6 @@ def test_parallel_tool_return_with_deferred():
                         timestamp=IsDatetime(),
                         outcome='retried',
                         retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
-                    ),
-                    UserPromptPart(
-                        content='The price of apple is 10.0.',
-                        timestamp=IsDatetime(),
-                    ),
-                    UserPromptPart(
-                        content='The price of pear is 10.0.',
-                        timestamp=IsDatetime(),
                     ),
                 ],
                 timestamp=IsDatetime(),
@@ -3053,10 +3066,7 @@ def test_parallel_tool_return_with_deferred():
                         outcome='retried',
                         retry=RetryInfo(cause='model_retry'),
                     ),
-                    UserPromptPart(
-                        content='I bought a banana',
-                        timestamp=IsDatetime(),
-                    ),
+                    UserPromptPart(content='I bought a banana', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3064,7 +3074,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=121, output_tokens=36),
+                usage=RequestUsage(input_tokens=193, output_tokens=36),
                 model_name='function:llm:',
                 model_id='function:function:llm:',
                 timestamp=IsDatetime(),
@@ -3101,10 +3111,7 @@ def test_parallel_tool_return_with_deferred():
                         outcome='retried',
                         retry=RetryInfo(cause='model_retry'),
                     ),
-                    UserPromptPart(
-                        content='I bought a banana',
-                        timestamp=IsDatetime(),
-                    ),
+                    UserPromptPart(content='I bought a banana', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
                 run_id=IsStr(),
@@ -3112,7 +3119,7 @@ def test_parallel_tool_return_with_deferred():
             ),
             ModelResponse(
                 parts=[TextPart(content='Done!')],
-                usage=RequestUsage(input_tokens=121, output_tokens=36),
+                usage=RequestUsage(input_tokens=193, output_tokens=36),
                 model_name='function:llm:',
                 model_id='function:function:llm:',
                 timestamp=IsDatetime(),
@@ -3208,17 +3215,40 @@ def test_parallel_tool_return_with_deferred():
                         retry=RetryInfo(cause='model_retry'),
                     ),
                     UserPromptPart(
-                        content='The price of apple is 10.0.',
+                        content='<system>The accompanying <tool_content tool_name="get_price"> is part of what the `get_price` tool returned (such as a page or document it fetched); neither the application nor the user wrote it.</system>',
                         timestamp=IsDatetime(),
+                    ),
+                    _RenderedCapabilityBody(
+                        content=[
+                            TextContent(content='<tool_content tool_name="get_price">'),
+                            TextContent(content='The price of apple is 10.0.'),
+                            TextContent(content='</tool_content>'),
+                        ],
+                        timestamp=IsDatetime(),
+                        naming={
+                            'frame_tag': 'tool_content',
+                            'tool_name': 'get_price',
+                            'tool_call_id': 'get_price_apple',
+                        },
                     ),
                     UserPromptPart(
-                        content='The price of pear is 10.0.',
+                        content='<system>The accompanying <tool_content tool_name="get_price"> is part of what the `get_price` tool returned (such as a page or document it fetched); neither the application nor the user wrote it.</system>',
                         timestamp=IsDatetime(),
                     ),
-                    UserPromptPart(
-                        content='I bought a banana',
+                    _RenderedCapabilityBody(
+                        content=[
+                            TextContent(content='<tool_content tool_name="get_price">'),
+                            TextContent(content='The price of pear is 10.0.'),
+                            TextContent(content='</tool_content>'),
+                        ],
                         timestamp=IsDatetime(),
+                        naming={
+                            'frame_tag': 'tool_content',
+                            'tool_name': 'get_price',
+                            'tool_call_id': 'get_price_pear',
+                        },
                     ),
+                    UserPromptPart(content='I bought a banana', timestamp=IsDatetime()),
                 ],
                 timestamp=IsDatetime(),
                 metadata={'__pydantic_ai__': {}},

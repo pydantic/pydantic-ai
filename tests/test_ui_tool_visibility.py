@@ -949,28 +949,22 @@ async def test_private_tool_sends_no_metadata_events_and_can_emit_instead(protoc
 
 
 @pytest.mark.parametrize('protocol', PROTOCOLS)
-@pytest.mark.parametrize('ui_visibility', ['redacted', 'private'])
-async def test_tool_return_content_is_a_user_message_visibility_does_not_cover(
+@pytest.mark.parametrize('ui_visibility', ['public', 'redacted', 'private'])
+async def test_tool_return_content_follows_the_tools_visibility(
     protocol: ProtocolName, ui_visibility: ToolUIVisibility
 ):
-    """`ui_visibility` covers the call and its return value; `ToolReturn.content` is a separate user message.
-
-    The model gets it as one, and `dump_messages` sends it as one, so data the client must not see belongs in the
-    return value. See https://github.com/pydantic/pydantic-ai/issues/6662#issuecomment-5443082639.
-    """
+    """`ToolReturn.content` is part of the tool's result, kept as its attachments, so `ui_visibility` covers it too."""
     agent = Agent(calling(('lookup_order', '{"order_id": "o_1"}')))
 
     @agent.tool_plain(ui_visibility=ui_visibility)
     def lookup_order(order_id: str) -> ToolReturn:
-        return ToolReturn(return_value=SECRET, content='Order o_1 is on its way.')
+        return ToolReturn(return_value='ok', content=f'Order o_1 margin: {SECRET}')
 
     run = await run_adapter(protocol, agent)
 
+    # The adapters' streams never send a tool's content, for any tool.
     assert SECRET not in run.wire
-    # The adapters' streams never send a result event's `content`, for any tool.
-    assert 'Order o_1 is on its way.' not in run.wire
-    assert SECRET not in dump(protocol, run.messages)
-    assert 'Order o_1 is on its way.' in dump(protocol, run.messages)
+    assert (SECRET in dump(protocol, run.messages)) == (ui_visibility == 'public')
 
 
 @pytest.mark.parametrize('protocol', PROTOCOLS)

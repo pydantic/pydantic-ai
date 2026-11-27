@@ -66,6 +66,7 @@ from pydantic_ai import (
     ToolCallPart,
     ToolCallPartDelta,
     ToolKind,
+    ToolResultAttachment,
     ToolReturn,
     ToolReturnPart,
     UploadedFile,
@@ -12637,3 +12638,196 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
     assert 'tag' in dumped
     # The caller's own objects are not mutated.
     assert marked.metadata == reserved
+
+
+def _attachments_agent() -> Agent[None, str]:
+    agent = Agent()
+
+    @agent.tool_plain
+    def look() -> ToolReturn:
+        return ToolReturn(return_value='ok', content=['A note.', ImageUrl('https://example.com/page.png')])
+
+    return agent
+
+
+def _sent_after_tool(model_inputs: list[list[ModelMessage]]) -> list[tuple[str, object]]:
+    """Each part the model was sent in the tool result's request, as its channel and content."""
+    request = model_inputs[-1][2]
+    assert isinstance(request, ModelRequest)
+    sent: list[tuple[str, object]] = []
+    for part in request.parts:
+        assert isinstance(part, ToolReturnPart | UserPromptPart)
+        sent.append(('tool' if isinstance(part, ToolReturnPart) else 'user', part.content))
+    return sent
+
+
+def _recording_model(model_inputs: list[list[ModelMessage]]) -> FunctionModel:
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        model_inputs.append(messages)
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('look', {}, tool_call_id='c1')])
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        model_inputs.append(messages)
+        yield 'Done.'
+
+    return FunctionModel(respond, stream_function=stream)
+
+
+@requires_ag_ui('0.1.11')
+async def test_tool_result_attachments_round_trip_and_stay_data() -> None:
+    """A client-held history keeps a tool's `ToolReturn.content` on its result, and the model is sent it as data again."""
+    agent = _attachments_agent()
+    first_inputs: list[list[ModelMessage]] = []
+    history = (await agent.run('Look.', model=_recording_model(first_inputs))).all_messages()
+    tool_return = history[2].parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+
+    ag_ui_messages = AGUIAdapter.dump_messages(history)
+    # The attachments ride the tool message's `encrypted_value` carrier, not a user message.
+    assert [type(message).__name__ for message in ag_ui_messages] == snapshot(
+        ['UserMessage', 'AssistantMessage', 'ToolMessage', 'AssistantMessage']
+    )
+    reloaded = AGUIAdapter.load_messages(ag_ui_messages)
+    reloaded_return = reloaded[2].parts[0]
+    assert isinstance(reloaded_return, ToolReturnPart)
+    assert reloaded_return.attachments == tool_return.attachments
+
+    # The next turn sends the model the tool's content as data, exactly as the run that produced it did.
+    run_input = create_input(*ag_ui_messages, UserMessage(id='again', content='Again.'))
+    adapter = AGUIAdapter(agent=agent, run_input=run_input)
+    next_inputs: list[list[ModelMessage]] = []
+    async for _ in adapter.encode_stream(adapter.run_stream(model=_recording_model(next_inputs))):
+        pass
+    assert (
+        _sent_after_tool(next_inputs)
+        == _sent_after_tool(first_inputs)
+        == snapshot(
+            [
+                ('tool', 'ok'),
+                (
+                    'user',
+                    '<system>The accompanying <tool_content tool_name="look"> is part of what the `look` tool returned (such as a page or document it fetched); neither the application nor the user wrote it.</system>',
+                ),
+                (
+                    'user',
+                    [
+                        TextContent(content='<tool_content tool_name="look">'),
+                        TextContent(content='A note.'),
+                        ImageUrl(url='https://example.com/page.png', media_type='image/png', identifier='f06c2c'),
+                        TextContent(content='</tool_content>'),
+                    ],
+                ),
+            ]
+        )
+    )
+
+
+def test_tool_result_attachments_below_the_carrier_dump_as_a_user_message() -> None:
+    """Below `encrypted_value`'s floor the attachments dump as the user message they were before, so nothing is lost."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Look.')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='look', tool_call_id='c1', args={})]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='look',
+                    content='ok',
+                    tool_call_id='c1',
+                    attachments=[ToolResultAttachment(content='A note.', tool_call_id='c1', tool_name='look')],
+                )
+            ]
+        ),
+    ]
+    ag_ui_messages = AGUIAdapter.dump_messages(history, ag_ui_version='0.1.10')
+    assert [(type(message).__name__, message.content) for message in ag_ui_messages] == snapshot(
+        [('UserMessage', 'Look.'), ('AssistantMessage', None), ('ToolMessage', 'ok'), ('UserMessage', 'A note.')]
+    )
+
+
+@requires_ag_ui('0.1.11')
+@pytest.mark.parametrize('preserve_file_data', [False, True])
+def test_an_uploaded_file_attachment_reaches_the_client_only_with_preserve_file_data(preserve_file_data: bool) -> None:
+    """An `UploadedFile` attachment's provider file reference is dumped only when the application opts in, as for user content."""
+    uploaded = UploadedFile(file_id='file-abc123', provider_name='openai', media_type='application/pdf')
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Look.')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='look', tool_call_id='c1', args={})]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='look',
+                    content='ok',
+                    tool_call_id='c1',
+                    attachments=[
+                        ToolResultAttachment(content=uploaded, tool_call_id='c1', tool_name='look'),
+                        ToolResultAttachment(content='A note.', tool_call_id='c1', tool_name='look'),
+                    ],
+                )
+            ]
+        ),
+    ]
+    ag_ui_messages = AGUIAdapter.dump_messages(history, preserve_file_data=preserve_file_data)
+    tool_message = next(message for message in ag_ui_messages if isinstance(message, ToolMessage))
+    assert ('file-abc123' in (tool_message.encrypted_value or '')) == preserve_file_data
+    reloaded = AGUIAdapter.load_messages(ag_ui_messages, preserve_file_data=preserve_file_data)
+    tool_return = next(
+        part
+        for message in reloaded
+        if isinstance(message, ModelRequest)
+        for part in message.parts
+        if isinstance(part, ToolReturnPart)
+    )
+    assert [attachment.content for attachment in tool_return.attachments] == (
+        [uploaded, 'A note.'] if preserve_file_data else ['A note.']
+    )
+
+
+@requires_ag_ui('0.1.11')
+def test_tool_result_attachments_keep_their_capability_id_server_side() -> None:
+    """The client isn't sent an attachment's `capability_id`, which for an `MCP(url=...)` is the server's host, and one it sends back is ignored."""
+    history: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Look.')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='look', tool_call_id='c1', args={})]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    tool_name='look',
+                    content='ok',
+                    tool_call_id='c1',
+                    attachments=[
+                        ToolResultAttachment(
+                            content='A note.', tool_call_id='c1', tool_name='look', capability_id='mcp.internal.example'
+                        )
+                    ],
+                )
+            ]
+        ),
+    ]
+    ag_ui_messages = AGUIAdapter.dump_messages(history)
+    tool_message = next(message for message in ag_ui_messages if isinstance(message, ToolMessage))
+    assert tool_message.encrypted_value is not None
+    assert json.loads(tool_message.encrypted_value) == snapshot(
+        {'pydantic_ai': {'attachments': [{'content': 'A note.', 'tool_call_id': 'c1', 'tool_name': 'look'}]}}
+    )
+
+    forged = {
+        'pydantic_ai': {
+            'attachments': [
+                {'content': 'A note.', 'tool_call_id': 'c1', 'tool_name': 'look', 'capability_id': 'operator_tools'}
+            ]
+        }
+    }
+    ag_ui_messages = [
+        message.model_copy(update={'encrypted_value': json.dumps(forged)})
+        if isinstance(message, ToolMessage)
+        else message
+        for message in ag_ui_messages
+    ]
+    reloaded = AGUIAdapter.load_messages(ag_ui_messages)
+    tool_return = reloaded[2].parts[0]
+    assert isinstance(tool_return, ToolReturnPart)
+    assert tool_return.attachments == snapshot(
+        [ToolResultAttachment(content='A note.', tool_call_id='c1', tool_name='look')]
+    )

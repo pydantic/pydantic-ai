@@ -36,7 +36,6 @@ from pydantic_ai.messages import (
     TextPart,
     ToolCallPart,
     ToolReturnPart,
-    UserPromptPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -442,13 +441,14 @@ class TestCDPBrowser:
         assert tool_returns(result.all_messages()) == snapshot(
             ['Screenshot attached (image/png, 15 bytes).', 'Screenshot attached (image/jpeg, 15 bytes).']
         )
+        # Each screenshot is kept with the result of the call that took it.
         images = [
-            item
+            attachment.content
             for message in result.all_messages()
             for part in message.parts
-            if isinstance(part, UserPromptPart)
-            for item in part.content
-            if isinstance(item, BinaryContent)
+            if isinstance(part, ToolReturnPart)
+            for attachment in part.attachments
+            if isinstance(attachment.content, BinaryContent)
         ]
         assert [(image.data, image.media_type) for image in images] == [
             (chrome.screenshot, 'image/png'),

@@ -1493,6 +1493,41 @@ _FILE_ITEM_KEYS: dict[Any, frozenset[str]] = {
 """The keys a dump of each recorded file kind can write; `test_file_item_keys_match_their_dumps` pins them."""
 
 
+@dataclass(repr=False, kw_only=True)
+class ToolResultAttachment:
+    """An item of a tool's [`ToolReturn.content`][pydantic_ai.messages.ToolReturn.content], kept with the result of the call.
+
+    It's part of the tool's result, but not of its return value, so it reaches the model as data on the user channel
+    after the request's tool results, behind a note naming the tool that produced it. It's always data: nothing on an
+    attachment raises its authority, so an attachment from history, from a client or from a hook can at most name the
+    wrong tool.
+    """
+
+    content: UserContent
+    """The item, as the tool returned it."""
+
+    tool_call_id: str
+    """The ID of the call that produced it: the result's own call, or a call a tool that runs other tools made, such as
+    Code Mode's `run_code`."""
+
+    tool_name: str
+    """The name of the tool that produced it."""
+
+    capability_id: str | None = None
+    """The ID of the capability that contributed the tool, if any, which the note names instead of the tool."""
+
+    def __post_init__(self) -> None:
+        # Checked here, as `UserPromptPart` checks its items, so a mapping shaped like a file can't be stored as one
+        # and rebuilt as a file reference when the history is loaded. `ValueError`: see `UserPromptPart.__post_init__`.
+        if not isinstance(self.content, _USER_CONTENT_TYPES):
+            raise ValueError(
+                '`ToolResultAttachment.content` must be a `UserContent` item, '
+                f'got `{type(self.content).__name__}`. {_NOT_USER_CONTENT}'
+            )
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
 _ToolReturnValueT = TypeVar('_ToolReturnValueT', default=Any)
 """Type variable for the return value type in `ToolReturn[T]`.
 
@@ -1519,11 +1554,32 @@ class ToolReturn(_RecordsContentFiles, Generic[_ToolReturnValueT]):
     _: KW_ONLY
 
     content: str | Sequence[UserContent] | None = None
-    """Content sent to the model as a separate `UserPromptPart`.
+    """Content that's part of the tool's result, but not of its return value, such as a page's text next to a summary.
 
-    Use this when you want content to appear outside the tool result message.
-    For multimodal content that should be sent natively in the tool result,
-    return it directly from the tool function or include it in `return_value`.
+    It's stored on the call's [`ToolReturnPart`][pydantic_ai.messages.ToolReturnPart] as
+    [`attachments`][pydantic_ai.messages.ToolReturnPart.attachments], and reaches the model after the request's tool
+    results as data framed on the user channel, behind a note naming the tool (or the capability that contributed
+    it). Like the return value, it has no authority: the model reads it as information, not instructions.
+
+    A `ToolReturn` passed in [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] wasn't produced by a tool
+    in the run: it's supplied from outside it, by the application or the user answering. Its `content` keeps the user's
+    voice, as a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] after the request's tool results, held to the
+    authority of the capability that owns the tool.
+
+    To send multimodal content in the tool result itself, return it from the tool function or include it in
+    `return_value`. To speak to the model as the user or the application, enqueue it with
+    [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue] instead, which holds what a capability's tool enqueues to the
+    capability's authority ceiling.
+    """
+
+    # Left out of a dump when empty, so a durable journal holds what it did before the field existed.
+    attachments: Annotated[
+        Sequence[ToolResultAttachment], pydantic.Field(exclude_if=lambda attachments: not attachments)
+    ] = ()
+    """The `content` of the tools this tool called, each item attributed to the call that produced it.
+
+    For a tool that runs other tools, such as Code Mode's `run_code`: the nested calls' content is kept with this
+    tool's result, ahead of its own `content`, and still names the tool that produced it.
     """
 
     metadata: Any = None
@@ -1978,6 +2034,10 @@ RetryFeedbackCause: TypeAlias = Literal['validation_error', 'no_output', 'model_
   rejects, so it goes in the user voice too, inside a `<pyai:retry_feedback>` fence.
 
 Only `'no_output'` carries fixed framework text, so only it reaches the model in the system voice.
+
+[`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] is the exception: it
+sends the feedback as a `developer` message whatever its cause, so the model doesn't read it as a newer
+request.
 """
 
 RetryCauseT_co = TypeVar(
@@ -2841,6 +2901,21 @@ class ToolReturnPart(BaseToolReturnPart[ContentT_co, MetadataT_co]):
     the provider's prompt cache.
     """
 
+    # Left out of a dump when empty, so a history without any is stored as it was before the field existed.
+    attachments: Annotated[
+        Sequence[ToolResultAttachment], pydantic.Field(exclude_if=lambda attachments: not attachments)
+    ] = ()
+    """Content that's part of this result but not of its return value: the tool's
+    [`ToolReturn.content`][pydantic_ai.messages.ToolReturn.content], after that of the tools it called, if any.
+
+    [`Model.prepare_messages`][pydantic_ai.models.Model.prepare_messages] sends it after the request's tool results,
+    as data framed on the user channel: each call's items in one frame, behind a note naming the tool that produced
+    them, or the capability that contributed the tool. It's data whatever an attachment says, so a stored, forged or
+    replaced attachment can name the wrong tool, but never speaks as the user or the application.
+
+    History recorded before this field existed keeps that content in the request's other parts, as it was sent then.
+    """
+
     part_kind: Literal['tool-return'] = 'tool-return'
     """Part type identifier, this is available on all parts as a discriminator."""
 
@@ -3091,6 +3166,10 @@ class RetryFeedbackPart:
     which is what a retry rendered as bare user text never allowed
     (https://github.com/pydantic/pydantic-ai/issues/6404), and keeping the presentation out of the
     history keeps a cached prefix valid across providers.
+
+    [`OpenAIDecisionsModel`][pydantic_ai.models.openai_decisions.OpenAIDecisionsModel] is the exception:
+    it sends the feedback as a `developer` message whatever its cause, so the model doesn't read it as
+    a newer request.
     """
 
     content: list[pydantic_core.ErrorDetails] | str
@@ -3101,8 +3180,8 @@ class RetryFeedbackPart:
 
     A string comes from a [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] your own code raised, and
     goes out in the user voice inside a `<pyai:retry_feedback>` fence, since output validators commonly
-    interpolate the output they reject; or, for a `'no_output'` cause, it's the framework's own fixed
-    text.
+    interpolate the output they reject (except on `OpenAIDecisionsModel`, as above); or, for a
+    `'no_output'` cause, it's the framework's own fixed text.
     """
 
     _: KW_ONLY
@@ -5649,6 +5728,21 @@ class _CapabilityContentPart(
 
 
 @dataclass(repr=False, kw_only=True)
+class _ToolContentPart(
+    DataCapabilityPart, namespace='pydantic_ai', name='tool_content', tag='tool_content', attributes=('tool_name',)
+):
+    """A tool's [`ToolResultAttachment`][pydantic_ai.messages.ToolResultAttachment]s, as data framed on the user channel.
+
+    What the attachments of a tool no capability contributed render as, with a
+    [`ToolResultSource`][pydantic_ai.messages.ToolResultSource] naming the tool. Rendered fresh from the attachments
+    on every request; stored only where a capability delivers a call's result itself, such as `BackgroundTools`.
+    """
+
+    tool_name: str
+    """The name of the tool that produced the content."""
+
+
+@dataclass(repr=False, kw_only=True)
 class _CapabilityInstructionPart(InstructionCapabilityPart, namespace='pydantic_ai', name='capability_instruction'):
     """A `SystemPromptPart` a capability with less than `'operator'` authority enqueued, downgraded to that authority.
 
@@ -7471,10 +7565,21 @@ def _sanitize_request_parts(
             )
             new_parts.append(replace(part, content=_without_text_metadata(filtered_content, stripped_text_metadata)))
         elif isinstance(part, ToolReturnPart):
-            new_parts.append(
-                _sanitize_tool_return_part(
-                    part,
-                    ToolReturnPart,
+            part = _sanitize_tool_return_part(
+                part,
+                ToolReturnPart,
+                allowed_file_url_schemes,
+                allowed_file_url_force_download,
+                allow_uploaded_files,
+                disallowed_schemes,
+                reset_force_download_values,
+                dropped_uploaded_file_providers,
+                stripped_text_metadata,
+            )
+            part = replace(
+                part,
+                attachments=_sanitize_attachments(
+                    part.attachments,
                     allowed_file_url_schemes,
                     allowed_file_url_force_download,
                     allow_uploaded_files,
@@ -7482,11 +7587,47 @@ def _sanitize_request_parts(
                     reset_force_download_values,
                     dropped_uploaded_file_providers,
                     stripped_text_metadata,
-                )
+                ),
             )
+            new_parts.append(part)
         else:
             new_parts.append(part)
     return new_parts, stripped_system_prompt, dropped_capability_part
+
+
+def _sanitize_attachments(
+    attachments: Sequence[ToolResultAttachment],
+    allowed_file_url_schemes: set[str],
+    allowed_file_url_force_download: set[ForceDownloadMode],
+    allow_uploaded_files: bool,
+    disallowed_schemes: set[str],
+    reset_force_download_values: set[ForceDownloadMode],
+    dropped_uploaded_file_providers: set[str],
+    stripped_text_metadata: list[TextContent],
+) -> Sequence[ToolResultAttachment]:
+    """Check the files of untrusted tool result attachments like any the client sends.
+
+    Attachments are data whatever they say, so only their file references and text metadata need sanitizing.
+    Returns `attachments` itself when there are none, so a part without them keeps its `()` default.
+    """
+    if not attachments:
+        return attachments
+    return [
+        replace(attachment, content=item)
+        for attachment in attachments
+        for item in _without_text_metadata(
+            _filter_user_content(
+                [attachment.content],
+                allowed_file_url_schemes,
+                allowed_file_url_force_download,
+                allow_uploaded_files,
+                disallowed_schemes,
+                reset_force_download_values,
+                dropped_uploaded_file_providers,
+            ),
+            stripped_text_metadata,
+        )
+    ]
 
 
 def _filter_user_content(
@@ -8555,7 +8696,14 @@ class FunctionToolResultEvent(ToolResultEvent):
     _: KW_ONLY
 
     content: str | Sequence[UserContent] | None = None
-    """The content that will be sent to the model as a UserPromptPart following the result."""
+    """The tool's own [`ToolReturn.content`][pydantic_ai.messages.ToolReturn.content], if any.
+
+    For a tool executed in the run, all the content that reaches the model with its result is on the result's
+    [`attachments`][pydantic_ai.messages.ToolReturnPart.attachments] on `part`, including the content of the tools it
+    called, such as Code Mode's `run_code` and `ToolBridge`'s `tool_call`, which this field leaves out. Content supplied
+    with a deferred tool result is sent as a [`UserPromptPart`][pydantic_ai.messages.UserPromptPart] after the request's
+    tool results.
+    """
 
     event_kind: Literal['function_tool_result'] = 'function_tool_result'
     """Event type identifier, used as a discriminator."""

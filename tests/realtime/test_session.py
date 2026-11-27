@@ -67,6 +67,7 @@ from pydantic_ai.messages import (
     TextPart,
     TextPartDelta,
     ToolCallPart,
+    ToolResultAttachment,
     ToolResultSource,
     ToolReturn,
     ToolReturnPart,
@@ -9587,6 +9588,8 @@ async def test_agent_realtime_session_runs_args_validator() -> None:
     ('follow_up_content', 'expected_wire_content'),
     [
         ('extra context', ['extra context']),
+        # A one-item list is stored as the list it was returned as, not the bare string.
+        (['extra context'], ['extra context']),
         (
             ['extra context', BinaryContent(data=b'image', media_type='image/png')],
             ['extra context', BinaryContent(data=b'image', media_type='image/png')],
@@ -9628,6 +9631,27 @@ async def test_agent_realtime_session_tool_return_is_unwrapped(
         result.part,
         UserPromptPart(content=follow_up_content, timestamp=IsDatetime()),
     ]
+
+
+async def test_agent_realtime_session_tool_return_attachments_follow_as_user_content() -> None:
+    """The content of the tools a tool called goes ahead of its own, as one list of user content."""
+    agent: Agent[None, str] = Agent()
+
+    @agent.tool_plain
+    def info() -> ToolReturn:
+        return ToolReturn(
+            return_value='done',
+            content='own note',
+            attachments=[ToolResultAttachment(content='nested note', tool_call_id='nested', tool_name='lookup')],
+        )
+
+    conn = FakeRealtimeConnection([ToolCall(tool_call_id='tc', tool_name='info', args='{}'), ResponseDone()])
+    async with agent.realtime(FakeRealtimeModel(conn)).session() as session:
+        events = [e async for e in session]
+
+    result = next(e for e in events if isinstance(e, FunctionToolResultEvent))
+    assert result.content == ['nested note', 'own note']
+    assert conn.sent == [ToolResult(tool_call_id='tc', output='done', content=['nested note', 'own note'])]
 
 
 async def test_agent_realtime_session_denied_tool_returns_denial_message() -> None:

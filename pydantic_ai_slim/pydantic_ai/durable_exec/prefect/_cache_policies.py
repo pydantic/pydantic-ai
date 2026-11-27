@@ -20,6 +20,7 @@ from pydantic_ai.messages import (
     CapabilityPart,
     CapabilitySource,
     RunInstructionSource,
+    ToolReturnPart,
     ToolsetInstructionSource,
 )
 from pydantic_ai.tools import RunContext, ToolDefinition
@@ -237,10 +238,13 @@ def _excluded_fields(obj: object, *, is_framework: bool) -> frozenset[str]:
         excluded_fields |= _CAPABILITY_PART_EXCLUDED_FIELDS
     elif isinstance(obj, _INSTRUCTION_SOURCE_TYPES):
         excluded_fields |= _INSTRUCTION_SOURCE_EXCLUDED_FIELDS
-    elif isinstance(obj, ToolDefinition | BaseToolCallPart | BaseToolReturnPart) and obj.ui_visibility is None:
-        # Left out while unset, so keys stay what they were before the field was added; a set stamp stays in the key,
-        # since the model task's cached response carries it.
-        excluded_fields |= {'ui_visibility'}
+    elif isinstance(obj, ToolDefinition | BaseToolCallPart | BaseToolReturnPart):
+        # Fields added after keys were first computed are left out while unset, so a flow retried across the upgrade
+        # hits; set, they stay in the key, since the model task's cached response carries them.
+        if obj.ui_visibility is None:
+            excluded_fields |= {'ui_visibility'}
+        if isinstance(obj, ToolReturnPart) and not obj.attachments:
+            excluded_fields |= {'attachments'}
     return excluded_fields
 
 

@@ -16,6 +16,9 @@ import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from pydantic import ValidationError
 
+from pydantic_ai._capability_parts import tool_result_attachment_parts
+from pydantic_ai._tool_execution import tool_result_attachments
+from pydantic_ai._utils import now_utc
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentNode,
@@ -34,7 +37,13 @@ from pydantic_ai.exceptions import (
     UnexpectedModelBehavior,
     UserError,
 )
-from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
+from pydantic_ai.messages import (
+    DataCapabilityPart,
+    ModelResponse,
+    ToolCallPart,
+    ToolReturn,
+    ToolReturnPart,
+)
 from pydantic_ai.output import PendingModelResponse
 from pydantic_ai.tools import (
     AgentDepsT,
@@ -127,6 +136,9 @@ class _Completion:
     """The failure that counts toward the tool's `max_retries`, when the call is to be retried."""
     succeeded: bool = False
     """Whether the call returned a result, which resets the tool's retry count as for a sequential call."""
+    attachments: list[DataCapabilityPart] = field(default_factory=list[DataCapabilityPart])
+    """The call's `ToolReturn.content`, as the data parts it reaches the model as after the result, as it does after a
+    direct call's result."""
 
 
 _Outcome = _Completion | BaseException
@@ -170,31 +182,14 @@ def _format_background_failure(tool_name: str, task_id: str, error: _SignalledEr
 
 
 def _format_background_result(tool_name: str, task_id: str, result: Any) -> BackgroundToolResultPart:
-    """The call's result as model-visible content: the return value, its files, then any `ToolReturn.content`."""
-    if isinstance(result, ToolReturn):
-        return_value: object = result.return_value
-        extra_content = result.content
-    else:
-        return_value = result
-        extra_content = None
-
+    """The call's result as model-visible content: the return value, then its files."""
+    return_value: object = result.return_value if isinstance(result, ToolReturn) else result
     return_part = ToolReturnPart(tool_name=tool_name, tool_call_id=task_id, content=return_value)
     # The frame's attributes name the call the "running in background" reply announced, so the result needs no
-    # preamble. `ToolReturn.content` is the tool's too, so it goes in the same frame, after what the tool returned.
-    content: list[UserContent] = [return_part.model_response_str(), *return_part.files]
-    if isinstance(extra_content, str):
-        content.append(extra_content)
-    elif extra_content is not None:
-        content.extend(extra_content)
-    # Adjacent text goes on separate lines, as one item.
-    merged: list[UserContent] = []
-    for item in content:
-        if isinstance(item, str) and merged and isinstance(merged[-1], str):
-            merged[-1] = f'{merged[-1]}\n{item}'
-        else:
-            merged.append(item)
-    body = merged[0] if len(merged) == 1 and isinstance(merged[0], str) else merged
-    return make_background_result(tool_name, task_id, body)
+    # preamble.
+    text = return_part.model_response_str()
+    files = return_part.files
+    return make_background_result(tool_name, task_id, [text, *files] if files else text)
 
 
 @dataclass
@@ -415,12 +410,14 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
                     # would for a sequential tool.
                     outcome = exc
                 else:
+                    attachments = tool_result_attachments(result, call=call, capability_id=tool_def.capability_id)
                     outcome = _Completion(
                         tool_name,
                         ctx.max_retries,
                         _format_background_result(tool_name, task_id, result),
                         dispatched,
                         succeeded=True,
+                        attachments=tool_result_attachment_parts(attachments, timestamp=now_utc()),
                     )
                 self._send.send_nowait(outcome)
             finally:
@@ -492,7 +489,7 @@ class BackgroundTools(AbstractCapability[AgentDepsT]):
         self._unsettled.append(outcome)
 
     def _enqueue(self, ctx: RunContext[AgentDepsT], completion: _Completion) -> None:
-        enqueue_id = ctx.enqueue(completion.result)
+        enqueue_id = ctx.enqueue(completion.result, *completion.attachments)
         assert enqueue_id is not None  # Only an empty call queues nothing.
         self._queued[enqueue_id] = completion
 

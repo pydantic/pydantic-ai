@@ -5402,7 +5402,7 @@ async def test_deferred_tool_handler_via_handle_call_with_resolve():
 
 async def test_deferred_tool_handler_approved_tool_returns_tool_return():
     """Approved tool returning a ToolReturn preserves metadata and user content."""
-    from pydantic_ai.messages import ToolReturn as _ToolReturn, UserPromptPart
+    from pydantic_ai.messages import ToolResultAttachment, ToolReturn as _ToolReturn
 
     def llm(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
@@ -5428,13 +5428,10 @@ async def test_deferred_tool_handler_approved_tool_returns_tool_return():
     ]
     assert len(tool_returns) == 1
     assert tool_returns[0].metadata == {'source': 'tool'}
-    # Verify ToolReturn.content appears as UserPromptPart
-    user_parts = [
-        p
-        for p in iter_message_parts(result.all_messages(), ModelRequest, UserPromptPart)
-        if p.content == 'user prompt extra'
+    # Verify ToolReturn.content is kept with the result
+    assert tool_returns[0].attachments == [
+        ToolResultAttachment(content='user prompt extra', tool_call_id='call1', tool_name='my_tool')
     ]
-    assert len(user_parts) == 1
 
 
 async def test_deferred_tool_handler_approved_tool_raises_model_retry():

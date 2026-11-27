@@ -3,9 +3,10 @@
 Each case's `calls` run with every capability it builds lowered to `with_authority('none')`, once as plain tool calls
 (the native route) and once through each other route in `ROUTES`. What a call returns travels in a carrier of the
 route's own, such as the `run_code` result or a background result, so the check compares everything else the calls
-put in the history: each part's type, source, capability id, authority, frame and scope must be the native route's,
-and for `PROBES`, whose calls put fixed content there, its content too. The same tools must run, so a call a route
-never makes can't pass.
+put in the history, including the content a carrier keeps with what a call returned (`ToolReturnPart.attachments`),
+as the parts it reaches the model as: each part's type, source, capability id, authority, frame and scope must be the
+native route's, and for `PROBES`, whose calls put fixed content there, its content too. The same tools must run, so a
+call a route never makes can't pass.
 
 A route that breaks this for a case is a known finding, marked `xfail(strict=True)` in `KNOWN` with what fixes it, so
 the fix fails the suite until its entry is removed. A route that doesn't apply to a case is skipped with its reason.
@@ -18,9 +19,11 @@ import json
 import re
 from collections.abc import AsyncIterator, Callable, Iterator, Sequence
 from dataclasses import dataclass, field
+from itertools import groupby
 from pathlib import Path
 from typing import Literal, get_args
 
+import anyio
 import pytest
 from _pytest.mark import ParameterSet
 
@@ -35,8 +38,11 @@ from pydantic_ai.messages import (
     ModelRequest,
     OperatorSource,
     OperatorText,
+    StructuredContent,
     ToolCallPart,
+    ToolResultAttachment,
     ToolReturnPart,
+    UserContent,
 )
 from pydantic_ai.models.function import AgentInfo
 from pydantic_ai.tools import ToolDefinition
@@ -48,7 +54,6 @@ from ..append_only import (
     OneCallPerResponse,
     ToolArgs,
     ToolCall,
-    build_calls,
     discover_capabilities,
     drain_events,
     run_through_ui,
@@ -152,23 +157,13 @@ PROBES: dict[str, Calls] = {
 part to compare while few cases' calls do: one returns `ToolReturn.content`, one calls `ctx.enqueue` with text, and one
 enqueues a request-scoped system prompt. What they put there is fixed, so their routes are also compared on content."""
 
-_PULL = 'https://github.com/pydantic/pydantic-ai/pull/'
-_CONTENT = f"{_PULL}14327: a nested call's `ToolReturn.content` is attributed to the route's own tool"
 _ISSUE = 'https://github.com/pydantic/pydantic-ai/issues/'
-_BACKGROUND_NAME = (
-    f'{_ISSUE}12391: `BackgroundTools` folds `ToolReturn.content` into its result frame, which keeps the frame but drops the '
-    'capability that wrote it (`background_tools/_capability.py`, `_format_background_result`)'
-)
 _PLAN_IN_CARRIER = (
     f"{_ISSUE}14441: `Planning` finds the plan a plan tool returned only in that tool's own `ToolReturnPart`, so after a plan tool "
     'runs inside another carrier it records the plan again in a `<plan_reminder>`'
 )
 
 KNOWN: dict[tuple[str, Route], tuple[str, type[Exception]]] = {
-    ('probe:tool_return_content', 'code_mode'): (_CONTENT, AssertionError),
-    ('probe:tool_return_content', 'ipython_code_mode'): (_CONTENT, AssertionError),
-    ('probe:tool_return_content', 'tool_bridge'): (_CONTENT, AssertionError),
-    ('probe:tool_return_content', 'background_tools'): (_BACKGROUND_NAME, AssertionError),
     ('Planning', 'code_mode'): (_PLAN_IN_CARRIER, AssertionError),
     ('Planning', 'ipython_code_mode'): (_PLAN_IN_CARRIER, AssertionError),
     ('Planning', 'background_tools'): (_PLAN_IN_CARRIER, AssertionError),
@@ -194,9 +189,15 @@ class Seen:
     """What a capability part tells the model, compared only for the probes, whose content is fixed."""
 
 
-def _seen(part: object, *, with_content: bool) -> Seen:
-    if not isinstance(part, CapabilityPart):
-        return Seen(type(part).__name__)
+def _said(content: str | StructuredContent | Sequence[UserContent]) -> object:
+    """`content` as the model reads it: one item alone reads the same as that item."""
+    if isinstance(content, str | StructuredContent):
+        return content
+    items = tuple(content)
+    return items[0] if len(items) == 1 else items
+
+
+def _seen(part: CapabilityPart, *, with_content: bool) -> Seen:
     return Seen(
         part.kind,
         part.source,
@@ -204,12 +205,44 @@ def _seen(part: object, *, with_content: bool) -> Seen:
         part.source.authority,
         (part.rendering.voice, part.rendering.tag),
         part.scope,
-        part.model_content() if with_content else None,
+        _said(part.model_content()) if with_content else None,
     )
 
 
 _CARRIERS = (ToolReturnPart, BackgroundToolResultPart)
 """Parts that carry what a call returned, which each route wraps its own way."""
+
+
+def _attachments_seen(attachments: Sequence[ToolResultAttachment], *, with_content: bool) -> Iterator[Seen]:
+    """What the model sees of a tool result's attachments, which are always data.
+
+    Each run of items one call made reaches the model as one framed part: content the capability that contributed the
+    tool would enqueue at `'none'`. Every case's tools come from a capability.
+    """
+    for (_, _, capability_id), group in groupby(
+        attachments, key=lambda attachment: (attachment.tool_call_id, attachment.tool_name, attachment.capability_id)
+    ):
+        assert capability_id is not None
+        items = [attachment.content for attachment in group]
+        yield Seen(
+            'pydantic_ai.capability_content',
+            CapabilitySource(capability_id, authority='none'),
+            capability_id,
+            'none',
+            ('data', 'capability_content'),
+            'conversation',
+            _said(items) if with_content else None,
+        )
+
+
+def _parts_seen(part: object, *, with_content: bool) -> Iterator[Seen]:
+    """What the model sees of `part`: a carrier's attachments, or the part."""
+    if isinstance(part, ToolReturnPart):
+        yield from _attachments_seen(part.attachments, with_content=with_content)
+    elif not isinstance(part, _CARRIERS):
+        # Besides the prompt and the carriers, the calls put only capability parts in the history.
+        assert isinstance(part, CapabilityPart), part
+        yield _seen(part, with_content=with_content)
 
 
 def typed_history(messages: Sequence[ModelMessage], *, with_content: bool = False) -> list[Seen]:
@@ -219,10 +252,10 @@ def typed_history(messages: Sequence[ModelMessage], *, with_content: bool = Fals
     """
     requests = [message for message in messages if isinstance(message, ModelRequest)]
     return [
-        _seen(part, with_content=with_content)
+        seen
         for request in requests[1:]
         for part in request.parts
-        if not isinstance(part, _CARRIERS)
+        for seen in _parts_seen(part, with_content=with_content)
     ]
 
 
@@ -278,9 +311,17 @@ class RouteRun:
     """The tools the calls executed, in order, leaving out the route's own dispatchers."""
 
 
+def _lowered(calls: Calls, directory: Path) -> list[AbstractCapability[None]]:
+    built = calls.build(directory)
+    capabilities = [built] if isinstance(built, AbstractCapability) else list(built)
+    return [capability.with_authority('none') for capability in capabilities]
+
+
 async def _built(calls: Calls, directory: Path) -> tuple[list[AbstractCapability[None]], _Observer]:
-    capabilities = await build_calls(calls.build, directory)
-    return [capability.with_authority('none') for capability in capabilities], _Observer()
+    directory.mkdir()
+    # Built off the event loop, as an app builds its agent: building can import a client library.
+    capabilities = await anyio.to_thread.run_sync(_lowered, calls, directory)
+    return capabilities, _Observer()
 
 
 def _ran(calls: Calls, observer: _Observer) -> list[str]:
@@ -290,7 +331,11 @@ def _ran(calls: Calls, observer: _Observer) -> list[str]:
 
 async def _native(calls: Calls, directory: Path) -> RouteRun:
     capabilities, observer = await _built(calls, directory)
-    agent = Agent(OneCallPerResponse(calls.made).model, deps_type=type(None), capabilities=[*capabilities, observer])
+    agent = Agent(
+        OneCallPerResponse(calls.made, unstreamed=True).model,
+        deps_type=type(None),
+        capabilities=[*capabilities, observer],
+    )
     result = await agent.run('go', event_stream_handler=drain_events)
     return RouteRun(result.all_messages(), _ran(calls, observer))
 
@@ -302,8 +347,7 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
         loaded = ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(native.messages))
         return RouteRun(loaded, native.ran)
     capabilities, observer = await _built(calls, directory)
-    # A sub-agent's run doesn't stream.
-    script = OneCallPerResponse(calls.made, wrap=_WRAPS.get(route), unstreamed=route == 'sub_agent')
+    script = OneCallPerResponse(calls.made, wrap=_WRAPS.get(route), unstreamed=True)
     if route in ('vercel_ai', 'ag_ui'):
         agent = Agent(script.model, deps_type=type(None), capabilities=[*capabilities, observer])
         protocol: Literal['vercel', 'agui'] = 'vercel' if route == 'vercel_ai' else 'agui'
@@ -314,7 +358,7 @@ async def _through(route: Route, calls: Calls, directory: Path, kernel: IPythonK
     if route == 'sub_agent':
         child = Agent(script.model, deps_type=type(None), name='child', capabilities=[observer])
         parent = Agent(
-            OneCallPerResponse([('delegate_task', {'agent_name': 'child', 'task': 'go'})]).model,
+            OneCallPerResponse([('delegate_task', {'agent_name': 'child', 'task': 'go'})], unstreamed=True).model,
             deps_type=type(None),
             capabilities=[SubAgents(agents=[SubAgent(child)], shared_capabilities=capabilities)],
         )

@@ -13,7 +13,7 @@ from pydantic_ai import AbstractToolset, RunContext, ToolDefinition, WrapperTool
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.exceptions import ModelRetry, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature
-from pydantic_ai.messages import ToolCallPart, ToolReturn, ToolReturnContent, ToolReturnPart, UserContent
+from pydantic_ai.messages import ToolCallPart, ToolResultAttachment, ToolReturn, ToolReturnContent, ToolReturnPart
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
@@ -125,7 +125,7 @@ class _Cell:
     call_count: int = 0
     calls: dict[str, ToolCallPart] = field(default_factory=dict[str, ToolCallPart])
     returns: dict[str, ToolReturnPart] = field(default_factory=dict[str, ToolReturnPart])
-    user_content: dict[str, list[UserContent]] = field(default_factory=dict[str, list[UserContent]])
+    attachments: dict[str, list[ToolResultAttachment]] = field(default_factory=dict[str, list[ToolResultAttachment]])
     usage_limit_exceeded: UsageLimitExceeded | None = None
 
     async def call_function(self, request: str) -> str:
@@ -149,14 +149,14 @@ class _Cell:
         self.call_count += 1
         tool_call_id = f'{self.parent_tool_call_id}__{self.call_count}'
         # Reserved before the call runs, so `ToolReturn.content` reaches the model in call order.
-        self.user_content[tool_call_id] = []
+        self.attachments[tool_call_id] = []
         call_part = ToolCallPart(
             tool_name=self.tool.sanitized_to_original.get(name, name),
             args=schema_arg_names(self.tool.callable_defs[name], call['args']),
             tool_call_id=tool_call_id,
         )
         outcome = await run_nested_call(self.tool_manager, call_part)
-        record_nested_call(call_part, outcome, calls=self.calls, returns=self.returns, user_content=self.user_content)
+        record_nested_call(call_part, outcome, calls=self.calls, returns=self.returns, attachments=self.attachments)
         if outcome.error is not None:
             if outcome.usage_limit_exceeded is not None:
                 self.usage_limit_exceeded = outcome.usage_limit_exceeded
@@ -179,7 +179,7 @@ class _Cell:
             return_value = {'output': output, 'result': result}
         return ToolReturn(
             return_value=return_value,
-            content=[item for items in self.user_content.values() for item in items] or None,
+            attachments=[attachment for attachments in self.attachments.values() for attachment in attachments],
             metadata={'code_mode': True, 'tool_calls': self.calls, 'tool_returns': self.returns},
         )
 

@@ -256,10 +256,11 @@ class _CapabilityAuthority:
     content you don't fully control, such as one built from a plugin or another team's code: as a class attribute of
     a subclass, or as a field of the capability's own. To lower one instance, use
     [`with_authority`][pydantic_ai.capabilities.AbstractCapability.with_authority]. The ceiling covers what the
-    capability sends mid-conversation, including its tools' `ToolReturn.content`, and its instructions, which below
+    capability sends mid-conversation, including what its tools enqueue, and its instructions, which below
     `'operator'` reach the model as [framed data](../capabilities/custom.md#lowered-instructions) instead of as
-    instructions. It doesn't cap its tool names and descriptions or its tools' return values: review or leave those
-    out yourself.
+    instructions. Its tools' `ToolReturn.content` needs no ceiling: it's part of the tool's result, which reaches the
+    model as data whatever the capability's authority. The ceiling doesn't cap its tool names and descriptions or its
+    tools' return values: review or leave those out yourself.
 
     For a workspace capability, such as [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace], it's also the
     default authority of the workspace's files. A file another capability reads through a workspace carries the

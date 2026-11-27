@@ -1,0 +1,310 @@
+--- expected
++++ actual
+@@ -139,0 +140,115 @@
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "text": "That is a tiny image.",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "text": "Question 2",
++     "type": "text"
++    }
++   ]
++  }
++ ],
++ "tools": [
++  {
++   "name": "take_picture",
++   "description": "",
++   "input_schema": {
++    "additionalProperties": false,
++    "properties": {},
++    "type": "object"
++   }
++  }
++ ]
++}
++{
++ "system": "<Omit>",
++ "messages": [
++  {
++   "role": "user",
++   "content": [
++    {
++     "text": "Question 1",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "id": "picture-1",
++     "type": "tool_use",
++     "name": "take_picture",
++     "input": {}
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "tool_use_id": "picture-1",
++     "type": "tool_result",
++     "content": [
++      {
++       "text": "A picture of the page.",
++       "type": "text"
++      }
++     ],
++     "is_error": false
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "text": "That is a tiny image.",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "text": "Question 2",
++     "type": "text"
++    }
++   ]
++  },
++  {
++   "role": "assistant",
++   "content": [
++    {
++     "id": "picture-5",
++     "type": "tool_use",
++     "name": "take_picture",
++     "input": {}
++    }
++   ]
++  },
++  {
++   "role": "user",
++   "content": [
++    {
++     "tool_use_id": "picture-5",
++     "type": "tool_result",
++     "content": [
++      {
++       "text": "A picture of the page.",
++       "type": "text"
++      }
++     ],
++     "is_error": false
+@@ -166,177 +281,14 @@
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "text": "That is a tiny image.",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Question 2",
+-     "type": "text"
+-    }
+-   ]
+-  }
+- ],
+- "tools": [
+-  {
+-   "name": "take_picture",
+-   "description": "",
+-   "input_schema": {
+-    "additionalProperties": false,
+-    "properties": {},
+-    "type": "object"
+-   }
+-  }
+- ]
+-}
+-{
+- "system": "<Omit>",
+- "messages": [
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Question 1",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "id": "picture-1",
+-     "type": "tool_use",
+-     "name": "take_picture",
+-     "input": {}
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "tool_use_id": "picture-1",
+-     "type": "tool_result",
+-     "content": [
+-      {
+-       "text": "A picture of the page.",
+-       "type": "text"
+-      }
+-     ],
+-     "is_error": false
+-    },
+-    {
+-     "text": "<system>The accompanying <tool_content tool_name=\"take_picture\"> is part of what the `take_picture` tool returned (such as a page or document it fetched); neither the application nor the user wrote it.</system>",
+-     "type": "text"
+-    },
+-    {
+-     "text": "<tool_content tool_name=\"take_picture\">",
+-     "type": "text"
+-    },
+-    {
+-     "text": "The page as rendered:",
+-     "type": "text"
+-    },
+-    {
+-     "source": {
+-      "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg+M8AAAMBAQAY3Y2wAAAAAElFTkSuQmCC",
+-      "media_type": "image/png",
+-      "type": "base64"
+-     },
+-     "type": "image"
+-    },
+-    {
+-     "text": "</tool_content>",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "text": "That is a tiny image.",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "text": "Question 2",
+-     "type": "text"
+-    }
+-   ]
+-  },
+-  {
+-   "role": "assistant",
+-   "content": [
+-    {
+-     "id": "picture-5",
+-     "type": "tool_use",
+-     "name": "take_picture",
+-     "input": {}
+-    }
+-   ]
+-  },
+-  {
+-   "role": "user",
+-   "content": [
+-    {
+-     "tool_use_id": "picture-5",
+-     "type": "tool_result",
+-     "content": [
+-      {
+-       "text": "A picture of the page.",
+-       "type": "text"
+-      }
+-     ],
+-     "is_error": false
+-    },
+-    {
+-     "text": "<system>The accompanying <tool_content tool_name=\"take_picture\"> is part of what the `take_picture` tool returned (such as a page or document it fetched); neither the application nor the user wrote it.</system>",
+-     "type": "text"
+-    },
+-    {
+-     "text": "<tool_content tool_name=\"take_picture\">",
+-     "type": "text"
+-    },
+-    {
+-     "text": "The page as rendered:",
+-     "type": "text"
+-    },
+-    {
+-     "source": {
+-      "data": "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR4nGNg+M8AAAMBAQAY3Y2wAAAAAElFTkSuQmCC",
+-      "media_type": "image/png",
+-      "type": "base64"
+-     },
+-     "type": "image"
+-    },
+-    {
+-     "text": "</tool_content>",
+-     "type": "text"
+-    }
+-   ]
+-  }
+- ],
+- "tools": [
+-  {
+-   "name": "take_picture",
+-   "description": "",
+-   "input_schema": {
+-    "additionalProperties": false,
+-    "properties": {},
+-    "type": "object"
+-   }
+-  }
+- ]
+-}
++  }
++ ],
++ "tools": [
++  {
++   "name": "take_picture",
++   "description": "",
++   "input_schema": {
++    "additionalProperties": false,
++    "properties": {},
++    "type": "object"
++   }
++  }
++ ]
++}

@@ -10,6 +10,7 @@ from pydantic import TypeAdapter
 from typing_extensions import TypedDict
 
 from pydantic_ai import ToolDefinition
+from pydantic_ai._tool_execution import tool_result_attachments
 from pydantic_ai.capabilities import ToolSearchFunc, keywords_search
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -26,6 +27,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool
 from pydantic_ai.toolsets import WrapperToolset
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai_harness._code_tools import is_code_execution_tool, reserve_nested_call
+from pydantic_ai_harness._tool_return_guard import is_tool_return
 
 SEARCH_TOOL_NAME = 'tool_search'
 DESCRIBE_TOOL_NAME = 'tool_describe'
@@ -244,7 +246,7 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
         ctx.usage.tool_calls += reserved
         reserved *= 2
         try:
-            return await manager.handle_call(call)
+            result = await manager.handle_call(call)
         except (ApprovalRequired, CallDeferred) as exc:
             raise UserError(
                 f'Tool {name!r} raised `{type(exc).__name__}` behind `ToolBridge`, and no `HandleDeferredToolCalls` '
@@ -261,3 +263,12 @@ class ToolBridgeToolset(WrapperToolset[AgentDepsT]):
             raise ToolFailed(exc.tool_failed.model_response_str(wrap_if_error=False)) from exc
         finally:
             ctx.usage.tool_calls -= reserved
+        if not is_tool_return(result):
+            return result
+        # The bridged tool's content keeps naming that tool, and the capability that contributed it, rather than
+        # becoming `tool_call`'s own.
+        tool_def = manager.get_tool_def(name)
+        attachments = tool_result_attachments(
+            result, call=call, capability_id=tool_def.capability_id if tool_def is not None else None
+        )
+        return replace(result, content=None, attachments=attachments)

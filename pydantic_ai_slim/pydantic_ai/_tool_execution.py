@@ -11,6 +11,7 @@ from collections.abc import (
     Awaitable,
     Callable,
     Coroutine,
+    Iterable,
     Iterator,
     Mapping,
     Sequence,
@@ -137,16 +138,44 @@ def cancelled_sub_agent_return(
     )
 
 
+def tool_result_attachments(
+    tool_result: Any, *, call: _messages.ToolCallPart, capability_id: str | None
+) -> list[_messages.ToolResultAttachment]:
+    """The content a settled tool result carries beside its return value, each item attributed to the call that produced it.
+
+    That's the [`attachments`][pydantic_ai.messages.ToolReturn.attachments] of the tools it called, then its own
+    [`ToolReturn.content`][pydantic_ai.messages.ToolReturn.content], attributed to `call` and `capability_id`, the
+    capability that contributed the tool to the `ToolManager` that ran it. Content a hook replaced is attributed to
+    `call` too, as the tool's own.
+    """
+    if not isinstance(tool_result, _messages.ToolReturn):
+        return []
+    tool_return = cast(_messages.ToolReturn[Any], tool_result)
+    content = tool_return.content
+    items: Sequence[_messages.UserContent] = [] if not content else [content] if isinstance(content, str) else content
+    return [
+        *tool_return.attachments,
+        *(
+            _messages.ToolResultAttachment(
+                content=item, tool_call_id=call.tool_call_id, tool_name=call.tool_name, capability_id=capability_id
+            )
+            for item in items
+        ),
+    ]
+
+
 def build_tool_return_part(
     tool_result: Any,
     *,
     call: _messages.ToolCallPart,
     tool_kind: _messages.ToolPartKind | None,
-) -> tuple[_messages.ToolReturnPart, str | Sequence[_messages.UserContent] | None, Sequence[str] | None]:
-    """Translate a settled function-tool result into normalized history, optional user content, and tool reveals.
+    capability_id: str | None = None,
+) -> tuple[_messages.ToolReturnPart, list[_messages.ToolResultAttachment], Sequence[str] | None]:
+    """Translate a settled function-tool result into normalized history, its attachments, and tool reveals.
 
-    The third element is the validated [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn.tools] request;
-    the caller decides how (or whether) those tools can be revealed on its surface.
+    The return part leaves the attachments (see `tool_result_attachments`) out, for the caller to keep with it or send
+    its own way. The third element is the validated [`ToolReturn.tools`][pydantic_ai.messages.ToolReturn.tools]
+    request; the caller decides how (or whether) those tools can be revealed on its surface.
     """
     if isinstance(tool_result, ToolDenied):
         return (
@@ -158,7 +187,7 @@ def build_tool_return_part(
                 ui_visibility=call.ui_visibility,
                 outcome='denied',
             ),
-            None,
+            [],
             None,
         )
 
@@ -191,7 +220,8 @@ def build_tool_return_part(
         tool_kind=tool_kind,
         ui_visibility=call.ui_visibility,
     )
-    return _messages.ToolReturnPart.narrow_type(return_part), tool_return.content or None, tools
+    attachments = tool_result_attachments(tool_return, call=call, capability_id=capability_id)
+    return _messages.ToolReturnPart.narrow_type(return_part), attachments, tools
 
 
 _DeferredBucket = Literal['external', 'question', 'unapproved']
@@ -460,6 +490,18 @@ async def process_tool_calls(
         output_final_result.append(processor.final_result)
 
 
+def _is_supplied(tool_call_result: DeferredToolResult | None) -> bool:
+    """Whether a call's result was supplied from outside the run, rather than produced by running its tool now."""
+    return tool_call_result is not None and not isinstance(tool_call_result, ToolApproved)
+
+
+def _event_content(tool_result: Any) -> str | Sequence[_messages.UserContent] | None:
+    """The tool's own `ToolReturn.content` for its result event; the history keeps it on the return part."""
+    if isinstance(tool_result, _messages.ToolReturn):
+        return tool_result.content or None
+    return None
+
+
 @dataclasses.dataclass
 class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
     """Executes one model response's tool calls for a single step, honoring the `end_strategy`.
@@ -487,6 +529,13 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         init=False
     )
     calls_to_run_results: dict[str, DeferredToolResult] = dataclasses.field(init=False)
+    supplied_user_parts: dict[str, _messages.ModelRequestPart] = dataclasses.field(
+        default_factory=dict[str, _messages.ModelRequestPart], init=False
+    )
+    """The user-channel part for the `ToolReturn.content` supplied with each call's deferred result, by call ID.
+
+    Appended after the request's tool results, once, by `_append_supplied_user_parts`.
+    """
     executable_function_kinds: tuple[ToolDefinitionKind | Literal['unknown'], ...] = dataclasses.field(init=False)
     function_indices: list[int] = dataclasses.field(init=False)
     output_indices: list[int] = dataclasses.field(init=False)
@@ -944,16 +993,40 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         except exceptions.RunCancelled as e:
             return [cancelled_sub_agent_return(call, e)], None
 
+        return self._result_parts(call, tool_result, supplied=_is_supplied(tool_call_result)), _event_content(
+            tool_result
+        )
+
+    def _result_parts(self, call: _messages.ToolCallPart, tool_result: Any, *, supplied: bool) -> _FunctionCallParts:
+        """Build the history parts for a tool's result: its return part, then any tools it revealed.
+
+        Content in a `ToolReturn` a tool in this run produced is part of its result, sent as data. Content `supplied`
+        with a deferred result came from outside the run (the application, or the user answering), so it keeps the
+        user's voice, as it always has: it goes in a `UserPromptPart` after the request's tool results. So do the items
+        of its `attachments`, after the content, so nothing supplied reaches the return part's attachments.
+        """
+        if supplied and isinstance(tool_result, _messages.ToolReturn):
+            answer = cast(_messages.ToolReturn[Any], tool_result)
+            content = answer.content
+            if answer.attachments:
+                items = [] if not content else [content] if isinstance(content, str) else list(content)
+                content = [*items, *(attachment.content for attachment in answer.attachments)]
+            if content:
+                self.supplied_user_parts[call.tool_call_id] = self._supplied_user_part(call, content)
+                tool_result = dataclasses.replace(answer, content=None, attachments=())
         # If the called tool's `ToolDefinition.tool_kind` declares a registered typed subclass
         # (e.g. `'tool-search'`), promote the return part to that subclass. This keeps the
         # typed identity intact across multi-turn history: the next turn's discovery parser /
         # cross-provider replay sees a typed `ToolSearchReturnPart` instead of a base part.
         tool_def = self.tool_manager.get_tool_def(call.tool_name)
-        return_part, tool_user_content, tools = build_tool_return_part(
+        return_part, attachments, tools = build_tool_return_part(
             tool_result,
             call=call,
             tool_kind=tool_def.tool_kind if tool_def else None,
+            capability_id=tool_def.capability_id if tool_def else None,
         )
+        if attachments:
+            return_part = dataclasses.replace(return_part, attachments=attachments)
 
         parts: _FunctionCallParts = [return_part]
         if tools:
@@ -974,12 +1047,12 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     tools_added=list(dict.fromkeys(tools)), tool_call_id=call.tool_call_id
                 )
             )
-        return parts, tool_user_content
+        return parts
 
-    def _tool_user_part(
+    def _supplied_user_part(
         self, call: _messages.ToolCallPart, content: str | Sequence[_messages.UserContent]
     ) -> _messages.ModelRequestPart:
-        """The user-channel part for a tool's `ToolReturn.content`, held to its owning capability's authority.
+        """The user-channel part for content supplied with a call's deferred result, held to its owner's authority.
 
         A tool a capability contributes speaks with no more authority than the capability, as what it enqueues does: at
         `'none'`, its content is data naming the capability.
@@ -993,6 +1066,12 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             return part
         return within_ceiling(part, capability_id, owner._effective_authority)  # pyright: ignore[reportPrivateUsage]
 
+    def _append_supplied_user_parts(self, calls: Sequence[_messages.ToolCallPart], indices: Iterable[int]) -> None:
+        """Append the user parts of content supplied with the deferred results of `calls` at `indices`, each once."""
+        for index in indices:
+            if (part := self.supplied_user_parts.pop(calls[index].tool_call_id, None)) is not None:
+                self.output_parts.append(part)
+
     async def _call_tools(  # noqa: C901
         self,
         tool_calls: list[_messages.ToolCallPart],
@@ -1004,7 +1083,6 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         deferred_validated_args: dict[str, dict[str, Any]],
     ) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         tool_parts_by_index: dict[int, _FunctionCallParts] = {}
-        user_parts_by_index: dict[int, _messages.ModelRequestPart] = {}
         deferred_calls_by_index: dict[int, _DeferredBucket] = {}
         deferred_metadata_by_index: dict[int, dict[str, Any] | None] = {}
 
@@ -1013,8 +1091,6 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         ) -> _messages.FunctionToolResultEvent:
             tool_parts, tool_user_content = result
             tool_parts_by_index[index] = tool_parts
-            if tool_user_content:
-                user_parts_by_index[index] = self._tool_user_part(tool_calls[index], tool_user_content)
 
             tool_part = tool_parts[0]
             assert isinstance(tool_part, _messages.ToolReturnPart)
@@ -1134,7 +1210,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             _prune_duplicate_tool_reveals(tool_parts_by_index, self.ctx.deps.discovered_tool_names)
             for index in sorted(tool_parts_by_index):
                 self.output_parts.extend(tool_parts_by_index[index])
-            self.output_parts.extend([user_parts_by_index[k] for k in sorted(user_parts_by_index)])
+            self._append_supplied_user_parts(tool_calls, sorted(tool_parts_by_index))
 
         for index in sorted(tool_parts_by_index):
             self._take_submission(tool_calls[index], tool_parts_by_index[index][0])
@@ -1298,7 +1374,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         if validated is None or not isinstance(result, _messages.ToolReturn):
             return result
         answer = cast(_messages.ToolReturn[Any], result)
-        bare = answer.content is None and answer.metadata is None and answer.tools is None
+        bare = answer.content is None and not answer.attachments and answer.metadata is None and answer.tools is None
         return await self.tool_manager.after_tool_execute(validated, answer.return_value if bare else answer)
 
     def _answered_question_calls(
@@ -1567,7 +1643,6 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
         )
 
         function_parts: dict[int, _FunctionCallParts] = {}
-        function_user_parts: dict[int, _messages.ModelRequestPart] = {}
         # Under `parallel_ordered_events`, function-tool result events are buffered and yielded in
         # emission order at the end (alongside output events) instead of streaming as tasks complete.
         function_events: dict[int, _messages.FunctionToolResultEvent] = {}
@@ -1591,7 +1666,6 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
         # events), and a consumer closing or throwing at any of those suspension points would
         # otherwise make the `finally` cleanup re-extend indices the loop already appended.
         appended_function_indices: set[int] = set()
-        appended_user_indices: set[int] = set()
         pruned = False
         try:
             for segment in segments:
@@ -1615,10 +1689,6 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                             else:
                                 tool_parts, tool_user_content = payload
                                 function_parts[index] = tool_parts
-                                if tool_user_content:
-                                    function_user_parts[index] = self._tool_user_part(
-                                        self.tool_calls[index], tool_user_content
-                                    )
                                 tool_part = tool_parts[0]
                                 assert isinstance(tool_part, _messages.ToolReturnPart)
                                 if self._is_retry_wins_trigger(tool_part, kind=self.call_kinds[index]):
@@ -1630,11 +1700,11 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                                     yield result_event
                 except asyncio.CancelledError as e:
                     await cancel_and_drain(*tasks, msg=e.args[0] if len(e.args) != 0 else None)
-                    self._record_completed_results(tasks, function_parts, function_user_parts)
+                    self._record_completed_results(tasks, function_parts)
                     raise
                 except BaseException:
                     await cancel_and_drain(*tasks)
-                    self._record_completed_results(tasks, function_parts, function_user_parts)
+                    self._record_completed_results(tasks, function_parts)
                     raise
 
             if self.final_result is None:
@@ -1677,10 +1747,6 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
                     for part in function_parts[i]:
                         if isinstance(part, _messages.ToolAvailabilityDeltaPart):
                             yield _messages.ToolAvailabilityDeltaEvent(part=part)
-            for i in executable_indices:
-                if i in function_user_parts:
-                    self.output_parts.append(function_user_parts[i])
-                    appended_user_indices.add(i)
         finally:
             # Partial capture on exception or mid-stream close: surface completed function-tool
             # returns so `CallToolsNode._handle_tool_calls` can record them in the interrupted
@@ -1696,9 +1762,7 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
             for i in executable_indices:
                 if i in function_parts and i not in appended_function_indices:  # pragma: no branch
                     self.output_parts.extend(function_parts[i])
-            for i in executable_indices:  # pragma: no branch
-                if i in function_user_parts and i not in appended_user_indices:
-                    self.output_parts.append(function_user_parts[i])
+            self._append_supplied_user_parts(self.tool_calls, executable_indices)
 
         self._populate_deferred_calls(
             self.tool_calls,
@@ -1715,14 +1779,10 @@ class _ExhaustiveProcessor(_ToolCallProcessor[DepsT, NodeRunEndT]):
         self,
         tasks: list[asyncio.Task[tuple[int, _ToolCallPayload[NodeRunEndT]]]],
         function_parts: dict[int, _FunctionCallParts],
-        function_user_parts: dict[int, _messages.ModelRequestPart],
     ) -> None:
         """Record payloads of tasks that finished before a sibling failed or the run was cancelled."""
         for task in tasks:
             if task.done() and not task.cancelled() and task.exception() is None:
                 index, payload = task.result()
                 if index not in function_parts and isinstance(payload, tuple):
-                    tool_parts, tool_user_content = payload
-                    function_parts[index] = tool_parts
-                    if tool_user_content:
-                        function_user_parts[index] = self._tool_user_part(self.tool_calls[index], tool_user_content)
+                    function_parts[index] = payload[0]

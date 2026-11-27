@@ -142,15 +142,15 @@ class Observer(AbstractCapability[None]):
         self.answered.append(event)
 
 
-def calling(arguments: object) -> FunctionModel:
-    """A model that calls the tool once with `arguments`, then answers with the tool result.
+def calling(arguments: object, tool_name: str = TOOL_NAME) -> FunctionModel:
+    """A model that calls the tool, named `tool_name`, once with `arguments`, then answers with the tool result.
 
     Streams too, since a run with event listeners is a streamed run.
     """
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
-            return ModelResponse(parts=[ToolCallPart(TOOL_NAME, {'questions': arguments}, tool_call_id='c1')])
+            return ModelResponse(parts=[ToolCallPart(tool_name, {'questions': arguments}, tool_call_id='c1')])
         part = next(part for part in messages[-1].parts if isinstance(part, ToolReturnPart))
         if part.outcome == 'retried':
             return ModelResponse(parts=[TextPart(part.model_response_str(wrap_if_error=False))])
@@ -971,6 +971,27 @@ class TestComposition:
         assert kinds == ['question']
         assert json.loads(result.output) == {'Approach': ['Patch'], 'Targets': ['ui.py']}
 
+    async def test_a_handler_answer_wrapped_without_notes_is_kept_as_is(self) -> None:
+        """A `ToolReturn` with empty content carries no notes, so nothing reaches the user channel."""
+
+        def ask(ctx: RunContext[None], requests: DeferredToolRequests, token: str) -> DeferredToolResults:
+            (call,) = requests.calls
+            return requests.build_results(
+                calls={call.tool_call_id: ToolReturn(return_value={'Approach': ['Patch']}, content=[])}
+            )
+
+        agent = Agent(
+            calling(raw_questions()),
+            deps_type=type(None),
+            capabilities=[AskUser(answerer=None), HandleDeferredToolCalls[None](ask)],
+        )
+        result = await agent.run('go')
+
+        assert json.loads(result.output) == {'Approach': ['Patch']}
+        (tool_part,) = result.all_messages()[-2].parts
+        assert isinstance(tool_part, ToolReturnPart)
+        assert tool_part.attachments == ()
+
 
 class _ImmediateBackend(JournalCallableOperationBackend[None]):
     def __init__(self, agent_name: str, default_model_id: str | None) -> None:
@@ -1397,11 +1418,17 @@ class TestAnswerNotes:
         request_id = observer.requested[0].request.id
         last_request = result.all_messages()[-2]
         assert isinstance(last_request, ModelRequest)
-        tool_part, user_part = last_request.parts
+        tool_part = last_request.parts[0]
         assert isinstance(tool_part, ToolReturnPart)
         assert tool_part.content == snapshot({'Approach': ['Patch'], 'Targets': ['all files']})
+        # The user's own words, so they reach the model in the user's voice right after the answer, as before: during
+        # the run `AskUser` enqueues them, and an answer given to a later run was supplied from outside it.
+        _, user_part = last_request.parts
+        assert tool_part.attachments == ()
         assert isinstance(user_part, UserPromptPart)
-        assert user_part.content == [
+        assert not isinstance(user_part.content, str)
+        notes = list(user_part.content)
+        assert notes == [
             TextContent(
                 '<answer_note header="Approach">',
                 metadata={
@@ -1438,8 +1465,28 @@ class TestAnswerNotes:
                 },
             ),
         ]
-        assert not isinstance(user_part.content, str)
-        assert user_part.content[2] == image_content
+        assert notes[2] == image_content
+
+    async def test_notes_reach_the_user_channel_when_the_tool_is_renamed(self) -> None:
+        """`AskUser` knows its tool by the capability that contributed it, so a prefix doesn't make its notes data."""
+        response = AskUserResponse(
+            answers=(
+                AskUserAnswer(header='Approach', selected=('Patch',), note=('Keep it',)),
+                AskUserAnswer(header='Targets', custom_answer='all files'),
+            )
+        )
+        agent = Agent(
+            calling(raw_questions(), tool_name=f'later_{TOOL_NAME}'),
+            deps_type=type(None),
+            capabilities=[
+                PrefixTools(AskUser(answerer=ScriptedAnswerer(response), id='later_ask_user'), prefix='later')
+            ],
+        )
+        result = await agent.run('go')
+        tool_part, user_part = result.all_messages()[-2].parts
+        assert isinstance(tool_part, ToolReturnPart)
+        assert tool_part.attachments == ()
+        assert isinstance(user_part, UserPromptPart)
 
     def test_only_answers_with_notes_get_frames_and_multi_select_is_unchanged(self) -> None:
         request = AskUserRequest(questions=(question(), question('Targets', multi_select=True)))

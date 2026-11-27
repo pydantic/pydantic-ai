@@ -40,8 +40,10 @@ def ask_user_result(request: AskUserRequest, response: AskUserResponse) -> AskUs
     """Check `response` against `request` and render it as the `ask_user_question` tool result.
 
     Without notes, returns the answer dictionary or decline text. With notes, returns a `ToolReturn`
-    whose `return_value` is the same dictionary and whose `content` sends the notes in the user channel,
-    framed by question header. Attachments remain multimodal, in their original order.
+    whose `return_value` is the same dictionary and whose `content` carries the notes, framed by question header.
+    Attachments remain multimodal, in their original order. The notes reach the model in the user's voice: `AskUser`
+    enqueues those of an answer that arrives during the run, and an answer passed to a later run in
+    `DeferredToolResults` is supplied from outside the run, whose content keeps the user's voice.
 
     To answer a deferred call, pass this in `DeferredToolResults.calls` under the call's ID.
     Raises `ValueError` when the response does not fit the request, as `check_response` does.

@@ -88,7 +88,12 @@ from pydantic_ai.capabilities import (
 )
 from pydantic_ai.durable_exec._base import construction_toolsets
 from pydantic_ai.exceptions import ContentFilterError
-from pydantic_ai.messages import AgentStreamEvent, FunctionToolResultEvent, ModelResponseStreamEvent
+from pydantic_ai.messages import (
+    AgentStreamEvent,
+    FunctionToolResultEvent,
+    ModelResponseStreamEvent,
+    ToolResultAttachment,
+)
 from pydantic_ai.models import KnownModelName, Model, ModelRequestParameters, StreamedResponse
 from pydantic_ai.models.function import AgentInfo, BuiltinToolCallsReturns, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -8630,13 +8635,15 @@ class TestMultipleToolCalls:
                     content=10,
                     tool_call_id='call_good',
                     timestamp=IsDatetime(),
-                ),
-                UserPromptPart(content='extra context', timestamp=IsDatetime()),
+                    attachments=[
+                        ToolResultAttachment(content='extra context', tool_call_id='call_good', tool_name='good_tool')
+                    ],
+                )
             ]
         )
 
     def test_exhaustive_function_tool_user_content(self):
-        """Under `exhaustive`, a function tool's `ToolReturn` content surfaces as a `UserPromptPart`."""
+        """Under `exhaustive`, a function tool's `ToolReturn` content is kept with its result."""
 
         def return_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) == 1:
@@ -8651,12 +8658,14 @@ class TestMultipleToolCalls:
 
         result = agent.run_sync('test')
         assert result.output == 'done'
-        assert any(
-            isinstance(part, UserPromptPart) and part.content == 'extra context for the model'
+        assert [
+            attachment.content
             for message in result.all_messages()
             if isinstance(message, ModelRequest)
             for part in message.parts
-        )
+            if isinstance(part, ToolReturnPart)
+            for attachment in part.attachments
+        ] == ['extra context for the model']
 
     def test_exhaustive_approval_required_then_resume(self):
         """Under `exhaustive`, a tool raising `ApprovalRequired` defers; resuming with an approval
@@ -10800,15 +10809,26 @@ def test_multimodal_tool_response():
                         tool_call_id=IsStr(),
                         metadata={'foo': 'bar'},
                         timestamp=IsNow(tz=UTC),
-                    ),
-                    UserPromptPart(
-                        content=[
-                            'Here are the analysis results:',
-                            ImageUrl(url='https://example.com/chart.jpg', identifier='672a5c'),
-                            'The chart shows positive trends.',
+                        attachments=[
+                            ToolResultAttachment(
+                                content='Here are the analysis results:',
+                                tool_call_id=IsStr(),
+                                tool_name='analyze_data',
+                            ),
+                            ToolResultAttachment(
+                                content=ImageUrl(
+                                    url='https://example.com/chart.jpg', media_type='image/jpeg', identifier='672a5c'
+                                ),
+                                tool_call_id=IsStr(),
+                                tool_name='analyze_data',
+                            ),
+                            ToolResultAttachment(
+                                content='The chart shows positive trends.',
+                                tool_call_id=IsStr(),
+                                tool_name='analyze_data',
+                            ),
                         ],
-                        timestamp=IsNow(tz=UTC),
-                    ),
+                    )
                 ],
                 timestamp=IsNow(tz=UTC),
                 run_id=IsStr(),
@@ -10816,7 +10836,7 @@ def test_multimodal_tool_response():
             ),
             ModelResponse(
                 parts=[TextPart(content='Analysis completed')],
-                usage=RequestUsage(input_tokens=70, output_tokens=6),
+                usage=RequestUsage(input_tokens=106, output_tokens=6),
                 model_name='function:llm:',
                 model_id='function:function:llm:',
                 timestamp=IsNow(tz=UTC),

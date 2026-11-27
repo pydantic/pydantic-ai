@@ -14,14 +14,16 @@ from typing_extensions import TypeIs
 
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, HandleDeferredToolCalls
+from pydantic_ai.capabilities.abstract import ValidatedToolArgs
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.external_events import ExternalEventError, wait_for_external_event
 from pydantic_ai.messages import ToolCallPart
-from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext
+from pydantic_ai.tools import AgentDepsT, DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._callable import takes_context
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._from_spec import use_default_from_spec
+from pydantic_ai_harness._tool_return_guard import is_tool_return
 from pydantic_ai_harness.ask_user._events import AskUserAnsweredEvent
 from pydantic_ai_harness.ask_user._toolset import (
     OWNER_METADATA_KEY,
@@ -219,6 +221,30 @@ class AskUser(AbstractCapability[AgentDepsT]):
                 for call in questions
             }
         )
+
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[AgentDepsT],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: Any,
+    ) -> Any:
+        """Send the user's notes on an answer in the user's voice, right after the answer, rather than as tool data.
+
+        `ask_user_result` puts them in `ToolReturn.content`, which the model is sent as data when a tool in the run
+        produced it; they are the user's own words, so this capability enqueues them as the user's instead, and the
+        result keeps the answers. An answer passed to a later run passes none of these hooks, and keeps the user's voice
+        as content supplied with a deferred result.
+        """
+        if tool_def.name != TOOL_NAME or tool_def.capability_id != self.id or not is_tool_return(result):
+            return result
+        if not result.content:
+            return result
+        notes = result.content
+        ctx.enqueue(*([notes] if isinstance(notes, str) else notes))
+        return replace(result, content=None)
 
     def _owns(self, requests: DeferredToolRequests, tool_call_id: str) -> bool:
         """Whether this capability's tool deferred the call, as opposed to another `AskUser` or another tool."""

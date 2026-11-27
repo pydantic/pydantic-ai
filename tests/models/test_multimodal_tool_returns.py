@@ -231,8 +231,9 @@ NOTED_IN_TOOL_RESULTS: frozenset[tuple[ProviderName, FileType]] = frozenset(
 )
 """Pairs whose file, returned directly by a tool, is replaced by a note: the model's profile says it can't read it.
 
-The SUPPORT_MATRIX error still applies to the same file sent through `ToolReturn.content`, which goes on
-the user channel as the developer wrote it, and to an `UploadedFile`, which only its provider can read.
+The SUPPORT_MATRIX error still applies to the same file sent through `ToolReturn.content`, which is kept on the
+`ToolReturnPart` as an attachment and sent after the tool results as `<tool_content>` data behind a note naming the
+tool, with the file itself rather than a note about it, and to an `UploadedFile`, which only its provider can read.
 """
 
 # Overrides for specific (provider, file_type, content_source, return_style) combos where
@@ -244,7 +245,10 @@ ERROR_OVERRIDES: dict[tuple[ProviderName, FileType, ContentSource | None, Return
     ),
     # Vertex AI can't crawl certain URLs blocked by robots.txt (gstatic.com, test-videos.co.uk).
     # force_download variants work since the client downloads locally before sending to Vertex.
-    ('google_vertex', 'image', 'url', None): ExpectError(ModelHTTPError, r'URL_ROBOTED|ROBOTED_DENIED'),
+    # Older recordings carry the `URL_ROBOTED`/`ROBOTED_DENIED` code; newer ones only the message.
+    ('google_vertex', 'image', 'url', None): ExpectError(
+        ModelHTTPError, r'URL_ROBOTED|ROBOTED_DENIED|blocked by robots\.txt'
+    ),
     ('google_vertex_interactions', 'image', 'url', None): ExpectError(ModelHTTPError, r'blocked by robots.txt'),
     # Chat Completions can't reference an uploaded image by file_id (no image equivalent of the
     # `file` content part), so OpenAIChatModel raises before the request. Responses maps it to
@@ -315,7 +319,7 @@ MODEL_CONFIGS: dict[ProviderName, tuple[str, Any]] = {
     'openai_responses': ('gpt-5-mini', openai_available),
     'groq': ('meta-llama/llama-4-maverick-17b-128e-instruct', groq_available),
     'mistral': ('mistral-medium-latest', mistral_available),
-    'xai': ('grok-4-1-fast-non-reasoning', xai_available),
+    'xai': ('grok-4.3', xai_available),
 }
 
 
@@ -597,18 +601,17 @@ def assert_file_in_tool_return(messages: list[ModelMessage], file_type: FileType
     raise AssertionError(f'No {file_type} found in any ToolReturnPart')  # pragma: no cover
 
 
-def assert_file_in_user_prompt(messages: list[ModelMessage], file_type: FileType) -> None:
-    """Assert that file content of the expected type is present in a UserPromptPart.
+def assert_file_in_attachments(messages: list[ModelMessage], file_type: FileType) -> None:
+    """Assert that file content of the expected type is kept with a ToolReturnPart as an attachment.
 
-    For tool_return_content style, files are moved to a separate UserPromptPart
-    by design of ToolReturn.content. This verifies files ended up in user messages.
+    For tool_return_content style, files are part of the tool's result, but not of its return value,
+    by design of ToolReturn.content: they're sent after the tool results, framed as data.
     """
-    for upp in iter_message_parts(messages, ModelRequest, UserPromptPart):
-        if isinstance(upp.content, list):
-            for item in upp.content:  # pragma: no branch
-                if _is_file_type(item, file_type):  # pragma: no branch
-                    return
-    raise AssertionError(f'No {file_type} found in any UserPromptPart')  # pragma: no cover
+    for trp in iter_message_parts(messages, ModelRequest, ToolReturnPart):
+        for attachment in trp.attachments:  # pragma: no branch
+            if _is_file_type(attachment.content, file_type):  # pragma: no branch
+                return
+    raise AssertionError(f'No {file_type} found in any ToolReturnPart attachments')  # pragma: no cover
 
 
 def assert_multimodal_result(
@@ -618,11 +621,11 @@ def assert_multimodal_result(
 ) -> None:
     """Assert that multimodal content was handled correctly.
 
-    For 'tool_return_content' style, files go to a separate UserPromptPart.
+    For 'tool_return_content' style, files are kept with the ToolReturnPart as attachments.
     For 'direct' style, files should be in ToolReturnPart.
     """
     if return_style == 'tool_return_content':
-        assert_file_in_user_prompt(messages, file_type)
+        assert_file_in_attachments(messages, file_type)
     else:
         assert_file_in_tool_return(messages, file_type)
 

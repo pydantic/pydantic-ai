@@ -7,20 +7,21 @@ from __future__ import annotations
 
 import builtins
 import warnings
-from collections.abc import Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import Mapping
+from dataclasses import dataclass, field, replace
 from typing import Any
 
 from pydantic_ai import ToolDefinition
+from pydantic_ai._tool_execution import tool_result_attachments
 from pydantic_ai.computer_use import COMPUTER_KIND
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, UsageLimitExceeded, UserError
 from pydantic_ai.function_signature import FunctionSignature, _to_python_identifier  # pyright: ignore[reportPrivateUsage]
 from pydantic_ai.messages import (
     ToolCallPart,
     ToolPartKind,
+    ToolResultAttachment,
     ToolReturn,
     ToolReturnPart,
-    UserContent,
     is_multi_modal_content,
 )
 from pydantic_ai.tool_manager import ToolManager
@@ -148,8 +149,9 @@ class NestedCallOutcome:
     metadata: Any = None
     """`ToolReturn.metadata` when the tool returned a `ToolReturn`."""
 
-    user_content: str | Sequence[UserContent] | None = None
-    """`ToolReturn.content` when the tool returned a `ToolReturn`: model-facing content outside the sandbox."""
+    attachments: list[ToolResultAttachment] = field(default_factory=list[ToolResultAttachment])
+    """The call's `ToolReturn.content` (after that of the tools it called), attributed to it: model-facing content
+    outside the sandbox, kept with the enclosing call's result."""
 
     error: Exception | None = None
     """The exception the sandbox sees at the call site."""
@@ -230,8 +232,13 @@ async def run_nested_call(tool_manager: ToolManager[AgentDepsT], call_part: Tool
         )
 
     if isinstance(result, ToolReturn):
+        # Attributed from the nested `ToolManager` that ran the call, so the content names the tool that produced it
+        # rather than the enclosing call.
+        attachments = tool_result_attachments(
+            result, call=call_part, capability_id=tool_def.capability_id if tool_def is not None else None
+        )
         return NestedCallOutcome(
-            content=result.return_value, metadata=result.metadata, user_content=result.content, tool_kind=tool_kind
+            content=result.return_value, metadata=result.metadata, attachments=attachments, tool_kind=tool_kind
         )
     return NestedCallOutcome(content=result, tool_kind=tool_kind)
 
@@ -242,12 +249,12 @@ def record_nested_call(
     *,
     calls: dict[str, ToolCallPart],
     returns: dict[str, ToolReturnPart],
-    user_content: dict[str, list[UserContent]],
+    attachments: dict[str, list[ToolResultAttachment]],
 ) -> None:
     """Record a nested call and how it settled with the typed parts a direct call would leave in history.
 
-    A call that failed gets no return part unless a handler denied it. `user_content` gets the call's
-    `ToolReturn.content`, which reaches the model on the enclosing `run_code` return, not inside the code.
+    A call that failed gets no return part unless a handler denied it. `attachments` gets the call's
+    `ToolReturn.content`, which reaches the model with the enclosing `run_code` result, not inside the code.
     """
     tool_call_id = call_part.tool_call_id
     tool_kind = outcome.tool_kind
@@ -271,10 +278,7 @@ def record_nested_call(
             tool_kind=tool_kind,
         )
     )
-    # Like core, empty content sends the model nothing.
-    if outcome.user_content:
-        content = outcome.user_content
-        user_content[tool_call_id] = [content] if isinstance(content, str) else list(content)
+    attachments[tool_call_id] = outcome.attachments
 
 
 def schema_arg_names(tool_def: ToolDefinition, kwargs: dict[str, Any]) -> dict[str, Any]:

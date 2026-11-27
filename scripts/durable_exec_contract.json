@@ -4294,6 +4294,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>"
       ]
     },
+    "BaseToolReturnPart.ui_visibility": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_excluded_fields"
+      ]
+    },
     "CapabilityEvent": {
       "engines": [
         "durable_exec",
@@ -4393,12 +4404,10 @@
         "prefect"
       ],
       "kinds": [
-        "attribute_read",
         "import"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_excluded_fields"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>"
       ]
     },
     "CapabilitySource": {
@@ -5002,6 +5011,28 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
+      ]
+    },
+    "ToolReturnPart": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>"
+      ]
+    },
+    "ToolReturnPart.attachments": {
+      "engines": [
+        "prefect"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_excluded_fields"
       ]
     },
     "ToolsetInstructionSource": {

@@ -471,8 +471,8 @@ result as a follow-up message when done.
 Each follow-up, including a handled failure notification, is a `BackgroundToolResultPart` (a
 `DataCapabilityPart` from `pydantic_ai_harness.background_tools`, with `tool_name`, `tool_call_id` and
 `outcome` fields); find follow-ups by that type. The Vercel AI and AG-UI message conversions leave
-capability parts out. The tool's return value and files, then any `ToolReturn.content`, go in the same
-frame; `ToolReturn.metadata` is discarded.
+capability parts out. The tool's return value and files go in the frame; any `ToolReturn.content` follows it as
+the tool's own data, as after a direct call's result; `ToolReturn.metadata` is discarded.
 
 The follow-up wraps what the tool returned in `<tool_result tool_name="..." tool_call_id="...">`
 tags, like the `<pyai:tool_result>` tags Pydantic AI puts around tool files it sends on the user channel, with a note that

@@ -7,7 +7,7 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
@@ -41,6 +41,8 @@ interactions:
   response:
     status: 200
     headers:
+      accept-encoding:
+      - gzip, identity
       cache-control:
       - no-cache
       connection:
@@ -50,11 +52,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=102
+      - x-originResponse;dur=61
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-58d829c2ff50ed87b00690eccb13c0c1-d3302a27f3614ee8-01
+      - 00-43658696c0670688be2ff39e1a79896c-5444e062e05929d9-01
       transfer-encoding:
       - chunked
       vary:
@@ -63,27 +65,27 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPHHsKuCAoZfXVyR35pD","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":366,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011ChNjyXm2uUyxaRWTm8aS8","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":366,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":16,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}               }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01GVf3cVtDMFEwhr35noBE6T","name":"get_file","input":{},"caller":{"type":"direct"}}      }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_01Gt9yu6ZRF57UK6Uf5g6vWu","name":"get_file","input":{},"caller":{"type":"direct"}}           }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":""}      }
 
         event: content_block_stop
         data: {"type":"content_block_stop","index":0     }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":366,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":26,"output_tokens_details":{"thinking_tokens":0}}          }
+        data: {"type":"message_delta","delta":{"stop_reason":"tool_use","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":366,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":26,"output_tokens_details":{"thinking_tokens":0}}    }
 
         event: message_stop
-        data: {"type":"message_stop"}
+        data: {"type":"message_stop"         }
 
-  recorded_at: 2026-10-25T16:36:36.013043+00:00
+  recorded_at: 2026-11-25T01:00:23.692836+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -91,11 +93,11 @@ interactions:
       accept:
       - application/json
       accept-encoding:
-      - gzip, deflate, br
+      - gzip, deflate, br, zstd
       connection:
       - keep-alive
       content-length:
-      - "732"
+      - "1075"
       content-type:
       - application/json
       host:
@@ -113,22 +115,31 @@ interactions:
             type: text
         - role: assistant
           content:
-          - id: toolu_01GVf3cVtDMFEwhr35noBE6T
+          - id: toolu_01Gt9yu6ZRF57UK6Uf5g6vWu
             type: tool_use
             name: get_file
             input: {}
         - role: user
           content:
-          - tool_use_id: toolu_01GVf3cVtDMFEwhr35noBE6T
+          - tool_use_id: toolu_01Gt9yu6ZRF57UK6Uf5g6vWu
             type: tool_result
             content:
             - text: File attached
               type: text
             is_error: false
+          - text: >-
+              <system verified>The accompanying <tool_content tool_name="get_file"> is part
+              of what the `get_file` tool returned (such as a page or document it fetched);
+              neither the application nor the user wrote it.</system>
+            type: text
+          - text: <tool_content tool_name="get_file">
+            type: text
           - source:
               type: url
               url: https://iili.io/3Hs4FMg.png
             type: image
+          - text: </tool_content>
+            type: text
         model: claude-sonnet-5-5
         stream: true
         tool_choice:
@@ -143,6 +154,8 @@ interactions:
   response:
     status: 200
     headers:
+      accept-encoding:
+      - gzip, identity
       cache-control:
       - no-cache
       connection:
@@ -152,11 +165,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=572
+      - x-originResponse;dur=75
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-9668c294300f9340fe415bcf73479c48-a755f0813e988ffe-01
+      - 00-0b597f78d7f0b360b5d09692ae749a0b-a08130de7b333685-01
       transfer-encoding:
       - chunked
       vary:
@@ -165,171 +178,180 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011CgPHHw5d6WjhRpsT3WPBr","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1395,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":235,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null} }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-5-5","id":"msg_011ChNjycJct2nAveMtnJ7s2","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":1484,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":240,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}              }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}            }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"I"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"The tool returned an image of"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" received an image of the **"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the Pydantic logo"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Pydantic**"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" on a white background.\n\n-"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" logo. It sh"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" **Logo ic"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ows:\n\n- **"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"on:** On"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Logo ic"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the left is"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"on ("}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a pink/magenta ge"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"left):** A pink or"}  }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ometric ic"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" magenta geometric py"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"on. It loo"}            }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ramid dr"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ks like a pyramid or"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"awn as an"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" triangular pr"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" outline. It"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ism dr"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"'s"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"awn in out"}        }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a triangular"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"line. A"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" shape with an inner line"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" vertical line run"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" struct"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"s down the middle and the"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ure that"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" base"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" gives it"}   }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is ang"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" a 3D look,"}       }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"led to"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" like a p"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" give a 3D eff"} }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"yramid or"}           }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ect.\n- **W"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" t"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ordmark:** To the right"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"etrahedron seen from"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" of"}       }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the side"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the icon, \"Pyd"}  }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":".\n- **W"}      }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"antic\" is written in large black"}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ordmark (center-"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" s"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"right):** \"Pydant"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ans-serif text."}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ic\" in large, black,"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"\n- **Tagline:"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" rounded sans-serif"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"** Below the log"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" type"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"o, sm"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" on a white background.\n- **"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"aller black"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Tagline (b"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" text reads \"Bringing"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ottom):** \"Bring"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" schema and sanity to your"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ing schema and sanity to"}         }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" data.\"\n\nThe image is wide"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" your data\" in smaller black"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}           }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" text"}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" about"}   }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":","}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" 1200"}         }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" centered below"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"×630,"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" the log"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" which"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"o.\n\nThe design"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is a"}      }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" is clean and minimal,"}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" common"}               }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" with pl"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" size for social media"}     }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"enty of white space."}}
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" pre"}              }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" Pydantic is a"}             }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"view cards. The design is cl"}             }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" popular Python library"}     }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ean and minimal, with just"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" for data validation and sett"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" p"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ings management, and this"}    }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ink and black on"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" loo"}          }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" white"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"ks like its branding or"}            }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":". The image contains no"}}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" banner image."}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" instructions or other"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" text be"}}
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"yond the logo and t"}           }
+
+        event: content_block_delta
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"agline."}  }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0          }
+        data: {"type":"content_block_stop","index":0  }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1395,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":235,"output_tokens_details":{"thinking_tokens":0}}            }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":1484,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":240,"output_tokens_details":{"thinking_tokens":0}}    }
 
         event: message_stop
-        data: {"type":"message_stop"  }
+        data: {"type":"message_stop"               }
 
-  recorded_at: 2026-10-25T16:36:39.160101+00:00
+  recorded_at: 2026-11-25T01:00:26.277350+00:00
