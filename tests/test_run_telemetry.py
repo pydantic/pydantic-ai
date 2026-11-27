@@ -7,25 +7,22 @@ These are unit tests, not VCR tests: what they check is span attributes and the 
 from __future__ import annotations
 
 import asyncio
-from collections.abc import Iterator, Sequence
+from collections.abc import Generator
+from contextlib import contextmanager
 from dataclasses import dataclass
 from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
-from opentelemetry.context import Context
 from opentelemetry.trace import (
     INVALID_SPAN,
-    Link,
     NoOpTracer,
     Span,
     SpanContext,
-    SpanKind,
     Tracer,
     TracerProvider as ApiTracerProvider,
 )
-from opentelemetry.util._decorator import _agnosticcontextmanager  # pyright: ignore[reportPrivateUsage]
-from opentelemetry.util.types import Attributes, AttributeValue
+from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, AgentRunResult, RunContext
 from pydantic_ai._telemetry import open_ambient_span, run_telemetry_scope
@@ -528,22 +525,11 @@ async def test_tool_call_span_is_invalid_in_a_sub_agent_run_inside_a_parent_tool
 class LeavesTheCurrentSpanTracer(Tracer):
     """Yields `INVALID_SPAN` without making it current, as no-op tracers on older `opentelemetry-api` versions do."""
 
-    def start_span(self, *args: Any, **kwargs: Any) -> Span:
+    def start_span(self, *args: Any, **kwargs: Any) -> Span:  # pragma: no cover
         return INVALID_SPAN
 
-    @_agnosticcontextmanager
-    def start_as_current_span(
-        self,
-        name: str,
-        context: Context | None = None,
-        kind: SpanKind = SpanKind.INTERNAL,
-        attributes: Attributes = None,
-        links: Sequence[Link] | None = None,
-        start_time: int | None = None,
-        record_exception: bool = True,
-        set_status_on_exception: bool = True,
-        end_on_exit: bool = True,
-    ) -> Iterator[Span]:
+    @contextmanager
+    def start_as_current_span(self, *args: Any, **kwargs: Any) -> Generator[Span]:  # pyright: ignore[reportIncompatibleMethodOverride]
         yield INVALID_SPAN
 
 
