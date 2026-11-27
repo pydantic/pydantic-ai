@@ -953,11 +953,12 @@ def _ending_with(marker: str, capture: str, args: list[str]) -> list[str]:
     printed on stdout after the marker line, and `_split_output` separates the two again. The file is
     removed when the command finishes; one stopped by a timeout or a cancellation can leave it in
     `/tmp`, but every command gets a fresh name, so no later command reads it. The exit status is the
-    command's.
+    command's. The command is `exec`ed in a subshell, so an `argv[0]` named like a builtin (`echo`, `cd`,
+    `exit`) runs the program on `PATH` and cannot end the wrapper before it reports.
     """
     script = (
         'cat >/dev/null; err=$1; shift; : >"$err" || exit 125; '
-        f'"$@" 2>"$err"; status=$?; printf "\\n%s\\n" {marker}; cat "$err"; rm -f "$err"; exit "$status"'
+        f'(exec "$@") 2>"$err"; status=$?; printf "\\n%s\\n" {marker}; cat "$err"; rm -f "$err"; exit "$status"'
     )
     return ['sh', '-c', script, 'sh', capture, *args]
 

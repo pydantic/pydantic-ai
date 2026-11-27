@@ -316,7 +316,8 @@ class _DaytonaProcess:
             argv = ['env', '--', *(f'{name}={value}' for name, value in env.items()), *argv]
         missing_cwd = f'{{ printf %s {self._marker}-cwd >{self._out}; exit 125; }}'
         prefix = f'cd -- {shlex.quote(cwd)} || {missing_cwd}; ' if cwd is not None else ''
-        script = f'{prefix}"$@" </dev/null >{self._out} 2>{self._error}'
+        # `exec`, so an `argv[0]` named like a builtin (`echo`, `cd`, `exit`) runs the program on `PATH`.
+        script = f'{prefix}exec "$@" </dev/null >{self._out} 2>{self._error}'
         return shlex.join(['sh', '-c', script, 'sh', *argv])
 
     async def start(self, line: str) -> None:
