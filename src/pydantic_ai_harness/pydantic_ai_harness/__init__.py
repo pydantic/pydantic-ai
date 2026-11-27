@@ -111,6 +111,7 @@ if TYPE_CHECKING:
     from .tool_call_judge import ToolCallJudge
     from .tool_output_limits import ToolOutputLimits
     from .trajectory_judge import TrajectoryJudge
+    from .untrusted_content_gate import UntrustedContentGate
     from .warn_on_cache_busts import WarnOnCacheBusts
     from .wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, WrapUpAtLimits, wrapped_up_by
     from .youdotcom import YouResearch, YouSearch
@@ -241,6 +242,7 @@ __all__ = [
     'ToolGuardrail',
     'ToolOutputLimits',
     'TrajectoryJudge',
+    'UntrustedContentGate',
     'WarnNearLimits',
     'WarnOnCacheBusts',
     'WrapUpAtLimits',
@@ -373,6 +375,7 @@ _LAZY_EXPORTS = {
     'ToolGuardrail': 'guardrails',
     'ToolOutputLimits': 'tool_output_limits',
     'TrajectoryJudge': 'trajectory_judge',
+    'UntrustedContentGate': 'untrusted_content_gate',
     'WarnNearLimits': 'compaction',
     'WarnOnCacheBusts': 'warn_on_cache_busts',
     'WrapUpAtLimits': 'wrap_up_at_limits',

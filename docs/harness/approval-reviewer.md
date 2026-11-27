@@ -273,6 +273,25 @@ reviewer = ApprovalReviewer(
 
 The handler runs on every model in the chain, and a language model reports no `confidence`, so the fallback model's answer stands. Tune the bar on labelled calls of your own, as in [tuning a threshold on your own data](../models/decision.md#tuning-a-threshold-on-your-own-data), and once you have, pin the Jev version you tuned it against (`typesafe:jev-1.13.0`) rather than `jev-latest`. Jev treats the text it judges as data rather than as hostile, so arguments written to steer its answer can move it ([what Jev answers badly](../models/typesafe.md#what-jev-answers-badly)): keep the [safety boundary](#safety-boundary) in place, as with any reviewer.
 
+## Calls an Untrusted Content Gate holds
+
+A call held by [Untrusted Content Gate](untrusted-content-gate.md) because the run read content from outside sources goes to the person by default, even when `tools` selects it: the content that may have steered the call can also reach the reviewer. Set `review_untrusted_content=True` to have the reviewer answer those calls too. It is then shown the gate's reason in an `approval_reason` block before the call, written by the application rather than taken from the call or the conversation, and its instructions say so.
+
+The reviewer answers only its `question`. A question about leaks and payments says nothing about a delete the gated tools can also make, so name every harm the gated tools can do.
+
+```python {test="skip"}
+from pydantic_ai_harness import ApprovalReviewer, UntrustedContentGate
+
+capabilities = [
+    UntrustedContentGate(),
+    ApprovalReviewer(
+        'anthropic:claude-haiku-5-5',
+        question='Could this call send data outside the company, move money, or delete something the person still needs?',
+        review_untrusted_content=True,
+    ),
+]
+```
+
 ## Composition
 
 Calls in one batch are reviewed one at a time, in the order the model made them, so a batch of approval requests adds one review per selected call to the run step's latency.
