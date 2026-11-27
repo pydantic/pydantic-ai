@@ -4154,7 +4154,7 @@ def test_capability_load_delta_round_trips_and_leaves_tool_deltas_unchanged():
     assert ModelMessagesTypeAdapter.validate_json(ModelMessagesTypeAdapter.dump_json(messages)) == messages
     assert ModelMessagesTypeAdapter.dump_python(messages, mode='json')[0]['parts'] == snapshot(
         [
-            {'loaded': ['refunds'], 'tool_call_id': 'open', 'part_kind': 'capability-load-delta'},
+            {'loaded': ['refunds'], 'unloaded': [], 'tool_call_id': 'open', 'part_kind': 'capability-load-delta'},
             {'tools_added': ['refund_status'], 'tool_call_id': 'open', 'part_kind': 'tool-availability-delta'},
         ]
     )

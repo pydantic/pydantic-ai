@@ -3901,6 +3901,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         update_lowered_instruction_history(
             messages, loaded_parts, self._lowered_authorities, recording_targets, loaded=loaded
         )
+        _record_capability_unloads(ctx, recording_targets)
         # A hook that rewrote the history (`ctx.messages[:] = ...`) with a copy of this request left
         # `self.request` out of it, so the instructions sent are recorded where the history now holds them.
         instruction_targets = (
@@ -5309,6 +5310,27 @@ def _deliver_capability_loads(
     if loads := queue.pop_capability_loads():
         request.parts = [*request.parts, *loads]
     return loads
+
+
+def _record_capability_unloads(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]], targets: Sequence[_messages.ModelRequest]
+) -> None:
+    """Unload the capabilities history loads that a per-step `DynamicCapability` no longer returns, on `targets`.
+
+    A `CapabilityLoadDeltaPart` naming them in `unloaded`, on the request of the step they left at, so a capability
+    returned again later has to be loaded again. Recorded after the withdrawal of their instructions, which the
+    unload takes out of scope. Read from history, so a retried request or a durable replay finds the unload it
+    already recorded, and a step that sends no request leaves it to the next one.
+    """
+    if not has_per_step_capabilities(ctx.deps.capabilities.values()):
+        return
+    unloaded = sorted(parse_loaded_capabilities(ctx.state.message_history) - ctx.deps.capabilities.keys())
+    if not unloaded:
+        return
+    part = _messages.CapabilityLoadDeltaPart(unloaded=unloaded)
+    for target in targets:
+        target.parts = [*target.parts, part]
+    ctx.state.event_stream_buffer.append(_messages.CapabilityLoadDeltaEvent(part=part))
 
 
 def _reveal_tools_of_loads_before_run(

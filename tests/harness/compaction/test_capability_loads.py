@@ -527,6 +527,28 @@ class TestCapabilityLoadsAcrossCompaction:
             ]
         )
 
+    async def test_an_unloaded_capability_is_not_recorded_again(self) -> None:
+        # A per-step `DynamicCapability` that stopped returning a capability unloaded it, so compaction leaves it so.
+        original: list[ModelMessage] = [
+            ModelRequest(parts=[UserPromptPart('Weather in Athens?')]),
+            ModelResponse(parts=[LoadCapabilityCallPart(args={'id': 'weather'}, tool_call_id='load')]),
+            ModelRequest(
+                parts=[
+                    LoadCapabilityReturnPart(content={'message': 'loaded'}, tool_call_id='load'),
+                    ToolAvailabilityDeltaPart(tools_added=['get_forecast'], tool_call_id='load'),
+                ]
+            ),
+            ModelResponse(parts=[TextPart('Sunny.')]),
+            ModelRequest(parts=[UserPromptPart('And in Oslo?'), CapabilityLoadDeltaPart(unloaded=['weather'])]),
+            ModelResponse(parts=[TextPart('No forecast.')]),
+            ModelRequest(parts=[UserPromptPart('Thanks')]),
+        ]
+        compacted = [original[0], original[-1]]
+
+        result = keep_capability_loads(original, compacted, kept_from=1, deferred_ids={'weather'})
+
+        assert result == compacted
+
     async def test_compact_now_records_loads_without_a_run(self) -> None:
         history = await _first_turn_history()
         next_prompt = ModelRequest(parts=[UserPromptPart('And in Oslo?')])

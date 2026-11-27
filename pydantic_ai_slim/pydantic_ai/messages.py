@@ -3775,7 +3775,9 @@ class ToolAvailabilityDeltaPart:
 class CapabilityLoadDeltaPart:
     """Records a change to the set of loaded [on-demand capabilities](../capabilities/on-demand.md) at this point, without a `load_capability` call.
 
-    Additions only, in `loaded`: unloading a capability isn't supported yet.
+    Loads are in `loaded`, and unloads in `unloaded`: a capability a
+    [`DynamicCapability(per_run_step=True)`][pydantic_ai.capabilities.DynamicCapability] stops returning is unloaded
+    by one on the request of the step it left at, so if it's returned again later, it has to be loaded again.
 
     [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability] records one on the request after the
     tool call that loaded the capability, followed by a
@@ -3786,11 +3788,14 @@ class CapabilityLoadDeltaPart:
     and its model settings and hooks apply.
 
     Never sent to the model: `prepare_messages` drops it, and the model sees the capability's instructions and
-    tools instead.
+    tools instead, or, for an unload, its instructions withdrawn, its tools gone, and the catalog's change.
     """
 
     loaded: list[str] = field(default_factory=lambda: [])
     """IDs of the capabilities loaded at this point in history, in load order."""
+
+    unloaded: list[str] = field(default_factory=lambda: [])
+    """IDs of the capabilities unloaded at this point in history, ahead of any in `loaded`."""
 
     tool_call_id: str | None = None
     """The tool call being handled when the capabilities were loaded, if any."""
@@ -3800,7 +3805,12 @@ class CapabilityLoadDeltaPart:
 
     def otel_message_parts(self, settings: InstrumentationSettings) -> list[_otel_messages.MessagePart]:
         """Render the change as trace content: capability IDs aren't user content, so they're always recorded."""
-        changes = ', '.join(f'+{capability_id}' for capability_id in self.loaded)
+        changes = ', '.join(
+            [
+                *(f'-{capability_id}' for capability_id in self.unloaded),
+                *(f'+{capability_id}' for capability_id in self.loaded),
+            ]
+        )
         return [_otel_messages.TextPart(type='text', content=f'Loaded capabilities changed: {changes}')]
 
     __repr__ = _utils.dataclasses_no_defaults_repr

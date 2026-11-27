@@ -34,6 +34,7 @@ from pydantic_ai.messages import (
     LoadCapabilityCallPart,
     LoadCapabilityReturnPart,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     RetryInfo,
@@ -45,9 +46,11 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.native_tools import WebSearchTool
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.toolsets import AbstractToolset, ApprovalRequiredToolset
+from pydantic_ai.ui._adapter import capability_load_delta_from_payload, capability_load_delta_payload
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
@@ -379,7 +382,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
 
 @pytest.mark.moves_cache_prefix(reason='a loaded capability that leaves mid-run takes its tools out of the request')
 async def test_capability_leaving_mid_run_is_withdrawn() -> None:
-    """A loaded capability the factory stops returning leaves the catalog, its instructions, and its tools."""
+    """A loaded capability the factory stops returning leaves the catalog, its instructions, and its tools, and is unloaded."""
     seen = Seen()
     refunds = make_refunds()
     loaded: list[set[str]] = []
@@ -486,6 +489,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                     InstructionDeltaPart(
                         id=InstructionId(source=CapabilityInstructionSource(id='refunds')), content=None
                     ),
+                    CapabilityLoadDeltaPart(unloaded=['refunds']),
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
@@ -508,22 +512,32 @@ The following capabilities are deferred and can be loaded using the `load_capabi
     )
 
 
-async def test_loaded_capability_returning_after_leaving_is_loaded_again() -> None:
-    """A capability's earlier load counts again when the factory returns it again, and its instructions are restated."""
-    refunds = Capability[object](
-        id='refunds', description='Refund policy.', instructions='Refunds take 5 days.', defer_loading=True
-    )
+@pytest.mark.moves_cache_prefix(reason='a loaded capability that leaves mid-run takes its tools out of the request')
+async def test_loaded_capability_returning_after_leaving_must_be_loaded_again() -> None:
+    """A capability the factory returns again after it left was unloaded, so the model has to load it again.
+
+    The unload is appended: every message an earlier step recorded is unchanged, byte for byte.
+    """
+    seen = Seen()
+    refunds = make_refunds()
     loaded: list[set[str]] = []
 
     def capability_for_step(ctx: RunContext[object]) -> Capability[object] | None:
         return None if ctx.run_step == 3 else refunds
 
     def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.record(messages, info)
         step = responses(messages)
-        if step == 0:
-            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'refunds'}, tool_call_id='load')])
-        if step < 3:
-            return ModelResponse(parts=[ToolCallPart('ping', {}, tool_call_id=f'ping-{step}')])
+        if step in (0, 3):
+            return ModelResponse(
+                parts=[ToolCallPart('load_capability', {'id': 'refunds'}, tool_call_id=f'load-{step}')]
+            )
+        if step in (1, 4):
+            return ModelResponse(
+                parts=[ToolCallPart('refund_status', {'order_id': 'A1'}, tool_call_id=f'status-{step}')]
+            )
+        if step == 2:
+            return ModelResponse(parts=[ToolCallPart('ping', {}, tool_call_id='ping')])
         return make_text_response('done')
 
     agent = Agent(FunctionModel(model_fn), capabilities=[DynamicCapability(capability_for_step, per_run_step=True)])
@@ -536,28 +550,208 @@ async def test_loaded_capability_returning_after_leaving_is_loaded_again() -> No
     def record_loaded(ctx: RunContext[object]) -> None:
         loaded.append(set(ctx.loaded_capability_ids))
 
-    result = await agent.run('Refund order A1')
+    recorded: list[list[bytes]] = []
+    async with agent.iter('Refund order A1') as run:
+        async for _ in run:
+            recorded.append([ModelMessagesTypeAdapter.dump_json([message]) for message in run.all_messages()])
+    assert run.result is not None
+    for earlier, later in zip(recorded, recorded[1:]):
+        assert later[: len(earlier)] == earlier
 
-    assert loaded == snapshot([set(), {'refunds'}, set(), {'refunds'}])
-    assert [
-        (part.id, part.content)
-        for message in result.all_messages()
-        if isinstance(message, ModelRequest)
-        for part in message.parts
-        if isinstance(part, InstructionDeltaPart)
-    ] == snapshot(
+    # Not loaded when it comes back on the fourth request, until the model loads it again.
+    assert loaded == snapshot([set(), {'refunds'}, set(), set(), {'refunds'}, {'refunds'}])
+    assert seen.tools == snapshot(
         [
-            (InstructionId(source=CapabilityInstructionSource(id='refunds')), 'Refunds take 5 days.'),
-            (InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')), None),
-            (InstructionId(source=CapabilityInstructionSource(id='refunds')), None),
-            (
-                InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
-                """\
+            ['load_capability', 'ping'],
+            ['load_capability', 'ping', 'refund_status'],
+            ['load_capability', 'ping'],
+            ['load_capability', 'ping'],
+            ['load_capability', 'ping', 'refund_status'],
+            ['load_capability', 'ping', 'refund_status'],
+        ]
+    )
+    assert run.result.all_messages() == snapshot(
+        [
+            ModelRequest(
+                parts=[
+                    UserPromptPart(content='Refund order A1', timestamp=IsDatetime()),
+                    InstructionBaselinePart(
+                        instructions=[
+                            InstructionPart(
+                                content="""\
 The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
-- refunds: Refund policy.\
+- refunds: Refund tools.\
 """,
+                                dynamic=True,
+                                on_change='append',
+                                id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                            )
+                        ]
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
             ),
-            (InstructionId(source=CapabilityInstructionSource(id='refunds')), 'Refunds take 5 days.'),
+            ModelResponse(
+                parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='load-0')],
+                usage=RequestUsage(input_tokens=53, output_tokens=5),
+                model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    LoadCapabilityReturnPart(
+                        content={'message': "Capability 'refunds' loaded. Its instructions, if any, follow."},
+                        tool_call_id='load-0',
+                        timestamp=IsDatetime(),
+                    ),
+                    ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id='load-0'),
+                    InstructionDeltaPart(
+                        id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
+                        content='Confirm the order ID first.',
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='refund_status', args={'order_id': 'A1'}, tool_call_id='status-1')],
+                usage=RequestUsage(input_tokens=84, output_tokens=10),
+                model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='refund_status',
+                        content='Order A1: refund issued.',
+                        tool_call_id='status-1',
+                        timestamp=IsDatetime(),
+                    ),
+                    InstructionDeltaPart(
+                        id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')), content=None
+                    ),
+                    InstructionDeltaPart(
+                        id=InstructionId(source=CapabilityInstructionSource(id='refunds')), content=None
+                    ),
+                    CapabilityLoadDeltaPart(unloaded=['refunds']),
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='ping', args={}, tool_call_id='ping')],
+                usage=RequestUsage(input_tokens=126, output_tokens=12),
+                model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(tool_name='ping', content='pong', tool_call_id='ping', timestamp=IsDatetime()),
+                    InstructionDeltaPart(
+                        id=InstructionId(source=CapabilityInstructionSource(id='deferred_capabilities')),
+                        content="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.\
+""",
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[LoadCapabilityCallPart(args={'id': 'refunds'}, tool_call_id='load-3')],
+                usage=RequestUsage(input_tokens=168, output_tokens=17),
+                model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    LoadCapabilityReturnPart(
+                        content={'message': "Capability 'refunds' loaded. Its instructions, if any, follow."},
+                        tool_call_id='load-3',
+                        timestamp=IsDatetime(),
+                    ),
+                    InstructionDeltaPart(
+                        id=InstructionId(source=CapabilityInstructionSource(id='refunds')),
+                        content='Confirm the order ID first.',
+                    ),
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='refund_status', args={'order_id': 'A1'}, tool_call_id='status-4')],
+                usage=RequestUsage(input_tokens=192, output_tokens=22),
+                model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(
+                        tool_name='refund_status',
+                        content='Order A1: refund issued.',
+                        tool_call_id='status-4',
+                        timestamp=IsDatetime(),
+                    )
+                ],
+                timestamp=IsDatetime(),
+                instructions="""\
+The following capabilities are deferred and can be loaded using the `load_capability` tool. A capability's tools stay hidden until it is loaded:
+- refunds: Refund tools.\
+""",
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
+            ModelResponse(
+                parts=[TextPart(content='done')],
+                usage=RequestUsage(input_tokens=197, output_tokens=23),
+                model_name='function:model_fn:',
+                model_id='function:function:model_fn:',
+                timestamp=IsDatetime(),
+                run_id=IsStr(),
+                conversation_id=IsStr(),
+            ),
         ]
     )
 
@@ -717,7 +911,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
         ]
     )
 
-    # A run whose context no longer produces it doesn't have it, even with its load in history.
+    # A run whose context no longer produces it doesn't have it, even with its load in history, and unloads it.
     third = await agent.run(
         message_history=[
             *first.all_messages(),
@@ -743,6 +937,7 @@ The following capabilities are deferred and can be loaded using the `load_capabi
                     InstructionDeltaPart(
                         id=InstructionId(source=CapabilityInstructionSource(id='refunds')), content=None
                     ),
+                    CapabilityLoadDeltaPart(unloaded=['refunds']),
                 ],
                 timestamp=IsDatetime(),
                 instructions="""\
@@ -994,3 +1189,16 @@ async def test_hooks_and_event_listeners_apply_while_loaded_and_present() -> Non
 
     assert audit.requests == snapshot([3, 4])
     assert audit.events == snapshot(['3: ping', '4: ping'])
+
+
+def test_unload_record_names_the_capability_in_traces_and_rides_through_a_ui_client() -> None:
+    """An unload is named in traces like a load, and survives a UI round trip, so the capability stays unloaded."""
+    unload = CapabilityLoadDeltaPart(unloaded=['refunds'])
+
+    assert InstrumentationSettings().messages_to_otel_messages([ModelRequest(parts=[unload])]) == snapshot(
+        [{'role': 'system', 'parts': [{'type': 'text', 'content': 'Loaded capabilities changed: -refunds'}]}]
+    )
+    payload = capability_load_delta_payload(unload)
+    assert payload == snapshot({'loaded': [], 'tool_call_id': None, 'unloaded': ['refunds']})
+    assert capability_load_delta_from_payload(payload) == unload
+    assert capability_load_delta_from_payload({'loaded': [], 'unloaded': ['']}) is None

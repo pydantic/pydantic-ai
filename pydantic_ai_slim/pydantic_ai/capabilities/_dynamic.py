@@ -38,7 +38,7 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
     and may only return [on-demand capabilities](../capabilities/on-demand.md)
     (`defer_loading=True`, or a `CombinedCapability` of them). A capability that first
     appears at a later step joins the catalog as an appended change, and one that stops
-    being returned leaves it the same way; see
+    being returned leaves it the same way, unloaded if it was loaded; see
     [Capabilities that change during a run](../capabilities/on-demand.md#per-step).
 
     Under durable execution, a stable `id` is required on `DynamicCapability`: it

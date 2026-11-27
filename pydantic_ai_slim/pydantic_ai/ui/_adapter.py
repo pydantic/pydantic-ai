@@ -417,26 +417,36 @@ def capability_load_delta_payload(part: CapabilityLoadDeltaPart) -> dict[str, An
     """Serialize a [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart] for a UI data channel.
 
     The part rides through the client like a `ToolAvailabilityDeltaPart`, because it's what keeps a capability
-    loaded from code loaded: leaving it out would unload the capability on the request after a round trip.
+    loaded from code loaded: leaving it out would unload the capability on the request after a round trip. An unload
+    rides along too, as `unloaded` when there is one, so a capability it unloaded isn't loaded again after one.
     """
-    return {'loaded': part.loaded, 'tool_call_id': part.tool_call_id}
+    payload: dict[str, Any] = {'loaded': part.loaded, 'tool_call_id': part.tool_call_id}
+    if part.unloaded:
+        payload['unloaded'] = part.unloaded
+    return payload
 
 
 def capability_load_delta_from_payload(payload: Mapping[str, Any]) -> CapabilityLoadDeltaPart | None:
-    """Build a [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart] from a UI payload, or `None` if it loads nothing.
+    """Build a [`CapabilityLoadDeltaPart`][pydantic_ai.messages.CapabilityLoadDeltaPart] from a UI payload, or `None` if it changes nothing.
 
     Client-driven like `tool_availability_delta_from_payload`, and no more than a client could already do by
     sending a `load_capability` call and its return: a capability ID isn't sent to the model, and one the run
-    doesn't register as an on-demand capability loads nothing.
+    doesn't register as an on-demand capability loads nothing. An unload is less than a client could do by leaving
+    out a load's records.
     """
     try:
         part = _CAPABILITY_LOAD_DELTA_PART_ADAPTER.validate_python(
-            {'loaded': payload.get('loaded'), 'tool_call_id': payload.get('tool_call_id')}
+            {
+                'loaded': payload.get('loaded'),
+                'unloaded': payload.get('unloaded') or [],
+                'tool_call_id': payload.get('tool_call_id'),
+            }
         )
     except ValidationError:
         return None
     part.loaded = [capability_id for capability_id in part.loaded if capability_id]
-    if not part.loaded:
+    part.unloaded = [capability_id for capability_id in part.unloaded if capability_id]
+    if not part.loaded and not part.unloaded:
         return None
     if part.tool_call_id is not None and not part.tool_call_id.strip():
         part.tool_call_id = None
