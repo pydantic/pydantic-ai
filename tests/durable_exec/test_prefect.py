@@ -2462,6 +2462,24 @@ def test_cache_policy_keys_for_unset_ui_visibility_are_pinned():
     assert key_for(stamped_history) != key_for(history)
 
 
+def test_cache_policy_keys_for_an_empty_unloaded_are_pinned():
+    """An empty `CapabilityLoadDeltaPart.unloaded` stays out of the key, so a flow retried across the upgrade that added it hits.
+
+    The digests were computed before the field existed. An unload stays in the key.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    load = CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='load')
+    history: list[ModelMessage] = [ModelResponse(parts=[TextPart('hi')]), ModelRequest(parts=[load])]
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    assert key_for(load) == snapshot('9ae38b6fa104f2d29261acaeba06bfd4')
+    assert key_for(history) == snapshot('7ea0fd75bd622bad710f9378c64e65fe')
+    assert key_for(replace(load, unloaded=['refunds'])) != key_for(load)
+
+
 def test_cache_policy_normalizes_only_framework_tool_call_ids():
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
