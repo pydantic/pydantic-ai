@@ -145,7 +145,8 @@ class InstrumentationSettings:
                     - `gen_ai.input.messages` and `gen_ai.output.messages` on model request spans.
                     - `pydantic_ai.all_messages` on agent run spans.
                 Version 3 is the same as version 2, but names spans `invoke_agent {agent_name}` and
-                    `execute_tool {tool_name}`, and tool attributes `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`.
+                    `execute_tool {tool_name}` (output functions included), and tool attributes
+                    `gen_ai.tool.call.arguments` and `gen_ai.tool.call.result`.
                 Version 4 is the same as version 3, with GenAI semantic conventions for multimodal content:
                     URL-based media uses type='uri' with uri and mime_type fields (and modality for image/audio/video).
                     Inline binary content uses type='blob' with mime_type and content fields (and modality for image/audio/video).

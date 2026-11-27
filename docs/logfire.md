@@ -354,6 +354,7 @@ With the default format (`version=5`), Pydantic AI emits these spans, all under 
 | `chat {model}` | Each model request | `gen_ai.request.model`, `gen_ai.response.model`, `gen_ai.input.messages`, `gen_ai.output.messages`, `gen_ai.usage.*`, `operation.cost` (when a price is known) |
 | `execute_tool {tool_name}` | Each tool or output function call | `gen_ai.tool.name`, `gen_ai.tool.call.id`, `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result` |
 | `model request attempt {model}` | Each failed attempt during [retries](capabilities/retry-on-model-errors.md) or [fallback](capabilities/model-fallback.md) | `pydantic_ai.model_request.attempt` |
+| `decide {model}` | Each request a [decision model](#decision-model-spans) sends, under the `chat` span | See [Decision model spans](#decision-model-spans) |
 | `embeddings {model}` | Each embeddings request | `gen_ai.request.model`, `gen_ai.usage.*`, `operation.cost` (when a price is known) |
 | `image_generation {model}` | Each image generation request | `gen_ai.request.model`, `gen_ai.usage.*`, `operation.cost` (when a price is known) |
 
