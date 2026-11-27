@@ -1917,18 +1917,20 @@ async def test_durability_delegated_usage_limit_is_not_retried(client: Client):
 
 
 _expired_response_requests: list[str] = []
-
-
-def _expired_response_handler(request: httpx2.Request) -> httpx2.Response:
-    _expired_response_requests.append(f'{request.method} {request.url.path}')
-    return httpx2.Response(404, json={'error': {'message': 'No response found.', 'type': 'invalid_request_error'}})
-
-
 _expired_response_model = OpenAIResponsesModel(
     'gpt-5.6-sol',
     provider=OpenAIProvider(
         api_key='mock-api-key',
-        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(_expired_response_handler)),
+        http_client=httpx2.AsyncClient(
+            transport=httpx2.MockTransport(
+                lambda request: (
+                    _expired_response_requests.append(f'{request.method} {request.url.path}')
+                    or httpx2.Response(
+                        404, json={'error': {'message': 'No response found.', 'type': 'invalid_request_error'}}
+                    )
+                )
+            )
+        ),
     ),
 )
 
@@ -2007,12 +2009,8 @@ async def check_background_job() -> str:
     return (await _expired_response_delegate.run(message_history=_expired_response_history)).output
 
 
-def _check_background_job_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-    return ModelResponse(parts=[ToolCallPart('check_background_job', {})])
-
-
 expired_response_tool_agent = Agent(
-    FunctionModel(_check_background_job_model_fn),
+    FunctionModel(lambda messages, info: ModelResponse(parts=[ToolCallPart('check_background_job', {})])),
     name='durability_expired_suspended_response_tool',
     toolsets=[FunctionToolset(tools=[check_background_job], id='background_job_toolset')],
     capabilities=[
