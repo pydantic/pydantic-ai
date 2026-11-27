@@ -442,7 +442,7 @@ broken install, not an extra."""
 
 def _extras_required() -> bool:
     """Whether `PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS` asks to fail a case whose extra isn't installed."""
-    value = os.environ.get(_REQUIRE_EXTRAS_VARIABLE, '').strip().lower()
+    value = os.environ.get(_REQUIRE_EXTRAS_VARIABLE, '').strip().lower()  # workflow-nondeterminism-ok: test-side
     if value in ('', '0', 'false'):
         return False
     if value in ('1', 'true'):
