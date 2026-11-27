@@ -718,6 +718,8 @@ def test_claude_code_headers_and_files(tmp_path: Path, monkeypatch: pytest.Monke
         ],
     )
     write_jsonl(project / 'agent-1.jsonl', [])
+    # A sub-agent's transcript belongs to its session, never listed beside it.
+    write_jsonl(project / 'commands' / 'subagents' / 'agent-2.jsonl', [])
     no_prompt = write_jsonl(project / 'empty.jsonl', [{'type': 'user', 'cwd': '/w', 'message': {'content': []}}])
     assert claude_code_sessions.header(commands) == Header(native_id='commands', cwd='/w', title='Typed prompt')
     assert claude_code_sessions.header(no_prompt) is None
@@ -1185,14 +1187,22 @@ def test_catalog_lists_both_agents_newest_first(tmp_path: Path) -> None:
     lines = codex.read_text(encoding='utf-8').splitlines()
     meta = {'type': 'session_meta', 'payload': {'id': 'script', 'cwd': str(tmp_path), 'source': 'exec'}}
     write_jsonl(script, [meta, *lines[1:]])
+    # Neither is an Agent SDK script's or `claude -p` run: only those are not listed, but can be imported by ID.
+    for native_id, entrypoint in (('sdk', 'sdk-py'), ('print', 'sdk-cli'), ('cli', 'cli'), ('ide', 'claude-vscode')):
+        prompt = {**claude_entry('u', None, 'user', 'Scripted'), 'cwd': str(tmp_path), 'entrypoint': entrypoint}
+        os.utime(write_jsonl(claude.parent / f'{native_id}.jsonl', [prompt]), (500, 500))
     catalog = ImportCatalog(('claude', 'codex'))
-    first, second = catalog.listing()
+    first, second, *interactive = catalog.listing()
+    assert sorted(entry.subtitle for entry in interactive) == ['Claude Code session cli', 'Claude Code session ide']
+    assert find_import('claude', 'sdk').path.name == 'sdk.jsonl'
+    assert not find_import('claude', 'print').listed
     assert (first.title, first.title_source, first.tags) == ('Verbose flag', 'generated', ('codex',))
     assert first.subtitle == f'Codex session {CODEX_ID}'
     assert first.workspace == str((tmp_path / 'codex-project').resolve())
     assert (second.title, second.title_source, second.revision) == ('Fix the parser', 'generated', 0)
     assert catalog.listing(limit=1) == [first]
     assert catalog.listing('CLAUDE-PROJECT') == [second]
+    assert find_import('claude', 'cli').listed
     imported = catalog.get(second.id)
     assert imported is not None and imported.path == claude
     assert catalog.get('missing') is None
@@ -1321,23 +1331,128 @@ async def test_resume_browser_lists_imports_beside_saved_sessions(
     imported_id = service.session.summary.id
     assert len(await store.listing()) == 2
 
+    # A Claude Code session not imported yet, which only the scan of every agent finds.
+    os.utime(claude_session(tmp_path, session_id=str(uuid4())), (500, 500))
+
     def only_codex(browser: SessionBrowser) -> str:
-        assert [entry.tags for entry in browser.entries] == [('codex',)]
+        # Naming an agent lists only its sessions at first; `f` still reaches the others.
+        assert (browser.source, [entry.tags for entry in browser.visible]) == ('codex', [('codex',)])
+        assert 'Source: Codex' in browser.frame(width=120, height=20)[0]
+        # The Codex session is in another project than this one, which has only Pax and Claude Code sessions.
+        assert [entry.tags for entry in browser.sessions] == [('codex',)]
+        browser.handle_key('f')
+        assert browser.notice == 'Listing all sessions.'
+        assert sorted(entry.tags for entry in browser.visible) == [(), ('claude',), ('claude',), ('codex',)]
+        assert [browser.importing(entry) for entry in browser.visible if entry.tags == ('claude',)] == [False, True]
+        browser.handle_key('f')
         browser.query = 'other'
         browser.reload()
-        assert len(browser.entries) == 1
+        assert len(browser.visible) == 1
         return ''
 
     monkeypatch.setattr(SessionBrowser, 'run', only_codex)
     assert await service.command(['codex']) == ''
 
     def copy_replaces_original(browser: SessionBrowser) -> str:
-        assert [entry.id for entry in browser.entries].count(imported_id) == 1
-        assert not browser.importing(next(entry for entry in browser.entries if entry.id == imported_id))
+        # Also when listing only Claude Code's sessions: the copy stands in for its original, saying it was imported.
+        browser.reload()
+        assert [entry.id for entry in browser.visible].count(imported_id) == 1
+        assert not browser.importing(next(entry for entry in browser.visible if entry.id == imported_id))
+        browser.mode = 'sessions'
+        assert 'Claude Code · imported ·' in '\n'.join(browser.frame(width=140, height=20))
+        # An import makes a Pax session, so the Pax filter lists the copy too, but not what is still to import.
+        browser.source = 'clai'
+        assert {entry.id for entry in browser.visible} == {native_id, imported_id}
         return imported_id
 
     monkeypatch.setattr(SessionBrowser, 'run', copy_replaces_original)
+    assert (await service.command(['claude'])).startswith('Resumed Fix the parser')
     assert (await service.command([])).startswith('Resumed Fix the parser')
+
+
+async def test_resume_with_a_source_lists_that_agents_sessions_past_newer_ones(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, _ = sessions_service(tmp_path)
+    os.utime(codex_session(tmp_path), (1_000, 1_000))
+    # More Claude Code sessions than the browser lists, all newer than the Codex one.
+    for index in range(201):
+        os.utime(claude_session(tmp_path, session_id=str(uuid4())), (2_000 + index, 2_000 + index))
+    seen: list[tuple[int, int]] = []
+
+    def check(browser: SessionBrowser) -> str:
+        seen.append((len(browser.visible), len(browser.entries)))
+        browser.reload()
+        seen.append((len(browser.visible), len(browser.entries)))
+        return ''
+
+    monkeypatch.setattr(SessionBrowser, 'run', check)
+    assert await service.command(['codex']) == ''
+    assert await service.command([]) == ''
+    # Naming Codex keeps its session, opening and reloading; listing all of them keeps only the newest.
+    assert seen == [(1, 201), (1, 201), (200, 200), (200, 200)]
+
+
+async def test_resume_with_a_source_lists_its_copy_past_newer_pax_sessions(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The copy takes its original's place even when more Pax sessions than the browser lists are newer than it."""
+    service, store = sessions_service(tmp_path)
+    os.utime(claude_session(tmp_path), (1_000, 1_000))
+    await service.command(['claude', CLAUDE_ID])
+    copy = service.session.conversation_id
+    await service.session.clear()
+    for _ in range(201):
+        await store.save(summary=ConversationSummary(id=str(uuid4()), workspace=str(tmp_path)), messages=[])
+    seen: list[list[bool]] = []
+
+    def check(browser: SessionBrowser) -> str:
+        for _ in range(2):
+            seen.append([browser.importing(entry) for entry in browser.visible if entry.id == copy])
+            browser.reload()
+        return ''
+
+    monkeypatch.setattr(SessionBrowser, 'run', check)
+    assert await service.command(['claude']) == ''
+    # Listed once, opening and reloading, as the copy rather than an original still to import.
+    assert seen == [[False], [False]]
+
+
+async def test_resume_browser_marks_a_copy_whose_original_moved_on(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    service, store = sessions_service(tmp_path)
+    path = claude_session(tmp_path)
+    os.utime(path, (1_000, 1_000))
+    await service.command(['claude', CLAUDE_ID])
+    copy = service.session.conversation_id
+    await service.session.prompt('Continue in Pax')
+    await service.session.clear()
+    await service.session.prompt('A Pax session')
+    await service.session.clear()
+    codex_session(tmp_path)
+    changed: list[bool] = []
+
+    def check(browser: SessionBrowser) -> str:
+        [entry] = [entry for entry in browser.entries if entry.id == copy]
+        changed.append(browser.changed_since_import(entry))
+        # A copy saved before `created_at` existed never shows as changed.
+        assert not browser.changed_since_import(replace(entry, created_at=None))
+        # Pax's own sessions and ones not imported yet have no import to compare with.
+        assert len(browser.entries) == 3 and not any(
+            browser.changed_since_import(other) for other in browser.entries if other.id != copy
+        )
+        return ''
+
+    monkeypatch.setattr(SessionBrowser, 'run', check)
+    assert await service.command([]) == ''
+    # Claude Code continued the session after Pax imported it.
+    saved = (await store.get(conversation_id=copy)).summary
+    assert saved.created_at is not None
+    later = saved.created_at.timestamp() + 60
+    os.utime(path, (later, later))
+    assert await service.command([]) == ''
+    assert changed == [False, True]
 
 
 async def test_an_archived_copy_keeps_its_original_out_of_resume(
@@ -1383,7 +1498,7 @@ def test_browser_marks_sessions_to_import() -> None:
         # Pax's own, with a topic tag that names a source.
         ConversationSummary(id=str(uuid4()), workspace='/w', title='About Claude', tags=('claude',)),
     ]
-    importing = [True]
+    importing, changed = [True], [False]
     keys = iter(['d', 'r', 'ctrl-c'])
     browser = SessionBrowser(
         entries=entries,
@@ -1395,6 +1510,7 @@ def test_browser_marks_sessions_to_import() -> None:
         rename=lambda entry, title: pytest.fail('not imported'),
         archive=lambda entry, archived: pytest.fail('not imported'),
         importing=lambda entry: importing[0],
+        changed_since_import=lambda entry: changed[0],
         output=StringIO(),
         key_source=lambda: next(keys),
         size=lambda: (100, 20),
@@ -1405,11 +1521,23 @@ def test_browser_marks_sessions_to_import() -> None:
     assert frame.count('Claude Code · to import') == 1 and frame.count('#claude') == 1
     assert imported_from(ConversationSummary(id='not-a-uuid', workspace='/w', tags=('claude',))) is None
     importing[0] = False
-    frame = '\n'.join(browser.frame(width=100, height=20))
-    assert frame.count('Claude Code · 123 msgs / 1,234,567 tok') == 1 and frame.count('#claude') == 1
-    # A narrower pane drops the tokens before the source, and the source before it squeezes out the title.
-    for width, counts in ((80, 'Claude Code · 123 msgs'), (22, '123 msgs'), (22, 'to import')):
+    frame = '\n'.join(browser.frame(width=140, height=20))
+    assert frame.count('Claude Code · imported · 123 msgs / 1,234,567 tok') == 1 and frame.count('#claude') == 1
+    # Once its original has moved on, the copy says so.
+    changed[0] = True
+    frame = '\n'.join(browser.frame(width=140, height=20))
+    assert frame.count('Claude Code · imported, changed since · 123 msgs / 1,234,567 tok') == 1
+    # A narrower pane drops the tokens, then that it was imported, then the source, before they squeeze out the title.
+    for width, counts, moved_on in (
+        (100, 'Claude Code · imported · 123 msgs', False),
+        (40, 'Claude Code · 123 msgs', False),
+        # That the original changed goes with the import marker, before the source label.
+        (40, 'Claude Code · 123 msgs', True),
+        (22, '123 msgs', False),
+        (22, 'to import', False),
+    ):
         importing[0] = counts == 'to import'
+        changed[0] = moved_on
         frame = ANSI_ESCAPE_RE.sub('', '\n'.join(browser.frame(width=width, height=20)))
         card = next((line for line in frame.splitlines() if '> ' in line and ' Fr' in line), frame)
         assert card.endswith(f' {counts}') and card.count('·') == counts.count('·'), frame

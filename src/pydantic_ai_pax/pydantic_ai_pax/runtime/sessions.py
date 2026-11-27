@@ -37,6 +37,7 @@ from pydantic_ai_pax.runtime.imported_sessions import (
     import_source,
     merge,
     save_import,
+    source_of,
 )
 from pydantic_ai_pax.runtime.launch import launch_session_id
 from pydantic_ai_pax.runtime.session import Session, fork_summary, interrupted_history
@@ -331,18 +332,31 @@ class Sessions(Generic[DepsT, OutputT]):
         return await self.browse(source, unarchive=unarchive)
 
     async def browse(self, source: ImportSource | None, *, unarchive: bool = True) -> str:
-        """Pick from Pax's sessions and not-yet-imported ones, or from one agent's sessions only."""
-        entries: list[ConversationSummary] = [] if source else await self.store.listing(archived=None)
+        """Pick from Pax's sessions and not-yet-imported ones, listing only one agent's sessions at first with `source`."""
+        entries = await self.store.listing(archived=None)
         self.namer.backfill([entry for entry in entries if entry.archived_at is None], client=self.naming)
-        imports = await run_sync(ImportCatalog, (source,) if source else IMPORT_SOURCES)
+        entries = await self._with_own_copies(entries, query='', limit=200, source=source)
+        imports = await run_sync(ImportCatalog, IMPORT_SOURCES)
         loop = asyncio.get_running_loop()
 
         def apply(action: Coroutine[object, object, ResultT]) -> ResultT:
             return asyncio.run_coroutine_threadsafe(action, loop).result()
 
+        def on_disk(query: str, limit: int) -> list[ConversationSummary]:
+            found = imports.listing(query, limit)
+            if source is None:
+                return found
+            # The named agent's own newest are listed too, however many newer ones other sources have.
+            ids = {summary.id for summary in found}
+            return [
+                *found,
+                *(summary for summary in imports.listing(query, limit, sources=(source,)) if summary.id not in ids),
+            ]
+
         def listing(query: str, limit: int, archived: bool) -> list[ConversationSummary]:
-            saved: list[ConversationSummary] = [] if source else apply(self.store.listing(query=query, limit=limit))
-            return self._browser_entries(saved, imports.listing(query, limit), limit=limit, archived=archived)
+            page = apply(self.store.listing(query=query, limit=limit))
+            saved = apply(self._with_own_copies(page, query=query, limit=limit, source=source))
+            return self._browser_entries(saved, on_disk(query, limit), limit=limit, archived=archived, source=source)
 
         retitled: dict[str, str] = {}
 
@@ -355,8 +369,8 @@ class Sessions(Generic[DepsT, OutputT]):
 
         def browse() -> str:
             # Resolve Git identities on the menu worker, not the application loop.
-            return SessionBrowser(
-                entries=self._browser_entries(entries, imports.listing(), limit=200, archived=False),
+            browser = SessionBrowser(
+                entries=self._browser_entries(entries, on_disk('', 200), limit=200, archived=False, source=source),
                 workspace=self.session.workspace,
                 active_id=self.session.summary.id,
                 refresh=listing,
@@ -366,7 +380,11 @@ class Sessions(Generic[DepsT, OutputT]):
                 archive=lambda source, archived: apply(archive(source, archived)),
                 # Saved sessions have a revision; one that is not yet imported has none.
                 importing=lambda entry: not entry.revision,
-            ).run()
+                changed_since_import=imports.changed_since_import,
+            )
+            # Naming an agent lists its sessions first; `f` reaches the others.
+            browser.select_source(source)
+            return browser.run()
 
         selected = await run_worker(browse)
         # Plugins hear of a rename once the browser has closed, so none of them draws over it.
@@ -384,13 +402,51 @@ class Sessions(Generic[DepsT, OutputT]):
             return f'A turn is running. Enter /resume {selected} to restore that session once it ends.'
         return await self.resume(selected, allow_other_workspace=True, unarchive=unarchive)
 
+    async def _with_own_copies(
+        self, saved: list[ConversationSummary], *, query: str, limit: int, source: ImportSource | None
+    ) -> list[ConversationSummary]:
+        """`saved`, the store's newest `limit`, with `source`'s own newest `limit` copies from the pages after it.
+
+        Naming an agent lists its own newest originals past the overall cut, so their copies must be there
+        too, or an original Pax already imported would be offered to import again in its copy's place.
+        """
+        if source is None:
+            return saved
+        entries, page, offset = list(saved), saved, len(saved)
+        own = sum(source_of(entry) == source for entry in saved)
+        # With fewer than `limit` copies from `source`, this pages through the whole store and reruns `query` on
+        # each page, on every reload of the browser. It runs on a worker thread; if it gets slow for large stores,
+        # the store could filter on the source tag instead.
+        while own < limit and len(page) == limit:
+            page = await self.store.listing(query=query, limit=limit, offset=offset)
+            offset += len(page)
+            # Only the agent's own are kept from later pages; the rest stay past the cut.
+            mine = [entry for entry in page if source_of(entry) == source]
+            entries += mine
+            own += len(mine)
+        return entries
+
     @staticmethod
     def _browser_entries(
-        saved: list[ConversationSummary], imported: list[ConversationSummary], *, limit: int, archived: bool
+        saved: list[ConversationSummary],
+        imported: list[ConversationSummary],
+        *,
+        limit: int,
+        archived: bool,
+        source: ImportSource | None = None,
     ) -> list[ConversationSummary]:
-        """The browser's sessions: `saved` merged with `imported`, keeping archived ones only when `archived`."""
+        """The newest `limit` of `saved` merged with `imported`, keeping archived ones only when `archived`.
+
+        With `source`, that agent's own newest `limit` are kept too, so newer sessions elsewhere cannot crowd them out.
+        """
         # An archived copy still replaces its Claude Code or Codex original, so neither is listed.
-        entries = merge(saved, imported, limit=limit)
+        entries: list[ConversationSummary] = []
+        own = 0
+        for index, entry in enumerate(merge(saved, imported, limit=len(saved) + len(imported))):
+            mine = source is not None and source_of(entry) == source
+            own += mine
+            if index < limit or (mine and own <= limit):
+                entries.append(entry)
         return entries if archived else [entry for entry in entries if entry.archived_at is None]
 
     async def _delete(self, source: ConversationSummary) -> None:

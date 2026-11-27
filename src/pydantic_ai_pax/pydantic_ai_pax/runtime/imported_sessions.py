@@ -182,13 +182,17 @@ class ImportCatalog:
         self._read: dict[Path, ImportedSession | None] = {}
         self._by_id: dict[str, ImportedSession] = {}
 
-    def listing(self, query: str = '', limit: int = 200) -> list[ConversationSummary]:
-        """Up to `limit` sessions whose title or directory contains `query`, newest first."""
+    def listing(
+        self, query: str = '', limit: int = 200, *, sources: Sequence[ImportSource] | None = None
+    ) -> list[ConversationSummary]:
+        """Up to `limit` sessions whose title or directory contains `query`, newest first, from `sources` or all."""
         needle = query.casefold()
         found: list[ConversationSummary] = []
         for modified, source, path in self._files:
             if len(found) >= limit:
                 break
+            if sources is not None and source not in sources:
+                continue
             if path not in self._read:
                 imported = _imported(source, path, modified=modified, titles=self._titles[source])
                 self._read[path] = imported
@@ -206,6 +210,15 @@ class ImportCatalog:
     def get(self, conversation_id: str) -> ImportedSession | None:
         """A session a listing has returned, by its Pax ID."""
         return self._by_id.get(conversation_id)
+
+    def changed_since_import(self, copy: ConversationSummary) -> bool:
+        """Whether a saved copy's original, as a listing has read it, changed after the copy was saved.
+
+        The store sets a copy's `created_at` when importing saves it, and again when a refresh replaces it, both
+        after the original was read. A copy saved before `created_at` existed has none, so never shows as changed.
+        """
+        original = self._by_id.get(copy.id)
+        return original is not None and copy.created_at is not None and original.summary.updated_at > copy.created_at
 
 
 def find_import(source: ImportSource, native_id: str) -> ImportedSession:
