@@ -20,8 +20,9 @@ from pydantic_ai import (
     UserPromptPart,
     capture_run_messages,
 )
-from pydantic_ai.capabilities import HistoryProcessor, ProcessHistory, ReinjectSystemPrompt
+from pydantic_ai.capabilities import HistoryProcessor, Hooks, ProcessHistory, ReinjectSystemPrompt
 from pydantic_ai.exceptions import UserError
+from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
@@ -2064,6 +2065,117 @@ async def test_reinject_system_prompt_resumed_tool_loop_excludes_resumed_request
     # The reinjected resumed request stays excluded; everything produced this run is new.
     assert result.new_messages() == result.all_messages()[1:]
     assert not _user_request_present(result.new_messages())
+
+
+@pytest.mark.parametrize('tool_calls', [0, 1])
+@pytest.mark.parametrize('replace_existing', [False, True])
+async def test_reinject_system_prompt_resumed_run_keeps_messages_a_hook_enqueues(
+    replace_existing: bool, tool_calls: int
+):
+    """
+    A `before_model_request` hook's `'asap'` content is appended after the request being prepared, on every
+    step. With system-prompt reinjection rebuilding the resumed request, the boundary falls back to its
+    position, which must not count those appended messages as ones before the resumed request.
+    """
+
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count <= tool_calls:
+            return ModelResponse(
+                parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id=f'tool_call_{call_count}')]
+            )
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    async def remind(ctx: RunContext, request_context: ModelRequestContext) -> ModelRequestContext:
+        ctx.enqueue('Reminder: be brief.')
+        return request_context
+
+    agent = Agent(
+        model=FunctionModel(model_function, model_name='test'),
+        system_prompt='Server prompt',
+        capabilities=[ReinjectSystemPrompt(replace_existing=replace_existing), Hooks(before_model_request=remind)],
+    )
+
+    @agent.tool
+    async def my_tool(_ctx: RunContext) -> str:
+        return 'tool executed'
+
+    result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart(content='Original prompt')])])
+
+    assert result.new_messages() == result.all_messages()[1:]
+    # Keyed by `tool_calls` only: `replace_existing` changes the resumed request, which isn't new.
+    expected_new_messages: dict[int, list[ModelMessage]] = {
+        0: snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Reminder: be brief.', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='done')],
+                    usage=RequestUsage(input_tokens=58, output_tokens=1),
+                    model_name='test',
+                    model_id='function:test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        ),
+        1: snapshot(
+            [
+                ModelRequest(
+                    parts=[UserPromptPart(content='Reminder: be brief.', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')],
+                    usage=RequestUsage(input_tokens=58, output_tokens=2),
+                    model_name='test',
+                    model_id='function:test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[
+                        ToolReturnPart(
+                            tool_name='my_tool',
+                            content='tool executed',
+                            tool_call_id='tool_call_1',
+                            timestamp=IsDatetime(),
+                        )
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelRequest(
+                    parts=[UserPromptPart(content='Reminder: be brief.', timestamp=IsDatetime())],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[TextPart(content='done')],
+                    usage=RequestUsage(input_tokens=64, output_tokens=3),
+                    model_name='test',
+                    model_id='function:test',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        ),
+    }
+    assert result.new_messages() == expected_new_messages[tool_calls]
 
 
 async def test_history_processor_truncation_during_resumed_tool_loop_keeps_run_messages():
