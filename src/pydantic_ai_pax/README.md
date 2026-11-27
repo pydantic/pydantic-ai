@@ -233,8 +233,9 @@ A second account of the same provider is a profile, written `PROVIDER@PROFILE`:
 /model openai-codex@*:gpt-6-astra   # every signed-in Codex account, in /accounts order
 ```
 
-When a provider has more than one account, a model runs on the first one and moves to
-the next when it hits a rate or usage limit.
+A plain `PROVIDER:MODEL` runs on the provider's default account. With `PROVIDER@*:MODEL`,
+or `/set accounts.pool true`, a model runs on the first account and moves to the next when it
+hits a rate or usage limit.
 
 ### Fallback chains
 
