@@ -634,6 +634,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             tool_name=call.tool_name,
             content=content,
             tool_call_id=call.tool_call_id,
+            tool_kind=call.tool_kind,
             ui_visibility=call.ui_visibility,
         )
 
@@ -743,7 +744,9 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 part = self._status_part(r.call, OUTPUT_NOT_FINAL_RESULT)
                 yield from self._record_output_part(r.call, part, args_valid=True)
         elif r.retry_part is not None:
-            yield from self._record_output_part(r.call, r.retry_part, args_valid=r.args_valid)
+            # An output tool's retry is built without the call's kind, so it takes it here.
+            part = dataclasses.replace(r.retry_part, tool_kind=r.call.tool_kind)
+            yield from self._record_output_part(r.call, part, args_valid=r.args_valid)
         else:
             # Absorbed failure: another output won, so this one's max-retries error is recorded
             # as a skip rather than raised. (When no output won, the caller raises `raise_exc`.)

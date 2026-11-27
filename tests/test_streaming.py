@@ -1671,6 +1671,7 @@ async def test_streamed_structured_response():
                     tool_name='final_result',
                     args={'response': ['a', 'a']},
                     tool_call_id='pyd_ai_tool_call_id__final_result',
+                    tool_kind='output',
                 )
             ],
             usage=RequestUsage(input_tokens=50, output_tokens=7),
@@ -2134,6 +2135,7 @@ async def test_call_tool():
                             tool_name='final_result',
                             args='{"response": ["hello world", 2]}',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                         )
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=7),
@@ -2149,6 +2151,7 @@ async def test_call_tool():
                             tool_name='final_result',
                             content='Final result processed.',
                             timestamp=IsNow(tz=datetime.UTC),
+                            tool_kind='output',
                             tool_call_id=IsStr(),
                         )
                     ],
@@ -2780,7 +2783,12 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='final_result', args='{"value": "final"}', tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"value": "final"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
                         ToolCallPart(tool_name='regular_tool', args='{"x": 1}', tool_call_id=IsStr()),
                         ToolCallPart(tool_name='another_tool', args='{"y": 2}', tool_call_id=IsStr()),
                         ToolCallPart(tool_name='deferred_tool', args='{"x": 3}', tool_call_id=IsStr()),
@@ -2798,6 +2806,7 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             content='Final result processed.',
                             timestamp=IsNow(tz=datetime.UTC),
+                            tool_kind='output',
                             tool_call_id=IsStr(),
                         ),
                         ToolReturnPart(
@@ -2988,8 +2997,18 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='first_output', args='{"value": "first"}', tool_call_id=IsStr()),
-                        ToolCallPart(tool_name='second_output', args='{"value": "second"}', tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='first_output',
+                            args='{"value": "first"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
+                        ToolCallPart(
+                            tool_name='second_output',
+                            args='{"value": "second"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
@@ -3004,12 +3023,14 @@ class TestMultipleToolCalls:
                             tool_name='first_output',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
                             content='Output tool not used - a final result was already processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                     ],
@@ -3046,8 +3067,18 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
-                        ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"value": "first"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"value": "second"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::sf',
@@ -3062,12 +3093,14 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             content='Final result processed.',
                             timestamp=IsNow(tz=datetime.UTC),
+                            tool_kind='output',
                             tool_call_id=IsStr(),
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Output tool not used - a final result was already processed.',
                             timestamp=IsNow(tz=datetime.UTC),
+                            tool_kind='output',
                             tool_call_id=IsStr(),
                         ),
                     ],
@@ -3144,6 +3177,7 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             args='{"value": "final"}',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                         ),
                         ToolCallPart(
                             tool_name='another_tool',
@@ -3174,6 +3208,7 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
@@ -3285,6 +3320,7 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             args='{"value": "final"}',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                         ),
                         ToolCallPart(
                             tool_name='regular_tool',
@@ -3305,6 +3341,7 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             content='Output tool not used - a final result was already processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
@@ -3471,9 +3508,7 @@ class TestMultipleToolCalls:
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='final_result',
-                            args={'value': 'a'},
-                            tool_call_id=IsStr(),
+                            tool_name='final_result', args={'value': 'a'}, tool_call_id=IsStr(), tool_kind='output'
                         )
                     ],
                     usage=RequestUsage(input_tokens=58, output_tokens=9),
@@ -3490,6 +3525,7 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                         )
                     ],
@@ -3543,7 +3579,12 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"value": "first"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
                         ToolCallPart(tool_name='regular_tool', args='{"x": 42}', tool_call_id=IsStr()),
                         ToolCallPart(tool_name='another_tool', args='{"y": 2}', tool_call_id=IsStr()),
                     ],
@@ -3560,6 +3601,7 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             content='Final result processed.',
                             timestamp=IsNow(tz=datetime.UTC),
+                            tool_kind='output',
                             tool_call_id=IsStr(),
                         ),
                         ToolReturnPart(
@@ -3628,8 +3670,18 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='first_output', args='{"value": "first"}', tool_call_id=IsStr()),
-                        ToolCallPart(tool_name='second_output', args='{"value": "second"}', tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='first_output',
+                            args='{"value": "first"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
+                        ToolCallPart(
+                            tool_name='second_output',
+                            args='{"value": "second"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
@@ -3644,12 +3696,14 @@ class TestMultipleToolCalls:
                             tool_name='first_output',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
                             content='Output tool not used - a final result was already processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                     ],
@@ -3686,8 +3740,18 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
-                        ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"value": "first"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"value": "second"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::sf',
@@ -3702,12 +3766,14 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             content='Final result processed.',
                             timestamp=IsNow(tz=datetime.UTC),
+                            tool_kind='output',
                             tool_call_id=IsStr(),
                         ),
                         ToolReturnPart(
                             tool_name='final_result',
                             content='Output tool not used - a final result was already processed.',
                             timestamp=IsNow(tz=datetime.UTC),
+                            tool_kind='output',
                             tool_call_id=IsStr(),
                         ),
                     ],
@@ -3785,6 +3851,7 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             args='{"value": "final"}',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                         ),
                         ToolCallPart(
                             tool_name='another_tool',
@@ -3821,6 +3888,7 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
@@ -3908,9 +3976,19 @@ class TestMultipleToolCalls:
                 ModelResponse(
                     parts=[
                         ToolCallPart(tool_name='regular_tool', args='{"x": 42}', tool_call_id=IsStr()),
-                        ToolCallPart(tool_name='final_result', args='{"value": "first"}', tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"value": "first"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
                         ToolCallPart(tool_name='another_tool', args='{"y": 2}', tool_call_id=IsStr()),
-                        ToolCallPart(tool_name='final_result', args='{"value": "second"}', tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args='{"value": "second"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
                         ToolCallPart(tool_name='unknown_tool', args='{"value": "???"}', tool_call_id=IsStr()),
                         ToolCallPart(tool_name='deferred_tool', args='{"x": 4}', tool_call_id=IsStr()),
                     ],
@@ -3933,6 +4011,7 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             content='Final result processed.',
                             timestamp=IsNow(tz=datetime.UTC),
+                            tool_kind='output',
                             tool_call_id=IsStr(),
                         ),
                         ToolReturnPart(
@@ -3945,6 +4024,7 @@ class TestMultipleToolCalls:
                             tool_name='final_result',
                             content='Output tool processed, but its value will not be the final result of the agent run.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
@@ -4018,8 +4098,18 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='first_output', args='{"value": "first"}', tool_call_id=IsStr()),
-                        ToolCallPart(tool_name='second_output', args='{"value": "second"}', tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='first_output',
+                            args='{"value": "first"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
+                        ToolCallPart(
+                            tool_name='second_output',
+                            args='{"value": "second"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
@@ -4034,12 +4124,14 @@ class TestMultipleToolCalls:
                             tool_name='first_output',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
                             content='Output tool processed, but its value will not be the final result of the agent run.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                     ],
@@ -4178,8 +4270,18 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='first_output', args='{"value": "valid"}', tool_call_id=IsStr()),
-                        ToolCallPart(tool_name='second_output', args='{"value": "invalid"}', tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='first_output',
+                            args='{"value": "valid"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
+                        ToolCallPart(
+                            tool_name='second_output',
+                            args='{"value": "invalid"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
@@ -4194,12 +4296,14 @@ class TestMultipleToolCalls:
                             tool_name='first_output',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             tool_name='second_output',
                             content='Output tool not used - output function execution failed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                     ],
@@ -4260,8 +4364,18 @@ class TestMultipleToolCalls:
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='first_output', args='{"value": "valid"}', tool_call_id=IsStr()),
-                        ToolCallPart(tool_name='second_output', args='{"value": "invalid"}', tool_call_id=IsStr()),
+                        ToolCallPart(
+                            tool_name='first_output',
+                            args='{"value": "valid"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
+                        ToolCallPart(
+                            tool_name='second_output',
+                            args='{"value": "invalid"}',
+                            tool_call_id=IsStr(),
+                            tool_kind='output',
+                        ),
                     ],
                     usage=RequestUsage(input_tokens=50, output_tokens=8),
                     model_name='function::stream_function',
@@ -4276,12 +4390,14 @@ class TestMultipleToolCalls:
                             tool_name='first_output',
                             content='Final result processed.',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                         ),
                         ToolReturnPart(
                             content='Second output validation failed',
                             tool_name='second_output',
                             tool_call_id=IsStr(),
+                            tool_kind='output',
                             timestamp=IsNow(tz=datetime.UTC),
                             outcome='retried',
                             retry=RetryInfo(cause='model_retry', attempt=1, max_retries=1),
@@ -5060,9 +5176,7 @@ async def test_output_tool_success_events():
         [
             OutputToolCallEvent(
                 part=ToolCallPart(
-                    tool_name='final_result',
-                    args={'value': 'hello'},
-                    tool_call_id=IsStr(),
+                    tool_name='final_result', args={'value': 'hello'}, tool_call_id=IsStr(), tool_kind='output'
                 ),
                 args_valid=True,
             ),
@@ -5071,6 +5185,7 @@ async def test_output_tool_success_events():
                     tool_name='final_result',
                     content='Final result processed.',
                     tool_call_id=IsStr(),
+                    tool_kind='output',
                     timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
@@ -5105,9 +5220,7 @@ async def test_output_tool_events():
         [
             OutputToolCallEvent(
                 part=ToolCallPart(
-                    tool_name='final_result',
-                    args={'bad_value': 'invalid'},
-                    tool_call_id=IsStr(),
+                    tool_name='final_result', args={'bad_value': 'invalid'}, tool_call_id=IsStr(), tool_kind='output'
                 ),
                 args_valid=False,
             ),
@@ -5123,6 +5236,7 @@ async def test_output_tool_events():
                     ],
                     tool_name='final_result',
                     tool_call_id=IsStr(),
+                    tool_kind='output',
                     timestamp=IsNow(tz=datetime.UTC),
                     outcome='retried',
                     retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
@@ -5130,9 +5244,7 @@ async def test_output_tool_events():
             ),
             OutputToolCallEvent(
                 part=ToolCallPart(
-                    tool_name='final_result',
-                    args={'value': 'valid'},
-                    tool_call_id=IsStr(),
+                    tool_name='final_result', args={'value': 'valid'}, tool_call_id=IsStr(), tool_kind='output'
                 ),
                 args_valid=True,
             ),
@@ -5141,6 +5253,7 @@ async def test_output_tool_events():
                     tool_name='final_result',
                     content='Final result processed.',
                     tool_call_id=IsStr(),
+                    tool_kind='output',
                     timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
@@ -6180,6 +6293,7 @@ async def test_get_output_after_stream_output():
                         tool_name='final_result',
                         args={'response': False},
                         tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=4),
@@ -6196,6 +6310,7 @@ async def test_get_output_after_stream_output():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                         timestamp=IsNow(tz=datetime.UTC),
                     )
                 ],

@@ -372,6 +372,33 @@ print(repr(result.output))
 
 _(This example is complete, it can be run "as is")_
 
+##### Output tool parts in message history {#output-tool-parts-in-message-history}
+
+An output tool's call, and the result answering it, are recorded in the [message history](message-history.md) like any other tool's. To tell them apart from function tool calls, for example to leave them out of a history you hand to another agent, don't match on the tool's name: both parts carry [`tool_kind`][pydantic_ai.messages.ToolPartKind] `'output'`, whatever the tool is called, and [`is_output_tool_part()`][pydantic_ai.output.is_output_tool_part] checks it for you.
+
+```python {title="output_tool_parts.py"}
+from pydantic import BaseModel
+
+from pydantic_ai import Agent, ToolOutput
+from pydantic_ai.output import is_output_tool_part
+
+
+class Fruit(BaseModel):
+    name: str
+    color: str
+
+
+agent = Agent('{{ openai:medium }}', output_type=ToolOutput(Fruit, name='return_fruit'))
+result = agent.run_sync('What is a banana?')
+output_parts = [part for message in result.all_messages() for part in message.parts if is_output_tool_part(part)]
+print([part.part_kind for part in output_parts])
+#> ['tool-call', 'tool-return']
+```
+
+_(This example is complete, it can be run "as is")_
+
+Message histories stored by earlier versions of Pydantic AI don't mark output tool parts, so `is_output_tool_part()` recognizes an unmarked part by the default output tool name, [`DEFAULT_OUTPUT_TOOL_NAME`][pydantic_ai.output.DEFAULT_OUTPUT_TOOL_NAME] (`'final_result'`). An unmarked part of an output tool with a custom name, or a suffixed one like `final_result_Fruit`, looks like a function tool's, and a function tool you named `final_result` yourself looks like an output tool.
+
 #### Native Output
 
 Native Output mode uses a model's native "Structured Outputs" feature (aka "JSON Schema response format"), where the model is forced to only output text matching the provided JSON schema. Note that this is not supported by all models, and sometimes comes with restrictions. For example, [Gemini 3](https://ai.google.dev/gemini-api/docs/structured-output#structured_outputs_with_tools) supports Native Output alongside function and native tools, while earlier Gemini models cannot combine Native Output with function tools. [Groq](models/groq.md#structured-output) also cannot combine Native Output with function tools. On [Anthropic](models/anthropic.md#schema-complexity-limits), the schema is compiled into a grammar with complexity limits that a large schema can exceed, and on a request that thinks, a structured `output_type` uses Native Output even without the marker class, unless its schema is over those limits or Anthropic rejects it as too complex, in which case the run uses Tool Output instead, except inside a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] (see [Schema complexity limits](models/anthropic.md#schema-complexity-limits)). On [OpenAI](models/openai.md#structured-output-schemas), a schema over the strict-mode size limits is sent without strict mode.

@@ -193,7 +193,9 @@ async def test_output_model(allow_model_requests: None, typesafe_model: TypeSafe
     result = await agent.run('rm -rf ./build')
 
     assert result.output == snapshot(Handling(verdict=Verdict.ask, irreversible=True))
-    assert result.response.parts == [ToolCallPart('final_result', result.output.model_dump(), tool_call_id=IsStr())]
+    assert result.response.parts == [
+        ToolCallPart('final_result', result.output.model_dump(), tool_call_id=IsStr(), tool_kind='output')
+    ]
     assert result.response.model_name == snapshot('jev-1.13.0')
     assert result.response.provider_name == 'typesafe'
     assert result.response.provider_url == 'https://api.typesafe.ai'
@@ -2286,6 +2288,7 @@ async def test_none_of_these_leaves_a_default_to_apply(allow_model_requests: Non
             'final_result',
             {'named': None, 'fallback': None, 'queue': 'billing', 'placement': {}},
             tool_call_id=IsStr(),
+            tool_kind='output',
         )
     ]
 
@@ -2349,6 +2352,7 @@ async def test_none_of_these_leaves_a_nested_model_default_to_apply(allow_model_
             'final_result',
             {'queued': {'queue': 'billing'}, 'placed': {}, 'placement': {}},
             tool_call_id=IsStr(),
+            tool_kind='output',
         )
     ]
 
@@ -2367,6 +2371,7 @@ async def test_none_of_these_leaves_a_nested_model_default_to_apply_in_a_union_m
             'final_result_Escalated',
             {'queued': {'queue': 'billing'}, 'placed': {}, 'placement': {}},
             tool_call_id=IsStr(),
+            tool_kind='output',
         )
     ]
 

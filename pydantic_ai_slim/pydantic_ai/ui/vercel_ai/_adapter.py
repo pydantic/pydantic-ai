@@ -1637,7 +1637,7 @@ def _place_model_settings_delta(context: _AssistantLoadContext, part: ModelSetti
 
 
 def _claimed_tool_kind(metadata: Mapping[str, object]) -> ToolPartKind | None:
-    """The `tool_kind` client-echoed metadata claims, if it's the id of a defined kind."""
+    """The `tool_kind` client-echoed metadata claims, if it's the id of a defined kind or the output kind `'output'`."""
     raw_tool_kind = metadata.get('tool_kind')
     return parse_tool_kind(raw_tool_kind) if isinstance(raw_tool_kind, str) else None
 

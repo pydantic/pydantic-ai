@@ -54,7 +54,12 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
 )
 from pydantic_ai._model_request_attempts import AttemptStart, carried_attempts
-from pydantic_ai._parts_manager import stamp_and_type_call_part, ui_visibility_stamps
+from pydantic_ai._parts_manager import (
+    output_tool_part_kinds,
+    stamp_and_type_call_part,
+    tool_part_kinds,
+    ui_visibility_stamps,
+)
 from pydantic_ai._tool_execution import last_response_index, process_tool_calls
 from pydantic_ai._utils import (
     ScopedTask,
@@ -6864,7 +6869,9 @@ def _build_agent_graph(
 def _apply_tool_defs_to_call_parts(
     response: _messages.ModelResponse, model_request_parameters: models.ModelRequestParameters
 ) -> _messages.ModelResponse:
-    """Stamp each `ToolCallPart` with its tool's `ui_visibility`, and promote a base one to its typed subclass.
+    """Stamp each `ToolCallPart` with its tool's `ui_visibility` and kind, and promote a base one to its typed subclass.
+
+    A function tool's kind is its `ToolDefinition.tool_kind`; an output tool's is `'output'`.
 
     Lives here rather than in each model adapter so adapter authors emit base
     `ToolCallPart`s freely and the framework owns the typed-identity translation. Streaming
@@ -6873,9 +6880,7 @@ def _apply_tool_defs_to_call_parts(
     the same typed end state — `isinstance(part, ToolSearchCallPart)` is true from the
     moment the call is emitted by the model.
     """
-    tool_kind_by_name: dict[str, _messages.ToolPartKind] = {
-        td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind
-    }
+    tool_kind_by_name = tool_part_kinds(model_request_parameters)
     return _stamp_and_type_call_parts(response, tool_kind_by_name, ui_visibility_stamps(model_request_parameters))
 
 
@@ -6884,10 +6889,13 @@ def _stamp_ui_visibility(
 ) -> _messages.ModelResponse:
     """Stamp each `ToolCallPart` of a response a capability supplied instead of `Model.request()` with its tool's `ui_visibility`.
 
-    Only the stamp is written: those calls keep the typing they came with, as execution types each call from its tool
-    (`ToolManager._with_tool_kind_and_visibility`).
+    Function tool calls keep the typing they came with, as execution types each call from its tool
+    (`ToolManager._with_tool_kind_and_visibility`). An output tool call gets the `'output'` kind here: it has no typed
+    subclass and its definition declares no kind, so execution can't give it one, and its return copies it from the call.
     """
-    return _stamp_and_type_call_parts(response, {}, ui_visibility_stamps(model_request_parameters))
+    return _stamp_and_type_call_parts(
+        response, output_tool_part_kinds(model_request_parameters), ui_visibility_stamps(model_request_parameters)
+    )
 
 
 def _stamp_and_type_call_parts(

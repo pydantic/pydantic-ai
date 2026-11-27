@@ -1978,8 +1978,8 @@ async def test_retry_attempts_count_on_the_budget_each_retry_is_charged_to():
     messages = result.all_messages()
     retried_output = message_part(messages, ToolReturnPart, message_index=2)
     assert (retried_output.tool_name, retried_output.outcome) == ('final_result', 'retried')
-    # Output tool calls carry no `tool_kind`: the output/function distinction is `ToolDefinition.kind`.
-    assert retried_output.tool_kind is None
+    # An output tool's parts, a retry included, say they're an output tool's whatever the tool is named.
+    assert retried_output.tool_kind == 'output'
     assert retried_output.retry == RetryInfo(cause='validation_error', attempt=1, max_retries=3)
 
     lookup_return = message_part(messages, ToolReturnPart, message_index=4)

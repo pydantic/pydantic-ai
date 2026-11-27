@@ -314,6 +314,7 @@ async def test_output_type(
                     tool_name='final_result',
                     args={'urgent': True, 'area': 'billing'},
                     tool_call_id=IsStr(),
+                    tool_kind='output',
                 )
             ],
             usage=RequestUsage(input_tokens=312, output_reasoning_tokens=0, cost=Decimal('0.0000312')),

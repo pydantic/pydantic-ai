@@ -347,6 +347,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                         tool_name='final_result',
                         args={'temperature': '30°C', 'date': '2022-01-01', 'city': 'London'},
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(
@@ -375,6 +376,7 @@ async def test_google_model_structured_output(allow_model_requests: None, google
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -2859,7 +2861,11 @@ async def test_google_tool_config_any_with_tool_without_args(
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'bar': 'hello'}, tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result', args={'bar': 'hello'}, tool_call_id=IsStr(), tool_kind='output'
+                    )
+                ],
                 usage=RequestUsage(
                     input_tokens=27,
                     output_tokens=5,
@@ -2886,6 +2892,7 @@ async def test_google_tool_config_any_with_tool_without_args(
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -3128,6 +3135,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         tool_name='final_result',
                         args={'city': 'Mexico City', 'country': 'Mexico'},
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(
@@ -3156,6 +3164,7 @@ async def test_google_tool_output(allow_model_requests: None, google_provider: G
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -5822,6 +5831,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         tool_name='final_result',
                         args={'city': 'Mexico City', 'country': 'Mexico'},
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                         provider_name='google',
                         provider_details={'thought_signature': IsStr()},
                     )
@@ -5852,6 +5862,7 @@ async def test_thinking_with_tool_calls_from_other_model(
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],

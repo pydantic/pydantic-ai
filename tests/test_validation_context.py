@@ -164,7 +164,10 @@ def test_agent_output_function_with_validation_context():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__final_result'
+                        tool_name='final_result',
+                        args={'x': 0},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(input_tokens=50, output_tokens=4),
@@ -181,6 +184,7 @@ def test_agent_output_function_with_validation_context():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -219,7 +223,10 @@ def test_agent_output_validator_with_validation_context():
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__final_result'
+                        tool_name='final_result',
+                        args={'x': 0},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(input_tokens=50, output_tokens=4),
@@ -236,6 +243,7 @@ def test_agent_output_validator_with_validation_context():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -308,7 +316,10 @@ def test_agent_output_validator_with_intermediary_deps_change_and_validation_con
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__final_result'
+                        tool_name='final_result',
+                        args={'x': 0},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(input_tokens=50, output_tokens=6),
@@ -325,6 +336,7 @@ def test_agent_output_validator_with_intermediary_deps_change_and_validation_con
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],

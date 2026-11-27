@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any, TypeVar
 
 from pydantic_ai.exceptions import UnexpectedModelBehavior
 from pydantic_ai.messages import (
+    _OUTPUT_TOOL_PART_KIND,  # pyright: ignore[reportPrivateUsage]
     Citation,
     ModelResponsePart,
     ModelResponseStreamEvent,
@@ -66,6 +67,18 @@ def tool_def_ui_visibility(tool_def: ToolDefinition, *, approved: bool = False) 
     return visibility
 
 
+def tool_part_kinds(model_request_parameters: ModelRequestParameters) -> dict[str, ToolPartKind]:
+    """The `tool_kind` a call to each tool gets: a function tool's declared kind, and `'output'` for an output tool."""
+    kinds = {td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind is not None}
+    kinds.update(output_tool_part_kinds(model_request_parameters))
+    return kinds
+
+
+def output_tool_part_kinds(model_request_parameters: ModelRequestParameters) -> dict[str, ToolPartKind]:
+    """The `tool_kind` a call to each output tool gets: `'output'`, unless its definition declares a kind."""
+    return {td.name: td.tool_kind or _OUTPUT_TOOL_PART_KIND for td in model_request_parameters.output_tools}
+
+
 def ui_visibility_stamps(model_request_parameters: ModelRequestParameters) -> dict[str, ToolUIVisibility]:
     """The `ui_visibility` a call to each function or output tool is stamped with, for the tools that set one."""
     return {
@@ -110,8 +123,8 @@ class ModelResponsePartsManager:
     """
 
     model_request_parameters: ModelRequestParameters
-    """Active request context. The manager promotes streamed tool call parts to their typed
-    subclasses based on `ToolDefinition.tool_kind` from `function_tools` — so
+    """Active request context. The manager gives streamed tool call parts their tool's kind (an output
+    tool's is `'output'`) and promotes them to the kind's typed subclass based on `ToolDefinition.tool_kind` — so
     `isinstance(part, ToolSearchCallPart)` is true from the first `PartStartEvent` rather
     than only after a post-stream pass — and stamps them with their tool's `ui_visibility`, so a
     UI adapter can hide a call from its first event.
@@ -129,16 +142,14 @@ class ModelResponsePartsManager:
     )
     """Unmaterialized string deltas, keyed by part index."""
     _tool_kind_by_name: dict[str, ToolPartKind] = field(default_factory=dict[str, ToolPartKind], init=False, repr=False)
-    """Cached `{tool_name: tool_kind}` built from `function_tools` at construction time."""
+    """Cached `{tool_name: tool_kind}` for the function and output tools, built at construction time."""
     _ui_visibility_by_name: dict[str, ToolUIVisibility] = field(
         default_factory=dict[str, ToolUIVisibility], init=False, repr=False
     )
     """Cached `ui_visibility_stamps(model_request_parameters)`, built at construction time."""
 
     def __post_init__(self) -> None:
-        self._tool_kind_by_name = {
-            td.name: td.tool_kind for td in self.model_request_parameters.function_tools if td.tool_kind is not None
-        }
+        self._tool_kind_by_name = tool_part_kinds(self.model_request_parameters)
         self._ui_visibility_by_name = ui_visibility_stamps(self.model_request_parameters)
 
     def __repr__(self) -> str:
@@ -173,8 +184,9 @@ class ModelResponsePartsManager:
         """`_stamp_and_type` for a call that `delta` just changed."""
         if delta.tool_name_delta:
             # A name streamed in pieces can first match another tool, whose stamp the grown name mustn't keep:
-            # stamp it again from the tool it names now.
-            part = replace(part, ui_visibility=None)
+            # stamp it again from the tool it names now. The output kind is only ever inferred, so it's redone too.
+            output_kind = part.tool_kind == _OUTPUT_TOOL_PART_KIND
+            part = replace(part, ui_visibility=None, tool_kind=None if output_kind else part.tool_kind)
         return self._stamp_and_type(part)
 
     def get_parts(self) -> list[ModelResponsePart]:

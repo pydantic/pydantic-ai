@@ -12,7 +12,7 @@ import anyio
 import pytest
 from pydantic import BaseModel
 
-from pydantic_ai import Agent, RunContext, _utils
+from pydantic_ai import Agent, RunContext, ToolOutput, _utils
 from pydantic_ai._run_context import AgentDepsT
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, ReinjectSystemPrompt
@@ -3775,3 +3775,44 @@ def test_messages_builder_copies_parts_it_did_not_make():
     assert own_parts == [TextPart('a')]
     assert message.parts == [TextPart('a'), TextPart('b'), TextPart('c')]
     assert builder.last_modified(checkpoint, of_type=ModelResponse) is message
+
+
+async def test_interrupted_closeout_carries_the_output_tool_kind():
+    """The closeout of an interrupted output tool call carries `tool_kind='output'`; a function tool's has none.
+
+    Not VCR-backed: the closeout is built locally by the UI event stream when a run is cancelled or errors.
+    """
+    closeouts: list[tuple[str, str | None, str]] = []
+
+    class RecordingEventStream(DummyUIEventStream[None, str]):
+        async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[str]:
+            closeouts.append((event.part.tool_name, event.part.tool_kind, event.part.outcome))
+            async for e in super().handle_output_tool_result(event):
+                yield e
+
+        async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[str]:
+            closeouts.append((event.part.tool_name, event.part.tool_kind, event.part.outcome))
+            async for e in super().handle_function_tool_result(event):
+                yield e
+
+    class RecordingAdapter(DummyUIAdapter[None, str]):
+        def build_event_stream(self) -> UIEventStream[DummyUIRunInput, str, None, str]:
+            return RecordingEventStream(self.run_input, accept=self.accept)
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='lookup', json_args='{"query": "a"}', tool_call_id='call_1')}
+        yield {
+            1: DeltaToolCall(name=info.output_tools[0].name, json_args='{"response": "done"}', tool_call_id='call_2')
+        }
+
+    agent = Agent(FunctionModel(stream_function=respond), output_type=ToolOutput(str, name='submit_report'))
+
+    @agent.tool
+    async def lookup(ctx: RunContext, query: str) -> str:
+        ctx.cancel()
+        return 'completed before the cancellation took effect'
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    [_ async for _ in RecordingAdapter(agent, request).run_stream()]
+
+    assert closeouts == snapshot([('lookup', None, 'interrupted'), ('submit_report', 'output', 'interrupted')])

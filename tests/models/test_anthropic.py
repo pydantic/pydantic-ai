@@ -3614,9 +3614,7 @@ async def test_request_structured_response(allow_model_requests: None):
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result',
-                        args={'response': [1, 2, 3]},
-                        tool_call_id='123',
+                        tool_name='final_result', args={'response': [1, 2, 3]}, tool_call_id='123', tool_kind='output'
                     )
                 ],
                 usage=RequestUsage(
@@ -3642,6 +3640,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
+                        tool_kind='output',
                         timestamp=IsNow(tz=UTC),
                     )
                 ],
@@ -11564,6 +11563,7 @@ async def test_anthropic_tool_output(
                         tool_name='final_result',
                         args='{"city": "Mexico City", "country": "Mexico"}',
                         tool_call_id='toolu_01XUpRzXubYr7mWL7NhA1Hvr',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(
@@ -11594,6 +11594,7 @@ async def test_anthropic_tool_output(
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='toolu_01XUpRzXubYr7mWL7NhA1Hvr',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],

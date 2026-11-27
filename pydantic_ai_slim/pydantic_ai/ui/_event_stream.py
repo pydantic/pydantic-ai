@@ -15,6 +15,7 @@ from pydantic_ai import _utils
 from .._instrumentation import record_exception
 from ..exceptions import RunCancelled
 from ..messages import (
+    _OUTPUT_TOOL_PART_KIND,  # pyright: ignore[reportPrivateUsage]
     INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentStreamEvent,
     CapabilityEvent,
@@ -493,6 +494,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             tool_call_id=tool_call_id,
             tool_name=tool_name,
             content=INTERRUPTED_TOOL_RETURN_CONTENT if cancelled else 'Tool execution was interrupted by an error.',
+            tool_kind=_OUTPUT_TOOL_PART_KIND if kind == 'output' else None,
             outcome='interrupted' if cancelled else 'failed',
         )
         client_part = client_tool_return(

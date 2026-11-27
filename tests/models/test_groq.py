@@ -284,6 +284,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_name='final_result',
                         args='{"response": [1, 2, 123]}',
                         tool_call_id='123',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(unmeasured_requests=1),
@@ -307,6 +308,7 @@ async def test_request_structured_response(allow_model_requests: None):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -5962,6 +5964,7 @@ The user wants me to fix the errors. They attempted to get plain "maybe" but sys
                         tool_name='final_result',
                         args='{"response":"yes"}',
                         tool_call_id='fc_beee8d84-e6d7-4980-bec6-298d3ec7a73f',
+                        tool_kind='output',
                     ),
                 ],
                 usage=RequestUsage(
@@ -5992,6 +5995,7 @@ The user wants me to fix the errors. They attempted to get plain "maybe" but sys
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -6086,6 +6090,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                         tool_name='final_result',
                         args='{"response":"no"}',
                         tool_call_id='fc_299e8414-9e94-4d9c-bd06-c096f8919768',
+                        tool_kind='output',
                     ),
                 ],
                 usage=RequestUsage(
@@ -6112,6 +6117,7 @@ We need to respond with just the string maybe, not JSON, and no tool call. So ju
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],

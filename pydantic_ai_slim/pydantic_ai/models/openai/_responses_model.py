@@ -58,7 +58,6 @@ from typing_extensions import TypedDict
 from ... import ModelHTTPError, UnexpectedModelBehavior, _utils, usage
 from ..._http import to_httpx2_timeout
 from ..._instrumentation import current_model_request_span, get_instructions
-from ..._output import DEFAULT_OUTPUT_TOOL_NAME
 from ..._run_context import RunContext
 from ..._thinking_part import render_replayed_thinking
 from ..._utils import (
@@ -124,7 +123,7 @@ from ...native_tools import (
     WebSearchTool,
 )
 from ...native_tools._tool_search import ToolSearchTool
-from ...output import OutputObjectDefinition
+from ...output import DEFAULT_OUTPUT_TOOL_NAME, OutputObjectDefinition
 from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ...profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole
 from ...providers import Provider, infer_provider

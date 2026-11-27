@@ -4,7 +4,7 @@ import copy
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import TYPE_CHECKING, Any, ClassVar, Generic, Literal, Protocol, cast, overload
+from typing import TYPE_CHECKING, Any, ClassVar, Final, Generic, Literal, Protocol, TypeGuard, cast, overload
 
 from pydantic import GetCoreSchemaHandler, GetJsonSchemaHandler
 from pydantic.json_schema import JsonSchemaValue
@@ -16,7 +16,15 @@ from ._json_schema import InlineDefsJsonSchemaTransformer
 from ._json_schema_validation import json_schema_validator
 from ._removed_names import removed_names_getattr
 from ._run_context import RunContext
-from .messages import ModelResponse, ToolCallPart
+from .messages import (
+    _OUTPUT_TOOL_PART_KIND,  # pyright: ignore[reportPrivateUsage]
+    ModelRequestPart,
+    ModelResponse,
+    ModelResponsePart,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]
+    ToolCallPart,
+    ToolReturnPart,
+)
 from .tools import ObjectJsonSchema, ToolDefinition
 
 __all__ = (
@@ -39,6 +47,8 @@ __all__ = (
     'OutputSpec',
     'OutputTypeOrFunction',
     'TextOutputFunc',
+    'DEFAULT_OUTPUT_TOOL_NAME',
+    'is_output_tool_part',
 )
 
 T = TypeVar('T')
@@ -822,6 +832,39 @@ You should not need to import or use this type directly.
 
 See [output docs](../output.md) for more information.
 """
+
+DEFAULT_OUTPUT_TOOL_NAME: Final = 'final_result'
+"""The name of the output tool a [`ToolOutput`][pydantic_ai.output.ToolOutput] gets when it doesn't set `name`.
+
+With several output types, each tool gets a suffix: `final_result_{type name}`. To tell an output tool's parts
+apart in a message history, use [`is_output_tool_part`][pydantic_ai.output.is_output_tool_part] rather than this name.
+"""
+
+
+def is_output_tool_part(
+    part: ModelRequestPart | ModelResponsePart,
+) -> TypeGuard[ToolCallPart | ToolReturnPart | RetryPromptPart]:  # pyright: ignore[reportDeprecated]
+    """Whether `part` is the call to an output tool, or the result answering one, rather than a function tool's.
+
+    Output tool parts carry `tool_kind='output'`, whatever the tool is named. Parts recorded before Pydantic AI
+    marked them have no `tool_kind`, so those are recognized by the default output tool name,
+    [`DEFAULT_OUTPUT_TOOL_NAME`][pydantic_ai.output.DEFAULT_OUTPUT_TOOL_NAME], instead: an unmarked part of an
+    output tool with a custom name or a suffixed default name isn't recognized, and a function tool you named
+    `final_result` yourself is taken for an output tool.
+
+    A part it returns `True` for is narrowed to a tool call or return part, so its `tool_name` and `tool_call_id`
+    can be read without another `isinstance` check.
+
+    See [Output tool parts in message history](../output.md#output-tool-parts-in-message-history).
+    """
+    # TODO(v3): drop `RetryPromptPart` along with it
+    if not isinstance(part, ToolCallPart | ToolReturnPart | RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        return False
+    tool_kind = None if isinstance(part, RetryPromptPart) else part.tool_kind  # pyright: ignore[reportDeprecated]
+    if tool_kind is not None:
+        return tool_kind == _OUTPUT_TOOL_PART_KIND
+    return part.tool_name == DEFAULT_OUTPUT_TOOL_NAME
+
 
 _REMOVED_IN_V2 = {
     'DeferredToolCalls': 'use `pydantic_ai.tools.DeferredToolRequests`, whose `calls` replaces `tool_calls`.',

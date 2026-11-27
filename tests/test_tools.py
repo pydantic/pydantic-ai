@@ -2418,7 +2418,10 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                 ModelResponse(
                     parts=[
                         ToolCallPart(
-                            tool_name='final_result', args={'value': 'not-an-int'}, tool_call_id='output_call'
+                            tool_name='final_result',
+                            args={'value': 'not-an-int'},
+                            tool_call_id='output_call',
+                            tool_kind='output',
                         ),
                         ToolCallPart(tool_name='my_tool', args={'x': 1}, tool_call_id='approval_call'),
                     ],
@@ -2442,6 +2445,7 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                             ],
                             tool_name='final_result',
                             tool_call_id='output_call',
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                             outcome='retried',
                             retry=RetryInfo(cause='validation_error', attempt=1, max_retries=1),
@@ -2464,7 +2468,12 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                 ),
                 ModelResponse(
                     parts=[
-                        ToolCallPart(tool_name='final_result', args={'value': 42}, tool_call_id='valid_output_call')
+                        ToolCallPart(
+                            tool_name='final_result',
+                            args={'value': 42},
+                            tool_call_id='valid_output_call',
+                            tool_kind='output',
+                        )
                     ],
                     usage=RequestUsage(input_tokens=78, output_tokens=13),
                     model_name='function:llm:',
@@ -2479,6 +2488,7 @@ def test_resume_deferred_tool_with_invalid_output_call(end_strategy: EndStrategy
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id='valid_output_call',
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],
@@ -5325,7 +5335,11 @@ def test_tool_ctx_agent():
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'response': 0}, tool_call_id=IsStr())],
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result', args={'response': 0}, tool_call_id=IsStr(), tool_kind='output'
+                    )
+                ],
                 usage=RequestUsage(input_tokens=52, output_tokens=6),
                 model_name='test',
                 model_id='test:test',
@@ -5340,6 +5354,7 @@ def test_tool_ctx_agent():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id=IsStr(),
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],

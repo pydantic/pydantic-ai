@@ -213,6 +213,7 @@ def test_custom_output_args():
                         tool_name='final_result',
                         args={'response': ['a', 'b']},
                         tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
@@ -229,6 +230,7 @@ def test_custom_output_args():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                         timestamp=IsNow(tz=UTC),
                     )
                 ],
@@ -267,6 +269,7 @@ def test_custom_output_args_model():
                         tool_name='final_result',
                         args={'foo': 'a', 'bar': 1},
                         tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=6),
@@ -283,6 +286,7 @@ def test_custom_output_args_model():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                         timestamp=IsNow(tz=UTC),
                     )
                 ],
@@ -317,6 +321,7 @@ def test_output_type():
                         tool_name='final_result',
                         args={'response': ['a', 'a']},
                         tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(input_tokens=51, output_tokens=7),
@@ -333,6 +338,7 @@ def test_output_type():
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                         timestamp=IsNow(tz=UTC),
                     )
                 ],

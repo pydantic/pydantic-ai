@@ -930,7 +930,10 @@ async def test_output_tool_not_counted() -> None:
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result', args={'result': 'a'}, tool_call_id='pyd_ai_tool_call_id__final_result'
+                        tool_name='final_result',
+                        args={'result': 'a'},
+                        tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(input_tokens=52, output_tokens=10),
@@ -947,6 +950,7 @@ async def test_output_tool_not_counted() -> None:
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='pyd_ai_tool_call_id__final_result',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -1021,7 +1025,11 @@ async def test_output_tool_allowed_at_limit() -> None:
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args={'result': 'success'}, tool_call_id='call_2')],
+                parts=[
+                    ToolCallPart(
+                        tool_name='final_result', args={'result': 'success'}, tool_call_id='call_2', tool_kind='output'
+                    )
+                ],
                 usage=RequestUsage(input_tokens=10, output_tokens=5),
                 model_name='function:call_output_after_regular:',
                 model_id='function:function:call_output_after_regular:',
@@ -1035,6 +1043,7 @@ async def test_output_tool_allowed_at_limit() -> None:
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='call_2',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],

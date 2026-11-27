@@ -718,6 +718,7 @@ CASES = [
                             tool_name='final_result',
                             args='{"city": "Tokyo", "country": "Japan"}',
                             tool_call_id='call_00_fHeIT46fj9tK0YhyHu7Q9878',
+                            tool_kind='output',
                             id='c830d5e3-c87c-4e9c-9150-b157d70e5f9f',
                             provider_name='deepseek',
                         ),
@@ -751,6 +752,7 @@ CASES = [
                             tool_name='final_result',
                             content='Final result processed.',
                             tool_call_id='call_00_fHeIT46fj9tK0YhyHu7Q9878',
+                            tool_kind='output',
                             timestamp=IsDatetime(),
                         )
                     ],

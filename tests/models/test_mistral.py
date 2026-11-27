@@ -740,6 +740,7 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
                         tool_name='final_result',
                         args={'city': 'paris', 'country': 'france'},
                         tool_call_id='123',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=2),
@@ -763,6 +764,7 @@ async def test_request_native_with_arguments_dict_response(allow_model_requests:
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
+                        tool_kind='output',
                         timestamp=IsNow(tz=UTC),
                     )
                 ],
@@ -818,6 +820,7 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
                         tool_name='final_result',
                         args='{"city": "paris", "country": "france"}',
                         tool_call_id='123',
+                        tool_kind='output',
                     )
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
@@ -841,6 +844,7 @@ async def test_request_native_with_arguments_str_response(allow_model_requests: 
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
+                        tool_kind='output',
                         timestamp=IsNow(tz=UTC),
                     )
                 ],
@@ -890,9 +894,7 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result',
-                        args='{"response": 42}',
-                        tool_call_id='123',
+                        tool_name='final_result', args='{"response": 42}', tool_call_id='123', tool_kind='output'
                     )
                 ],
                 usage=RequestUsage(input_tokens=1, output_tokens=1),
@@ -916,6 +918,7 @@ async def test_request_output_type_with_arguments_str_response(allow_model_reque
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='123',
+                        tool_kind='output',
                         timestamp=IsNow(tz=UTC),
                     )
                 ],
@@ -1956,9 +1959,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
             ModelResponse(
                 parts=[
                     ToolCallPart(
-                        tool_name='final_result',
-                        args='{"lat": 51, "lng": 0}',
-                        tool_call_id='1',
+                        tool_name='final_result', args='{"lat": 51, "lng": 0}', tool_call_id='1', tool_kind='output'
                     )
                 ],
                 usage=RequestUsage(input_tokens=2, output_tokens=1),
@@ -1982,6 +1983,7 @@ async def test_request_tool_call_with_result_type(allow_model_requests: None):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='1',
+                        tool_kind='output',
                         timestamp=IsNow(tz=UTC),
                     )
                 ],
@@ -2106,7 +2108,9 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                 conversation_id=IsStr(),
             ),
             ModelResponse(
-                parts=[ToolCallPart(tool_name='final_result', args='{"won": true}', tool_call_id='1')],
+                parts=[
+                    ToolCallPart(tool_name='final_result', args='{"won": true}', tool_call_id='1', tool_kind='output')
+                ],
                 usage=RequestUsage(input_tokens=2, output_tokens=2),
                 model_name='gpt-4',
                 model_id='mistral:mistral-large-latest',
@@ -2128,6 +2132,7 @@ async def test_stream_tool_call_with_return_type(allow_model_requests: None):
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='1',
+                        tool_kind='output',
                         timestamp=IsNow(tz=UTC),
                     )
                 ],

@@ -920,6 +920,7 @@ STRUCTURED_OUTPUT_MESSAGES: dict[tuple[str, bool], list[ModelMessage]] = {
                         tool_name='final_result',
                         args={'country': 'France', 'name': 'Paris'},
                         tool_call_id='call_322247',
+                        tool_kind='output',
                         provider_name='google',
                         provider_details={'google_interactions_step_index': 1, 'google_interactions_content_index': 0},
                     ),
@@ -965,6 +966,7 @@ STRUCTURED_OUTPUT_MESSAGES: dict[tuple[str, bool], list[ModelMessage]] = {
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='call_322247',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
@@ -996,6 +998,7 @@ STRUCTURED_OUTPUT_MESSAGES: dict[tuple[str, bool], list[ModelMessage]] = {
                         tool_name='final_result',
                         args='{"country":"France","name":"Paris"}',
                         tool_call_id='call_352375',
+                        tool_kind='output',
                         provider_name='google',
                         provider_details={'google_interactions_step_index': 1, 'google_interactions_content_index': 0},
                     ),
@@ -1040,6 +1043,7 @@ STRUCTURED_OUTPUT_MESSAGES: dict[tuple[str, bool], list[ModelMessage]] = {
                         tool_name='final_result',
                         content='Final result processed.',
                         tool_call_id='call_352375',
+                        tool_kind='output',
                         timestamp=IsDatetime(),
                     )
                 ],
