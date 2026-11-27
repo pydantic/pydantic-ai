@@ -11,6 +11,10 @@ OUTPUT_NOT_FINAL_RESULT: Final = 'Output tool processed, but its value will not 
 OUTPUT_EXECUTION_FAILED: Final = 'Output tool not used - output function execution failed.'
 OUTPUT_VALIDATION_FAILED: Final = 'Output tool not used - output failed validation.'
 TOOL_SKIPPED_FINAL_ALREADY_PROCESSED: Final = 'Tool not executed - a final result was already processed.'
+# A call the tool deferred while running may have started work elsewhere, so it isn't said not to have run.
+DEFERRED_CALL_FINAL_ALREADY_PROCESSED: Final = (
+    'Tool call deferred - the run ended on a final result before its result was collected.'
+)
 
 TOOL_STATUS_TEXTS: Final = frozenset(
     {
@@ -21,6 +25,7 @@ TOOL_STATUS_TEXTS: Final = frozenset(
         OUTPUT_EXECUTION_FAILED,
         OUTPUT_VALIDATION_FAILED,
         TOOL_SKIPPED_FINAL_ALREADY_PROCESSED,
+        DEFERRED_CALL_FINAL_ALREADY_PROCESSED,
     }
 )
 """Every status message above, to tell them from text a tool returned, in history from any run."""
