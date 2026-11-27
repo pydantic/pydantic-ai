@@ -610,6 +610,8 @@ class CapabilityRecord(_ComponentRecord, total=False):
 
     defer_loading: bool
     active: bool
+    members: dict[str, list[CapabilityRecord]]
+    """For a bundle of capabilities, like Harness `Coder`: the capabilities it's made of, by class."""
 
 
 def _component_record(
@@ -686,8 +688,96 @@ def _records_id(
     return capability_id not in url_ids and (include_content or capabilities[capability_id].id is not None)
 
 
+def _is_bundle(capability: AbstractCapability[Any]) -> bool:
+    """Whether `capability` is a bundle of capabilities the user configured as one, like Harness `Coder`.
+
+    That is a `CombinedCapability` subclass of Pydantic AI, Harness or the user's own. The plain
+    `CombinedCapability` the agent and its capability lists are held in isn't one, and nor is a private
+    framework subclass, which the framework builds rather than the user.
+    """
+    from pydantic_ai.capabilities.combined import CombinedCapability
+
+    cls = type(capability)
+    if not isinstance(capability, CombinedCapability) or cls is CombinedCapability or _is_framework_internal(cls):
+        return False
+    return not (cls.__module__.partition('.')[0] in _PUBLIC_PACKAGES and cls.__name__.startswith('_'))
+
+
+def _bundles(root: AbstractCapability[Any] | None) -> list[AbstractCapability[Any]]:
+    """The bundles in a run's capability tree, outer ones before those they hold.
+
+    A `CombinedCapability` flattens a bundle it holds into its own children and keeps it in its `_bundles`
+    view instead. One a wrapper, such as a capability function's, or a deferred group holds stays in the tree.
+    """
+    from pydantic_ai.capabilities.combined import CombinedCapability
+    from pydantic_ai.capabilities.wrapper import WrapperCapability
+
+    bundles: list[AbstractCapability[Any]] = []
+
+    def walk(capability: AbstractCapability[Any]) -> None:
+        if isinstance(capability, CombinedCapability):
+            if _is_bundle(capability):
+                bundles.append(capability)
+            bundles.extend(bundle for bundle in capability._bundles if _is_bundle(bundle))  # pyright: ignore[reportPrivateUsage]
+            for child in capability.capabilities:
+                walk(child)
+        elif isinstance(capability, WrapperCapability):
+            walk(capability.wrapped)
+
+    if root is not None:
+        walk(root)
+    return bundles
+
+
+@dataclass
+class _CapabilityRecorder:
+    """Builds a run's `pydantic_ai.capabilities` records; see `capability_records`."""
+
+    capabilities: Mapping[str, AbstractCapability[Any]]
+    active_ids: Set[str]
+    url_ids: Set[str]
+    include_content: bool
+
+    def __post_init__(self) -> None:
+        self.classes = _recorded_classes(self.capabilities)
+        self.ids_by_capability = {
+            id(capability): capability_id for capability_id, capability in self.capabilities.items()
+        }
+
+    def leaf(self, capability_id: str, cls: type[AbstractCapability[Any]]) -> CapabilityRecord:
+        recorded = _records_id(self.capabilities, capability_id, self.url_ids, include_content=self.include_content)
+        record = _component_record(cls, capability_id if recorded else None, include_content=self.include_content)
+        return {
+            **record,
+            'defer_loading': self.capabilities[capability_id].defer_loading is True,
+            'active': capability_id in self.active_ids,
+        }
+
+    def registered_ids(self, bundle: AbstractCapability[Any]) -> list[str]:
+        """The ids of the run's capabilities `bundle` registers, itself included when it's a deferred group."""
+        registered: list[AbstractCapability[Any]] = []
+        bundle.apply(registered.append)
+        return [self.ids_by_capability[id(member)] for member in registered if id(member) in self.ids_by_capability]
+
+    def bundle(self, bundle: AbstractCapability[Any], member_ids: Sequence[str]) -> CapabilityRecord:
+        members: dict[str, list[CapabilityRecord]] = {}
+        for member_id in member_ids:
+            if (cls := self.classes.get(member_id)) is not None:
+                members.setdefault(public_class_path(cls), []).append(self.leaf(member_id, cls))
+        if (own_id := self.ids_by_capability.get(id(bundle))) is not None:
+            return {**self.leaf(own_id, type(bundle)), 'members': members}
+        bundle_id = bundle.id if bundle.id is not None and bundle.id not in self.url_ids else None
+        return {
+            **_component_record(type(bundle), bundle_id, include_content=self.include_content),
+            'defer_loading': False,
+            'active': any(member_id in self.active_ids for member_id in member_ids),
+            'members': members,
+        }
+
+
 def capability_records(
     capabilities: Mapping[str, AbstractCapability[Any]],
+    root: AbstractCapability[Any] | None,
     active_ids: Set[str],
     url_ids: Set[str],
     *,
@@ -695,19 +785,29 @@ def capability_records(
 ) -> dict[str, list[CapabilityRecord]]:
     """The capabilities registered for a run, by class, for the agent run span.
 
-    Keyed by class so that a backend can index which classes a run used by key alone.
+    Keyed by class so that a backend can index which classes a run used by key alone. A bundle the user
+    configured as one, like Harness `Coder`, is recorded as one record, with the capabilities it registers in
+    its `members`, so each capability is recorded once.
     """
+    recorder = _CapabilityRecorder(capabilities, active_ids, url_ids, include_content)
+    # Each bundle is recorded where its first registered capability would have been.
+    bundles_at: dict[str, tuple[AbstractCapability[Any], list[str]]] = {}
+    claimed: set[str] = set()
+    for bundle in _bundles(root):
+        owned = recorder.registered_ids(bundle)
+        # A bundle another bundle already holds is recorded as part of that one.
+        if not owned or claimed.issuperset(owned):
+            continue
+        claimed.update(owned)
+        bundles_at[owned[0]] = (bundle, [member_id for member_id in owned if capabilities[member_id] is not bundle])
+
     records: dict[str, list[CapabilityRecord]] = {}
-    for capability_id, cls in _recorded_classes(capabilities).items():
-        recorded = _records_id(capabilities, capability_id, url_ids, include_content=include_content)
-        record = _component_record(cls, capability_id if recorded else None, include_content=include_content)
-        records.setdefault(public_class_path(cls), []).append(
-            {
-                **record,
-                'defer_loading': capabilities[capability_id].defer_loading is True,
-                'active': capability_id in active_ids,
-            }
-        )
+    for capability_id in capabilities:
+        if (found := bundles_at.get(capability_id)) is not None:
+            bundle, member_ids = found
+            records.setdefault(public_class_path(type(bundle)), []).append(recorder.bundle(bundle, member_ids))
+        elif capability_id not in claimed and (cls := recorder.classes.get(capability_id)) is not None:
+            records.setdefault(public_class_path(cls), []).append(recorder.leaf(capability_id, cls))
     return records
 
 

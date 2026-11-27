@@ -425,6 +425,7 @@ class Instrumentation(AbstractCapability[Any]):
             'pydantic_ai.capabilities': safe_to_json(
                 capability_records(
                     ctx.capabilities,
+                    ctx.root_capability,
                     self._active_capability_ids | ctx.active_capability_ids,
                     mcp_url_ids,
                     include_content=settings.include_content,

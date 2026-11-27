@@ -59,8 +59,6 @@ class _DefaultCaching(AbstractCapability[AgentDepsT]):
     Without `Caching`'s fixed id, so a `Caching` bound next to `Coder` is not combined away.
     """
 
-    _telemetry_internal = True
-
     def get_model_settings(self) -> Callable[[RunContext[AgentDepsT]], ModelSettings]:
         def unless_configured(ctx: RunContext[AgentDepsT]) -> ModelSettings:
             return ModelSettings() if 'cache' in (ctx.model_settings or {}) else ModelSettings(cache=True)
@@ -74,8 +72,6 @@ class _SetToolStrict(AbstractCapability[AgentDepsT]):
 
     Tool names are unique within an agent, so the names select `Coder`'s own tools and no tool bound next to it.
     """
-
-    _telemetry_internal = True
 
     strict: bool
     tool_names: frozenset[str]
@@ -97,8 +93,6 @@ class _ReportExhaustedRetries(AbstractCapability[AgentDepsT]):
     raise `UnexpectedModelBehavior` and discard the whole run. The model gets the error as a failed
     tool result and can change approach; run-level usage limits still bound a model that never does.
     """
-
-    _telemetry_internal = True
 
     async def on_tool_execute_error(
         self,
@@ -153,8 +147,6 @@ class _CoderGuidance(AbstractCapability[AgentDepsT]):
     unrequested delegation for models whose profile sets `delegates_unprompted`, is in blocks of its own: see
     `model_specific_instructions`.
     """
-
-    _telemetry_internal = True
 
     guidance: str
     delegated_guidance: str

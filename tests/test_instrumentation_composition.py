@@ -257,6 +257,72 @@ async def test_capabilities_a_factory_resolved_to_are_recorded_as_themselves() -
     )
 
 
+@dataclass
+class SupportBundle(CombinedCapability[Any]):
+    """A user's bundle of capabilities, configured as one like Harness `Coder`."""
+
+
+async def test_a_bundle_is_recorded_once_with_its_members() -> None:
+    """A bundle is one record holding what it registers, a bundle inside it is part of it, and a factory's is too."""
+    capability, exporter = instrumentation()
+    inner = SupportBundle([Capability(id='escalation', instructions='Escalate.')])
+
+    def factory(ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        return SupportBundle([Capability(id='refunds', instructions='Refund.')])
+
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            capability,
+            SupportBundle([Capability(id='billing', instructions='Bill.'), BillingGuard(), inner], id='support'),
+            factory,
+        ],
+    )
+
+    await agent.run('Hello')
+
+    assert run_span_composition(exporter)['capabilities'] == snapshot(
+        {
+            'pydantic_ai.capabilities.Instrumentation': [
+                {'id': 'instrumentation', 'defer_loading': False, 'active': True}
+            ],
+            'pydantic_ai.capabilities.ToolSearch': [{'id': 'tool_search', 'defer_loading': False, 'active': True}],
+            'pydantic_ai.capabilities.CombinedCapability': [
+                {
+                    'id': 'support',
+                    'user_class': 'tests.test_instrumentation_composition.SupportBundle',
+                    'defer_loading': False,
+                    'active': True,
+                    'members': {
+                        'pydantic_ai.capabilities.Capability': [
+                            {'id': 'billing', 'defer_loading': False, 'active': True},
+                            {'id': 'escalation', 'defer_loading': False, 'active': True},
+                        ],
+                        'pydantic_ai.capabilities.AbstractCapability': [
+                            {
+                                'id': IsStr(regex=r'<billing_guard:[0-9a-f]{6}>'),
+                                'user_class': 'tests.test_instrumentation_composition.BillingGuard',
+                                'defer_loading': False,
+                                'active': True,
+                            }
+                        ],
+                    },
+                },
+                {
+                    'user_class': 'tests.test_instrumentation_composition.SupportBundle',
+                    'defer_loading': False,
+                    'active': True,
+                    'members': {
+                        'pydantic_ai.capabilities.Capability': [
+                            {'id': 'refunds', 'defer_loading': False, 'active': True}
+                        ]
+                    },
+                },
+            ],
+        }
+    )
+
+
 @pytest.mark.moves_cache_prefix(reason=TOOLS_CHANGE_MID_RUN)
 async def test_dynamic_toolset_is_recorded_as_resolved_on_each_step() -> None:
     """A `DynamicToolset` resolves per step, so the run records every toolset it resolved to."""

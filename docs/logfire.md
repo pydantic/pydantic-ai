@@ -363,6 +363,28 @@ Agent run spans record what the run was made of: `pydantic_ai.capabilities` list
 }
 ```
 
+A bundle of capabilities you configure as one, a [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] subclass such as Pydantic AI Harness's [`Coder`](harness/coder.md) or one of your own, is one entry, keyed by its class like any other. The capabilities it's made of are in its `members`, keyed the same way, rather than beside it, so each capability is listed once. A bundle inside another is part of the outer one. A plain `CombinedCapability`, which only groups capabilities, isn't listed itself. A `Coder` run records, trimmed:
+
+```json
+{
+  "pydantic_ai_harness.coder.Coder": [
+    {
+      "defer_loading": false,
+      "active": true,
+      "members": {
+        "pydantic_ai.capabilities.AbstractCapability": [{"id": "coder_instructions", "defer_loading": false, "active": true}],
+        "pydantic_ai_harness.file_system.FileSystem": [{"id": "<file_system:9c41d0>", "defer_loading": false, "active": true}],
+        "pydantic_ai_harness.shell.Shell": [{"id": "<shell:2be7f3>", "defer_loading": false, "active": true}],
+        "pydantic_ai_harness.sub_agents.SubAgents": [{"id": "sub_agents", "defer_loading": false, "active": true}]
+      }
+    }
+  ],
+  "pydantic_ai.capabilities.LocalWorkspace": [{"id": "local_workspace", "defer_loading": false, "active": true}]
+}
+```
+
+A bundle's `active` is whether any of its members was, and its `id` is the one you gave it, if any.
+
 Tools registered on the agent itself (with `tools=` or [`@agent.tool`][pydantic_ai.agent.Agent.tool]) and output tools aren't listed, as the framework owns the toolsets that hold them; their tools are on the model request spans' tool definitions. Neither are the capabilities the framework adds to a run for its own bookkeeping. Toolsets that record identically are listed once, however many steps used them: that includes separate toolsets of one class with no recorded id, so the list's length isn't a toolset count. Under [durable execution](durable_execution/overview.md), a `DynamicToolset` is listed as `pydantic_ai.toolsets.DynamicToolset` rather than as the toolsets it resolves to, since the engine resolves it outside the run's own toolset tree.
 
 `active` says whether the capability was in force on any of the run's model requests or was loaded by the end of the run, which tells a [deferred capability](capabilities/on-demand.md) the model loaded from one it was offered and never loaded. Each model request span also lists the ids of the capabilities active on that step in `pydantic_ai.active_capabilities`.

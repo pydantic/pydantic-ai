@@ -62,7 +62,7 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     span_include_content,
 )
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, Capability, CombinedCapability, Hooks, LocalWorkspace
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request
@@ -146,6 +146,7 @@ SECRETS = {
     # capability without one, which is built from the lowercased class name.
     'capability_class': 'SENTINEL_capability_class',
     'capability_run_assigned_id': 'sentinel_capability_class',
+    'bundle_class': 'SENTINEL_bundle_class',
     'toolset_class': 'SENTINEL_toolset_class',
 }
 
@@ -942,6 +943,10 @@ class SENTINEL_toolset_class(FunctionToolset[object]):
     """A user toolset whose class name is a sentinel."""
 
 
+class SENTINEL_bundle_class(CombinedCapability[object]):
+    """A user's bundle of capabilities, recorded as one, whose class name is a sentinel."""
+
+
 @pytest.mark.parametrize('include_content', [True, False])
 async def test_no_content_reaches_telemetry_from_the_run_composition(include_content: bool) -> None:
     """User class names and run-assigned ids in `pydantic_ai.capabilities`, `pydantic_ai.toolsets` and `pydantic_ai.active_capabilities`."""
@@ -955,11 +960,13 @@ async def test_no_content_reaches_telemetry_from_the_run_composition(include_con
     agent = Agent(
         TestModel(),
         toolsets=[toolset],
-        capabilities=[SENTINEL_capability_class(), Instrumentation(settings=settings)],
+        capabilities=[SENTINEL_bundle_class([SENTINEL_capability_class()]), Instrumentation(settings=settings)],
     )
     await agent.run('go')
 
-    check(exporter, include_content, {'capability_class', 'capability_run_assigned_id', 'toolset_class'})
+    check(
+        exporter, include_content, {'capability_class', 'capability_run_assigned_id', 'toolset_class', 'bundle_class'}
+    )
 
 
 @pytest.mark.parametrize('include_content', [True, False])

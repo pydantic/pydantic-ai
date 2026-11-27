@@ -90,12 +90,21 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     # `capabilities` keeps the given order: no order of whole branches matches the interleaved
     # dispatch order, and rebuilding from a re-sorted one would change how ties sort.
     _dispatch: Sequence[AbstractCapability[AgentDepsT]] = field(init=False, repr=False)
+    # A `CombinedCapability` subclass the user configured as one, like Harness `Coder`, is flattened too, so a
+    # trace could not say the run used it. This view retains each one (nested ones included, outer first),
+    # rebound with its children as `_instruction_sources` is, for the agent run span to record.
+    _bundles: Sequence[CombinedCapability[AgentDepsT]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.id is not None:
             validate_instruction_id_segment(self.id, kind='Capability id')
         instruction_sources: list[AbstractCapability[AgentDepsT]] = []
+        bundles: list[CombinedCapability[AgentDepsT]] = []
         for capability in self.capabilities:
+            if isinstance(capability, CombinedCapability) and not is_deferred_group(capability):
+                if type(capability) is not CombinedCapability:
+                    bundles.append(capability)
+                bundles.extend(capability._bundles)
             if (
                 isinstance(capability, CombinedCapability)
                 and not is_deferred_group(capability)
@@ -110,6 +119,7 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             else:
                 instruction_sources.append(capability)
         self._instruction_sources = instruction_sources
+        self._bundles = bundles
         self.__normalize_capabilities()
 
     def _rebound(
@@ -151,6 +161,9 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             rebound
             for source in new_self._instruction_sources
             if (rebound := self.__rebind_source(source, replacements, pending)) is not None
+        ]
+        new_self._bundles = [
+            rebound for bundle in new_self._bundles if (rebound := _rebind_bundle(bundle, replacements)) is not None
         ]
         new_self.__normalize_capabilities()
         return new_self
@@ -1124,6 +1137,19 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
                 break
             remaining = remaining_or_none
         return accumulated if any_handled else None
+
+
+def _rebind_bundle(
+    bundle: CombinedCapability[AgentDepsT],
+    replacements: Mapping[int, Sequence[AbstractCapability[AgentDepsT] | None]],
+) -> CombinedCapability[AgentDepsT] | None:
+    """A retained bundle rebuilt from what its children, flattened into the rebound container, became."""
+    pending = {key: list(decisions) for key, decisions in replacements.items()}
+    rebound_children = [
+        child if id(child) not in replacements else _take_decision(child, pending) for child in bundle.capabilities
+    ]
+    surviving = [child for child in rebound_children if child is not None]
+    return bundle._rebound(surviving, replacements) if surviving else None  # pyright: ignore[reportPrivateUsage]
 
 
 def _take_decision(
