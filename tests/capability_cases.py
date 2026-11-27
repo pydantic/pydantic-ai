@@ -66,10 +66,7 @@ from pydantic_ai.capabilities import (
     conformance,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.capabilities.conformance import (
-    CALLS,
-    _InUnit,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai.capabilities.conformance import CALLS
 from pydantic_ai.durable_exec.conformance import Recovery, Support
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import Model, ModelSelectionContext
@@ -299,6 +296,9 @@ def shipped_capability_types(packages: Sequence[str]) -> tuple[dict[str, type[Ab
             package = importlib.import_module(package_name)
             owner = f'{package_name.split(".")[0]}.'
             for module_info in pkgutil.walk_packages(package.__path__, f'{package_name}.'):
+                # A `conformance` module's classes are stand-ins its suites build, not capabilities the package ships.
+                if module_info.name.rsplit('.', 1)[-1] == 'conformance':
+                    continue
                 try:
                     module = importlib.import_module(module_info.name)
                 except Exception as exc:
@@ -423,10 +423,6 @@ def _windows_workspaces() -> tuple[WindowsWorkspace[None], WindowsWorkspace[None
 
 def _check_tool_search(merged: ToolSearch) -> None:
     assert merged.max_results == 20, 'a scalar takes the later value'
-
-
-def _check_in_unit(merged: _InUnit) -> None:
-    assert (merged.emit, merged.enqueue) == (False, True), 'a scalar takes the later value'
 
 
 def _check_thread_executor(merged: UseThreadExecutor) -> None:
@@ -678,14 +674,6 @@ CASES: dict[str, CapabilityCase] = {
     'DeferredCapabilityLoader': CapabilityCase(Anonymous('auto-injected only when absent')),
     'PendingMessageDrainCapability': CapabilityCase(Anonymous('auto-injected only when absent')),
     '_GroupMember': CapabilityCase(Anonymous('internal: dispatches a deferred group member, never registered')),
-    '_InUnit': CapabilityCase(
-        Combines(
-            'internal: a scenario stand-in, one per agent, which emits or enqueues inside a durable unit',
-            lambda: (_InUnit(emit=True), _InUnit(enqueue=True)),
-            _check_in_unit,
-        )
-    ),
-    '_FromHook': CapabilityCase(Anonymous('internal: a scenario stand-in, which emits and enqueues from a hook')),
     'AnthropicCompaction': CapabilityCase(
         Anonymous('each appends its own compaction edit to `anthropic_context_management`, so two send both edits')
     ),

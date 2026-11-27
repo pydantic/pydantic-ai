@@ -35,6 +35,7 @@ from typing import TYPE_CHECKING
 import pydantic_ai_harness
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, RawToolArgs
+from pydantic_ai.capabilities.conformance import CapabilityBuilder
 from pydantic_ai.messages import ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -72,6 +73,7 @@ from pydantic_ai_harness import (
     PruneToolResults,
     Pylon,
     RelevanceCompaction,
+    RepoContext,
     RequireVerification,
     Researcher,
     Shell,
@@ -94,14 +96,7 @@ from pydantic_ai_harness import (
     WarnNearLimits,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
-from pydantic_ai_harness.conformance import (
-    CALLS,
-    _capability_creation,  # pyright: ignore[reportPrivateUsage]
-    _deduplicate_file_reads,  # pyright: ignore[reportPrivateUsage]
-    _ipython_code_mode,  # pyright: ignore[reportPrivateUsage]
-    _repo_context,  # pyright: ignore[reportPrivateUsage]
-    _skills,  # pyright: ignore[reportPrivateUsage]
-)
+from pydantic_ai_harness.conformance import CALLS
 from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
 from pydantic_ai_harness.github import GitHub
 from pydantic_ai_harness.linear import Linear
@@ -184,6 +179,38 @@ def _hosted_calls(cls: Callable[..., AbstractCapability[None]], tool: str) -> Ca
 def _workspace_steps(calls: int) -> tuple[str, ...]:
     """The DBOS steps of `calls` workspace calls, the run's `ensure` included."""
     return ('capability__workspace.call',) * calls
+
+
+def _capabilities_of(build: CapabilityBuilder) -> Fixture:
+    """A public `Calls.build`, as a case's `build`: the calls of a case run against capabilities only."""
+
+    def fixture(tmp_path: Path) -> list[AbstractCapability[None]]:
+        built = build(tmp_path)
+        capabilities = [part for part in built if isinstance(part, AbstractCapability)]
+        assert len(capabilities) == len(built), 'a case builds only capabilities'
+        return capabilities
+
+    return fixture
+
+
+def _skills(tmp_path: Path) -> list[AbstractCapability[None]]:
+    skill = tmp_path / 'skills' / 'weather'
+    skill.mkdir(parents=True)
+    (skill / 'SKILL.md').write_text('---\ndescription: Report the weather.\n---\n\nSay sunny.\n')
+    return [Skills(tmp_path / 'skills'), LocalWorkspace(tmp_path)]
+
+
+def _repo_context(tmp_path: Path) -> list[AbstractCapability[None]]:
+    (tmp_path / 'AGENTS.md').write_text('Keep answers short.\n')
+    return [RepoContext(), FileSystem(), LocalWorkspace(tmp_path)]
+
+
+def _ipython_code_mode() -> AbstractCapability[None]:
+    # Imported here, so collecting the suites never imports `jupyter_client`. The test has already skipped
+    # when it isn't installed (the case's `requires`).
+    from pydantic_ai_harness.ipython_code_mode import IPythonCodeMode
+
+    return IPythonCodeMode(tools=())
 
 
 def _workspace(build: Callable[[], AbstractCapability[None]]) -> Fixture:
@@ -735,7 +762,7 @@ CASES: dict[str, CapabilityCase] = {
     'DenyUnanswered': CapabilityCase(Anonymous('a second instance would deny what the first already denied')),
     'DeduplicateFileReads': CapabilityCase(
         Anonymous('file-read identification is agent-specific; one per `file_key`'),
-        build=_deduplicate_file_reads,
+        build=_capabilities_of(CALLS['DeduplicateFileReads'].build),
         calls=Calls.of(CALLS['DeduplicateFileReads'], moves_cache_prefix=COMPACTION_REWRITES_HISTORY),
         durable_steps=DurableSteps(
             dbos=_workspace_steps(8),
@@ -949,7 +976,7 @@ CASES: dict[str, CapabilityCase] = {
             'one store directory per id; two that differ need their own ids and PrefixTools',
             lambda cls: (cls(str(COMBINE_ROOT_A)), cls(str(COMBINE_ROOT_B))),
         ),
-        build=_capability_creation,
+        build=_capabilities_of(CALLS['CapabilityCreation'].build),
         calls=Calls.of(CALLS['CapabilityCreation']),
         durable_steps=DurableSteps(
             dbos=(
