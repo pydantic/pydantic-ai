@@ -7,6 +7,10 @@ capability case's calls or a scenario, under the engine, recovers it, and checks
 [`SCENARIO_RUNS`][pydantic_ai.capabilities.conformance.SCENARIO_RUNS]; `pydantic_ai_harness.conformance`'s
 `HarnessDurableEngineSuite` adds the Pydantic AI Harness cases. Requires pytest and the anyio pytest plugin.
 
+A case whose capability needs an optional dependency that isn't installed is skipped, naming the missing module. Set
+the `PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS` environment variable to `1` to fail it instead, so a CI job that installs
+every extra can't skip a case unnoticed.
+
 The suite's class, fixtures, `DurableEngine`, `EngineRun`, `Support`, `Recovery` and the level names are stable in 2.x.
 Minor releases can add cases, scenarios and checks, or tighten them: a new cell runs as `supported`, so an engine that
 fails it declares its support on upgrade, or sets `unlisted = 'pending'`.
@@ -15,6 +19,7 @@ fails it declares its support on upgrade, or sets `unlisted = 'pending'`.
 from __future__ import annotations
 
 import json
+import os
 import re
 from collections import Counter
 from collections.abc import AsyncIterator, Awaitable, Callable, Collection, Mapping, Sequence
@@ -306,12 +311,10 @@ class DurableEngineSuite:
         agent_name = re.sub(r'\W', '_', name) + '_agent'
         observer = None if observed is None else agent_name
         try:
-            # A build may write the files its stand-ins read, so it runs off the event loop. A capability that
-            # refuses the engine may already refuse when it's built, which the cell's level judges like any refusal.
-            built = await anyio.to_thread.run_sync(calls.build, directory)  # workflow-nondeterminism-ok: test-side
+            # A capability that refuses the engine may already refuse when it's built, which the cell's level judges
+            # like any refusal.
+            built = await _build(name, calls, directory)
             agent = _agent(agent_name, calls.made, built, engine.durability(), observer=observer)
-        except ImportError as error:
-            pytest.skip(f'{name} needs an optional dependency that is not installed: {error}')
         except UserError as error:
             run = EngineRun('', error)
         else:
@@ -427,6 +430,43 @@ class DurableEngineSuite:
             assert any(re.search(cell.match, line) for line in breaks), (
                 f'{where} no longer shows {cell.match!r}: update its cell ({"; ".join(breaks) or "it now passes"})'
             )
+
+
+_REQUIRE_EXTRAS_VARIABLE = 'PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS'
+"""The environment variable that, set to `1` or `true`, fails a case whose extra isn't installed instead of skipping."""
+
+
+async def _build(
+    name: str, calls: Calls, directory: Path
+) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
+    """What the case `name`'s calls run against, skipping the case when its build can't find an optional module.
+
+    Only a module that isn't installed skips it: any other `ImportError`, such as a name a mismatched version lacks,
+    fails it. With `PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS` set, a missing module fails it too.
+    """
+    try:
+        # A build may write the files its stand-ins read, so it runs off the event loop.
+        return await anyio.to_thread.run_sync(calls.build, directory)  # workflow-nondeterminism-ok: test-side
+    except ImportError as error:
+        missing = _missing_module(error)
+        if missing is None:
+            raise
+        message = f'{name} needs `{missing}`, from an optional dependency that is not installed'
+        if os.environ.get(_REQUIRE_EXTRAS_VARIABLE, '').lower() in ('1', 'true'):
+            pytest.fail(f'{message}, and `{_REQUIRE_EXTRAS_VARIABLE}` is set: {error}')
+        pytest.skip(f'{message}: {error}')
+
+
+def _missing_module(error: BaseException) -> str | None:
+    """The module `error` says isn't installed, following the chain an install hint re-raises it under."""
+    seen: set[int] = set()
+    current: BaseException | None = error
+    while current is not None and id(current) not in seen:
+        if isinstance(current, ModuleNotFoundError):
+            return current.name or str(current)
+        seen.add(id(current))
+        current = current.__cause__ or current.__context__
+    return None
 
 
 def _agent(

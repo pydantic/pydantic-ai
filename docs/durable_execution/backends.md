@@ -458,6 +458,23 @@ class TestMyEngine(DurableEngineSuite):
 from `pydantic_ai_harness.conformance`, is the same suite with the [Pydantic AI Harness](../harness/index.md)
 capabilities' cases added. Subclass it instead to check your engine against both.
 
+A case whose capability needs an optional dependency that isn't installed is skipped, naming the missing module, so
+run pytest with `-rs` to see what went unchecked. Set the `PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS` environment
+variable to `1` to fail those cases instead, in a CI job that installs every extra. The cases that need one are:
+
+| Case | Needs |
+|---|---|
+| `MCP` | the `fastmcp` package, whose server `pydantic-ai-slim[mcp]` doesn't include |
+| `CodeMode` | `pydantic-ai-harness[code-mode]` |
+| `Coder` | `pydantic-ai-harness[coder]` |
+| `IPythonCodeMode` | `pydantic-ai-harness[ipython]` |
+| `PromptInjectionDefender` | `pydantic-ai-harness[prompt-injection-defender]` |
+| `RepairToolArguments` | `pydantic-ai-harness[repair-tool-arguments]`, or `[coder]` |
+| `Skills` | `pydantic-ai-harness[skills]` |
+
+Only a module that isn't installed skips a case. Any other `ImportError`, such as a name a mismatched version lacks,
+or one your engine's own code raises, fails it.
+
 The cases are the [`Calls`][pydantic_ai.capabilities.conformance.Calls] in
 [`pydantic_ai.capabilities.conformance.CALLS`][pydantic_ai.capabilities.conformance.CALLS] and
 `pydantic_ai_harness.conformance.CALLS`, and the scenarios are

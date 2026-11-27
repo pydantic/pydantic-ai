@@ -15,7 +15,7 @@ import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability
-from pydantic_ai.capabilities.conformance import Calls
+from pydantic_ai.capabilities.conformance import Calls, CapabilityBuilder
 from pydantic_ai.durable_exec import BaseDurabilityCapability, conformance
 from pydantic_ai.durable_exec.conformance import (
     ANSWER,
@@ -210,14 +210,61 @@ def _needs_a_missing_dependency(directory: Path, /) -> Sequence[AbstractCapabili
     raise ModuleNotFoundError("No module named 'missing_sdk'", name='missing_sdk')
 
 
-async def test_a_case_whose_dependency_is_missing_is_skipped(tmp_path: Path) -> None:
-    """A case whose build can't import its optional dependency is skipped, not judged: no engine ran it."""
+def _hints_at_a_missing_dependency(directory: Path, /) -> Sequence[AbstractCapability[None]]:
+    missing = ModuleNotFoundError("No module named 'missing_sdk'", name='missing_sdk')
+    raise ImportError('Install it with: pip install "missing-sdk"') from missing
+
+
+def _imports_a_missing_name(directory: Path, /) -> Sequence[AbstractCapability[None]]:
+    raise ImportError("cannot import name 'gone' from 'installed_sdk'")
+
+
+def _builds_nothing(directory: Path, /) -> Sequence[AbstractCapability[None]]:
+    return []
+
+
+@pytest.mark.parametrize('build', [_needs_a_missing_dependency, _hints_at_a_missing_dependency])
+async def test_a_case_whose_dependency_is_missing_is_skipped(
+    build: CapabilityBuilder, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A case whose build can't find its optional dependency is skipped, not judged: no engine ran it."""
+    monkeypatch.delenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', raising=False)
+    suite = _suite(cases={'case': Calls((('work', {}),), build=build)})
+    with pytest.raises(pytest.skip.Exception, match='case needs `missing_sdk`, from an optional dependency'):
+        await suite.test_case('case', _Engine(), True, dict, tmp_path)
+
+
+async def test_a_missing_dependency_fails_when_extras_are_required(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """`PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS` turns the skip into a failure, naming the missing module."""
+    monkeypatch.setenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', 'true')
     suite = _suite(cases={'case': Calls((('work', {}),), build=_needs_a_missing_dependency)})
     with pytest.raises(
-        pytest.skip.Exception,
-        match="case needs an optional dependency that is not installed: No module named 'missing_sdk'",
+        pytest.fail.Exception, match=r'case needs `missing_sdk`.*`PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS`'
     ):
         await suite.test_case('case', _Engine(), True, dict, tmp_path)
+
+
+async def test_an_import_error_that_is_no_missing_module_fails(tmp_path: Path) -> None:
+    """A name a mismatched version lacks is a broken install, not a missing extra: the case fails."""
+    suite = _suite(cases={'case': Calls((('work', {}),), build=_imports_a_missing_name)})
+    with pytest.raises(ImportError, match="cannot import name 'gone'"):
+        await suite.test_case('case', _Engine(), True, dict, tmp_path)
+
+
+@dataclass
+class _BrokenEngine(_Engine):
+    def durability(self) -> BaseDurabilityCapability[None]:
+        raise ModuleNotFoundError("No module named 'engine_sdk'", name='engine_sdk')
+
+
+async def test_a_missing_module_in_the_engine_fails(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Only a case's build can skip it: the engine's own code failing to import fails every cell."""
+    monkeypatch.delenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', raising=False)
+    suite = _suite(cases={'case': Calls((('work', {}),), build=_builds_nothing)})
+    with pytest.raises(ModuleNotFoundError, match='engine_sdk'):
+        await suite.test_case('case', _BrokenEngine(), True, dict, tmp_path)
 
 
 async def test_a_refused_unit_records_no_result() -> None:

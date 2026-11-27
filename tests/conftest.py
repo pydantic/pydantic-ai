@@ -136,6 +136,10 @@ def pytest_runtest_setup() -> None:
 
 
 os.environ.setdefault('HF_HUB_DISABLE_PROGRESS_BARS', '1')
+# The built-in engines' conformance suites skip a case whose optional dependency isn't installed before the suite
+# would (the case's `requires`), and the CI jobs that run them install every extra, so a case the suite itself skips
+# for a missing module is a broken install: fail it instead.
+os.environ.setdefault('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', '1')
 
 
 def pytest_configure(config: pytest.Config) -> None:
