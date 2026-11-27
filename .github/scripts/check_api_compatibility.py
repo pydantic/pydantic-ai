@@ -45,7 +45,7 @@ class Waiver(BaseModel):
 
     model_config = ConfigDict(extra='forbid', frozen=True)
 
-    against: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
+    against: Annotated[str, StringConstraints(strip_whitespace=True, pattern=r'^v\d+\.\d+\.\d+$')]
     reason: Annotated[str, StringConstraints(strip_whitespace=True, min_length=1)]
     pull_request: Annotated[str, StringConstraints(pattern=r'^https://github\.com/pydantic/pydantic-ai/pull/\d+$')]
 
@@ -162,9 +162,17 @@ def main() -> None:
                 emit_annotation('notice', finding, message)
                 continue
             waiver = waivers.get(finding.fingerprint)
-            if waiver is None or waiver.against != args.against:
+            path = args.waivers / f'{finding.fingerprint}.json'
+            # A waiver against an older release that the `--against` release doesn't hold was written before that
+            # release and hasn't shipped, as when its PR waits in the merge queue across a release. One the release
+            # holds shipped with its change, so the finding firing again is a new change that needs a new waiver.
+            unreleased = (
+                waiver is not None
+                and release_version(waiver.against) < release_version(args.against)
+                and not is_released(args.against, path)
+            )
+            if waiver is None or (waiver.against != args.against and not unreleased):
                 failed = True
-                path = f'{args.waivers / finding.fingerprint}.json'
                 message = (
                     f'{finding.message} [fingerprint: {finding.fingerprint}]. '
                     'Preserve compatibility or follow the allowed compatibility-impact process, '
@@ -191,6 +199,19 @@ def main() -> None:
 
     if failed:
         raise SystemExit(1)
+
+
+def is_released(against: str, path: PurePath) -> bool:
+    """Whether the tree of the `against` release holds `path`, relative to the repository root."""
+    released = subprocess.run(
+        ['git', 'cat-file', '-e', f'{against}:{path.as_posix()}'], check=False, capture_output=True
+    )
+    return released.returncode == 0
+
+
+def release_version(tag: str) -> tuple[int, ...]:
+    """The version numbers of a `vX.Y.Z` release tag, compared as CI picks the latest release."""
+    return tuple(int(number) for number in tag.removeprefix('v').split('.'))
 
 
 def is_excluded(finding: Finding, search_path: str) -> bool:
@@ -378,10 +399,7 @@ def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
     # A package new since `against`, such as `pydantic_ai_pax` until its first release, has no released API to stay
     # compatible with. One missing here too still fails.
     module = Path(search_path, package)
-    released = subprocess.run(
-        ['git', 'cat-file', '-e', f'{against}:{module.as_posix()}'], check=False, capture_output=True
-    )
-    if module.is_dir() and released.returncode != 0:
+    if module.is_dir() and not is_released(against, module):
         return []
     result = subprocess.run(
         [

@@ -41,6 +41,36 @@ def _write_waivers(tmp_path: Path, waivers: Mapping[str, object] | None = None) 
     return directory
 
 
+def _git(repo: Path, *args: str) -> None:
+    subprocess.run(
+        [
+            'git',
+            '-C',
+            str(repo),
+            '-c',
+            'user.name=t',
+            '-c',
+            'user.email=t@example.com',
+            '-c',
+            'commit.gpgsign=false',
+            '-c',
+            'tag.gpgSign=false',
+            '-c',
+            'core.hooksPath=/dev/null',
+            *args,
+        ],
+        check=True,
+    )
+
+
+def _release(repo: Path, tag: str) -> None:
+    """Commit everything in `repo` to a new Git repository there, and tag the commit `tag`."""
+    _git(repo, 'init', '-q')
+    _git(repo, 'add', '.')
+    _git(repo, 'commit', '-q', '-m', 'release')
+    _git(repo, 'tag', tag)
+
+
 def _config(tmp_path: Path, allowlist: object = None, waivers: Mapping[str, object] | None = None) -> list[str]:
     """Write an allowlist and waivers, and return the arguments naming them."""
     return [
@@ -87,25 +117,7 @@ def test_run_griffe_reports_real_griffe_findings(tmp_path: Path, monkeypatch: py
     # Re-exported from a private module, so only `griffe-public-redundant-aliases` makes Griffe check it.
     names = module.parent / '_names.py'
     names.write_text("from typing import Literal\n\nModelNames = Literal['a']\n", encoding='utf-8')
-    git = [
-        'git',
-        '-C',
-        str(tmp_path),
-        '-c',
-        'user.name=t',
-        '-c',
-        'user.email=t@example.com',
-        '-c',
-        'commit.gpgsign=false',
-        '-c',
-        'tag.gpgSign=false',
-        '-c',
-        'core.hooksPath=/dev/null',
-    ]
-    subprocess.run([*git, 'init', '-q'], check=True)
-    subprocess.run([*git, 'add', '.'], check=True)
-    subprocess.run([*git, 'commit', '-q', '-m', 'release'], check=True)
-    subprocess.run([*git, 'tag', 'v1'], check=True)
+    _release(tmp_path, 'v1')
     monkeypatch.chdir(tmp_path)
 
     assert run_griffe('fixture_pkg', '.', 'v1') == []
@@ -412,14 +424,35 @@ def test_main_rejects_waiver_for_listed_model_name_literal(
     assert f'::error::Unused API compatibility waiver for v2.32.1: {finding.fingerprint}' in capsys.readouterr().out
 
 
-# A waiver against an older release does not cover the same finding against the current one.
-@pytest.mark.parametrize('waived_against', [None, 'v2.31.0'])
-def test_main_fails_for_unapproved_breakage(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str], waived_against: str | None
+@pytest.mark.parametrize(
+    'waived_against, released, allowed',
+    [
+        (None, False, False),
+        ('v2.32.1', False, True),
+        # Written against the baseline of its time, and its PR waited in the merge queue while `v2.32.1` shipped.
+        ('v2.31.0', False, True),
+        ('v2.4.0', False, True),
+        # Shipped with its change, so the finding firing again is a new change.
+        ('v2.31.0', True, False),
+        ('v2.100.0', False, False),
+    ],
+)
+def test_main_checks_the_waiver_against_the_baseline_release(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    waived_against: str | None,
+    released: bool,
+    allowed: bool,
 ):
     finding = Finding('pydantic_ai', 'messages.py', 12, 'RequestPart: Attribute value was changed: Old -> New')
     waivers = {} if waived_against is None else {f'{finding.fingerprint}.json': {**WAIVER, 'against': waived_against}}
-    config = _config(tmp_path, waivers=waivers)
+    allowlist = _write_allowlist(tmp_path)
+    _write_waivers(tmp_path, waivers if released else {})
+    _release(tmp_path, 'v2.32.1')
+    for name, waiver in waivers.items():
+        (tmp_path / 'waivers' / name).write_text(json.dumps(waiver), encoding='utf-8')
+    monkeypatch.chdir(tmp_path)
 
     def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
         assert (package, search_path, against) == ('pydantic_ai', 'pydantic_ai_slim', 'v2.32.1')
@@ -427,36 +460,26 @@ def test_main_fails_for_unapproved_breakage(
 
     monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_ai': 'pydantic_ai_slim'})
     monkeypatch.setattr(check_api_compatibility, 'run_griffe', run_griffe)
-    monkeypatch.setattr('sys.argv', ['check_api_compatibility.py', '--against', 'v2.32.1', *config])
+    monkeypatch.setattr(
+        'sys.argv',
+        ['check_api_compatibility.py', '--against', 'v2.32.1', '--allowlist', str(allowlist), '--waivers', 'waivers'],
+    )
 
-    with pytest.raises(SystemExit, match='1'):
+    if allowed:
         check_api_compatibility.main()
+    else:
+        with pytest.raises(SystemExit, match='1'):
+            check_api_compatibility.main()
 
     output = capsys.readouterr().out
-    assert '::error file=messages.py,line=12::' in output
-    assert f'with a waiver in `{tmp_path}/waivers/{finding.fingerprint}.json`' in output
-    stale = 'waives it against v2.31.0; replace its contents with a waiver against v2.32.1.'
-    assert (stale in output) is (waived_against is not None)
-
-
-def test_main_warns_for_approved_breakage(
-    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, capsys: pytest.CaptureFixture[str]
-):
-    finding = Finding('pydantic_ai', 'messages.py', 12, 'RequestPart: Attribute value was changed: Old -> New')
-    config = _config(tmp_path, waivers={f'{finding.fingerprint}.json': WAIVER})
-
-    def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
-        return [finding]
-
-    monkeypatch.setattr(check_api_compatibility, 'PACKAGES', {'pydantic_ai': 'pydantic_ai_slim'})
-    monkeypatch.setattr(check_api_compatibility, 'run_griffe', run_griffe)
-    monkeypatch.setattr('sys.argv', ['check_api_compatibility.py', '--against', 'v2.32.1', *config])
-
-    check_api_compatibility.main()
-
-    output = capsys.readouterr().out
-    assert '::warning file=messages.py,line=12::' in output
-    assert 'Allowed by https://github.com/pydantic/pydantic-ai/pull/123' in output
+    if allowed:
+        assert '::warning file=messages.py,line=12::' in output
+        assert 'Allowed by https://github.com/pydantic/pydantic-ai/pull/123' in output
+    else:
+        assert '::error file=messages.py,line=12::' in output
+        assert f'with a waiver in `waivers/{finding.fingerprint}.json`' in output
+        stale = f'waives it against {waived_against}; replace its contents with a waiver against v2.32.1.'
+        assert (stale in output) is (waived_against is not None)
 
 
 def test_main_skips_the_clai2_web_ui_modules(
@@ -532,6 +555,7 @@ def test_load_allowlist_rejects_invalid_entries(tmp_path: Path, allowlist: objec
 
 _INVALID_WAIVERS: list[tuple[str, object, str]] = [
     (f'{_FINGERPRINT}.json', {}, 'against'),
+    (f'{_FINGERPRINT}.json', {**WAIVER, 'against': 'latest'}, 'string_pattern_mismatch'),
     ('bad.json', WAIVER, 'must be named'),
     (_FINGERPRINT, WAIVER, 'must be named'),
     (f'{_FINGERPRINT.upper()}.json', WAIVER, 'must be named'),
