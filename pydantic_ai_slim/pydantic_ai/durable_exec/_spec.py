@@ -93,6 +93,15 @@ class DurabilityEngineSpec:
     [`RunCancelled.from_cancellation()`][pydantic_ai.exceptions.RunCancelled.from_cancellation] can recover it.
     """
 
+    control_flow_error_types: tuple[type[BaseException], ...] = ()
+    """Exceptions an engine raises for control flow, such as suspending, that core must let through rather than treat as a failure.
+
+    For example, the error the capability's `durable_sleep` raises to suspend the durable container until its timer
+    fires, for an engine that waits by ending the container's current attempt and running it again once the wait is over,
+    replaying its journal up to the wait. When one of them ends a wait between polls of a model's server-side job, the
+    job is left running for the replayed run to continue, rather than cancelled as on another error.
+    """
+
     accepts_cancellation_token: bool = False
     """Whether a run inside the durable container may take a [`CancellationToken`][pydantic_ai.CancellationToken].
 

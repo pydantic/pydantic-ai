@@ -303,15 +303,33 @@ def mark_suspended_job_cancelled(error: BaseException) -> None:
     setattr(error, _SUSPENDED_JOB_CANCELLED, True)
 
 
+_RUN_SUSPENDED = '_pydantic_ai_run_suspended'
+
+
+def mark_run_suspended(error: BaseException) -> None:
+    """Mark `error` as suspending a durable run that is run again later and continues the job it was waiting on.
+
+    A durable engine like AWS Lambda waits by ending the run with such an error, and runs it again once the wait is
+    over, replaying it from its journal up to the wait. The continuation loop the error reaches leaves the job running
+    for the run that continues it.
+    """
+    setattr(error, _RUN_SUSPENDED, True)
+
+
 async def cancel_abandoned_job(model: Model, response: ModelResponse, error: BaseException) -> None:
     """Cancel the job of the suspended response `error` made a continuation loop give up on, unless already done.
+
+    A job is left running when `error` suspends a durable run that continues it later, see `mark_run_suspended`.
 
     The marker only reaches the loop when the model raises it there directly. So the job may still be cancelled
     twice when the model that cancelled it ran in a durable unit, whose error the workflow rebuilds without the
     marker, or when what it cancelled was a rejected response that was still suspended, rather than the response
     being continued, though that is usually the same job.
     """
-    if getattr(error, _SUSPENDED_JOB_CANCELLED, False) is not True:
+    if (
+        getattr(error, _SUSPENDED_JOB_CANCELLED, False) is not True
+        and getattr(error, _RUN_SUSPENDED, False) is not True
+    ):
         await cancel_suspended_job(model, response)
 
 
@@ -438,8 +456,9 @@ class _ContinuationStreamedResponse(StreamedResponse):
     _detached: bool = field(default=False, init=False)
     # Whether the stream ended on a pending response because of `return_pending`, so `get()` reports it as suspended.
     _ended_pending: bool = field(default=False, init=False)
-    # Set once a failed continuation has cancelled the suspended server-side job, so `get()` no longer
-    # reports it as a resumable detach and the graph doesn't cancel it a second time.
+    # Set once a failed continuation has cancelled the suspended server-side job, or left it for the durable run a
+    # suspending sleep ended to continue, so `get()` no longer reports it as a resumable detach and the graph doesn't
+    # cancel it (again).
     _job_cancelled: bool = field(default=False, init=False)
     # The inner segment stream owns each segment's `async with request_stream(...)`; keep it
     # separately because the outer cancel-guard's `async for` does not forward `aclose()`.
@@ -523,9 +542,10 @@ class _ContinuationStreamedResponse(StreamedResponse):
                     # The deadlines cover this wait, as they do the waits between later segments.
                     with enforce_request_deadline(self._request_deadline):
                         await self.sleep_func(delay)
-            except BaseException:
-                # Nothing will continue the job now, so cancel it, as a failure to open the segment does.
-                await cancel_suspended_job(self.model, seed)
+            except BaseException as error:
+                # Nothing will continue the job now, so cancel it, as a failure to open the segment does, unless the
+                # wait suspended a durable run that continues it later.
+                await cancel_abandoned_job(self.model, seed, error)
                 self._job_cancelled = True
                 raise
             messages = [*self.base_messages, seed]
