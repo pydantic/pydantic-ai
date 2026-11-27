@@ -534,12 +534,25 @@ jobs:
         run: |
           # Exclude the tag being built: once its GitHub release exists, `gh release view`
           # would otherwise compare the release to itself and make this gate a no-op.
-          # Take the highest version, not the newest: a V1 maintenance release can be published last.
-          release_tag=$(gh release list --repo pydantic/pydantic-ai --limit 20 \
+          # Try the highest versions first, not the newest: a V1 maintenance release can be published last.
+          candidates=$(gh release list --repo pydantic/pydantic-ai --limit 20 \
             --exclude-drafts --exclude-pre-releases --json tagName \
             | jq -r --arg current "$GITHUB_REF_NAME" \
               'map(select(.tagName != $current and (.tagName | test("^v[0-9]+\\.[0-9]+\\.[0-9]+$"))))
-               | max_by(.tagName | ltrimstr("v") | split(".") | map(tonumber)).tagName // empty')
+               | sort_by(.tagName | ltrimstr("v") | split(".") | map(tonumber)) | reverse | .[].tagName')
+          # Compare against the highest release this commit contains. A release tagged at main's head is
+          # not in a branch cut before it, or in an older main commit re-run afterwards, and comparing
+          # those against it reports everything it added as removed. GitHub's compare answers the
+          # ancestry question without the history the shallow checkout lacks: `ahead` or `identical`
+          # means the release is an ancestor of this commit.
+          release_tag=
+          for tag in $candidates; do
+            status=$(gh api "repos/pydantic/pydantic-ai/compare/$tag...$GITHUB_SHA?per_page=1" --jq .status)
+            if [ "$status" = ahead ] || [ "$status" = identical ]; then
+              release_tag=$tag
+              break
+            fi
+          done
           if [ -z "$release_tag" ]; then
             echo '::error::Could not find a prior stable release for the API compatibility baseline.'
             exit 1
