@@ -16,6 +16,8 @@ from pydantic_ai.exceptions import (
     CallDeferred,
     ContentFilterError,
     FallbackExceptionGroup,
+    ModelHTTPError,
+    ModelRateLimitError,
     ModelRetry,
     ToolFailed,
     UserError,
@@ -482,6 +484,67 @@ async def test_child_workflow_retries_a_fallback_group_unless_no_member_is_retry
     child_id = _child_start(await client.get_workflow_handle(workflow_id).fetch_history()).workflow_id
     child_history = await client.get_workflow_handle(child_id).fetch_history()
     assert child_history.events[0].workflow_execution_started_event_attributes.attempt == (3 if retryable else 1)
+
+
+policy_named_fallback_group_toolset = FunctionToolset[None](id='policy_named_fallback_group_child_tools')
+
+
+@policy_named_fallback_group_toolset.tool_plain(
+    metadata={
+        'temporal': {
+            'child_workflow': ChildWorkflowConfig(
+                retry_policy=RetryPolicy(
+                    maximum_attempts=3,
+                    initial_interval=timedelta(milliseconds=1),
+                    non_retryable_error_types=['ModelRateLimitError'],
+                )
+            )
+        }
+    }
+)
+async def policy_named_fallback_group_child_tool() -> str:
+    raise FallbackExceptionGroup(
+        'All models failed.',
+        [
+            ModelHTTPError.for_category(ModelRateLimitError, status_code=429, model_name=model_name)
+            for model_name in ('primary', 'backup')
+        ],
+    )
+
+
+policy_named_fallback_group_agent = _metadata_error_agent(
+    'policy_named_fallback_group_child_workflow_agent', policy_named_fallback_group_toolset
+)
+
+
+@workflow.defn
+class PolicyNamedFallbackGroupChildWorkflowAgentWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await policy_named_fallback_group_agent.run('call the tool')).output
+
+
+async def test_child_workflow_does_not_retry_a_fallback_group_whose_errors_the_retry_policy_names(
+    client: Client,
+) -> None:
+    """A child's retry policy matches a group's members by class name, as it matches the same error raised alone."""
+    workflow_id = 'test_child_workflow_does_not_retry_a_fallback_group_whose_errors_the_retry_policy_names'
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[PolicyNamedFallbackGroupChildWorkflowAgentWorkflow],
+        plugins=[AgentPlugin(policy_named_fallback_group_agent)],
+    ):
+        with pytest.raises(WorkflowFailureError) as exc_info:
+            await client.execute_workflow(
+                PolicyNamedFallbackGroupChildWorkflowAgentWorkflow.run, id=workflow_id, task_queue=TASK_QUEUE
+            )
+
+    cause = _workflow_failure_cause(exc_info.value)
+    assert (cause.type, cause.non_retryable) == ('FallbackExceptionGroup', True)
+    child_id = _child_start(await client.get_workflow_handle(workflow_id).fetch_history()).workflow_id
+    child_history = await client.get_workflow_handle(child_id).fetch_history()
+    assert child_history.events[0].workflow_execution_started_event_attributes.attempt == 1
 
 
 @activity.defn

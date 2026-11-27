@@ -189,19 +189,24 @@ def is_non_retryable(
     error: BaseException,
     non_retryable_model_errors: tuple[type[Exception], ...] = (),
     retry_policy: RetryPolicy | None = None,
+    policy_type: Callable[[BaseException], str] = retry_policy_type,
 ) -> bool:
     """Whether a retry can't fix `error`.
 
-    That's one of `NON_RETRYABLE_ERRORS` or `non_retryable_model_errors`, or an error whose type `retry_policy` names
-    in its `non_retryable_error_types`. A `FallbackExceptionGroup` from a `FallbackModel` whose models all failed
-    counts only when every error in it does, so a chain that ran into rate limits or outages is still retried, and one
-    whose errors the retry policy names on their own isn't.
+    That's one of `NON_RETRYABLE_ERRORS` or `non_retryable_model_errors`, or an error whose `policy_type`, the type
+    its `ApplicationError` would report on its own, `retry_policy` names in its `non_retryable_error_types`. A
+    `FallbackExceptionGroup` from a `FallbackModel` whose models all failed counts only when every error in it does,
+    so a chain that ran into rate limits or outages is still retried, and one whose errors the retry policy names on
+    their own isn't.
     """
     if isinstance(error, FallbackExceptionGroup):
-        return all(is_non_retryable(member, non_retryable_model_errors, retry_policy) for member in error.exceptions)
+        return all(
+            is_non_retryable(member, non_retryable_model_errors, retry_policy, policy_type)
+            for member in error.exceptions
+        )
     if isinstance(error, NON_RETRYABLE_ERRORS + non_retryable_model_errors):
         return True
-    return retry_policy is not None and retry_policy_type(error) in (retry_policy.non_retryable_error_types or ())
+    return retry_policy is not None and policy_type(error) in (retry_policy.non_retryable_error_types or ())
 
 
 def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:

@@ -310,11 +310,14 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
                     # Like an exception in an activity, fail this child workflow (subject to its retry policy) so
                     # the error reaches the parent's tool call, instead of failing the workflow task, which
                     # Temporal would retry forever. The retry policy names the non-retryable classes, but not their
-                    # subclasses, which are marked here.
+                    # subclasses, which are marked here. A `FallbackExceptionGroup`'s members are matched against
+                    # the retry policy by their class name, the type each would report here on its own.
                     raise ApplicationError(
                         str(e),
                         type=type(e).__name__,
-                        non_retryable=is_non_retryable(e, retry_policy=workflow.info().retry_policy),
+                        non_retryable=is_non_retryable(
+                            e, retry_policy=workflow.info().retry_policy, policy_type=lambda error: type(error).__name__
+                        ),
                     ) from e
 
             # UTF-8 hex preserves the full operation name while using only Python identifier characters.
