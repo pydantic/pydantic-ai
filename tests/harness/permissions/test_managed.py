@@ -621,3 +621,17 @@ class TestReviewerApprovals:
         assert isinstance(held.output, DeferredToolRequests)
         [call] = held.output.approvals
         assert held.output.metadata == {call.tool_call_id: {'permissions': {'person_only': True}}}
+
+    async def test_an_approval_from_any_other_handler_counts_as_the_persons(self, tmp_path: Path) -> None:
+        """Only `ApprovalReviewer` marks its approvals; a handler that approves in code is trusted as the person."""
+        agent = Agent[None, str](
+            _calls(ECHO),
+            deps_type=type(None),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Shell(denied_commands=[]),
+                Permissions(managed_rules=[PermissionRule('ask', command='echo')]),
+                HandleDeferredToolCalls[None](handler=_approve_all),
+            ],
+        )
+        assert (await agent.run('go')).output == '[stdout]\nhi\n'
