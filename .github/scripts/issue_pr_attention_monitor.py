@@ -2181,8 +2181,9 @@ def _priority_sla_decision(
     """Decide one open priority issue, with the comment to post when it is due one.
 
     The issue last moved when its priority label was applied, a maintainer acted, or an open
-    linked pull request was updated. Title edits, bots and the passive `mentioned`/`subscribed`
-    events never count; an assignment counts as the assignee's, as in `_owner_quiet_since`.
+    pull request in this repository that references it was updated. Title edits, bots and the
+    passive `mentioned`/`subscribed` events never count; an assignment counts as the assignee's,
+    as in `_owner_quiet_since`.
 
     The whole timeline is read, oldest first: on a longer one the newest marker or linked pull
     request could lie past the pages fetched, so the issue is left `unknown` rather than pinged.
@@ -2201,42 +2202,47 @@ def _priority_sla_decision(
     # An open pull request linked to the issue counts as movement only while it is this fresh.
     pull_freshness = dt.timedelta(days=7)
     probe = _MaintainerProbe(client, repo)
-    moments: list[dt.datetime] = []
+    # Only the priority label and maintainers open a new window; a pull request's update can
+    # hold one off, but never opens one.
+    resets: list[dt.datetime] = []
+    pulls: list[dt.datetime] = []
     for value in timeline:
         if (when := _event_time(value)) is None:
             continue
         event = IssueEvent.model_validate(value)
         linked = event.source.issue
         if event.event == 'labeled' and event.label.name == label:
-            moments.append(when)
+            resets.append(when)
         if (
             event.event == 'cross-referenced'
             and linked.pull_request is not None
+            and linked.repository_url.casefold() == f'{_API}/repos/{repo}'.casefold()
             and linked.state == 'open'
             and linked.updated_at
             and now - (updated := parse_time(linked.updated_at)) <= pull_freshness
         ):
-            moments.append(updated)
+            pulls.append(updated)
         if (
             event.event not in _NON_ACK_EVENTS
             and event.event != 'renamed'
             and not _is_bot(value)
             and probe.login(_actor(value))
         ):
-            moments.append(when)
-    if probe.exhausted or (since := max(moments, default=None)) is None:
+            resets.append(when)
+    if probe.exhausted or (since := max(resets + pulls, default=None)) is None:
         return 'unknown', ''
     window = _PRIORITY_SLA_WINDOWS[label]
     if now - since <= window:
         return 'active', ''
-    # A comment newer than `since` already covers this window, even when `since` has since
-    # moved back because a counted pull request closed or went stale.
+    # A comment newer than the last reset covers every window until a maintainer acts again, so
+    # neither a pull request's later update nor its closing brings a second comment.
+    reset = max(resets, default=None)
     if any(
         event.get('event') == 'commented'
         and _actor(event) == author
         and _PRIORITY_SLA_COMMENT.fullmatch(str(event.get('body') or ''))
         and (when := _event_time(event)) is not None
-        and when > since
+        and (reset is None or when > reset)
         for event in timeline
     ):
         return 'commented', ''

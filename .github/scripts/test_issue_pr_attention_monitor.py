@@ -3050,8 +3050,14 @@ def sla_event(event: str, login: str, created_at: str, **fields: object) -> dict
     return {'event': event, 'actor': {'login': login, 'type': 'User'}, 'created_at': created_at, **fields}
 
 
-def linked_pull(state: str, updated_at: str) -> dict[str, Any]:
-    issue = {'number': 99, 'state': state, 'updated_at': updated_at, 'pull_request': {'url': 'u'}}
+def linked_pull(state: str, updated_at: str, repo: str = 'r') -> dict[str, Any]:
+    issue = {
+        'number': 99,
+        'repository_url': f'https://api.github.com/repos/{repo}',
+        'state': state,
+        'updated_at': updated_at,
+        'pull_request': {'url': 'u'},
+    }
     return sla_event('cross-referenced', 'contributor', days_ago(20), source={'type': 'issue', 'issue': issue})
 
 
@@ -3103,6 +3109,7 @@ def decide(client: FakeClient, number: int = 1, label: str = 'p:2-high') -> tupl
         pytest.param([linked_pull('open', days_ago(6))], 'active', id='fresh-open-pull'),
         pytest.param([linked_pull('open', ago(dt.timedelta(days=7, hours=1)))], 'due', id='stale-open-pull'),
         pytest.param([linked_pull('closed', days_ago(1))], 'due', id='closed-pull'),
+        pytest.param([linked_pull('open', days_ago(1), repo='someone/else')], 'due', id='other-repo-pull'),
     ],
 )
 def test_priority_sla_sat_since_counts_the_label_maintainers_and_fresh_open_pulls(
@@ -3210,6 +3217,28 @@ def test_priority_sla_comment_still_covers_a_window_that_moved_back():
     client.timelines[1][1]['source']['issue']['state'] = 'closed'
 
     assert decide(client, label='p:1-highest')[0] == 'commented'
+
+
+def test_priority_sla_pull_request_update_never_opens_a_second_window():
+    client = sla_client(
+        {1: [label_event('p:1-highest', created_at=days_ago(10))]},
+        labels={1: ['p:1-highest']},
+        assignees={1: ['DouweM']},
+    )
+    outcome, body = monitor._priority_sla_decision(
+        client, 'r', client.items[1], 'p:1-highest', now=SLA_NOW - dt.timedelta(days=5)
+    )
+    assert outcome == 'due'
+    client.timelines[1] += [
+        {'event': 'commented', 'actor': SLA_BOT, 'created_at': days_ago(5), 'body': body},
+        linked_pull('open', days_ago(4)),
+    ]
+
+    # The pull request's update moved sat-since past the comment, and that window ran out too.
+    assert decide(client, label='p:1-highest')[0] == 'commented'
+    # A maintainer's reply still opens a new window.
+    client.timelines[1].append(sla_event('commented', 'DouweM', days_ago(4)))
+    assert decide(client, label='p:1-highest')[0] == 'due'
 
 
 def test_priority_sla_cannot_tell_without_a_moment_or_with_exhausted_maintainer_lookups(
@@ -3464,12 +3493,12 @@ def test_priority_sla_workflow_plans_read_only_and_posts_only_when_enabled():
         'default': True,
     }
     assert loaded['permissions'] == {}
-    assert jobs['plan']['permissions'] == {'contents': 'read', 'issues': 'read'}
+    assert jobs['plan']['permissions'] == {'contents': 'read', 'issues': 'read', 'pull-requests': 'read'}
     for job in jobs.values():
         checkout = job['steps'][0]
         assert checkout['with']['ref'] == '${{ github.event.repository.default_branch }}'
         assert checkout['with']['persist-credentials'] is False
-    assert jobs['post']['permissions'] == {'contents': 'read', 'issues': 'write'}
+    assert jobs['post']['permissions'] == {'contents': 'read', 'issues': 'write', 'pull-requests': 'read'}
     plan_step = jobs['plan']['steps'][-1]
     assert plan_step['run'] == 'python3 .github/scripts/issue_pr_attention_monitor.py priority-sla'
     assert plan_step['env']['PRIORITY_SLA_POST'] == (

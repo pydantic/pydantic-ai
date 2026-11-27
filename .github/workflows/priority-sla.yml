@@ -30,6 +30,8 @@ jobs:
     permissions:
       contents: read
       issues: read
+      # The linked pull requests in an issue's timeline.
+      pull-requests: read
     outputs:
       items: ${{ steps.plan.outputs.items }}
       post: ${{ steps.plan.outputs.post }}
@@ -70,6 +72,7 @@ jobs:
     permissions:
       contents: read
       issues: write
+      pull-requests: read
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:

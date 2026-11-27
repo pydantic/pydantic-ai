@@ -120,6 +120,7 @@ class LabelStub(_GitHubObject):
 
 
 class _LinkedIssue(_GitHubObject):
+    repository_url: str = ''
     state: str = ''
     updated_at: str = ''
     # Present only when the linked item is a pull request.
