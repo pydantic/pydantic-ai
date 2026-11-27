@@ -113,7 +113,7 @@ class TaskTelemetry:
     chose, is recorded only as content.
     """
 
-    ctx: RunContext[Any]
+    ctx: RunContext[object]
     """The delegating run, whose tracer and content setting the decisions are recorded with."""
     configured_names: frozenset[str] = frozenset()
     """Agent names the application configured. Any other name was chosen by the model, by creating that agent,
