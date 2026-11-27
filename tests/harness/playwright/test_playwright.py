@@ -5041,6 +5041,30 @@ class TestDialogs:
                 '[warning] dialog confirm dismissed: Delete this?'
             ]
 
+    async def test_a_beforeunload_dialog_is_accepted(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        page = _FakePage()
+        dialog = _FakeDialog(type='beforeunload', message='Leave this page?')
+        async with self._launched(monkeypatch, page) as session:
+            await self._open(session, page, dialog)
+            assert dialog.answer == 'accept'
+            assert [event.describe() for event in session.events] == [
+                '[warning] dialog beforeunload accepted: Leave this page?'
+            ]
+
+    @pytest.mark.parametrize('armed_accept', [True, False])
+    async def test_a_beforeunload_does_not_consume_an_armed_dialog(
+        self, monkeypatch: pytest.MonkeyPatch, armed_accept: bool
+    ) -> None:
+        page = _FakePage()
+        beforeunload = _FakeDialog(type='beforeunload', message='Leave this page?')
+        confirm = _FakeDialog()
+        async with self._launched(monkeypatch, page) as session:
+            await _toolset(page, session=session).handle_next_dialog(accept=armed_accept)
+            await self._open(session, page, beforeunload)
+            await self._open(session, page, confirm)
+        assert beforeunload.answer == 'accept'
+        assert confirm.answer == ('accept' if armed_accept else 'dismiss')
+
     async def test_an_armed_dialog_is_accepted_once(self, monkeypatch: pytest.MonkeyPatch) -> None:
         page = _FakePage()
         first, second = _FakeDialog(), _FakeDialog()
