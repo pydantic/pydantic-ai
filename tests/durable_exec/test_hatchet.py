@@ -9,9 +9,9 @@ from __future__ import annotations
 import asyncio
 import signal
 import threading
-import time
 from collections.abc import AsyncIterable, AsyncIterator, Iterator
 from dataclasses import dataclass, field
+from datetime import date
 from typing import Any
 
 import anyio
@@ -22,6 +22,7 @@ from pydantic_ai import (
     Agent,
     AgentRunResultEvent,
     AgentStreamEvent,
+    FunctionToolResultEvent,
     ModelMessage,
     ModelResponse,
     PartDeltaEvent,
@@ -31,8 +32,9 @@ from pydantic_ai import (
     ToolReturnPart,
 )
 from pydantic_ai.capabilities import ModelFallback, RetryOnModelErrors
-from pydantic_ai.capabilities.abstract import AbstractCapability
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelServerError, UserError
+from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
+from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelServerError, RunCancelled, UserError
+from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
@@ -48,7 +50,14 @@ with try_import() as imports_successful:
     from hatchet_sdk.config import EmbeddedHatchetConfig
 
     from pydantic_ai.durable_exec.hatchet import HatchetDurability, HatchetEventStream
-    from pydantic_ai.durable_exec.hatchet._operation_backend import hatchet_task_name
+    from pydantic_ai.durable_exec.hatchet._operation_backend import (
+        _model_error_message,  # pyright: ignore[reportPrivateUsage]
+        hatchet_task_name,
+    )
+    from pydantic_ai.durable_exec.hatchet._transports import (
+        _RequestWire,  # pyright: ignore[reportPrivateUsage]
+        _sort_sets,  # pyright: ignore[reportPrivateUsage]
+    )
 
 pytestmark = [
     pytest.mark.skipif(not imports_successful(), reason='hatchet-sdk not installed'),
@@ -121,6 +130,15 @@ class Scenario:
 
 
 @dataclass
+class StreamScenario:
+    """A durable task running an agent that publishes its events, and the tasks a worker needs to serve it."""
+
+    run: Standalone[Prompt, dict[str, Any]]
+    durability: HatchetDurability[Any]
+    workflows: list[Any]
+
+
+@dataclass
 class App:
     hatchet: Hatchet
     calls: Calls
@@ -137,6 +155,8 @@ class App:
     unserializable: Scenario
     late_stream_failure: Scenario
     retrying: Scenario
+    cancelling: StreamScenario
+    parallel: StreamScenario
 
 
 def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
@@ -238,6 +258,8 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
         unserializable=_build_unserializable(hatchet),
         late_stream_failure=_build_late_stream_failure(hatchet),
         retrying=_build_retrying(hatchet),
+        cancelling=_build_cancelling(hatchet),
+        parallel=_build_parallel(hatchet),
     )
     workflows: list[Any] = [
         run_weather,
@@ -253,6 +275,8 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
         *app.unserializable.workflows,
         *app.late_stream_failure.workflows,
         *app.retrying.workflows,
+        *app.cancelling.workflows,
+        *app.parallel.workflows,
     ]
     return app, workflows
 
@@ -344,6 +368,51 @@ def _build_retrying(hatchet: Hatchet) -> Scenario:
     return Scenario(run=run, calls=model_calls, workflows=[run, *durability.workflows])
 
 
+def _build_cancelling(hatchet: Hatchet) -> StreamScenario:
+    """A run that cancels itself, as its `timeout=` would, from a tool running in the durable task."""
+    durability = HatchetDurability[Any](hatchet, event_stream=True)
+    agent = Agent(TestModel(), name='cancelling', capabilities=[durability])
+
+    @agent.tool(durable=False)
+    async def cancel_run(ctx: RunContext[Any]) -> str:
+        ctx.cancel()
+        return 'cancelled'
+
+    @hatchet.durable_task(name='pydantic_ai_test_cancelling', input_validator=Prompt)
+    async def run(input: Prompt, ctx: DurableContext) -> dict[str, Any]:
+        try:
+            await agent.run(input.prompt)
+        except RunCancelled as error:
+            return {'error': type(error).__name__}
+        raise AssertionError('the run was not cancelled')  # pragma: no cover
+
+    return StreamScenario(run=run, durability=durability, workflows=[run, *durability.workflows])
+
+
+def _build_parallel(hatchet: Hatchet) -> StreamScenario:
+    """Two parallel tool calls, the first of which only finishes once the second has."""
+    second_done = asyncio.Event()
+    durability = HatchetDurability[Any](hatchet, event_stream=True)
+    agent = Agent(TestModel(call_tools=['first', 'second']), name='parallel', capabilities=[durability])
+
+    @agent.tool_plain
+    async def first() -> str:
+        await second_done.wait()
+        return 'first'
+
+    @agent.tool_plain
+    async def second() -> str:
+        second_done.set()
+        return 'second'
+
+    @hatchet.durable_task(name='pydantic_ai_test_parallel', input_validator=Prompt)
+    async def run(input: Prompt, ctx: DurableContext) -> dict[str, Any]:
+        await agent.run(input.prompt)
+        return {'ran': True}
+
+    return StreamScenario(run=run, durability=durability, workflows=[run, *durability.workflows])
+
+
 @pytest.fixture(scope='module')
 def app(tmp_path_factory: pytest.TempPathFactory) -> Iterator[App]:
     """An embedded Hatchet engine and a worker serving every durable task and child task in this module."""
@@ -359,15 +428,21 @@ def app(tmp_path_factory: pytest.TempPathFactory) -> Iterator[App]:
     # The worker installs its own signal handlers; put pytest's back once it's done.
     handlers = {sig: signal.getsignal(sig) for sig in (signal.SIGINT, signal.SIGTERM)}
     worker: Worker = hatchet.worker('pydantic-ai-test-worker', workflows=workflows)
+    # Wait for the worker to start its action listener process during setup, where its launch belongs to this
+    # module's fixture rather than to the first test.
+    listener_started = threading.Event()
+    start_listener = worker._start_action_listener  # pyright: ignore[reportPrivateUsage]
+
+    def start_action_listener() -> Any:
+        process = start_listener()
+        listener_started.set()
+        return process
+
+    worker._start_action_listener = start_action_listener  # pyright: ignore[reportPrivateUsage]
     thread = threading.Thread(target=worker.start, daemon=True)
     thread.start()
     try:
-        # Wait for the worker to start its action listener process during setup, where its launch belongs to this
-        # module's fixture rather than to the first test.
-        deadline = time.monotonic() + 60
-        while worker.status != 'HEALTHY':
-            assert thread.is_alive() and time.monotonic() < deadline, f'Hatchet worker did not start: {worker.status}'
-            time.sleep(0.1)
+        assert listener_started.wait(READINESS_WAIT_TIMEOUT), f'Hatchet worker did not start: {worker.status}'
         yield app
     finally:
         _stop_worker(worker, thread)
@@ -477,10 +552,10 @@ async def test_model_error_keeps_its_type(app: App):
 async def test_event_stream(app: App):
     """Tool events and the result are published from the durable task, and model token deltas from the model task."""
     ref = await app.run_streaming.aio_run(Prompt(prompt='What is the weather?'), wait_for_result=False)
-    with anyio.fail_after(30):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         result = await ref.aio_result()
     # The topic keeps the run's events after it ends, so subscribing afterwards reads them all.
-    with anyio.fail_after(10):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         events = [event async for event in app.streaming_durability.stream_agent_events(ref.workflow_run_id)]
 
     assert [type(event).__name__ for event in events if not isinstance(event, PartDeltaEvent)] == [
@@ -506,9 +581,9 @@ async def test_event_stream(app: App):
 async def test_event_stream_of_failed_run(app: App):
     """A run that fails publishes no result, so its subscription ends early with the failure instead of waiting."""
     ref = await app.run_failing_model.aio_run(Prompt(prompt='hi'), wait_for_result=False)
-    with anyio.fail_after(30):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         await ref.aio_result()
-    with anyio.fail_after(10):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         events = app.failing_durability.stream_agent_events(ref.workflow_run_id)
         assert [event async for event in events] == []
     assert events.result is None
@@ -519,13 +594,65 @@ async def test_event_stream_of_failed_run(app: App):
 async def test_event_stream_ends_when_after_run_fails(app: App):
     """A capability's `after_run` failing the run still ends the subscription, though no `on_run_error` runs."""
     ref = await app.run_after_run_failing.aio_run(Prompt(prompt='hi'), wait_for_result=False)
-    with anyio.fail_after(30):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         assert await ref.aio_result() == {'error': 'after_run failed'}
-    with anyio.fail_after(10):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         events = app.after_run_durability.stream_agent_events(ref.workflow_run_id)
         published = [type(event).__name__ async for event in events]
     assert 'AgentRunResultEvent' not in published
     assert events.error == 'RuntimeError'
+
+
+async def test_event_stream_of_cancelled_run(app: App):
+    """A run that cancels itself, as its `timeout=` does, ends the subscription with `RunCancelled`."""
+    ref = await app.cancelling.run.aio_run(Prompt(prompt='hi'), wait_for_result=False)
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        assert await ref.aio_result() == {'error': 'RunCancelled'}
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        events = app.cancelling.durability.stream_agent_events(ref.workflow_run_id)
+        async for _event in events:
+            pass
+    assert events.error == 'RunCancelled'
+
+
+async def test_parallel_tool_results_are_published_in_call_order(app: App):
+    """Parallel tool calls publish their results in call order, which a replay reproduces, not the order they finished in."""
+    ref = await app.parallel.run.aio_run(Prompt(prompt='hi'), wait_for_result=False)
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await ref.aio_result()
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        events = [event async for event in app.parallel.durability.stream_agent_events(ref.workflow_run_id)]
+    results = [event.part.tool_name for event in events if isinstance(event, FunctionToolResultEvent)]
+    assert results == ['first', 'second']
+
+
+def test_strict_deps_cross_the_task_boundary(app: App):
+    """`deps` cross as JSON, so a strict model's fields that JSON holds as strings, like a date, are read back."""
+
+    class StrictDeps(BaseModel, strict=True):
+        day: date
+
+    agent = Agent(
+        TestModel(), name='strict_deps', deps_type=StrictDeps, capabilities=[HatchetDurability[StrictDeps](app.hatchet)]
+    )
+    durability = next(cap for cap in leaf_capabilities(agent.root_capability) if isinstance(cap, HatchetDurability))
+    deps = StrictDeps(day=date(2026, 1, 1))
+    assert durability.load_deps(durability.dump_deps(deps)) == deps
+
+
+def test_request_sets_cross_sorted():
+    """A set crosses as a sorted list, as its iteration order changes with the hash seed of the worker replaying it."""
+    parameters = ModelRequestParameters(revealed_tool_names={'charlie', 'alpha', 'bravo'})
+    payload = _sort_sets(
+        _RequestWire, {'model_request_parameters': {'revealed_tool_names': list(parameters.revealed_tool_names)}}
+    )
+    assert payload == {'model_request_parameters': {'revealed_tool_names': ['alpha', 'bravo', 'charlie']}}
+
+
+def test_model_error_with_unencodable_body_crosses_as_text():
+    """A model error whose body isn't UTF-8 crosses as its message instead of failing the task with an encoding error."""
+    error = ModelHTTPError(status_code=400, model_name='rejecting', body=b'\xff')
+    assert _model_error_message(error) == str(error)
 
 
 async def test_unserializable_tool_result_is_not_retried(app: App):
