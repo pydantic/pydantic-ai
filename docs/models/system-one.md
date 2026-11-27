@@ -56,6 +56,12 @@ print(result.output)
 
 Nimble picks one label in one request, and reports how sure it is of each in [`provider_details`](decision.md#confidence-and-thresholds).
 
+## Nace Drex {#nace-drex}
+
+[Drex](https://console.nace.ai/docs/drex/quickstart) decision models use the same API. Set `SYSTEM_ONE_BASE_URL` to `https://console.nace.ai/v1` and `SYSTEM_ONE_API_KEY` to your Nace API key, then use `system-one:drex-max-v1.1` or `system-one:drex-v2.0` in the example above. With an explicit [`SystemOneProvider`][pydantic_ai.providers.system_one.SystemOneProvider], pass the same URL and key as `base_url` and `api_key`; this provider does not read `NACE_API_KEY` automatically.
+
+For Drex, set the [profile](#limits) fields `decision_max_choice_options` and `decision_max_score_levels` to `255`, and `decision_requires_instructions` to `False`. Configure the agent's `extra_headers` model setting to send the `X-Nace-Legend` header with the value `object`, so score answers use the object-shaped [legend](https://console.nace.ai/docs/drex/guides/reading-answers#legend-as-an-array-or-an-object) that `SystemOneModel` expects. See the [Drex limits](https://console.nace.ai/docs/drex/reference/limits) for request and token limits. `SystemOneModel` currently accepts text only, including when the selected Drex model supports images through Nace's API.
+
 ## Configuration
 
 To use any other server, set the API's URL, with or without a trailing `/v1`, and its key if it has one, as environment variables:
