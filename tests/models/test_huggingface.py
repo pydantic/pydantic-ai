@@ -11,6 +11,8 @@ from unittest.mock import Mock
 
 import httpx
 import pytest
+from cassetter import Cassette
+from pydantic import BaseModel
 
 from pydantic_ai import (
     Agent,
@@ -28,6 +30,7 @@ from pydantic_ai import (
     ModelResponse,
     ModelRetry,
     ModelTimeoutError,
+    NativeOutput,
     RetryFeedbackPart,
     RetryInfo,
     SystemPromptPart,
@@ -51,6 +54,7 @@ from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
 
 from .._inline_snapshot import snapshot
+from ..cassette_utils import request_json
 from ..conftest import IsDatetime, IsInstance, IsNow, IsStr, message, raise_if_exception, try_import
 from .mock_async_stream import MockAsyncStream
 
@@ -1566,3 +1570,20 @@ async def test_empty_stream_raises_model_empty_response_error(allow_model_reques
     with pytest.raises(ModelEmptyResponseError, match='Streamed response ended without content or tool calls'):
         async with Agent(model).run_stream('hello'):
             pass
+
+
+@pytest.mark.vcr()
+async def test_native_output(allow_model_requests: None, huggingface_api_key: str, vcr: Cassette):
+    """Native output is sent as a JSON schema `response_format` on a model whose profile supports it."""
+
+    class CityLocation(BaseModel):
+        city: str
+        country: str
+
+    model = HuggingFaceModel('Qwen/Qwen3.5-397B-A17B', provider=HuggingFaceProvider(api_key=huggingface_api_key))
+    agent = Agent(model, output_type=NativeOutput(CityLocation))
+
+    result = await agent.run('What is the largest city in Mexico?')
+
+    assert result.output == snapshot()
+    assert request_json(vcr.requests[0])['response_format'] == snapshot()
