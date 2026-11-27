@@ -2185,7 +2185,9 @@ not the filesystem the file tools act on there.
   `read_only_patterns` set, or a `ToolGuardrail` or `ToolCallJudge` (a plugin's
   or the agent's own) that checks or hides `write_file`, `edit_file`, `shell`,
   or `run_code`. Any bound `Permissions` in `read-only` mode (the session's,
-  the agent's own, or a plugin's) mounts it read-only for that run.
+  the agent's own, or a plugin's) mounts it read-only for that run, and so does
+  one with protected paths outside `full`, such as the session's under `auto`,
+  since `pathlib` could change Pax's settings without asking.
 - **Not mounted:** no `read_file`, `allowed_patterns` or `denied_patterns`, a
   `ToolGuardrail` or `ToolCallJudge` that may check or hide `read_file`, no
   `FileSystem`, more than one, a supplied agent that does not expose its
@@ -2312,7 +2314,9 @@ Outside `full`, a change to Pax's own settings always asks, and only you can app
 folder `--database` names, to any `.pax/` or `.clai/` folder, or to a repository's `.git/hooks/` or `.git/config`
 (where `core.hooksPath` can move the hooks); a shell command
 that names one of these in an argument or redirection, unless it only reads them with a program such as `cat` or
-`grep`; and `pax config set` or `reset` and `pax plugins add`, `enable`, `disable`, or `remove`. A session no one
+`grep`; `pax config set` or `reset` and `pax plugins add`, `enable`, `disable`, or `remove`; and `git config`,
+which can set `core.hooksPath` (reads such as `git config --get` ask too). Under `auto`, Code Mode's `run_code`
+mounts the workspace read-only, so `pathlib` can't make such a change unasked. A session no one
 can be asked in denies them. Commands are matched by their words, so one that builds the path as it runs, such as
 `cd .pax && ...` or a script the agent wrote, is not caught: like the command patterns, this is a convenience, not
 a sandbox. `full` lets these run too.

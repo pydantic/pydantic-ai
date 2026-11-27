@@ -44,6 +44,7 @@ from pydantic_ai_harness.sub_agents import SELF_AGENT_NAME, SubAgents
 from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.config import PERMISSION_MODES, PERMISSIONS_SETTING as SETTING
 from pydantic_ai_pax.config.project_settings import LEGACY_PROJECT_DIR, PROJECT_DIR
+from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.paths import LEGACY_DIRECTORY_NAME, config_dir
 from pydantic_ai_pax.runtime.task_prompts import is_delegate_tool
 
@@ -61,22 +62,26 @@ UNANSWERED = 'No one could be asked to approve it here; /permissions full lets s
 PROTECTED = "This may change Pax's own settings, which only you can approve."
 """The reason a call `Permissions` holds for `protected_paths` or `PROTECTED_COMMANDS` gives in its question."""
 
-_PROGRAMS = ('pax', 'clai2', 'pydantic_ai_pax', 'pydantic_clai2')
-"""The names `pax` runs under: its command, the deprecated one, and their modules for `python -m`."""
+_PROGRAMS = ('pax', 'pydantic-ai-pax', 'clai2', 'pydantic-clai2', 'pydantic_ai_pax', 'pydantic_clai2')
+"""The names `pax` runs under: its commands, the deprecated ones, and their modules for `python -m`."""
 
-PROTECTED_COMMANDS = tuple(
-    f'{program} {change}'
-    for program in _PROGRAMS
-    for change in (
-        'config set',
-        'config reset',
-        'plugins add',
-        'plugins enable',
-        'plugins disable',
-        'plugins remove',
-    )
+PROTECTED_COMMANDS = (
+    *(
+        f'{program} {change}'
+        for program in _PROGRAMS
+        for change in (
+            'config set',
+            'config reset',
+            'plugins add',
+            'plugins enable',
+            'plugins disable',
+            'plugins remove',
+        )
+    ),
+    # It can set `core.hooksPath`, which points a repository's hooks at any folder, without naming `.git/config`.
+    'git config',
 )
-"""The `pax` subcommands that change its settings, which ask outside `full` like a write to them."""
+"""The `pax` subcommands that change its settings, and `git config`, which ask outside `full` like a write to them."""
 _QUESTION_LENGTH = 500
 """What an `ask_user` question may hold; a longer command is cut, so the terminal prints it in full first."""
 
@@ -92,25 +97,25 @@ def permissions_command(context: CommandContext, args: list[str]) -> str:
     return f'Permissions: {MODES[context.settings.permissions]}\n{choices}'
 
 
-def protected_paths(database: Path | None = None) -> tuple[str, ...]:
+def protected_paths(store: SettingsStore | None = None) -> tuple[str, ...]:
     """Globs for Pax's own settings, which the agent may not change without asking outside `full`.
 
     The user's Pax folder (its settings database, credential files, and plugins folder) under its name and its
-    name before the rename, the settings `database` with its plugins folder when it is elsewhere, every
+    name before the rename, the `store`'s settings database and plugins folder when they are elsewhere, every
     project's `.pax/` and `.clai/` folders, and every repository's `.git/hooks/` and `.git/config`, each as written
     and resolved.
     """
     folder = config_dir()
     directories = [folder, folder.with_name(LEGACY_DIRECTORY_NAME)]
-    if database is not None:
-        directories.append(database.parent / 'plugins')
+    if store is not None:
+        directories.append(store.plugins_dir)
     patterns: list[str] = []
     for directory in directories:
         for form in _spellings(directory):
             patterns += [form, f'{form}/*']
-    if database is not None:
+    if store is not None:
         # The database's `-wal`, `-shm`, and `-journal` files too.
-        patterns += [f'{form}*' for form in _spellings(database)]
+        patterns += [f'{form}*' for form in _spellings(store.path)]
     for name in (PROJECT_DIR.name, LEGACY_PROJECT_DIR.name, '.git/hooks'):
         patterns += [name, f'{name}/*']
     # `core.hooksPath` in a repository's config can point its hooks at any folder, around `.git/hooks/`.
@@ -124,17 +129,17 @@ def _spellings(path: Path) -> list[str]:
 
 
 def session_permissions(
-    mode: Callable[[], PermissionMode], *, database: Path | None = None
+    mode: Callable[[], PermissionMode], *, store: SettingsStore | None = None
 ) -> 'tuple[Permissions[AgentDepsT], DenyUnanswered[AgentDepsT], KeepDelegatesChecked[AgentDepsT]]':
     """What a session binds: `Permissions` reading `mode` on each call, and its two backstops.
 
-    Outside `full`, `Permissions` asks before every change to `protected_paths(database)` and every
+    Outside `full`, `Permissions` asks before every change to `protected_paths(store)` and every
     `PROTECTED_COMMANDS` command. The runtime keeps them for the session, so approvals remembered for its
     conversations end with it. It binds the `DenyUnanswered` backstop only to runs no one can be asked in: see
     `unattended_only`.
     """
     permissions = Permissions[AgentDepsT](
-        lambda ctx: mode(), protected_paths=protected_paths(database), protected_commands=PROTECTED_COMMANDS
+        lambda ctx: mode(), protected_paths=protected_paths(store), protected_commands=PROTECTED_COMMANDS
     )
     return (
         permissions,

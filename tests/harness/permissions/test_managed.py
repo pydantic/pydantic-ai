@@ -458,3 +458,20 @@ class TestReviewerApprovals:
             ],
         )
         assert (await agent.run('go')).output == '[stdout]\nhi\n'
+
+    async def test_a_managed_deny_refuses_a_protected_write_instead_of_holding_it(self, tmp_path: Path) -> None:
+        agent = Agent[None, 'str | DeferredToolRequests'](
+            _calls(('write_file', {'path': '.pax/settings.json', 'content': 'x'})),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                FileSystem(),
+                Permissions(
+                    'auto', managed_rules=[PermissionRule('deny', tools=['write_file'])], protected_paths=['.pax/*']
+                ),
+            ],
+        )
+        assert (await agent.run('go')).output == (
+            'A managed permission rule denied this file write, so it did not run. Do not retry it.'
+        )

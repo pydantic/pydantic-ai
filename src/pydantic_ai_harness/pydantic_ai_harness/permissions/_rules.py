@@ -34,7 +34,7 @@ _OPTIONS = re.compile(r'-[A-Za-z]+')
 _REDIRECTION = re.compile(r'(?<!\d)\d*[<>]+&?\s*[^\s;&|<>()]*')
 _GLOB_LIMIT = 4096
 """Longer argument values aren't globbed, which could take quadratic time: ask and deny rules match them."""
-_COMMAND_LIMIT = 65536
+COMMAND_LIMIT = 65536
 """Longer commands aren't parsed: no rule allows them, and they ask when an ask or deny command rule applies."""
 _HARMLESS_REDIRECTS = frozenset({('>', '/dev/null'), *(('>&', str(fd)) for fd in range(10))})
 
@@ -323,7 +323,7 @@ def _unsplittable_rule(
 
 def _command_rule(rules: Sequence[PermissionRule[Any]], command: str, *, posix: bool) -> PermissionRule[Any] | None:
     """The rule deciding a shell command: the strictest any simple command matches, `'allow'` only if all do."""
-    if len(command) > _COMMAND_LIMIT:
+    if len(command) > COMMAND_LIMIT:
         return _UNSPLITTABLE_RULE if _restricts(rules) else None
     segments = _segments(command) if posix else None
     if segments is None:
@@ -393,7 +393,7 @@ def command_matches(rules: Sequence[PermissionRule[Any]], command: str, *, posix
 
 def command_segments(command: str) -> list[tuple[list[str], bool]] | None:
     """The simple commands in `command`, each with whether it redirects; `None` when it is too complex to split."""
-    if len(command) > _COMMAND_LIMIT:
+    if len(command) > COMMAND_LIMIT:
         return None
     segments = _segments(command)
     return None if segments is None else [(segment.words, segment.redirected) for segment in segments]
