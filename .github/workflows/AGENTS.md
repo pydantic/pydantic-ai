@@ -330,7 +330,10 @@ Publication is serialized per PR and marks the `Gate:` statuses pending before s
 incomplete data fail closed. After the requirements are met, a new evaluation replaces the previous
 failure through GitHub's latest-per-context commit statuses. Rerun an existing current-head,
 default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add
-branch-selectable dispatch to this privileged workflow. Workflows and scripts remain owned in `.github/CODEOWNERS`.
+branch-selectable dispatch to this privileged workflow. Do not rerun a run whose `Resolve review gate target` job
+was skipped. That run woke on a cancelled run, a merge group, or a skipped `PR Review Checks` run, and its rerun
+skips again.
+Workflows and scripts remain owned in `.github/CODEOWNERS`.
 
 # `PR Review Checks` reviews every same-repository pull request head
 
