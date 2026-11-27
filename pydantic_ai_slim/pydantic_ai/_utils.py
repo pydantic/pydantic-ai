@@ -1224,15 +1224,21 @@ def _rename_shared_defs_with_renamed_refs(
 
 
 _MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\r?\n(\{.*?\})\s*(?:\r?\n?```|\Z)', flags=re.DOTALL)
+_MARKDOWN_FENCE_OPENING_PATTERN = re.compile(r'```(?:\w+)?\r?\n\{')
 
 
 def strip_markdown_fences(text: str) -> str:
     if text.startswith('{'):
         return text
 
-    match = re.search(_MARKDOWN_FENCES_PATTERN, text)
-    if match:
-        return match.group(1)
+    # A search with the full pattern would scan to the end of the text from every opening that has no closing, which
+    # takes quadratic time. Matching at the first opening alone is linear and finds the same: whether a `}` ends the
+    # JSON doesn't depend on the opening, so any `}` that ends a later opening's JSON ends the first one's too.
+    opening = _MARKDOWN_FENCE_OPENING_PATTERN.search(text)
+    if opening:
+        match = _MARKDOWN_FENCES_PATTERN.match(text, opening.start())
+        if match:
+            return match.group(1)
 
     return text
 
