@@ -581,25 +581,19 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
         """Load a tool part of an assistant `UIMessage` as its call and, once it has output, its return."""
         tool_name = part.tool_name if isinstance(part, DynamicToolUIPart) else part.type.removeprefix('tool-')
 
-        args: str | dict[str, Any] | None = part.input
-
-        if isinstance(args, str):
-            try:
-                parsed = json.loads(args)
-                if _is_str_dict(parsed):
-                    args = parsed
-            except (ValueError, RecursionError):  # also integers past the digit limit, and deeply nested JSON
-                pass
-        elif isinstance(args, dict) or args is None:
-            pass
-        else:
-            assert_never(args)
-
+        args = _tool_part_args(part)
         if part.provider_executed:
             cls._load_native_tool_part(part, tool_name, args, context.builder)
             return
 
-        provider_meta = load_provider_metadata(part.call_provider_metadata)
+        # The AI SDK keeps the `providerMetadata` of a `tool-input-error` chunk as the part's result metadata, so a
+        # call that chunk opened has its call metadata there, and the outcome claim the chunk carries is there too.
+        result_meta = (
+            load_provider_metadata(part.result_provider_metadata)
+            if isinstance(part, ToolOutputErrorPart | DynamicToolOutputErrorPart)
+            else {}
+        )
+        provider_meta = load_provider_metadata(part.call_provider_metadata) or result_meta
         provider_name = provider_meta.get('provider_name')
         tool_kind = _claimed_tool_kind(provider_meta)
         context.builder.add(
@@ -635,7 +629,11 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
             # `'failed'` and `'retried'` share `output-error`, so the outcome
             # claim in the metadata channel is what tells a retry apart from a
             # definitive failure; without it the return reloads as `'failed'`.
-            retried = provider_meta.get('outcome') == 'retried'
+            # A call the run discarded is closed with `tool-input-error`, which
+            # also lands in `output-error`, so its `'success'` stub or
+            # `'interrupted'` closeout is restored from the same claim.
+            claimed_outcome = result_meta.get('outcome', provider_meta.get('outcome'))
+            retried = claimed_outcome == 'retried'
             structured = provider_meta.get('content') if retried else None
             context.pending_returns.append(
                 ToolReturnPart(
@@ -645,7 +643,7 @@ class VercelAIAdapter(UIAdapter[RequestData, UIMessage, BaseChunk, AgentDepsT, O
                     # ride the metadata channel as the list they are, so the
                     # provider is sent the same structure after a round-trip.
                     content=_validate_tool_output(structured) if isinstance(structured, list) else part.error_text,
-                    outcome='retried' if retried else 'failed',
+                    outcome=claimed_outcome if claimed_outcome in ('retried', 'success', 'interrupted') else 'failed',
                     retry=parse_tool_retry(provider_meta.get('retry')) if retried else None,
                     tool_kind=tool_kind,
                 )
@@ -1657,6 +1655,27 @@ def _parse_json(value: object) -> object:
         return json.loads(value)
     except (ValueError, RecursionError):  # also integers past the digit limit, and deeply nested JSON
         return None
+
+
+def _tool_part_args(part: ToolUIPart | DynamicToolUIPart) -> str | dict[str, Any] | None:
+    """A tool part's call arguments, parsed from a JSON string when they are a JSON object."""
+    args: str | dict[str, Any] | None = part.input
+    if args is None and isinstance(part, ToolOutputErrorPart):
+        # The AI SDK keeps the input of a call closed by `tool-input-error` as `rawInput` only.
+        args = part.raw_input
+
+    if isinstance(args, str):
+        try:
+            parsed = json.loads(args)
+            if _is_str_dict(parsed):
+                args = parsed
+        except (ValueError, RecursionError):  # also integers past the digit limit, and deeply nested JSON
+            pass
+    elif isinstance(args, dict) or args is None:
+        pass
+    else:
+        assert_never(args)
+    return args
 
 
 def _retried_structured_content(tool_result: ToolReturnPart | None) -> list[Any] | None:

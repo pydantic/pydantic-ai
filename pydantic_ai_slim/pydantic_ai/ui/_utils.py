@@ -39,6 +39,9 @@ The AG-UI MCP Apps middleware fixes this name, and renderers such as CopilotKit'
 type. Vercel AI reuses it so both protocols send the same event.
 """
 
+TOOL_INTERRUPTED_BY_ERROR: Final = 'Tool execution was interrupted by an error.'
+"""The synthetic result content that closes a pending tool call a run error interrupted."""
+
 
 def set_ui_message_id(message: ModelMessage, ui_message_id: str) -> None:
     """Keep the UI message id that `message` was loaded from, for `get_ui_message_id` to restore.

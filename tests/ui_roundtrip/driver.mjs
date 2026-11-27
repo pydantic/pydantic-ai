@@ -9,7 +9,8 @@
 // - `<protocol>.regenerate` does the same for the client's retry of its last response, instead of a new message,
 //   and takes `messages` the same way, for a retry from a client hydrated after a reload.
 // - `<protocol>.receive` feeds the server's stream to the pending request and returns the client's messages, and
-//   `data`: what it handed the app besides them, the transient data parts or custom events.
+//   `data`: what it handed the app besides them, the transient data parts or custom events. For Vercel AI it also
+//   returns `toolCalls`, the ids of the tool calls the client handed `onToolCall` to run on the frontend.
 //
 // Vercel AI goes through the AI SDK's `AbstractChat` (what `useChat` wraps), with a transport that hands the
 // request to the test and streams back what the test receives. AG-UI goes through `AbstractAgent.runAgent()` of
@@ -83,6 +84,8 @@ class VercelSession {
       // Deterministic ids, so failures reproduce.
       generateId: () => `${this.chatId}-client-${++this.counter}`,
       onData: (part) => this.turn.data.push(part),
+      // What a frontend tool would run: the ids of the tool calls the client handed the app to execute.
+      onToolCall: ({ toolCall }) => void this.turn.toolCalls.push(toolCall.toolCallId),
       transport: {
         sendMessages: async ({ trigger, chatId, messageId, messages }) => {
           let controller;
@@ -112,7 +115,7 @@ class VercelSession {
   }
 
   async start(send) {
-    this.turn = { sent: deferred(), data: [] };
+    this.turn = { sent: deferred(), data: [], toolCalls: [] };
     // `AbstractChat` keeps a failed request's error rather than rejecting.
     this.turn.done = send().then(() => this.chat.error);
     return await sentOrFailed(this.turn.sent.promise, this.turn.done);
@@ -124,7 +127,12 @@ class VercelSession {
     }
     this.turn.controller.close();
     const error = await this.turn.done;
-    return { error: error && String(error), messages: structuredClone(this.chat.messages), data: this.turn.data };
+    return {
+      error: error && String(error),
+      messages: structuredClone(this.chat.messages),
+      data: this.turn.data,
+      toolCalls: this.turn.toolCalls,
+    };
   }
 }
 

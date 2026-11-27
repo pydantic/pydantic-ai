@@ -28,6 +28,7 @@ from pydantic_ai.conversation import Conversation
 from pydantic_ai.conversation_store import ConversationEntry, ConversationRecord, InMemoryConversationStore
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
+    INTERRUPTED_TOOL_RETURN_CONTENT,
     AgentInstructionSource,
     AudioUrl,
     BinaryContent,
@@ -3864,30 +3865,29 @@ async def test_run_stream_error_closes_open_native_tool_call():
     )
 
 
+async def _stream_tool_call_until_usage_limit(
+    messages: list[ModelMessage], agent_info: AgentInfo
+) -> AsyncIterator[DeltaToolCalls | str]:
+    # A function tool call opens at index 0 and stays open (never gets a `PartEndEvent`)...
+    yield {0: DeltaToolCall(name='my_tool', json_args='{"query": "hi"}', tool_call_id='call_1')}
+    # ...while a second call at a new index carries enough tokens to trip the usage limit mid-stream, so the
+    # run errors before `call_1` is closed.
+    while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
+        yield {
+            1: DeltaToolCall(name='my_tool', json_args=' '.join(f'word{i}' for i in range(40)), tool_call_id='call_2')
+        }
+
+
 async def test_run_stream_error_closes_open_tool_call():
-    """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must emit `tool-input-available` before `error`.
+    """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must close the call before `error`.
 
     A `ToolCallPart` — the streamed form of both function and output tool calls — is tracked in neither the
     open text/thinking slot nor `_pending_tool_calls` (which only holds already-dispatched calls), so without
     an explicit close the AI SDK v6 client aborts at the `error` chunk leaving the call stuck in an
-    input-streaming state.
+    input-streaming state. The run discarded the call, so on v6 it's closed with `tool-input-error`:
+    `tool-input-available` would have the client run it through `onToolCall`.
     """
-
-    async def stream_tool_call(
-        messages: list[ModelMessage], agent_info: AgentInfo
-    ) -> AsyncIterator[DeltaToolCalls | str]:
-        # A function tool call opens at index 0 and stays open (never gets a `PartEndEvent`)...
-        yield {0: DeltaToolCall(name='my_tool', json_args='{"query": "hi"}', tool_call_id='call_1')}
-        # ...while a second call at a new index carries enough tokens to trip the usage limit mid-stream, so the
-        # run errors before `call_1` is closed.
-        while True:  # unbounded loop so the aborted stream leaves no uncovered exit branch
-            yield {
-                1: DeltaToolCall(
-                    name='my_tool', json_args=' '.join(f'word{i}' for i in range(40)), tool_call_id='call_2'
-                )
-            }
-
-    agent = Agent(model=FunctionModel(stream_function=stream_tool_call))
+    agent = Agent(model=FunctionModel(stream_function=_stream_tool_call_until_usage_limit))
 
     request = SubmitMessage(
         id='foo',
@@ -3899,24 +3899,352 @@ async def test_run_stream_error_closes_open_tool_call():
         async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
     ]
 
-    event_types = [e if isinstance(e, str) else e['type'] for e in events]
-    # `tool-input-available` must land immediately before `error`; anything after `error` is dropped by the client.
-    assert event_types[event_types.index('error') - 1] == 'tool-input-available'
-    # ...and it must carry the same `toolCallId` as its `tool-input-start`, or the client can't mark the call done.
-    tool_start = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-start')
-    tool_available = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-available')
-    assert tool_available['toolCallId'] == tool_start['toolCallId']
-    assert event_types == snapshot(
+    # The call must be closed immediately before `error`; anything after `error` is dropped by the client.
+    assert events == snapshot(
         [
-            'start',
-            'start-step',
-            'tool-input-start',
-            'tool-input-delta',
-            'tool-input-available',
-            'error',
-            'finish-step',
-            'finish',
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'call_1', 'toolName': 'my_tool'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_1', 'inputTextDelta': '{"query": "hi"}'},
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'call_1',
+                'toolName': 'my_tool',
+                'input': {'query': 'hi'},
+                'errorText': 'Tool execution was interrupted by an error.',
+            },
+            {
+                'type': 'error',
+                'errorText': 'Exceeded the output_tokens_limit of 10 (output_tokens=44). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish', 'finishReason': 'error'},
             '[DONE]',
+        ]
+    )
+
+
+async def _error_while_streaming(*parts: ToolCallPart) -> AsyncIterator[PartStartEvent]:
+    """Start each part at its own index, then raise as a model provider error does mid-stream."""
+    for index, part in enumerate(parts):
+        yield PartStartEvent(index=index, part=part)
+    raise RuntimeError('The model provider is down.')
+
+
+async def _error_closeout_events(*parts: ToolCallPart) -> list[Any]:
+    event_stream = VercelAIEventStream[None, Any](sdk_version=6)
+    return [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(_error_while_streaming(*parts)))
+        if '[DONE]' not in event
+    ]
+
+
+async def test_run_stream_error_closeout_of_redacted_call_warns_a_client_holding_the_history():
+    """The `tool-input-error` closeout that sends a `'redacted'` call's placeholder warns, as the base closeout does.
+
+    A unit test of the stream: `ui_visibility` is set by a capability, not by a model, and no recording errors
+    mid-stream, so the events are built by hand.
+    """
+    part = ToolCallPart('lookup_order', {'order_id': 'o_1'}, tool_call_id='call_1', ui_visibility='redacted')
+    event_stream = VercelAIEventStream[None, Any](sdk_version=6)
+    # As an adapter run with client-held history sets it.
+    event_stream._warns_on_hidden_tools = True  # pyright: ignore[reportPrivateUsage]
+
+    with pytest.warns(UserWarning, match="`manage_message_history='server'`") as record:
+        [_ async for _ in event_stream.encode_stream(event_stream.transform_stream(_error_while_streaming(part)))]
+    assert len(record) == 1
+
+
+async def test_run_stream_error_closeout_of_redacted_call_sends_the_placeholder():
+    """A `'redacted'` call cut off by a run error is closed with `tool-input-error`, and the placeholder as its error text.
+
+    A unit test of the stream: `ui_visibility` is set by a capability, not by a model, and no recording errors mid-stream,
+    so the events are built by hand.
+    """
+    part = ToolCallPart('lookup_order', {'order_id': 'o_1'}, tool_call_id='call_1', ui_visibility='redacted')
+
+    events = await _error_closeout_events(part)
+
+    assert [event for event in events if event['type'] == 'tool-input-error'] == snapshot(
+        [
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'call_1',
+                'toolName': 'lookup_order',
+                'input': {'order_id': 'o_1'},
+                'errorText': '[REDACTED]',
+            }
+        ]
+    )
+
+
+async def test_run_stream_error_closeout_skips_call_whose_id_a_private_call_reused():
+    """A `'private'` call that reuses a streaming call's `tool_call_id` takes over the id, so nothing closes the call.
+
+    A unit test of the stream: no model in the test suite repeats a `tool_call_id`, so the events are built by hand.
+    """
+    public = ToolCallPart('lookup_order', {'order_id': 'o_1'}, tool_call_id='dup')
+    private = ToolCallPart('lookup_margin', {}, tool_call_id='dup', ui_visibility='private')
+
+    events = await _error_closeout_events(public, private)
+
+    assert [event['type'] for event in events] == snapshot(
+        ['start', 'start-step', 'tool-input-start', 'tool-input-delta', 'error', 'finish-step', 'finish']
+    )
+    assert 'lookup_margin' not in json.dumps(events)
+
+
+async def test_run_stream_error_closes_open_tool_call_v5():
+    """AI SDK v5 has no `tool-input-error`, so an errored run still closes its streaming tool call with `tool-input-available`."""
+    agent = Agent(model=FunctionModel(stream_function=_stream_tool_call_until_usage_limit))
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request, sdk_version=5)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream(usage_limits=UsageLimits(output_tokens_limit=10)))
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'call_1', 'toolName': 'my_tool'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_1', 'inputTextDelta': '{"query": "hi"}'},
+            {'type': 'tool-input-available', 'toolCallId': 'call_1', 'toolName': 'my_tool', 'input': {'query': 'hi'}},
+            {
+                'type': 'error',
+                'errorText': 'Exceeded the output_tokens_limit of 10 (output_tokens=44). Consider raising the limit, or see the docs on usage limits for budget-aware patterns: https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits',
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish', 'finishReason': 'error'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_error_keeps_available_tool_call_closeout():
+    """A call already announced with `tool-input-available` keeps its `tool-output-error` closeout on v6 when the run errors."""
+    agent = Agent(model=TestModel())
+
+    @agent.tool_plain
+    async def tool(query: str) -> str:
+        raise ValueError('Unknown tool')
+
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(agent, request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'pyd_ai_tool_call_id__tool', 'toolName': 'tool'},
+            {'type': 'tool-input-delta', 'toolCallId': 'pyd_ai_tool_call_id__tool', 'inputTextDelta': '{"query":"a"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'pyd_ai_tool_call_id__tool',
+                'toolName': 'tool',
+                'input': {'query': 'a'},
+            },
+            {
+                'type': 'tool-output-error',
+                'toolCallId': 'pyd_ai_tool_call_id__tool',
+                'errorText': 'Tool execution was interrupted by an error.',
+            },
+            {'type': 'error', 'errorText': 'Unknown tool'},
+            {'type': 'finish-step'},
+            {'type': 'finish', 'finishReason': 'error'},
+            '[DONE]',
+        ]
+    )
+
+
+def _agent_skipping_a_call_after_the_final_result() -> Agent[None, str]:
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='final_result', json_args='{"response": "done"}', tool_call_id='output_call')}
+        yield {1: DeltaToolCall(name='my_tool', json_args='{"query": "hi"}', tool_call_id='skipped_call')}
+
+    agent = Agent(FunctionModel(stream_function=stream_function), output_type=ToolOutput(str), end_strategy='early')
+
+    @agent.tool_plain
+    def my_tool(query: str) -> str:
+        raise NotImplementedError  # never called: the run skips it
+
+    return agent
+
+
+async def test_run_stream_closes_call_skipped_after_final_result_with_input_error():
+    """A call skipped because the output tool already ended the run is closed with `tool-input-error` on v6.
+
+    `tool-input-available` would have the client run the skipped call through `onToolCall`.
+    """
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(_agent_skipping_a_call_after_the_final_result(), request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'output_call', 'toolName': 'final_result'},
+            {'type': 'tool-input-delta', 'toolCallId': 'output_call', 'inputTextDelta': '{"response": "done"}'},
+            {'type': 'tool-input-start', 'toolCallId': 'skipped_call', 'toolName': 'my_tool'},
+            {'type': 'tool-input-delta', 'toolCallId': 'skipped_call', 'inputTextDelta': '{"query": "hi"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'output_call',
+                'toolName': 'final_result',
+                'input': {'response': 'done'},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'output_call', 'output': 'Final result processed.'},
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'skipped_call',
+                'toolName': 'my_tool',
+                'input': {'query': 'hi'},
+                'providerMetadata': {'pydantic_ai': {'outcome': 'success'}},
+                'errorText': 'Tool not executed - a final result was already processed.',
+            },
+            {
+                'type': 'message-metadata',
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_run_stream_call_skipped_after_final_result_v5():
+    """AI SDK v5 has no `tool-input-error`, so a skipped call still gets `tool-input-available` and the stub output."""
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(_agent_skipping_a_call_after_the_final_result(), request, sdk_version=5)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'output_call', 'toolName': 'final_result'},
+            {'type': 'tool-input-delta', 'toolCallId': 'output_call', 'inputTextDelta': '{"response": "done"}'},
+            {'type': 'tool-input-start', 'toolCallId': 'skipped_call', 'toolName': 'my_tool'},
+            {'type': 'tool-input-delta', 'toolCallId': 'skipped_call', 'inputTextDelta': '{"query": "hi"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'output_call',
+                'toolName': 'final_result',
+                'input': {'response': 'done'},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'output_call', 'output': 'Final result processed.'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'skipped_call',
+                'toolName': 'my_tool',
+                'input': {'query': 'hi'},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'skipped_call',
+                'output': 'Tool not executed - a final result was already processed.',
+            },
+            {
+                'type': 'message-metadata',
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+def _agent_skipping_a_second_output_call() -> Agent[None, str]:
+    async def stream_function(messages: list[ModelMessage], agent_info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        yield {0: DeltaToolCall(name='final_result', json_args='{"response": "done"}', tool_call_id='output_call')}
+        yield {1: DeltaToolCall(name='final_result', json_args='{"response": "again"}', tool_call_id='skipped_output')}
+
+    return Agent(FunctionModel(stream_function=stream_function), output_type=ToolOutput(str), end_strategy='early')
+
+
+async def test_run_stream_closes_output_call_skipped_after_final_result_with_input_error():
+    """A second output tool call skipped after the final result is closed with `tool-input-error` on v6."""
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(_agent_skipping_a_second_output_call(), request, sdk_version=6)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert [e for e in events if not isinstance(e, str) and e.get('toolCallId') == 'skipped_output'] == snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'skipped_output', 'toolName': 'final_result'},
+            {'type': 'tool-input-delta', 'toolCallId': 'skipped_output', 'inputTextDelta': '{"response": "again"}'},
+            {
+                'type': 'tool-input-error',
+                'toolCallId': 'skipped_output',
+                'toolName': 'final_result',
+                'input': {'response': 'again'},
+                'providerMetadata': {'pydantic_ai': {'outcome': 'success'}},
+                'errorText': 'Output tool not used - a final result was already processed.',
+            },
+        ]
+    )
+
+
+async def test_run_stream_output_call_skipped_after_final_result_v5():
+    """On AI SDK v5 a second output tool call skipped after the final result keeps `tool-input-available` and the stub output."""
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Hello')])],
+    )
+    adapter = VercelAIAdapter(_agent_skipping_a_second_output_call(), request, sdk_version=5)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in adapter.encode_stream(adapter.run_stream())
+    ]
+
+    assert [e for e in events if not isinstance(e, str) and e.get('toolCallId') == 'skipped_output'] == snapshot(
+        [
+            {'type': 'tool-input-start', 'toolCallId': 'skipped_output', 'toolName': 'final_result'},
+            {'type': 'tool-input-delta', 'toolCallId': 'skipped_output', 'inputTextDelta': '{"response": "again"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'skipped_output',
+                'toolName': 'final_result',
+                'input': {'response': 'again'},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'skipped_output',
+                'output': 'Output tool not used - a final result was already processed.',
+            },
         ]
     )
 
@@ -5855,6 +6183,7 @@ async def test_adapter_dump_messages_with_tools():
                         'provider_executed': False,
                         'output': {'results': ['result1', 'result2']},
                         'call_provider_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -6557,6 +6886,7 @@ async def test_adapter_dump_messages_with_tool_metadata_single_chunk():
                         'provider_executed': False,
                         'output': 'Data sent',
                         'call_provider_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -6631,6 +6961,7 @@ async def test_adapter_dump_messages_with_tool_metadata_multiple_chunks():
                         'provider_executed': False,
                         'output': 'Events sent',
                         'call_provider_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -6721,6 +7052,7 @@ async def test_adapter_dump_messages_with_tool_metadata_data_chunks():
                         'provider_executed': False,
                         'output': 'Data sent',
                         'call_provider_metadata': None,
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -6889,6 +7221,7 @@ async def test_adapter_dump_messages_with_builtin_tools():
                                 },
                             }
                         },
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     }
@@ -7135,6 +7468,7 @@ async def test_adapter_dump_messages_with_retry():
                         'provider_executed': False,
                         'error_text': 'Tool failed with error',
                         'call_provider_metadata': {'pydantic_ai': {'outcome': 'retried'}},
+                        'result_provider_metadata': None,
                         'approval': None,
                     }
                 ],
@@ -7394,6 +7728,7 @@ async def test_adapter_dump_messages_text_with_interruption():
                                 'return_meta': {'provider_name': 'test'},
                             }
                         },
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     },
@@ -9318,6 +9653,7 @@ async def test_adapter_tool_call_part_with_provider_metadata():
                                 'provider_details': {'index': 0, 'type': 'function'},
                             }
                         },
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     }
@@ -9683,6 +10019,7 @@ async def test_adapter_builtin_tool_part_with_provider_metadata():
                                 },
                             }
                         },
+                        'result_provider_metadata': None,
                         'preliminary': None,
                         'approval': None,
                     }
@@ -9761,6 +10098,7 @@ async def test_adapter_builtin_tool_error_part_with_provider_metadata():
                                 },
                             }
                         },
+                        'result_provider_metadata': None,
                         'approval': None,
                     }
                 ],
@@ -10020,6 +10358,7 @@ async def test_adapter_dump_messages_tool_error_with_provider_metadata():
                                 'outcome': 'retried',
                             }
                         },
+                        'result_provider_metadata': None,
                         'approval': None,
                     }
                 ],
@@ -10460,7 +10799,7 @@ async def test_event_stream_output_tool_input_error_with_status_return_part():
                 'toolCallId': 'out_skipped',
                 'toolName': 'final_result',
                 'input': {'value': 'bad'},
-                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+                'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id', 'outcome': 'success'}},
                 'errorText': 'Output tool not used - output failed validation.',
             },
             {'type': 'finish-step'},
@@ -10470,34 +10809,60 @@ async def test_event_stream_output_tool_input_error_with_status_return_part():
     )
 
 
-async def test_event_stream_tool_call_end_backfills_input_available_when_call_event_skipped():
+async def _output_tool_interrupted_before_call_event(outcome: Literal['failed', 'interrupted'] = 'failed'):
+    part = ToolCallPart(
+        tool_name='final_result',
+        tool_call_id='out_interrupted',
+        args={'value': 'x'},
+        id='output_tool_id',
+    )
+    yield PartStartEvent(index=0, part=part)
+    yield PartEndEvent(index=0, part=part)
+    # Note: no `OutputToolCallEvent` — the agent graph would normally yield one,
+    # but `UnexpectedModelBehavior` raised before validation runs short-circuits it.
+    # The base class then synthesizes an error result for the pending call.
+    # The content the base class gives each synthetic closeout: a cancelled run's call was interrupted.
+    content = (
+        INTERRUPTED_TOOL_RETURN_CONTENT if outcome == 'interrupted' else 'Tool execution was interrupted by an error.'
+    )
+    yield OutputToolResultEvent(
+        ToolReturnPart(tool_name='final_result', content=content, tool_call_id='out_interrupted', outcome=outcome)
+    )
+
+
+EXPECTED_DISCARDED_CALL_INPUT_ERROR: dict[str, Any] = {
+    'failed': snapshot(
+        {
+            'type': 'tool-input-error',
+            'toolCallId': 'out_interrupted',
+            'toolName': 'final_result',
+            'input': {'value': 'x'},
+            'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
+            'errorText': 'Tool execution was interrupted by an error.',
+        }
+    ),
+    'interrupted': snapshot(
+        {
+            'type': 'tool-input-error',
+            'toolCallId': 'out_interrupted',
+            'toolName': 'final_result',
+            'input': {'value': 'x'},
+            'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id', 'outcome': 'interrupted'}},
+            'errorText': 'The tool call was interrupted before a result was produced.',
+        }
+    ),
+}
+
+
+@pytest.mark.parametrize('outcome', ['failed', 'interrupted'])
+async def test_event_stream_tool_call_end_closes_discarded_call_with_input_error(
+    outcome: Literal['failed', 'interrupted'],
+):
     """If the agent raises before yielding the tool call event (e.g. output-tool
     `UnexpectedModelBehavior` with no `final_result`), the base class synthesizes a
-    failed `ToolReturnPart` for the pending call. The adapter must backfill
-    `tool-input-available` from the part stashed at `handle_tool_call_end` before
-    emitting `tool-output-error`, so the chunk lifecycle stays complete."""
-
-    async def event_generator():
-        part = ToolCallPart(
-            tool_name='final_result',
-            tool_call_id='out_interrupted',
-            args={'value': 'x'},
-            id='output_tool_id',
-        )
-        yield PartStartEvent(index=0, part=part)
-        yield PartEndEvent(index=0, part=part)
-        # Note: no `OutputToolCallEvent` — the agent graph would normally yield one,
-        # but `UnexpectedModelBehavior` raised before validation runs short-circuits it.
-        # The base class then synthesizes an error result for the pending call.
-        yield OutputToolResultEvent(
-            ToolReturnPart(
-                tool_name='final_result',
-                content='Tool execution was interrupted by an error.',
-                tool_call_id='out_interrupted',
-                outcome='failed',
-            )
-        )
-
+    failed `ToolReturnPart` for the pending call (`'interrupted'` for a cancelled run). On v6 the adapter closes the call with
+    `tool-input-error` rather than backfilling `tool-input-available`, which would have
+    the client run the discarded call through `onToolCall`."""
     request = SubmitMessage(
         id='foo',
         messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
@@ -10505,11 +10870,14 @@ async def test_event_stream_tool_call_end_backfills_input_available_when_call_ev
     event_stream = VercelAIEventStream(run_input=request, sdk_version=6)
     events = [
         '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
-        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+        async for event in event_stream.encode_stream(
+            event_stream.transform_stream(_output_tool_interrupted_before_call_event(outcome))
+        )
     ]
 
-    # The backfilled `tool-input-available` carries the raw args and provider metadata
-    # from the stashed `ToolCallPart`, so the frontend never sees an unannounced input.
+    # The `tool-input-error` carries the raw args and provider metadata from the
+    # stashed `ToolCallPart`, so the frontend still sees the call's input. An
+    # `'interrupted'` outcome rides along as a claim, as `output-error` reloads as `'failed'`.
     assert events == snapshot(
         [
             {'type': 'start'},
@@ -10520,6 +10888,35 @@ async def test_event_stream_tool_call_end_backfills_input_available_when_call_ev
                 'toolName': 'final_result',
                 'providerMetadata': {'pydantic_ai': {'id': 'output_tool_id'}},
             },
+            {'type': 'tool-input-delta', 'toolCallId': 'out_interrupted', 'inputTextDelta': '{"value":"x"}'},
+            EXPECTED_DISCARDED_CALL_INPUT_ERROR[outcome],
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+            '[DONE]',
+        ]
+    )
+
+
+async def test_event_stream_tool_call_end_backfills_input_available_when_call_event_skipped_v5():
+    """AI SDK v5 has no `tool-input-error`, so the discarded call's `tool-input-available` is
+    backfilled before `tool-output-error` to keep the chunk lifecycle complete."""
+    request = SubmitMessage(
+        id='foo',
+        messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='Test')])],
+    )
+    event_stream = VercelAIEventStream(run_input=request, sdk_version=5)
+    events = [
+        '[DONE]' if '[DONE]' in event else json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(
+            event_stream.transform_stream(_output_tool_interrupted_before_call_event())
+        )
+    ]
+
+    assert events == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'out_interrupted', 'toolName': 'final_result'},
             {'type': 'tool-input-delta', 'toolCallId': 'out_interrupted', 'inputTextDelta': '{"value":"x"}'},
             {
                 'type': 'tool-input-available',
@@ -11005,6 +11402,7 @@ async def test_adapter_dump_messages_tool_return_error():
                 'error_text': 'Something went wrong',
                 'provider_executed': False,
                 'call_provider_metadata': None,
+                'result_provider_metadata': None,
                 'approval': None,
             }
         ]
@@ -11051,6 +11449,7 @@ async def test_adapter_dump_messages_builtin_tool_error_backward_compat():
                 'error_text': 'Rate limit exceeded',
                 'provider_executed': True,
                 'call_provider_metadata': None,
+                'result_provider_metadata': None,
                 'approval': None,
             }
         ]
@@ -11139,6 +11538,7 @@ async def test_adapter_dump_messages_tool_return_interrupted_is_neutral():
                 'output': 'The tool call was interrupted before a result was produced.',
                 'provider_executed': False,
                 'call_provider_metadata': {'pydantic_ai': {'outcome': 'interrupted'}},
+                'result_provider_metadata': None,
                 'preliminary': None,
                 'approval': None,
             }
@@ -15310,3 +15710,30 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
     assert 'tag' in dumped
     # The caller's own objects are not mutated.
     assert marked.metadata == reserved
+
+
+def test_load_messages_reads_args_of_tool_input_error_part_from_raw_input():
+    """The AI SDK keeps the input of a call closed by `tool-input-error` as `rawInput` only, so the args load from it.
+
+    The wire part is built by hand: the round-trip suite drives the real client, but this checks the loader alone.
+    """
+    message = UIMessage.model_validate(
+        {
+            'id': 'reloaded',
+            'role': 'assistant',
+            'parts': [
+                {
+                    'type': 'tool-lookup_order',
+                    'toolCallId': 'call_1',
+                    'state': 'output-error',
+                    'rawInput': '{"order_id": "o_1"}',
+                    'errorText': 'Tool not executed - a final result was already processed.',
+                }
+            ],
+        }
+    )
+    (response, _) = VercelAIAdapter.load_messages([message])
+    assert isinstance(response, ModelResponse)
+    assert response.parts == snapshot(
+        [ToolCallPart(tool_name='lookup_order', args={'order_id': 'o_1'}, tool_call_id='call_1')]
+    )
