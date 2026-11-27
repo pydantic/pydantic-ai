@@ -1396,6 +1396,8 @@ class CompactionRunResult:
     the history it was given and [`compactions`][pydantic_ai.agent.CompactionRunResult.compactions] is empty.
     """
 
+    _: dataclasses.KW_ONLY
+
     _state: _agent_graph.GraphAgentState = dataclasses.field(repr=False)
     _new_message_index: int = dataclasses.field(repr=False, default=0)
     """Where the messages the run added, like one a hook queued, start in the history, as for `AgentRunResult`."""

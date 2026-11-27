@@ -3071,10 +3071,14 @@ class _OutputSubmitted(Exception):
     """
 
 
-class _Compacted(Exception):
+class _Compacted(BaseException):
     """Raised once a `compact_history` run's compaction step is done, instead of sending its request.
 
-    `ModelRequestNode` catches it, like `_OutputSubmitted`, and ends the run.
+    `ModelRequestNode` catches it, like `_OutputSubmitted`, and ends the run. It's raised from within the
+    `wrap_model_request` chain, which builds the model the compaction runs with (a durable one under durable
+    execution), so it passes through those hooks. It's a `BaseException`, like `asyncio.CancelledError`, so a hook
+    catching `Exception` around its handler doesn't take it for a failed request, and `Instrumentation` doesn't
+    record it as the request span's error.
     """
 
 

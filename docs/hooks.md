@@ -135,7 +135,7 @@ The run lifecycle is dispatched once per agent run. `wrap_run` (registered via `
 
 A [realtime session](realtime/capabilities.md) is a run: the same four hooks fire once around the session, with `wrap_run` recovery and `after_run` result transformation applied when the session closes.
 
-So is [`compact_history()`][pydantic_ai.agent.AbstractAgent.compact_history], which ends after its compaction step without a model response: `wrap_run`, `after_run` and the final `AgentRunResultEvent` get a result whose `output` is `None`, whatever the agent's `output_type`. A hook that reads `result.output`, say to log, validate or store the answer, should allow for `None` there.
+So is [`compact_history()`][pydantic_ai.agent.AbstractAgent.compact_history], which ends after its compaction step without a model response: `wrap_run`, `after_run` and the final `AgentRunResultEvent` get a result whose `output` is `None`, whatever the agent's `output_type`. A hook that reads `result.output`, say to log, validate or store the answer, should allow for `None` there. Its one model request step compacts inside the `wrap_model_request` chain and then ends without sending the request, by raising a `BaseException` that isn't an `Exception` out of `handler()`: let it propagate, as `except Exception` does.
 
 ### Node hooks
 

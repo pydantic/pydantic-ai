@@ -34,18 +34,25 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     CompactionRequest,
     CompactionResult,
+    Instrumentation,
     ModelFallback,
     NativeCompaction,
+    WrapModelRequestHandler,
     WrapRunHandler,
     on_event,
 )
 from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
+from .conftest import try_import
+
+with try_import() as logfire_imports_successful:
+    from logfire.testing import CaptureLogfire
 
 COMPACTION_USAGE = RequestUsage(input_tokens=1000, output_tokens=50)
 
@@ -566,3 +573,55 @@ async def test_a_handler_that_writes_the_added_request_out_ahead_of_what_it_keep
     assert record.replaced == [*given, remembered]
     assert record.summarized == given
     assert result.new_messages() == result.all_messages()
+
+
+@pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
+@pytest.mark.parametrize('streamed', [False, True])
+async def test_an_instrumented_compact_history_run_records_no_error(capfire: CaptureLogfire, streamed: bool):
+    """No span of a `compact_history()` run has an error status or an exception event: ending after compacting isn't one.
+
+    The step's model request span is still opened, by the `wrap_model_request` chain the compaction runs in, and is
+    closed as for a request that wasn't sent.
+    """
+    agent = Agent(
+        FunctionModel(not_sent, model_name='primary'),
+        capabilities=[Instrumentation(settings=InstrumentationSettings()), Summarize()],
+    )
+
+    async def handler(ctx: RunContext[Any], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in events:
+            pass
+
+    await agent.compact_history(history(), event_stream_handler=handler if streamed else None)
+
+    spans = [
+        span
+        for span in capfire.exporter.exported_spans
+        # Logfire also exports a pending span when each span starts, before its status is set.
+        if (span.attributes or {}).get('logfire.span_type') != 'pending_span'
+    ]
+    assert [(span.name, span.status.status_code.name, [event.name for event in span.events]) for span in spans] == (
+        snapshot([('chat primary', 'UNSET', []), ('invoke_agent agent', 'UNSET', [])])
+    )
+
+
+async def test_a_wrap_model_request_that_catches_exceptions_doesnt_continue_the_run():
+    """Ending after the compaction step isn't an exception a `wrap_model_request` hook catching `Exception` can swallow."""
+    caught: list[str] = []
+
+    class Guardrail(AbstractCapability[Any]):
+        async def wrap_model_request(
+            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+        ) -> ModelResponse:
+            try:
+                return await handler(request_context)
+            except Exception as error:  # pragma: no cover - reached only if the compaction's end were an `Exception`
+                caught.append(type(error).__name__)
+                return ModelResponse(parts=[TextPart('fallback')])
+
+    agent = Agent(FunctionModel(not_sent), capabilities=[Guardrail(), Summarize()])
+    result = await agent.compact_history(history())
+
+    assert caught == []
+    assert shapes(result.all_messages()) == snapshot(['ModelRequest: CompactionPart', 'ModelResponse: TextPart'])
+    assert [record.handler for record in result.compactions] == ['summarize']
