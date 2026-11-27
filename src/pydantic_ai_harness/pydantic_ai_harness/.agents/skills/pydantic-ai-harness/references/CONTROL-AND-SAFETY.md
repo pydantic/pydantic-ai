@@ -39,7 +39,7 @@ judge model, and have the agent revise its answer before the run ends. All are
 | Have the agent review and revise its answer before the run ends | `RefineOutput` |
 | Send an exception a tool raises to the model instead of ending the run | `ReportToolErrors(format_error=...)` |
 | Send a coding agent back to run its checks before it finishes after an edit | `RequireVerification` |
-| End the run with a final answer instead of `UsageLimitExceeded` at a usage limit | `WrapUpAtLimits` |
+| End the run with a final answer instead of `UsageLimitExceeded` at a usage limit or timeout | `WrapUpAtLimits` |
 
 ## RepairToolArguments
 
@@ -1113,8 +1113,9 @@ agent = Agent('test', capabilities=[FileSystem(), Shell(), RequireVerification()
 
 ## WrapUpAtLimits
 
-When the run's `UsageLimits` leave room for one more model request but not another, makes that request
-the last: `tool_choice='none'` with the tool definitions kept (cached tools and instructions match), plus a
+When the run's `UsageLimits` leave room for one more model request but not another, or the time left
+before the run's `timeout=` deadline fits its longest step but not also its slowest response, makes that request
+the last: no function tools callable, with the tool definitions kept (cached tools and instructions match), plus a
 request-scoped `WrapUpPart` (an `InstructionCapabilityPart` from `pydantic_ai_harness.wrap_up_at_limits`)
 with `prompt` (default `DEFAULT_WRAP_UP_PROMPT`). The answer is the
 run's output instead of `UsageLimitExceeded`.
@@ -1147,18 +1148,20 @@ print(agent.run_sync('Research', usage_limits=UsageLimits(request_limit=2)).outp
 ```
 
 - Triggers on `request_limit` (the last allowed request), `tool_calls_limit` (fewer calls left than the
-  largest batch so far), and input/output/total token limits (projected from the run's responses).
-  `cost_limit` and `per_request_input_tokens_limit` are not projected. A larger batch that goes over
+  largest batch so far), input/output/total token and `cost_limit` limits (projected from the run's
+  responses), and the run's `timeout=` (`'timeout'`). `per_request_input_tokens_limit` is not projected.
+  `timeout_margin` (default `0.0`) keeps extra seconds in reserve; `None` turns the time trigger off. A larger batch that goes over
   `tool_calls_limit` still raises. With no `usage_limits`, the default `request_limit=50` applies.
 - `wrapped_up_by(result.new_messages())` returns the `LimitName` that cut the run short, or `None`; it reads
   the `WrapUpPart` on the final request, found by type.
-- With tool output, `tool_choice='none'` sends only the output tools; Anthropic caches messages per
-  `tool_choice`.
+- With tool output, it sets `tool_choice=ToolOrOutput(function_tools=[])`, which sends only the output
+  tools, so a structured result can still be given; otherwise `tool_choice='none'` (text, native and
+  prompted output answer in text). Anthropic caches messages per `tool_choice`.
 - List it after capabilities that spend from the run's usage before a request, so it sees what they spent.
 - For a sub-agent, give it its own `SubAgent.usage_limits`; sharing the parent's budget spends the parent's
   last request.
 - Compaction still runs on the final request; a summarizing strategy has no request left there, so wrap
-  it in `FallbackCompaction(fallback_on=(..., UsageLimitExceeded))`. Stateless and durable-safe. Span: `run wrapped up`
+  it in `FallbackCompaction(fallback_on=(..., UsageLimitExceeded))`. Keeps per-run timing state (via `for_run`); under Temporal the time trigger replays the same, see the docs for DBOS and Prefect. Span: `run wrapped up`
   (`wrap_up_at_limits.limit`).
 
 ## See also

@@ -1257,7 +1257,7 @@ async def main():
 
 If the model's last output fails validation, no request is left for the retry and the run still raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded].
 
-Pydantic AI Harness ships this as [Wrap Up At Limits](harness/wrap-up-at-limits.md), which also wraps up at the tool-call and token limits.
+Pydantic AI Harness ships this as [Wrap Up At Limits](harness/wrap-up-at-limits.md), which also wraps up at the tool-call, token and cost limits, and before the run's `timeout=`.
 
 ##### Limiting per-request input size
 

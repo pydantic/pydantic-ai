@@ -1,0 +1,5 @@
+{
+  "against": "v2.76.0",
+  "reason": "`LimitName` gains `'cost_limit'` and `'timeout'`, the new limits `WrapUpAtLimits` wraps up at (#14164); existing values are unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14164"
+}
