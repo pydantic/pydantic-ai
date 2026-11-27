@@ -68,7 +68,7 @@ try:
         create_sdk_mcp_server,
     )
     from claude_agent_sdk.types import EffortLevel
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install `claude-agent-sdk` to use the Claude Agent provider, '
         'you can use the `claude-agent` optional group — `pip install "pydantic-ai-slim[claude-agent]"`'

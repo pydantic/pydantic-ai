@@ -23,7 +23,7 @@ try:
     from ..providers.claude_agent import ClaudeAgentProvider
     from .anthropic import AnthropicModel, AnthropicModelName, AnthropicModelSettings
     from .anthropic._request_params import PreparedMessagesCreate
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `anthropic` and `claude-agent-sdk` packages to use the Claude Agent model, '
         'you can use the `claude-agent` optional group — `pip install "pydantic-ai-slim[claude-agent]"`'
