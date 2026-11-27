@@ -17,6 +17,7 @@ from urllib.parse import SplitResult, urlsplit
 
 from pydantic import BaseModel
 
+from pydantic_ai_pax.paths import pax_dir
 from pydantic_ai_pax.plugins.menus import Dialogs, Option
 
 _MCP_PATH = '/mcp'
@@ -146,11 +147,14 @@ _EXAMPLES = ('  logfire.example.com', '  https://logfire.example.com', '  https:
 
 
 def logfire_dir() -> Path:
-    """Pax's private Logfire directory: the SDK reads configuration and credentials only from here."""
+    """Pax's private Logfire directory: the SDK reads configuration and credentials only from here.
+
+    Unlike `config_dir()`, a relative `XDG_CONFIG_HOME` is ignored, so a checkout cannot supply them.
+    """
     config_home = Path(os.getenv('XDG_CONFIG_HOME', '')).expanduser()
     if not config_home.is_absolute():
         config_home = Path.home() / '.config'
-    return config_home / 'pydantic-clai2' / 'logfire'
+    return pax_dir(config_home) / 'logfire'
 
 
 class _Remembered(BaseModel):

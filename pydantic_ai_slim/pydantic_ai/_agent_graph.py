@@ -14,6 +14,7 @@ from collections.abc import (
     Collection,
     Generator,
     Iterable,
+    Mapping,
     Sequence,
 )
 from contextlib import (
@@ -34,7 +35,6 @@ from typing import TYPE_CHECKING, Any, Generic, Literal, NamedTuple, NoReturn, T
 from weakref import WeakValueDictionary
 
 import anyio
-import pydantic_core
 from opentelemetry.trace import Tracer
 from pydantic import ValidationError
 from typing_extensions import TypeVar
@@ -54,7 +54,8 @@ from pydantic_ai._instrumentation import (
     open_request_policy,
 )
 from pydantic_ai._model_request_attempts import AttemptStart, carried_attempts
-from pydantic_ai._tool_execution import process_tool_calls
+from pydantic_ai._parts_manager import stamp_and_type_call_part, ui_visibility_stamps
+from pydantic_ai._tool_execution import last_response_index, process_tool_calls
 from pydantic_ai._utils import (
     ScopedTask,
     aclose_if_supported,
@@ -166,6 +167,7 @@ from .tools import (
     NativeToolFunc,
     RunContext,
     ToolDefinition,
+    ToolUIVisibility,
 )
 from .toolsets._deferred_capability_loader import (
     capability_load_window,
@@ -1018,14 +1020,9 @@ class GraphAgentState:
             and model_response.parts
             and isinstance(tool_call := model_response.parts[-1], _messages.ToolCallPart)
             and (call is None or call.tool_call_id == tool_call.tool_call_id)
-            and isinstance(tool_call.args, str)
-            and tool_call.args
+            and _output.are_tool_call_args_cut_off(tool_call)
         ):
-            # Only JSON that doesn't parse was cut off: complete JSON the schema rejects is retried like any other.
-            try:
-                pydantic_core.from_json(tool_call.args)
-            except ValueError:
-                raise exceptions.IncompleteToolCall(_output.incomplete_tool_call_message(self.last_max_tokens))
+            raise exceptions.IncompleteToolCall(_output.incomplete_tool_call_message(self.last_max_tokens))
 
     def consume_output_retry(
         self,
@@ -1359,7 +1356,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 # The history ends on what a run that paused for deferred tool calls wrote after its response.
                 # Run the response's unanswered calls again, as a history ending on the response would, so
                 # deferred ones pause the run again.
-                index = _last_response_index(messages)
+                index = last_response_index(messages)
                 assert index is not None  # `_answered_at_pause` found it.
                 response, _ = await self._adopt_resumed_response(ctx, messages, index)
                 return _shaped(ctx, CallToolsNode[DepsT, NodeRunEndT](response, _answered_calls=answered_at_pause))
@@ -1626,13 +1623,17 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_Tool
     that run or by a later one that paused again. Returns `None` for any other history: a new message, or a
     request whose model call failed, continues the run.
     """
-    index = _last_response_index(history)
+    index = last_response_index(history)
     if index is None or index == len(history) - 1:
         return None
     response = history[index]
     assert isinstance(response, _messages.ModelResponse)
     requests = [message for message in history[index + 1 :] if isinstance(message, _messages.ModelRequest)]
-    if response.state != 'complete' or not all(_is_deferred_pause_record(request) for request in requests):
+    # A response whose stream ended before the provider's terminal event is `'incomplete'`, yet the run still ran its
+    # calls and paused on it.
+    if response.state not in ('complete', 'incomplete') or not all(
+        _is_deferred_pause_record(request) for request in requests
+    ):
         return None
     call_ids = {call.tool_call_id for call in response.tool_calls}
     answered = [
@@ -1678,10 +1679,6 @@ def final_tool_results_request(
     if isinstance(output, DeferredToolRequests):
         mark_deferred_pause(request)
     return request
-
-
-def _last_response_index(history: Sequence[_messages.ModelMessage]) -> int | None:
-    return next((i for i in range(len(history) - 1, -1, -1) if isinstance(history[i], _messages.ModelResponse)), None)
 
 
 def _resumed_request(request: _messages.ModelRequest) -> _messages.ModelRequest:
@@ -2051,6 +2048,59 @@ def _keep_default_output_mode(
     return params
 
 
+def _inferred_output_params(params: models.ModelRequestParameters) -> models.ModelRequestParameters | None:
+    """`params` if the model is left to infer their output mode, as for an `output_type` that doesn't choose one."""
+    # Its own function to keep `ModelRequestNode._prepare_attempt` from growing more complex.
+    return params if params.output_mode == 'auto' else None
+
+
+def _can_switch_to_tool_output(
+    request_context: ModelRequestContext, inferred_params: models.ModelRequestParameters | None
+) -> bool:
+    """Whether a rejection of the attempt's schema as too complex can be acted on by switching to Tool Output.
+
+    That's when the attempt sends Native Output that the model inferred, now or on the run's first request to it, to
+    a model that raises `ModelSchemaTooComplexError` for such a rejection (see `_switch_to_tool_output`).
+    """
+    if inferred_params is None or not _unwrap_model(request_context.model)._classifies_schema_too_complex():  # pyright: ignore[reportPrivateUsage]
+        return False
+    params = request_context.model_request_parameters
+    if params.output_mode == 'auto':
+        with suppress_unsupported_setting_warnings():
+            _, params = request_context.model.prepare_request(request_context.model_settings, params)
+    return params.output_mode == 'native'
+
+
+def _switch_to_tool_output(
+    state: GraphAgentState,
+    request_context: ModelRequestContext,
+    inferred_params: models.ModelRequestParameters | None,
+    error: Exception,
+) -> bool:
+    """Whether to attempt the request again in Tool Output, as the run now keeps for its model.
+
+    A provider like Anthropic compiles a Native Output schema into a grammar, and can reject one as too complex
+    (`ModelSchemaTooComplexError`). When the model inferred Native Output, rather than the `output_type` choosing it,
+    Tool Output doesn't compile the schema, so the run uses it for the rest of its requests to the model: from its
+    second request on, the run sends the mode it keeps (see `_keep_default_output_mode`). The kept mode only changes
+    from Native to Tool Output, so a request is attempted again this way at most once.
+    """
+    if not isinstance(error, exceptions.ModelSchemaTooComplexError) or not _can_switch_to_tool_output(
+        request_context, inferred_params
+    ):
+        return False
+    assert inferred_params is not None
+    model = request_context.model
+    try:
+        with suppress_unsupported_setting_warnings():
+            model.prepare_request(request_context.model_settings, inferred_params.with_default_output_mode('tool'))
+    except exceptions.UserError:
+        # Tool Output isn't valid for this request either, e.g. on a model that doesn't support tools.
+        return False
+    state.default_output_modes[model.model_id] = 'tool'
+    return True
+
+
 # --- Innermost model-call helpers ---
 #
 # Both the agent graph (ModelRequestNode) and durable execution capabilities
@@ -2353,7 +2403,7 @@ async def model_request(  # noqa: C901
                     await cancel_abandoned_job(model, response, error)
                 raise
 
-            new_response = _narrow_tool_call_parts(new_response, request_context.model_request_parameters)
+            new_response = _apply_tool_defs_to_call_parts(new_response, request_context.model_request_parameters)
             report_continuation_segment(request_context, new_response)
             if response is None:
                 response = new_response
@@ -2744,6 +2794,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     """The model the latest attempt was sent to, with the capabilities' model wrappers."""
     _serving_model_id: str | None = field(default=None, init=False, repr=False)
     """The identifier of the model the latest attempt was sent to, which the response it produces records as `model_id`."""
+    _inferred_output_params: models.ModelRequestParameters | None = field(default=None, init=False, repr=False)
+    """The latest attempt's request parameters before the model inferred their output mode, if it did."""
     _resolved_loaded_parts: dict[str, list[_messages.InstructionPart]] = field(
         repr=False, init=False, default_factory=dict[str, list[_messages.InstructionPart]]
     )
@@ -3022,6 +3074,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # The consumer didn't iterate the stream far enough to see the failure.
                 raise error
             self._did_stream = True
+            model_response = _stamp_ui_visibility(model_response, wrap_request_context.model_request_parameters)
             replay_sr = CompletedStreamedResponse(
                 model_response,
                 model_request_parameters=wrap_request_context.model_request_parameters,
@@ -3978,6 +4031,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         model = request_context.model
         messages = request_context.messages
         model_settings = request_context.model_settings
+        self._inferred_output_params = _inferred_output_params(request_context.model_request_parameters)
         # Per attempt, since the default output mode a request keeps is that of the model serving it.
         model_request_parameters = models._with_framing_announcement(  # pyright: ignore[reportPrivateUsage]
             _keep_default_output_mode(ctx.state, model, model_settings, request_context.model_request_parameters),
@@ -4146,8 +4200,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                     )
                 )
                 opened = sr
-                if ctx.deps.root_capability._handles_model_request_error(run_context, request_context):  # pyright: ignore[reportPrivateUsage]
-                    # Only worth opening early when a hook can act on a failure to open: otherwise the
+                if self._recovers_failure_to_open(ctx, run_context, request_context):
+                    # Only worth opening early when a failure to open can be acted on: otherwise the
                     # stream keeps opening lazily, once the consumer starts iterating it.
                     outcome: asyncio.Future[Exception | None] = asyncio.get_running_loop().create_future()
                     handoff.offers.put_nowait(_StreamOffer(sr, outcome))
@@ -4190,6 +4244,17 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             stream_stack.push_async_exit(attempt_stack)
             failed.log.attach_to_stream(sr)
             return sr, request_context, request_start, failed.log.attempts
+
+    def _recovers_failure_to_open(
+        self,
+        ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
+        run_context: RunContext[DepsT],
+        request_context: ModelRequestContext,
+    ) -> bool:
+        """Whether a hook, or a switch to Tool Output (see `_switch_to_tool_output`), can act on a failure to open."""
+        return ctx.deps.root_capability._handles_model_request_error(  # pyright: ignore[reportPrivateUsage]
+            run_context, request_context
+        ) or _can_switch_to_tool_output(request_context, self._inferred_output_params)
 
     async def _start_next_attempt(
         self,
@@ -4291,6 +4356,9 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         record_usage: bool,
         described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT]:
+        assert self.last_request_context is not None
+        # A response a capability supplied, or one a hook replaced, has unstamped calls; the model's own are stamped.
+        response = _stamp_ui_visibility(response, self.last_request_context.model_request_parameters)
         self._emit_capability_load_records(ctx)
         if record_usage:
             self._record_response_usage(ctx, response, described=described)
@@ -4315,8 +4383,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         return self._result
 
-    @staticmethod
     async def _recover_model_request_error(
+        self,
         ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]],
         run_context: RunContext[DepsT],
         request_context: ModelRequestContext,
@@ -4332,10 +4400,15 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
             request_context._usage_response_ledger.attempts.extend(error.attempts)  # pyright: ignore[reportPrivateUsage]
         root_capability = ctx.deps.root_capability
         try:
+            if _switch_to_tool_output(ctx.state, request_context, self._inferred_output_params, error):
+                # Before the hooks, so `ModelFallback` only moves on once the same model also failed in Tool Output.
+                raise exceptions.RetryModelRequest()
             if not root_capability._handles_model_request_error(run_context, request_context):  # pyright: ignore[reportPrivateUsage]
                 raise error
-            return await root_capability.on_model_request_error(
-                run_context, request_context=request_context, error=error
+            # Before `after_model_request` and the streamed replay, as `Model.request()`'s own response is stamped.
+            return _stamp_ui_visibility(
+                await root_capability.on_model_request_error(run_context, request_context=request_context, error=error),
+                request_context.model_request_parameters,
             )
         except exceptions.RetryModelRequest as retry:
             failed.record(request_context, error, start, retry)
@@ -6066,14 +6139,14 @@ def _build_agent_graph(
     return g.build(validate_graph_structure=False)
 
 
-def _narrow_tool_call_parts(
+def _apply_tool_defs_to_call_parts(
     response: _messages.ModelResponse, model_request_parameters: models.ModelRequestParameters
 ) -> _messages.ModelResponse:
-    """Promote each base `ToolCallPart` in the response to its typed subclass via `ToolDefinition.tool_kind`.
+    """Stamp each `ToolCallPart` with its tool's `ui_visibility`, and promote a base one to its typed subclass.
 
     Lives here rather than in each model adapter so adapter authors emit base
     `ToolCallPart`s freely and the framework owns the typed-identity translation. Streaming
-    parts are typed up-front by `ModelResponsePartsManager` via the same lookup; this
+    parts are typed and stamped up-front by `ModelResponsePartsManager` via the same lookups; this
     function handles the non-streaming `Model.request()` return path. Either path produces
     the same typed end state — `isinstance(part, ToolSearchCallPart)` is true from the
     moment the call is emitted by the model.
@@ -6081,23 +6154,38 @@ def _narrow_tool_call_parts(
     tool_kind_by_name: dict[str, _messages.ToolPartKind] = {
         td.name: td.tool_kind for td in model_request_parameters.function_tools if td.tool_kind
     }
-    if not tool_kind_by_name:
+    return _stamp_and_type_call_parts(response, tool_kind_by_name, ui_visibility_stamps(model_request_parameters))
+
+
+def _stamp_ui_visibility(
+    response: _messages.ModelResponse, model_request_parameters: models.ModelRequestParameters
+) -> _messages.ModelResponse:
+    """Stamp each `ToolCallPart` of a response a capability supplied instead of `Model.request()` with its tool's `ui_visibility`.
+
+    Only the stamp is written: those calls keep the typing they came with, as execution types each call from its tool
+    (`ToolManager._with_tool_kind_and_visibility`).
+    """
+    return _stamp_and_type_call_parts(response, {}, ui_visibility_stamps(model_request_parameters))
+
+
+def _stamp_and_type_call_parts(
+    response: _messages.ModelResponse,
+    tool_kind_by_name: Mapping[str, _messages.ToolPartKind],
+    ui_visibility_by_name: Mapping[str, ToolUIVisibility],
+) -> _messages.ModelResponse:
+    """`response` with each `ToolCallPart` passed through `stamp_and_type_call_part`; `response` itself if none changes."""
+    if not tool_kind_by_name and not ui_visibility_by_name:
         return response
 
-    changed = False
-    new_parts: list[_messages.ModelResponsePart] = []
-    for part in response.parts:
-        if (
-            isinstance(part, _messages.ToolCallPart)
-            and part.tool_kind is None
-            and (tool_kind := tool_kind_by_name.get(part.tool_name)) is not None
-        ):
-            promoted = _messages.ToolCallPart.narrow_type(part, tool_kind=tool_kind)
-            new_parts.append(promoted)
-            changed = True
-        else:
-            new_parts.append(part)
-    return replace(response, parts=new_parts) if changed else response
+    new_parts: list[_messages.ModelResponsePart] = [
+        stamp_and_type_call_part(part, tool_kind_by_name, ui_visibility_by_name)
+        if isinstance(part, _messages.ToolCallPart)
+        else part
+        for part in response.parts
+    ]
+    if all(new is old for new, old in zip(new_parts, response.parts)):
+        return response
+    return replace(response, parts=new_parts)
 
 
 def _first_run_id_index(messages: Sequence[_messages.ModelMessage], run_id: str) -> int:

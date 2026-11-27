@@ -588,7 +588,7 @@ async def _enqueued(
     ctx = _ctx(tmp_path, conversation_id)
     run = await capability.for_run(ctx)
     enqueued: list[object] = []
-    ctx.enqueue = lambda *content, priority='asap': enqueued.extend(content)
+    ctx.enqueue = lambda *content, priority='asap', placement='append': enqueued.extend(content)
     request_context = ModelRequestContext(
         model=TestModel(), messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
     )
