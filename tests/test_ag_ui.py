@@ -782,6 +782,7 @@ async def test_run_stream_error_closes_open_native_tool_call() -> None:
     )
 
 
+@requires_ag_ui('0.1.11')  # the failed tool result's `REASONING_ENCRYPTED_VALUE` claim
 async def test_run_stream_error_closes_open_tool_call() -> None:
     """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must end and answer it before `RUN_ERROR`.
 
@@ -12725,6 +12726,7 @@ def _boundary_events(status: Literal['failed', 'superseded']) -> list[AgentStrea
     return events
 
 
+@requires_ag_ui('0.1.11')  # the failed tool result's `REASONING_ENCRYPTED_VALUE` claim
 @pytest.mark.parametrize('status', ['failed', 'superseded'])
 async def test_a_response_that_does_not_complete_closes_its_tool_call(status: Literal['failed', 'superseded']):
     """A failed response's streamed tool call is ended and answered; a superseded one's is ended but left unanswered.
