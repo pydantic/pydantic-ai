@@ -721,16 +721,16 @@ async def test_a_capability_that_answers_the_request_itself_means_nothing_is_com
         async def before_model_request(
             self, ctx: RunContext[Any], request_context: ModelRequestContext
         ) -> ModelRequestContext:
-            if answered_by == 'before_model_request':
-                raise SkipModelRequest(response)
-            return request_context
+            # A `wrap_model_request` that answers the request itself never calls the handler that runs this.
+            assert answered_by == 'before_model_request'
+            raise SkipModelRequest(response)
 
         async def wrap_model_request(
             self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
         ) -> ModelResponse:
-            # `SkipModelRequest` skips the whole chain, so this only runs when it answers the request itself.
-            assert answered_by == 'wrap_model_request'
-            return response
+            if answered_by == 'wrap_model_request':
+                return response
+            return await handler(request_context)
 
     summarize = Summarize()
     lifecycle = Lifecycle()
