@@ -257,6 +257,33 @@ class TestManagedRules:
         )
         assert not (tmp_path / '.pax' / 'settings.json').exists()
 
+    @pytest.mark.parametrize(
+        'command',
+        ["sh -c 'touch made'", 'bash -c "touch made"', "echo 'x'; eval 'touch made'", 'sh -c "touch made; $(true)"'],
+    )
+    async def test_a_managed_deny_inside_quotes_is_still_a_deny(self, tmp_path: Path, command: str) -> None:
+        """A person's own deny matched only in quoted text asks, as it may be data; a managed one stays a deny."""
+        person = _Person(PermissionDecision(approved=True))
+        await _run(
+            tmp_path,
+            ('run_command', {'command': command}),
+            permissions=Permissions(managed_rules=[PermissionRule('deny', command='touch')]),
+            person=person,
+        )
+        assert person.asked == []
+        assert not (tmp_path / 'made').exists()
+
+    async def test_a_persons_deny_inside_quotes_still_asks(self, tmp_path: Path) -> None:
+        person = _Person(PermissionDecision(approved=True))
+        await _run(
+            tmp_path,
+            ('run_command', {'command': "sh -c 'touch made'"}),
+            permissions=Permissions(rules=[PermissionRule('deny', command='touch')]),
+            person=person,
+        )
+        assert [request.subject for request in person.asked] == ["sh -c 'touch made'"]
+        assert (tmp_path / 'made').exists()
+
     async def test_every_deny_is_checked_before_a_managed_ask(self, tmp_path: Path) -> None:
         """Approving a managed ask must not run a call the person's own rule denies."""
         person = _Person(PermissionDecision(approved=True))

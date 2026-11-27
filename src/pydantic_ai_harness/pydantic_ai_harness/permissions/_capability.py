@@ -401,7 +401,10 @@ class Permissions(AbstractCapability[AgentDepsT]):
         """What to ask about this call, or `None` to run it; raises `SkipToolExecution` when a rule denies it."""
         command = shell_command(tool_def, args)
         posix = ctx.workspace.platform != 'windows'
-        managed = await _decided(ctx, self.managed_rules, tool_def=tool_def, args=args, command=command, posix=posix)
+        # A managed deny inside quotes stays a deny: the person it restricts mustn't approve their way past it.
+        managed = await _decided(
+            ctx, self.managed_rules, tool_def=tool_def, args=args, command=command, posix=posix, strict=True
+        )
         rule = await _decided(ctx, self.rules, tool_def=tool_def, args=args, command=command, posix=posix)
         subject = _subject(tool_def, args, command)
         # Every deny before any ask: a person approving a managed ask must not run a call a rule denies.
@@ -521,10 +524,13 @@ async def _decided(
     args: dict[str, Any],
     command: str | None,
     posix: bool,
+    strict: bool = False,
 ) -> PermissionRule[AgentDepsT] | None:
-    """The rule among `rules` deciding a call, or `None` when none applies."""
+    """The rule among `rules` deciding a call, or `None` when none applies; see `decide` for `strict`."""
     applying = [rule for rule in rules if await matches_tool_selector(rule.tools, ctx, tool_def)]
-    return decide(applying, command=command, command_arg=shell_command_arg(tool_def), args=args, posix=posix)
+    return decide(
+        applying, command=command, command_arg=shell_command_arg(tool_def), args=args, posix=posix, strict=strict
+    )
 
 
 def _subject(
