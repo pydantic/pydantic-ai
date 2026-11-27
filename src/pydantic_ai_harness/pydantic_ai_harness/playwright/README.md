@@ -147,7 +147,9 @@ recorded, while `tabs('new')` is refused and asks the model to close one first.
 A page dialog (`alert`, `confirm`, `prompt`) blocks the page until it is
 answered, and is dismissed unless `handle_next_dialog(accept=True)` was called
 before the action that opened it -- that call covers one dialog, not the rest of
-the run.
+the run. A `beforeunload` dialog is accepted automatically so the navigation
+that raised it goes through, and does not consume the `handle_next_dialog`
+decision.
 
 `screenshot` (and the optional `screenshot_on_navigate` attachment) return the
 image as [`BinaryContent`](https://pydantic.dev/docs/ai/api/pydantic-ai/messages/#pydantic_ai.messages.BinaryContent)
