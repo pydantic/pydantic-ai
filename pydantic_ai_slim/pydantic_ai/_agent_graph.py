@@ -1189,17 +1189,25 @@ def _part_position(messages: Sequence[_messages.ModelMessage], part: _messages.C
     raise AssertionError('The compacted history was checked to contain its `CompactionPart`.')  # pragma: no cover
 
 
-def _drop_added_request(record: _messages.CompactionRecord) -> None:
-    """Describe a `compact_history` run's compaction without the empty request the run added to compact with.
+def _drop_added_request(
+    record: _messages.CompactionRecord, added: _messages.ModelRequest, removed_at: int | None
+) -> None:
+    """Describe a `compact_history` run's compaction without the request the run added to compact with.
 
-    The run removes that request, the last message of both the history the compaction replaced and the compacted one.
+    That request was in the history the compaction replaced. `removed_at` is where the run removed it from the
+    compacted history, or `None` when the compaction summarized it away, so the compacted history never held it.
     """
     # Set when the compaction was made; only a record loaded from a serialized result lacks it.
     assert record.replaced is not None
-    record.replaced = record.replaced[:-1]
-    record.messages_before -= 1
+    replaced = [message for message in record.replaced if message is not added]
+    record.messages_before -= len(record.replaced) - len(replaced)
+    record.replaced = replaced
+    if removed_at is None:
+        return
     record.messages_after -= 1
-    record.kept_from = min(record.kept_from, record.messages_after)
+    # It's after the part, in the kept tail, unless a handler wrote it out ahead of the messages it kept.
+    record.kept_from -= removed_at < record.kept_from
+    record.part_message_index -= removed_at < record.part_message_index
 
 
 def _compaction_timestamp(holder: _messages.ModelMessage, step_request: _messages.ModelRequest) -> datetime:
@@ -5305,14 +5313,16 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         """
         history = ctx.state.message_history
         if (added := ctx.deps.added_compaction_request) is not None:
-            # By identity, from the end: a compaction keeps the request being answered as it was, and a hook can have
-            # appended a message after it.
-            del history[next(index for index in reversed(range(len(history))) if history[index] is added)]
-            ctx.state.appended_messages.replace(added, None)
-            ctx.deps.new_message_index = min(ctx.deps.new_message_index, len(history))
+            # By identity: a compaction keeps what it doesn't summarize as it was. It can have summarized the request
+            # away, when a hook queued a message after it, which is then the request being answered.
+            removed_at = next((index for index, message in enumerate(history) if message is added), None)
+            if removed_at is not None:
+                del history[removed_at]
+                ctx.state.appended_messages.replace(added, None)
+                ctx.deps.new_message_index = min(ctx.deps.new_message_index, len(history))
             # The run ends right after its compaction step, so there's at most the one compaction it kept.
             for record in ctx.state.compactions:
-                _drop_added_request(record)
+                _drop_added_request(record, added, removed_at)
         _drop_unanswered_request_scoped_prompts(ctx.state)
         self._result = SetFinalResult(result.FinalResult(cast(NodeRunEndT, None)))
         return self._result

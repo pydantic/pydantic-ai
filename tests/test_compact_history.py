@@ -434,3 +434,52 @@ async def test_a_changed_appending_system_prompt_isnt_added_to_the_history(compa
     # The model is sent the appended statement, framed, at the start of the new request.
     sent = [str(part.content) for part in seen[-1][-1].parts if isinstance(part, UserPromptPart)]
     assert ['The plan is two.' in text for text in sent] == [True, False]
+
+
+@pytest.mark.parametrize('compacts', [True, False], ids=['compacted', 'nothing-compacted'])
+async def test_a_message_a_hook_enqueues_is_kept_and_the_added_request_isnt(compacts: bool):
+    """A message a `before_model_request` hook enqueues is kept, as the request the compaction answers.
+
+    It comes after the request the run added to compact with, so a compaction that keeps only the request being
+    answered summarizes the added request away: the record still counts it among the messages it replaced, but not
+    among the compacted ones. When nothing compacts, the added request is dropped and the enqueued one kept, so the
+    next run sends it to the model.
+    """
+
+    class Remember(AbstractCapability[Any]):
+        async def before_model_request(
+            self, ctx: RunContext[Any], request_context: ModelRequestContext
+        ) -> ModelRequestContext:
+            ctx.enqueue('remember this')
+            return request_context
+
+    class SummarizeKeepingTheLast(AbstractCapability[Any]):
+        async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+            part = CompactionPart(content='summary')
+            return CompactionResult(messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='s')
+
+    capabilities: list[AbstractCapability[Any]] = [Remember()]
+    if compacts:
+        capabilities.append(SummarizeKeepingTheLast())
+    agent = Agent(FunctionModel(not_sent), capabilities=capabilities)
+    given = history()
+
+    result = await agent.compact_history(given)
+
+    remembered = result.all_messages()[-1]
+    assert isinstance(remembered, ModelRequest)
+    assert [part.content for part in remembered.parts if isinstance(part, UserPromptPart)] == ['remember this']
+    if compacts:
+        assert shapes(result.all_messages()) == snapshot(
+            ['ModelRequest: CompactionPart', 'ModelRequest: UserPromptPart']
+        )
+        [record] = result.compactions
+        # The compaction replaced the given history and the enqueued request; the added request isn't counted.
+        assert (record.messages_before, record.messages_after, record.kept_from) == (len(given) + 1, 2, 1)
+        assert (record.part_message_index, record.part_index) == (0, 0)
+        assert record.replaced == [*given, remembered]
+        assert record.summarized == given
+        assert result.new_messages() == result.all_messages()[:1]
+    else:
+        assert result.all_messages()[:-1] == given
+        assert result.compactions == []
