@@ -265,6 +265,38 @@ async def test_the_parents_managed_permissions_reach_a_durable_child_in_the_work
     assert observed == ['A managed permission rule denied this command, so it did not run. Do not retry it.']
 
 
+@pytest.mark.parametrize('managed', [True, False], ids=['managed', 'unmanaged'])
+async def test_a_durable_delegate_with_its_own_sub_agents_is_refused_under_a_managed_layer(
+    dbos: DBOS, managed: bool
+) -> None:
+    """Its child-workflow delegations can't see the layer it inherited; without a layer it runs as before."""
+    grandchild = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('grandchild done')])))
+    child_agent = Agent(
+        FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('child done')])),
+        name=f'delegating_child_{managed}',
+        capabilities=[SubAgents[object](agents=[SubAgent(grandchild, name='grandchild')]), DBOSDurability[object]()],
+    )
+    parent = Agent(
+        call_then_echo('delegate_task', {'agent_name': 'child', 'task': 'go'}, 'd1', 'parent done'),
+        name=f'delegating_parent_{managed}',
+        capabilities=[
+            *([Permissions[object](managed_rules=[PermissionRule('deny', command='rm')])] if managed else []),
+            SubAgents[object](agents=[SubAgent(child_agent, name='child')]),
+            DBOSDurability[object](),
+        ],
+    )
+
+    @DBOS.workflow(name=f'delegating_parent_{managed}_workflow')
+    async def workflow() -> str:
+        return (await parent.run('delegate')).output
+
+    if managed:
+        with pytest.raises(UserError, match=r"Sub-agent 'child' is bound to a durable execution engine .*14944"):
+            await workflow()
+    else:
+        assert await workflow() == 'parent done'
+
+
 async def test_a_managed_permissions_added_per_run_is_refused_in_the_workflow(dbos: DBOS) -> None:
     """So the agent's own capabilities, which a child-workflow delegation reads, hold every managed `Permissions`."""
     agent = Agent(

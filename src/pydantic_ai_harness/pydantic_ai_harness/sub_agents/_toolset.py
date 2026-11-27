@@ -19,6 +19,7 @@ import anyio
 from pydantic_ai import AgentStreamEvent, CapabilityEvent, capture_run_messages
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.durable_exec import BaseDurabilityCapability, DurableRunContext
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -900,8 +901,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # Temporal runs a restored context in workflow code, and DBOS a restored context at all, only in a child workflow.
         if not (isinstance(ctx, DurableRunContext) and ctx.in_durable_context and ctx.agent is not None):
             return
-        durability = BaseDurabilityCapability.from_agent(ctx.agent)
-        if durability is None or durability.engine_spec.engine_name not in ('Temporal', 'DBOS'):
+        if not _runs_child_workflows(ctx.agent):
             return
         if (
             self._include_self
@@ -994,7 +994,14 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
         Raises:
             ModelRetry: no delegate has that name.
+            UserError: the delegate would pass this run's managed layer on through a child workflow, which drops it.
         """
+        sub_agent = self._find_agent(ctx, agent_name)
+        _check_durable_delegate(ctx, agent_name, sub_agent.agent)
+        return sub_agent
+
+    def _find_agent(self, ctx: RunContext[AgentDepsT], agent_name: str) -> SubAgent[AgentDepsT]:
+        """The delegate `agent_name` names: see `_resolve_agent`."""
         if self._is_self(agent_name):
             agent = ctx.agent
             if agent is None:  # pragma: no cover - the running agent is always set during a run
@@ -1951,6 +1958,28 @@ def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: Usage
         cost_limit=cost,
         count_tokens_before_request=parent.count_tokens_before_request or child.count_tokens_before_request,
     )
+
+
+def _runs_child_workflows(agent: AbstractAgent[Any, Any]) -> bool:
+    """Whether `agent` is bound to an engine that runs a `SubAgents` delegation as a child workflow."""
+    durability = BaseDurabilityCapability.from_agent(agent)
+    return durability is not None and durability.engine_spec.engine_name in ('Temporal', 'DBOS')
+
+
+def _check_durable_delegate(ctx: RunContext[Any], agent_name: str, agent: AbstractAgent[Any, Any]) -> None:
+    """Refuse a delegate that could pass this run's managed layer on through a child workflow, which drops it."""
+    # Imported here: `_capability` imports this module.
+    from pydantic_ai_harness.sub_agents._capability import SubAgents
+
+    if not inherited_managed_permissions(ctx) or not _runs_child_workflows(agent):
+        return
+    if any(isinstance(capability, SubAgents) for capability in leaf_capabilities(agent.root_capability)):
+        # Inside the child workflow, only the delegate agent's own capabilities can be read, not the layer it got.
+        raise UserError(
+            f'Sub-agent {agent_name!r} is bound to a durable execution engine and has its own `SubAgents`: '
+            'a delegation it makes through a child workflow would run without the `max_mode` and `managed_rules` '
+            "of this run's `Permissions`, so it is refused (https://github.com/pydantic/pydantic-ai/issues/14944)."
+        )
 
 
 def _check_remote(ctx: RunContext[Any], agent_name: str, model: str | None) -> None:

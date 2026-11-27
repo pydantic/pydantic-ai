@@ -212,9 +212,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
     `max_mode` and `managed_rules` are limits set by whoever configures the agent for the people who run it,
     such as an organization's managed settings: `mode` and `rules`, which the person running it may choose,
     can't loosen them, and `SubAgents` holds each delegate to them, and the delegate's own delegates, whatever
-    it shares, except a child-workflow delegation made by a durable delegate that only inherited them. Every `'deny'`, managed or not, is checked before any `'ask'`, so approving a call
-    never runs one a rule denies. A call held by a managed rule or by `max_mode` is `person_only`, like a
-    protected change.
+    it shares, or refuses a delegation it can't hold to them. Every `'deny'`, managed or not, is checked before
+    any `'ask'`, so approving a call never runs one a rule denies. A call held by a managed rule or by `max_mode`
+    is `person_only`, like a protected change.
     """
 
     mode: PermissionMode | Callable[[RunContext[AgentDepsT]], PermissionMode] = 'full'
