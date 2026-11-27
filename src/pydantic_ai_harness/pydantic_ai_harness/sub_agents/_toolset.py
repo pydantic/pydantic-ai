@@ -18,7 +18,7 @@ import anyio
 
 from pydantic_ai import AgentStreamEvent, CapabilityEvent, capture_run_messages
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError, WrapperCapability
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.durable_exec import BaseDurabilityCapability, DurableRunContext
 from pydantic_ai.exceptions import (
@@ -1973,13 +1973,23 @@ def _check_durable_delegate(ctx: RunContext[Any], agent_name: str, agent: Abstra
 
     if not inherited_managed_permissions(ctx) or not _runs_child_workflows(agent):
         return
-    if any(isinstance(capability, SubAgents) for capability in leaf_capabilities(agent.root_capability)):
+    if any(_finds(capability, SubAgents) for capability in leaf_capabilities(agent.root_capability)):
         # Inside the child workflow, only the delegate agent's own capabilities can be read, not the layer it got.
         raise UserError(
             f'Sub-agent {agent_name!r} is bound to a durable execution engine and has its own `SubAgents`: '
             'a delegation it makes through a child workflow would run without the `max_mode` and `managed_rules` '
             "of this run's `Permissions`, so it is refused (https://github.com/pydantic/pydantic-ai/issues/14944)."
         )
+
+
+def _finds(capability: AbstractCapability[Any], kind: type[AbstractCapability[Any]]) -> bool:
+    """Whether `capability`, or one it wraps through a `WrapperCapability` chain, is a `kind`."""
+    candidate: AbstractCapability[Any] | None = capability
+    while candidate is not None:
+        if isinstance(candidate, kind):
+            return True
+        candidate = candidate.wrapped if isinstance(candidate, WrapperCapability) else None
+    return False
 
 
 def _check_remote(ctx: RunContext[Any], agent_name: str, model: str | None) -> None:
