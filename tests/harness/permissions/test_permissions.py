@@ -969,27 +969,31 @@ class TestParsePermissionRule:
     def test_a_leading_dot_slash_is_dropped(self, rule: str) -> None:
         assert parse_permission_rule(rule, 'deny') == PermissionRule('deny', tools=['read_file'], args={'path': '.env'})
 
+    @pytest.mark.parametrize('rule', ['list_dir(./)', 'list_dir(**/)', 'list_dir(path=./)'])
+    def test_a_path_of_only_dot_slash_is_everything(self, rule: str) -> None:
+        assert parse_permission_rule(rule, 'deny').args == {'path': '**'}
+
     @pytest.mark.parametrize(
-        ('rule', 'glob'),
+        ('rule', 'hint'),
         [
-            ('write_file(secrets/)', 'secrets/**'),
-            ('read_file(./.git/)', '.git/**'),
-            ('read_file(**/.git/)', '.git/**'),
-            ('list_dir(./)', '**'),
-            ('list_dir(**/)', '**'),
+            ('write_file(secrets/)', 'write `secrets/\\*\\*` .* add `secrets`'),
+            ('read_file(./.git/)', 'write `.git/\\*\\*` .* add `.git`'),
+            ('read_file(**/.git/)', 'write `.git/\\*\\*` .* add `.git`'),
         ],
     )
-    def test_a_trailing_slash_names_a_directory_and_everything_under_it(self, rule: str, glob: str) -> None:
-        parsed = parse_permission_rule(rule, 'deny')
-        assert parsed.args == {'path': glob}
+    def test_a_trailing_slash_raises(self, rule: str, hint: str) -> None:
+        """`secrets/**` misses a call on `secrets` itself, so a directory rule asks for both globs instead."""
+        with pytest.raises(UserError, match=f'ends its path with `/`: {hint}'):
+            parse_permission_rule(rule, 'deny')
 
-    async def test_a_directory_deny_refuses_a_file_under_it(self, tmp_path: Path) -> None:
+    async def test_a_directory_and_what_is_under_it_are_both_denied(self, tmp_path: Path) -> None:
         (tmp_path / 'secrets').mkdir()
-        call = ('write_file', {'path': 'secrets/key', 'content': 'x'})
-        rules = parse_permission_rules({'deny': ['write_file(secrets/)']})
-        result = await _agent(tmp_path, _calls(call), 'full', rules=rules).run('go')
-        assert result.output == 'A permission rule denied this file write, so it did not run. Do not retry it.'
-        assert not (tmp_path / 'secrets' / 'key').exists()
+        (tmp_path / 'secrets' / 'key').write_text('x')
+        rules = parse_permission_rules({'deny': ['list_directory(secrets)', 'list_directory(secrets/**)']})
+        calls = [('list_directory', {'path': 'secrets'}), ('list_directory', {'path': 'secrets/inner'})]
+        for call in calls:
+            result = await _agent(tmp_path, _calls(call), 'full', rules=rules).run('go')
+            assert result.output == 'A permission rule denied this tool call, so it did not run. Do not retry it.'
 
     def test_other_arguments_keep_their_glob_as_written(self) -> None:
         assert parse_permission_rule('web_fetch(url=./x)', 'deny').args == {'url': './x'}
