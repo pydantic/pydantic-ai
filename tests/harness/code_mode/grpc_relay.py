@@ -27,6 +27,8 @@ from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 SESSION_METHOD = '/monty.v1.MontySession/Session'
 _LENGTH_PREFIX = struct.Struct('<I')
+_OOM_EXIT_CODE = 65
+"""A worker's exit code after it exceeded its memory limit: Monty's `OOM_EXIT_CODE`, in `crates/monty-types/src/resource.rs`."""
 
 
 class _RawCodec(CodecBase):
@@ -36,10 +38,10 @@ class _RawCodec(CodecBase):
     def __content_subtype__(self) -> str:
         return 'proto'
 
-    def encode(self, message: Any, message_type: Any) -> bytes:  # pragma: no cover -- only bridged sessions (#8824)
+    def encode(self, message: Any, message_type: Any) -> bytes:
         return message
 
-    def decode(self, data: bytes, message_type: Any) -> Any:  # pragma: no cover -- only bridged sessions (#8824)
+    def decode(self, data: bytes, message_type: Any) -> Any:
         return data
 
 
@@ -53,12 +55,14 @@ class MontyRelay:
     """Refuse streams with one or more causes in order, repeating the last cause after exhaustion."""
     url: str = ''
     metadata: list[Mapping[str, str]] = field(default_factory=list[Mapping[str, str]])
+    workers: list[asyncio.subprocess.Process] = field(default_factory=list[asyncio.subprocess.Process])
+    """Every worker a stream started, so the relay can reap any worker that a stream's handler left running."""
     _streams: list[Stream[bytes, bytes]] = field(default_factory=list[Stream[bytes, bytes]])
 
     def __mapping__(self) -> dict[str, Handler]:
         return {SESSION_METHOD: Handler(self._session, Cardinality.STREAM_STREAM, bytes, bytes)}
 
-    async def drop_streams(self) -> None:  # pragma: no cover -- only the skipped #8824 tests bridge a session
+    async def drop_streams(self) -> None:
         """Reset every open stream, as a lost worker connection does."""
         await asyncio.gather(*(stream.cancel() for stream in self._streams))
 
@@ -80,13 +84,14 @@ class MontyRelay:
             return
         if self.refuse:
             raise GRPCError(Status.UNAUTHENTICATED, 'unauthorized')
-        return await self._bridge(stream)  # pragma: no cover -- only the skipped #8824 tests bridge a session
+        return await self._bridge(stream)
 
-    async def _bridge(self, stream: Stream[bytes, bytes]) -> None:  # pragma: no cover -- only the skipped #8824 tests
+    async def _bridge(self, stream: Stream[bytes, bytes]) -> None:
         self._streams.append(stream)
         child = await asyncio.create_subprocess_exec(
             find_monty_binary(), 'subprocess', stdin=asyncio.subprocess.PIPE, stdout=asyncio.subprocess.PIPE
         )
+        self.workers.append(child)
         stdin, stdout = child.stdin, child.stdout
         assert stdin is not None and stdout is not None
 
@@ -104,12 +109,23 @@ class MontyRelay:
                 while True:
                     (length,) = _LENGTH_PREFIX.unpack(await stdout.readexactly(_LENGTH_PREFIX.size))
                     await stream.send_message(await stdout.readexactly(length))
+            # The worker closed its stdout, so it exited or is exiting: reap it rather than kill it,
+            # since a kill that lands mid-exit replaces its exit code.
+            async with asyncio.timeout(READINESS_WAIT_TIMEOUT):
+                await child.wait()
         finally:
             to_child_task.cancel()
             await asyncio.gather(to_child_task, return_exceptions=True)
             with suppress(ProcessLookupError):
                 child.kill()
             await child.wait()
+        if child.returncode == _OOM_EXIT_CODE:
+            # Monty's server reports a worker out of memory this way, which the client raises as `MemoryError`.
+            await stream.send_trailing_metadata(
+                status=Status.RESOURCE_EXHAUSTED,
+                status_message='worker exceeded its memory limit',
+                metadata={'monty-cause': 'out_of_memory'},
+            )
 
 
 class _RelayServer(Server):
@@ -166,3 +182,9 @@ async def serve_monty_relay(
         yield relay
     finally:
         await server.stop()
+        # grpclib cancels a stream's handler when the client closes the connection, and that cancel can land
+        # before the handler's `finally` has killed or reaped its worker.
+        for worker in relay.workers:
+            with suppress(ProcessLookupError):  # its transport closed after the worker exited
+                worker.kill()
+            await worker.wait()
