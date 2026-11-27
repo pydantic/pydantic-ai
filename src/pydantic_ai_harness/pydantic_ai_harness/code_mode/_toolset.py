@@ -77,6 +77,7 @@ from pydantic_ai_harness._monty_exec import (
     WorkerFailure,
     check_monty_sandbox,
     in_temporal_workflow,
+    module_attrs,
     module_functions,
     resolve_limits,
     worker_failure,
@@ -469,12 +470,49 @@ def _jsonable_for_sandbox(value: Any) -> Any:
     return to_jsonable_python(value)
 
 
-_RUN_CODE_DESCRIPTION_HEAD = """\
+# Every module the sandbox imports, as `test_advertised_modules_cover_every_importable_module` checks against
+# Monty. The `run_code` description lists them, and `check_external_modules` refuses their top-level names, since
+# `import math` reaches Monty's module, never an external one of that name.
+_SANDBOX_MODULES = (
+    'sys',
+    'typing',
+    'asyncio',
+    'math',
+    'json',
+    're',
+    'unicodedata',
+    'datetime',
+    'time',
+    'random',
+    'os',
+    'pathlib',
+    'collections',
+    'itertools',
+    'functools',
+    'dataclasses',
+    'copy',
+    'base64',
+    'binascii',
+    'bisect',
+    'csv',
+    'decimal',
+    'fnmatch',
+    'hashlib',
+    'os.path',
+    'tomllib',
+    'annotationlib',
+    'colorsys',
+    'keyword',
+    'stat',
+    'statistics',
+)
+
+_RUN_CODE_DESCRIPTION_HEAD = f"""\
 Write and run Python code in a sandboxed environment.
 
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No third-party libraries**: only the standard library modules listed below can be used
-- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`, `hashlib`, `os.path`, `tomllib`, `annotationlib`, `colorsys`, `keyword`, `stat`, `statistics`. These must be imported before use, just like in regular Python."""
+- **Importable standard library modules**: {', '.join(f'`{name}`' for name in _SANDBOX_MODULES)}. These must be imported before use, just like in regular Python."""
 
 # Timing/OS restriction line, swapped depending on what host access the agent
 # configured. Three states, because `mount` and `os` enable different things:
@@ -551,28 +589,7 @@ def _policy_has_clock(os_policy: CodeModeOSPolicy | None) -> bool:
 
 def _module_stubs(modules: Mapping[str, ExternalModule]) -> dict[str, str | None]:
     """Each module in `modules` and each of its submodules, by dotted name, with its `.pyi` stubs."""
-    stubs: dict[str, str | None] = {}
-    for name, module in modules.items():
-        stubs[name] = module.stubs
-        stubs |= _module_stubs(
-            {
-                f'{name}.{attr}': value
-                for attr, value in module.attrs.items()
-                # Monty hides attributes starting with `_` from the sandbox, so a hidden submodule needs no stubs.
-                if isinstance(value, ExternalModule) and not attr.startswith('_')
-            }
-        )
-    return stubs
-
-
-# Modules Monty bundles: `import math` reaches Monty's own module, never an external one of that name. Monty
-# 1.7's `sys.builtin_module_names`, plus `time`, which it bundles but leaves out of that list.
-_MONTY_MODULES = frozenset(
-    {
-        'asyncio', 'base64', 'binascii', 'bisect', 'collections', 'dataclasses', 'datetime', 'functools',
-        'itertools', 'json', 'math', 'os', 'pathlib', 'random', 're', 'sys', 'time', 'typing', 'unicodedata',
-    }
-)  # fmt: skip
+    return {name: module.stubs for name, module, _ in module_attrs(modules)}
 
 
 def check_external_modules(modules: Mapping[str, ExternalModule]) -> None:
@@ -583,7 +600,7 @@ def check_external_modules(modules: Mapping[str, ExternalModule]) -> None:
                 f'`external_modules` key {name!r} is not a module name. '
                 'Use a top-level name and nest submodules as `ExternalModule` attributes.'
             )
-        if name in _MONTY_MODULES:
+        if name in _SANDBOX_MODULES:
             raise UserError(
                 f'`external_modules` key {name!r} names a module Monty already provides, '
                 'so the sandbox would import that one. Pick another name.'
