@@ -3171,6 +3171,26 @@ def test_structured_dict_validate_refuses_unevaluated_properties_with_patterns()
         )
 
 
+def test_structured_dict_validate_refuses_nested_dialects():
+    """A nested `$schema` would switch `jsonschema` back to Python's `re` for its patterns, so it's refused.
+
+    It checks a configuration error raised before any request, so this is a unit test.
+    """
+    with pytest.raises(UserError, match='supports `\\$schema` only at the top level'):
+        StructuredDict(
+            {
+                'type': 'object',
+                'properties': {
+                    'tags': {
+                        '$schema': 'https://json-schema.org/draft/2019-09/schema',
+                        'patternProperties': {'^(a+)+$': True},
+                    }
+                },
+            },
+            validate=True,
+        )
+
+
 def test_output_type_structured_dict_refuses_nan_under_multiple_of():
     """NaN is refused before keywords like `multipleOf`, which would raise on it, are evaluated.
 

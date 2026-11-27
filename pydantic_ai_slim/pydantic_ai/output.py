@@ -580,6 +580,11 @@ def _compile_schema_patterns(json_schema: JsonSchemaValue) -> _PatternMatchers:
             '`StructuredDict(validate=True)` does not support `unevaluatedProperties` together with `pattern` or '
             '`patternProperties`, because it could not check their property names in linear time.'
         )
+    if any(_uses_keyword(subschema, '$schema') for subschema in _subschemas(json_schema)):
+        # A nested `$schema` makes `jsonschema` switch to its stock validator, which checks patterns with Python's `re`.
+        raise exceptions.UserError(
+            '`StructuredDict(validate=True)` supports `$schema` only at the top level of the schema, not in a subschema.'
+        )
     return matchers
 
 
