@@ -898,6 +898,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
         previous_summary = extract_previous_summary(messages) if self.incremental else None
         written = await self._summarize(to_summarize, ctx, previous_summary=previous_summary)
+        record_summary_calls(written)
         # A durable engine replays the time with the text, so the summary's metadata, which later requests
         # and tools are keyed on, is the same on a retry. A result recorded before the time was kept is a `str`.
         summary, created_at = (written, None) if isinstance(written, str) else (written.text, written.created_at)
@@ -1126,9 +1127,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
 
         The return type keeps the `str` an earlier version recorded, so a durable run started before it replays.
         """
-        return WrittenSummary(
-            await write_summary(self, messages, ctx, previous_summary=previous_summary), datetime.now(UTC)
-        )
+        return await write_summary(self, messages, ctx, previous_summary=previous_summary)
 
 
 async def write_summary(
@@ -1137,7 +1136,7 @@ async def write_summary(
     ctx: RunContext[AgentDepsT],
     *,
     previous_summary: str | None = None,
-) -> str:
+) -> WrittenSummary:
     """Write *summarizer*'s summary of *messages* with its model, prompts and settings, inline.
 
     `SummarizingCompaction._summarize` wraps this in its durable operation; another strategy that
@@ -1145,7 +1144,7 @@ async def write_summary(
 
     When the request doesn't fit the summarizer model's context window, *messages* are summarized in chunks,
     oldest first, each next request updating the summary so far (see `_SummaryRequests`). The number of
-    requests is then recorded on the `compact_messages` span as `compaction.summary_calls`.
+    requests comes back with the summary, for the caller to record with `record_summary_calls`.
     """
     from pydantic_ai import Agent
 
@@ -1211,9 +1210,16 @@ async def write_summary(
         calls += 1
         if start == len(messages):
             break
-    if calls > 1:
-        record_span_attributes({'compaction.summary_calls': calls})
-    return summary
+    return WrittenSummary(summary, datetime.now(UTC), calls)
+
+
+def record_summary_calls(written: WrittenSummary | str) -> None:
+    """Record on the enclosing `compact_messages` span how many requests *written* took, when it took more than one.
+
+    Called outside the durable operation that wrote it, so a replay that returns the recorded summary records it too.
+    """
+    if isinstance(written, WrittenSummary) and written.summary_calls > 1:
+        record_span_attributes({'compaction.summary_calls': written.summary_calls})
 
 
 _DEFAULT_SUMMARY_RESERVE_TOKENS = 8_192
@@ -1284,6 +1290,12 @@ class _SummaryRequests(Generic[AgentDepsT]):
     """The number of messages holding `<harness_data>` before each message, then their total."""
     _boundaries: list[int] = field(init=False, default_factory=list[int])
     """The ends a chunk can have: `tool_pair_boundaries` of `messages`."""
+    _sent: list[int] = field(init=False, default_factory=lambda: [0])
+    """The tokens sent for the messages before each boundary, then their total: what `next` sends of each.
+
+    Between two boundaries is the smallest span a chunk can hold. A span over the budget is sent in a request of
+    its own with its tool output cut until it fits (see `_truncated`), so it counts as the budget, not its size.
+    """
 
     def __post_init__(self) -> None:
         for message in self.messages:
@@ -1296,17 +1308,21 @@ class _SummaryRequests(Generic[AgentDepsT]):
             has_data = isinstance(message, ModelRequest) and any(_is_transcript_data(part) for part in message.parts)
             self._data.append(self._data[-1] + has_data)
         self._boundaries = tool_pair_boundaries(self.messages)
+        if self.budget is not None:
+            for begin, end in zip([0, *self._boundaries], self._boundaries):
+                self._sent.append(self._sent[-1] + min(self._estimate(begin, end), self.budget))
 
     def needs_more_requests_than(self, start: int, summary: str | None, available: int) -> bool:
         """Whether summarizing the messages from *start*, updating *summary*, takes more than *available* requests.
 
-        A request holds at most `budget` tokens of transcript, so a rest estimated above `available` times that needs
-        more. A summary that goes out in one request whatever its size, without a known window or when the fixed
-        part alone doesn't fit, never does.
+        A request holds at most `budget` tokens of transcript, so a rest whose sent tokens (`_sent`) are above
+        `available` times that needs more. A summary that goes out in one request whatever its size, without a known
+        window or when the fixed part alone doesn't fit, never does.
         """
         if self.budget is None or not self._fits(self._render(start, start, summary)):
             return False
-        return available <= 0 or self._estimate(start, len(self.messages)) > available * self.budget
+        sent = self._sent[-1] - self._sent[bisect_right(self._boundaries, start)]
+        return available <= 0 or sent > available * self.budget
 
     def next(self, start: int, summary: str | None) -> tuple[str, int]:
         """The prompt of the next request, summarizing the messages from *start* and updating *summary*, and its end.

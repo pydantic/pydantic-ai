@@ -285,6 +285,19 @@ class TestSummarizingCompaction:
 
         assert summarizer.prompts == []
 
+    async def test_a_return_over_32_requests_long_is_cut_rather_than_refused(self) -> None:
+        """The bound counts a return as the request it's cut to fit, not its full length."""
+        summarizer = _Summarizer()
+        agent = _agent(_compaction(summarizer, tool_return_max_chars=None))
+
+        result = await agent.run('next', message_history=_tool_turns(1, size=400_000))
+
+        assert len(summarizer.prompts) == snapshot(3)
+        assert all(tokens <= _WINDOW for tokens in summarizer.request_tokens)
+        [prompt] = [prompt for prompt in summarizer.prompts if 'name="tool_0"' in prompt]
+        assert re.search(r'<message role="tool_return" name="tool_0">\ny+\[\.\.\.\]\n</message>', prompt)
+        assert _summary(result.all_messages()) == f'summary {len(summarizer.prompts)}'
+
     async def test_a_summary_never_takes_more_than_32_requests(self) -> None:
         """Chunks that hold less than the budget are caught once the rest can't fit the requests left."""
         summarizer = _Summarizer()

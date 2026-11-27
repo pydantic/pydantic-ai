@@ -34,6 +34,8 @@ class WrittenSummary:
 
     text: str
     created_at: datetime
+    summary_calls: int = 1
+    """The number of requests the summary was written in; a result recorded before it was kept wrote it in one."""
 
 
 def summary_request(summary: str, created_at: datetime | None = None) -> ModelRequest:

@@ -15,7 +15,6 @@ import re
 from collections import OrderedDict
 from collections.abc import Callable, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from datetime import UTC, datetime
 from hashlib import sha256
 from typing import TYPE_CHECKING
 
@@ -73,6 +72,7 @@ from pydantic_ai_harness.compaction._summarizing_compaction import (
     extract_previous_summary,
     format_transcript,
     is_legacy_summary,
+    record_summary_calls,
     write_summary,
 )
 from pydantic_ai_harness.compaction._summary import WrittenSummary, is_summary_part, summary_request
@@ -525,6 +525,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             # Without an anchor the earlier summary is summarized again, as `SummarizingCompaction` does.
             summarized = [ModelRequest(parts=earlier), *summarized]
         written = await self._summarize(ctx, summarized, previous)
+        record_summary_calls(written)
         # A result recorded before the write time was kept is a bare `str`, and its summary goes without one.
         text, created_at = (written, None) if isinstance(written, str) else (written.text, written.created_at)
         # The summarizer is reused as configured, including its cross-model bridge note.
@@ -635,9 +636,9 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
         type keeps the `str` an earlier version recorded, so a durable run started before it replays.
         """
         assert self.summarizer is not None
-        text = await write_summary(self.summarizer, messages, ctx, previous_summary=previous_summary)
-        # The time is recorded with the text, so a replay restores the summary's metadata exactly.
-        return WrittenSummary(text, datetime.now(UTC))
+        # The time and request count are recorded with the text, so a replay restores the summary's metadata and span
+        # attributes exactly.
+        return await write_summary(self.summarizer, messages, ctx, previous_summary=previous_summary)
 
 
 def _split_steps(messages: Sequence[ModelMessage], counts: Sequence[int], start: int, end: int) -> list[_Step]:
