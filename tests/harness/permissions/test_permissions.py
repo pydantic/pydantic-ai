@@ -487,6 +487,13 @@ _SHELL_TOOL = Tool(
     _run_command, name='run_command', metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'}
 )
 
+_SHELL_TOOL_REQUIRING_APPROVAL = Tool(
+    _run_command,
+    name='run_command',
+    requires_approval=True,
+    metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'},
+)
+
 _RULES = [
     PermissionRule('allow', command='git status'),
     PermissionRule('allow', command='ls'),
@@ -1526,6 +1533,79 @@ class TestProtectedCommandWords:
         ]
         assert await _held(*map(_command, commands), commands=['pax config']) == commands[:12]
 
+    async def test_an_eval_after_a_shell_without_a_script_is_checked(self) -> None:
+        commands = [
+            "sh /dev/null; eval 'echo x > .pax/settings.json'",
+            "bash build.sh && sh x; eval 'echo x > .pax/settings.json'",
+        ]
+        assert await _held(*map(_command, commands)) == commands
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            'cp payload .git/hook?/pre-commit',
+            'cp payload .git/hook*/pre-commit',
+            'echo x > .pa[x]/settings.json',
+            'echo x > .pa[!y]/settings.json',
+            'echo x > .pa[]x]/settings.json',
+            'tee .pa{x,y}/settings.json < payload',
+            'cp payload .p{a{x,y},b}/settings.json',
+            'cp payload .pa{w..z}/settings.json',
+            'cp payload notes/.*/x',
+            'cp payload notes/[.]?/x',
+            'touch x{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}{a,b}',
+        ],
+        ids=[
+            'question-mark',
+            'star',
+            'bracket',
+            'negated-bracket',
+            'bracket-holding-a-bracket',
+            'braces',
+            'nested-braces',
+            'brace-sequence',
+            'could-be-a-dot',
+            'bracket-could-be-a-dot',
+            'too-many-braces',
+        ],
+    )
+    async def test_a_pattern_that_could_expand_to_a_protected_path(self, command: str) -> None:
+        assert await _held(_command(command)) == [command]
+
+    async def test_a_windows_wildcard_that_could_name_a_protected_path(self) -> None:
+        commands = ['Set-Content .pa?\\settings.json x', 'Set-Content notes\\.*\\x y', 'Set-Content *.txt x']
+        assert await _held(*map(_command, commands), workspace=_WindowsRepo()) == commands[:2]
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            'sort -o.pax/settings.json payload',
+            'cp payload -t.git/hooks',
+            'install -D payload -t.git/hooks',
+            'cp -vt.git/hooks payload',
+        ],
+    )
+    async def test_a_value_attached_to_a_short_option(self, command: str) -> None:
+        assert await _held(_command(command), paths=[*PROTECTED, '.git/hooks']) == [command]
+
+    async def test_ordinary_patterns_options_and_shells_still_run(self) -> None:
+        commands = [
+            'cp *.py dest/',
+            "find . -name '*.py' -delete",
+            'touch f{1..3}.txt',
+            'mv config{,.bak}',
+            'echo {} a,b} {x',
+            'cp src/[a-z]?.txt .git/hooks-backup/',
+            'echo x > notes/[a/b]',
+            'echo x > notes/[unclosed',
+            'sort -o out.txt in.txt',
+            'cp -vt dest/ a.txt',
+            "python -c 'print([1, 2])'",
+            "git commit -m 'why?'",
+            "sh build.sh; eval 'echo hi'",
+        ]
+        assert await _held(*map(_command, commands), paths=[*PROTECTED, '.git/hooks']) == []
+
     async def test_a_quoted_path_is_one_word(self) -> None:
         commands = ['echo x > "my dir/.pax/x"', 'echo x > my dir/.pax/x', 'tool --out=my/a']
         assert await _held(*map(_command, commands), paths=['my dir/.pax/*', 'my/a']) == [commands[0], commands[2]]
@@ -2205,21 +2285,50 @@ class TestReviewerApprovals:
         ]
         assert _returns(held.all_messages()) == []
 
-    async def test_a_reviewers_approval_does_not_answer_a_managed_ask_on_a_plain_tool(self) -> None:
-        def deploy(env: str) -> str:
-            raise AssertionError('the held call must not run')  # pragma: no cover
+    async def test_a_managed_ask_on_a_plain_tool_with_requires_approval_goes_past_the_reviewer(self) -> None:
+        """Held before core defers the tool, the request says `person_only`, so the reviewer leaves it to the person."""
+        asked: list[object] = []
 
-        agent = Agent[None, 'str | DeferredToolRequests'](
+        def deploy(env: str) -> str:
+            return f'deployed {env}'
+
+        async def person(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            asked.extend(requests.metadata.values())
+            return await _approve_all(ctx, requests)
+
+        agent = Agent[None, str](
             _calls(('deploy', {'env': 'prod'})),
             deps_type=type(None),
-            output_type=[str, DeferredToolRequests],
             tools=[Tool(deploy, requires_approval=True)],
-            capabilities=[Permissions(managed_rules=[PermissionRule('ask', tools=['deploy'])]), _approving_reviewer()],
+            capabilities=[
+                Permissions(managed_rules=[PermissionRule('ask', tools=['deploy'])]),
+                _approving_reviewer(),
+                HandleDeferredToolCalls[None](handler=person),
+            ],
         )
-        held = await agent.run('go')
-        assert isinstance(held.output, DeferredToolRequests)
-        [call] = held.output.approvals
-        assert held.output.metadata == {call.tool_call_id: {'permissions': {'person_only': True}}}
+        assert (await agent.run('go')).output == 'deployed prod'
+        assert asked == [{'permissions': {'person_only': True}}]
+
+    @pytest.mark.parametrize(
+        'permissions',
+        [
+            Permissions[None](managed_rules=[PermissionRule('ask', command='echo')]),
+            Permissions[None](max_mode='read-only'),
+        ],
+        ids=['managed-ask', 'max-mode'],
+    )
+    async def test_a_person_only_hold_on_a_command_with_requires_approval_goes_to_the_person(
+        self, permissions: Permissions[None]
+    ) -> None:
+        person = _Person(PermissionDecision(approved=True))
+        agent = Agent[None, str](
+            _calls(ECHO),
+            deps_type=type(None),
+            tools=[_SHELL_TOOL_REQUIRING_APPROVAL],
+            capabilities=[permissions, _approving_reviewer(), HandleDeferredToolCalls[None](approval_ask(person))],
+        )
+        assert (await agent.run('go')).output == 'ran'
+        assert [(request.subject, request.person_only) for request in person.asked] == [('echo hi', True)]
 
     async def test_an_approval_from_any_other_handler_counts_as_the_persons(self, tmp_path: Path) -> None:
         """Only `ApprovalReviewer` marks its approvals; a handler that approves in code is trusted as the person."""
