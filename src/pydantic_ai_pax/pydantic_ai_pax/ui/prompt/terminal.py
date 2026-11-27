@@ -12,7 +12,7 @@ from prompt_toolkit.history import History
 from rich.console import Console
 
 from pydantic_ai_pax.commands import Commands
-from pydantic_ai_pax.config import SETTING_FIELDS, Settings
+from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.plugins import SessionEndReason
 from pydantic_ai_pax.ui.prompt.completion_adapter import COMPLETION_STYLE, PromptCompleter
 from pydantic_ai_pax.ui.prompt.image_input import ImageInput
@@ -28,8 +28,7 @@ if TYPE_CHECKING:
 DepsT = TypeVar('DepsT')
 OutputT = TypeVar('OutputT')
 
-_INPUT_FIELDS = tuple(name for key, name in SETTING_FIELDS.items() if key.startswith('input.'))
-# The composer shows its hint row once the shown session's input settings differ from these. It runs on every
+# The composer shows its hint row once the shown session's `input.*` settings differ from these. It runs on every
 # paint, so it compares fields rather than serializing them.
 _DEFAULTS = Settings.model_construct()
 
@@ -183,8 +182,12 @@ class Terminal(Generic[DepsT, OutputT]):
             keyboard_labels=lambda: self._shown().context.settings.keyboard_labels,
             busy_delivery=lambda: self._shown().context.settings.busy_delivery,
             remember_busy_delivery=lambda mode: self._shown().context.set_setting(['input.busy_delivery', mode]),
-            input_changed=lambda: any(
-                getattr(self._shown().context.settings, name) != getattr(_DEFAULTS, name) for name in _INPUT_FIELDS
+            input_changed=lambda: (
+                (settings := self._shown().context.settings).input_bindings != _DEFAULTS.input_bindings
+                or settings.keyboard_labels != _DEFAULTS.keyboard_labels
+                or settings.question_submit != _DEFAULTS.question_submit
+                or settings.question_placement != _DEFAULTS.question_placement
+                or settings.busy_delivery != _DEFAULTS.busy_delivery
             ),
             queue_in_toolbar=lambda: 'queued' in self._shown().context.settings.footer_fields,
             full_screen=self._shown().context.settings.full_screen,

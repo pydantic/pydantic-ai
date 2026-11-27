@@ -7,6 +7,7 @@ from collections import deque
 from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
 from contextlib import asynccontextmanager
 from itertools import islice
+from typing import Literal
 
 import anyio
 from PIL import Image
@@ -66,6 +67,9 @@ class PromptRewind(Exception):
 
 
 _Submission = QueuedPrompt | KeyboardInterrupt | EOFError | PromptRewind
+
+SendRoute = Literal['save', 'choose-save', 'question', 'choose', 'send', 'after-turn', 'next-checkpoint']
+"""What Send does with the draft now; each caller words it for its own surface."""
 
 
 class LivePrompt:
@@ -602,7 +606,23 @@ class LivePrompt:
         """Describe remappable actions using the same current state as their handlers."""
         match action:
             case 'send':
-                return self.send_action()
+                match self.send_route():
+                    case 'save':
+                        return 'save queued edit'
+                    case 'choose-save':
+                        return 'choose save delivery'
+                    case 'question':
+                        return self.questions.hint(
+                            send_label=self.key_label('send'), newline_label=self.key_label('newline')
+                        )
+                    case 'choose':
+                        return 'choose delivery'
+                    case 'send':
+                        return 'send'
+                    case 'after-turn':
+                        return 'after turn'
+                    case 'next-checkpoint':
+                        return 'next checkpoint'
             case 'steer':
                 if not self.buffer.text.strip():
                     return (
@@ -614,27 +634,27 @@ class LivePrompt:
             case 'newline':
                 return 'newline'
 
-    def send_action(self) -> str:
-        """Describe whether Send saves, answers, or delivers this draft."""
+    def send_route(self) -> SendRoute:
+        """Whether Send saves, answers, or delivers this draft, and when."""
         if self._editing is not None:
             return (
-                'choose save delivery'
+                'choose-save'
                 if self.busy_delivery() == 'next-checkpoint' and can_steer(expand_bare_command(self.buffer.text))
-                else 'save queued edit'
+                else 'save'
             )
         if self.questions.menu is not None:
-            return self.questions.hint(send_label=self.key_label('send'), newline_label=self.key_label('newline'))
+            return 'question'
         if (
             self._submissions
             and self.busy_delivery() == 'next-checkpoint'
             and can_steer(expand_bare_command(self.buffer.text))
         ):
-            return 'choose delivery'
+            return 'choose'
         if not self.interrupts.active:
             return 'send'
         if not can_steer(expand_bare_command(self.buffer.text)):
-            return 'after turn'
-        return self.busy_delivery().replace('-', ' ')
+            return 'after-turn'
+        return self.busy_delivery()
 
     def end_calibration(self) -> None:
         """Return to the unchanged composer once the explicit close key's batch ends."""
@@ -1209,17 +1229,19 @@ class LivePrompt:
         """
         send = self.key_label('send')
         if self._editing is not None:
-            save = 'choose delivery' if self.send_action() == 'choose save delivery' else 'save'
+            save = 'choose delivery' if self.send_route() == 'choose-save' else 'save'
             return [f'{send} to {save}', 'Esc to stop editing', 'Clear it to remove']
         if self.questions.menu is not None:
             return [self.questions.hint(send_label=send, newline_label=self.key_label('newline'))]
         if not (self.queued_messages or self.buffer.text.strip()):
             return []
-        action = self.send_action()
+        route = self.send_route()
         if self.busy_delivery() == 'after-turn':
             action = 'queue'
-        elif action != 'choose delivery':
-            action = 'send at next checkpoint' if action == 'next checkpoint' else 'queue after turn'
+        elif route == 'choose':
+            action = 'choose delivery'
+        else:
+            action = 'send at next checkpoint' if route == 'next-checkpoint' else 'queue after turn'
         return [f'{send} to {action}', f'{self.key_label("steer")} to steer']
 
     def input_hint(self) -> str:
@@ -1227,7 +1249,7 @@ class LivePrompt:
         send, newline = self.key_label('send'), self.key_label('newline')
         if self._editing is not None:
             steer = self.key_label('steer')
-            action = 'Choose delivery' if self.send_action() == 'choose save delivery' else 'Save/requeue'
+            action = 'Choose delivery' if self.send_route() == 'choose-save' else 'Save/requeue'
             return f'{send}: {action} - Esc: Stop editing - {steer}: Steer/send - Clear to remove'
         if self.questions.menu is not None:
             return self.questions.hint(send_label=send, newline_label=newline)

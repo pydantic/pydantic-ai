@@ -42,13 +42,14 @@ class InputSource(SettingsSource):
 
     def current(self, row: FieldRow) -> str:
         if row.key in _ACTIONS:
-            return str(self.context.settings.input_bindings.model_dump()[row.key])
+            return self.context.settings.input_bindings.key(row.key)
         return '' if row.key == 'test' else super().current(row)
 
     def reset(self, row: FieldRow) -> str:
         if row.key in _ACTIONS:
-            values = self.context.settings.input_bindings.model_dump()
-            values[row.key] = InputBindings().model_dump()[row.key]
+            bindings = self.context.settings.input_bindings
+            values: dict[InputAction, str] = {action: bindings.key(action) for action in _ACTIONS}
+            values[row.key] = InputBindings().key(row.key)
             try:
                 return self.context.set_setting(['input.bindings', json.dumps(values)])
             except ValueError as exc:
@@ -61,14 +62,17 @@ async def choose_binding(dialogs: Dialogs, *, context: CommandContext, action: I
     chosen = await dialogs.choose(
         title=f'Key for {action}',
         options=tuple(Option(value=key, label=key) for key in BINDABLE_KEYS),
-        current=str(context.settings.input_bindings.model_dump()[action]),
+        current=context.settings.input_bindings.key(action),
         description='Test your client with /input test. Mac labels cannot recover modifiers lost over SSH. Ctrl+J inserts a newline, or steers on Windows.',
     )
     if chosen is None:
         return ()
-    values = context.settings.input_bindings.model_dump()
+    bindings = context.settings.input_bindings
+    values: dict[InputAction, str] = {other: bindings.key(other) for other in _ACTIONS}
     replaced = values[action]
-    holder = next((other for other in _ACTIONS if other != action and canonical_key(values[other]) == chosen), None)
+    holder: InputAction | None = next(
+        (other for other in _ACTIONS if other != action and canonical_key(values[other]) == chosen), None
+    )
     values[action] = chosen
     if holder is not None:
         values[holder] = replaced

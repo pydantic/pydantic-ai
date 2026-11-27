@@ -76,10 +76,19 @@ class InputBindings(BaseModel):
             return 'steer'
         return None
 
+    def key(self, action: InputAction) -> str:
+        """The key saved for `action`."""
+        match action:
+            case 'send':
+                return self.send
+            case 'steer':
+                return self.steer
+            case 'newline':
+                return self.newline
+
     def label(self, action: InputAction, *, keyboard: KeyboardLabels = 'neutral') -> str:
         """Label keys for the user's keyboard, independent of the remote machine's OS."""
-        key = self.send if action == 'send' else self.steer if action == 'steer' else self.newline
-        parts = canonical_key(key).split('-')
+        parts = canonical_key(self.key(action)).split('-')
         labels = {
             'alt': 'Option' if keyboard == 'mac' else 'Alt',
             'super': 'Cmd' if keyboard == 'mac' else 'Super',
