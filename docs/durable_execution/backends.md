@@ -221,7 +221,7 @@ your `load` will return them, put its result on your wire, and pass it back as
 [`ToolsetCallToolParams.raw_tool_args`][pydantic_ai.durable_exec.ToolsetCallToolParams.raw_tool_args]
 in `load`. `revalidate_function_call` then validates those, as the run did. The helper returns `None`
 when validating the tool's arguments can run user code, such as a validator function, when the dump
-already validates back to the dispatched arguments, and when the model's arguments no longer do, for
+already validates back to the dispatched arguments, or when the model's arguments no longer do, for
 example because a hook changed them; the unit then validates `tool_args` as before. Leave the field
 off your wire when it's `None`, so a call that doesn't need it crosses as it did before the field existed.
 Reading a field that wasn't carried raises a `UserError` instead of returning a default that could

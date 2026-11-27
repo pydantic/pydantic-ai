@@ -185,7 +185,7 @@ Task.
 
 A call crosses as its JSON alone when validating the tool's arguments can run your own code, such as a
 validator function, a `default_factory` other than a builtin type, or a `model_post_init`, or when a hook or
-wrapper toolset changed the arguments after validation. The tool then gets those losses: a field that crosses under
+wrapper toolset changed the arguments. The tool then gets those losses: a field that crosses under
 a name the schema doesn't read fails when it's required and takes its default otherwise, and a `SecretStr` arrives
 masked. Pydantic models and Pydantic dataclasses, and the values nested in them, cross by alias. For such a tool,
 let a `TypedDict` or standard-library dataclass validate by name as well; the same decorator works on a
