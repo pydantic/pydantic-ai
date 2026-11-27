@@ -31,7 +31,8 @@ cluster mode that owns every slot, which is all `CROSSSLOT` needs.
 
 ```bash
 docker run -d --name redis-cluster -p 6380:6380 redis:8.10.3 \
-  redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1
+  redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1 \
+  --cluster-bus-port-protected-mode no
 docker exec redis-cluster redis-cli -p 6380 cluster addslotsrange 0 16383
 ```
 
