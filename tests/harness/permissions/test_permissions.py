@@ -864,7 +864,7 @@ class TestPermissionRules:
 
 
 def _lookup(x: int = 0) -> str:
-    return 'ran'
+    raise NotImplementedError
 
 
 async def _decisions(
