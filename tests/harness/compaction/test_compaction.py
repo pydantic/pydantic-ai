@@ -2858,6 +2858,36 @@ class TestTieredCompaction:
         with pytest.raises(ValueError, match='skip_on must contain only Exception subclasses'):
             TieredCompaction(tiers=[ClearToolResults()], target_tokens=10, skip_on=(BaseException,))  # pyright: ignore[reportArgumentType]
 
+    def test_apply_visits_capability_tiers_only(self):
+        non_capability_tier = _RecordingTier('non-capability', [])
+        capability_tier = ClearToolResults()
+        cap = TieredCompaction(tiers=[non_capability_tier, capability_tier], target_tokens=1)
+
+        visited: list[AbstractCapability[Any]] = []
+        cap.apply(visited.append)
+
+        assert visited == [capability_tier]
+
+    def test_visit_and_replace_preserves_non_capability_tiers(self):
+        non_capability_tier = _RecordingTier('non-capability', [])
+        tier = ClearToolResults()
+        cap = TieredCompaction(tiers=[non_capability_tier, tier], target_tokens=1)
+
+        assert cap.visit_and_replace(lambda capability: capability) is cap
+
+        replacement = ClearToolResults(max_messages=1)
+        replaced = cap.visit_and_replace(lambda _: replacement)
+        assert isinstance(replaced, TieredCompaction)
+        assert replaced.tiers == [non_capability_tier, replacement]
+        assert cap.tiers == [non_capability_tier, tier]
+
+        surviving = cap.visit_and_replace(lambda _: None)
+        assert isinstance(surviving, TieredCompaction)
+        assert surviving.tiers == [non_capability_tier]
+
+        removed = TieredCompaction(tiers=[tier], target_tokens=1).visit_and_replace(lambda _: None)
+        assert removed is None
+
     async def test_programming_error_in_a_tier_propagates(self):
         cap = TieredCompaction(tiers=[_FailingTier(RuntimeError('bug'))], target_tokens=1)
         messages: list[ModelMessage] = [_user('x' * 40)]
