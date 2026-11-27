@@ -5158,7 +5158,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         record_usage: bool,
         described: Sequence[_messages.ModelRequestAttempt] = (),
     ) -> CallToolsNode[DepsT, NodeRunEndT] | ModelRequestNode[DepsT, NodeRunEndT] | SetFinalResult[DepsT, NodeRunEndT]:
-        if self._ends_compaction_only_step(ctx):
+        if ctx.deps.compaction_only:
             # A response, as a hook answered the request itself or recovered from a failed compaction: in a
             # `compact_history` run, nothing compacted, and the response is discarded rather than acted on.
             return self._end_after_compaction(ctx)
@@ -5314,7 +5314,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         The request stays in history, so the tool returns it carries still answer their calls.
         """
-        if self._ends_compaction_only_step(ctx):
+        if ctx.deps.compaction_only:
             # A `compact_history` run has no output, so the submission ends it as a hook declining would.
             return self._end_after_compaction(ctx)
         submission = ctx.deps.run_submission
@@ -5324,20 +5324,14 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         self._result = SetFinalResult(result.FinalResult(cast(NodeRunEndT, submission.output)))
         return self._result
 
-    @staticmethod
-    def _ends_compaction_only_step(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]]) -> bool:
-        """Whether this step is a `compact_history` run's, which ends the run however the step ends.
-
-        It ends after compacting by raising `_Compacted` from the attempt. When the step ends any other way before
-        that, like a hook answering the request itself, asking for a retry or submitting an output, it ends the run
-        too, as when nothing compacts: a `compact_history` run never continues the conversation.
-        """
-        return ctx.deps.compaction_only
-
     def _end_after_compaction(
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> SetFinalResult[DepsT, NodeRunEndT]:
         """End a `compact_history` run after its compaction step, without an output.
+
+        A `compact_history` run never continues the conversation, so its step ends the run however it ends: after
+        compacting, by raising `_Compacted` from the attempt, or any other way before that, like a hook answering the
+        request itself, asking for a retry or submitting an output, as when nothing compacts.
 
         The run's history is the compacted one, or the one it was given when nothing compacted it: the request the run
         added to compact it with is removed, as no response will answer it.
@@ -5367,7 +5361,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         Increments the retry counter and creates a new request with a `RetryFeedbackPart`.
         """
-        if self._ends_compaction_only_step(ctx):
+        if ctx.deps.compaction_only:
             # A retry would make another request step, with the feedback in the history.
             return self._end_after_compaction(ctx)
         self._emit_capability_load_records(ctx)

@@ -728,9 +728,9 @@ async def test_a_capability_that_answers_the_request_itself_means_nothing_is_com
         async def wrap_model_request(
             self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
         ) -> ModelResponse:
-            if answered_by == 'wrap_model_request':
-                return response
-            return await handler(request_context)
+            # `SkipModelRequest` skips the whole chain, so this only runs when it answers the request itself.
+            assert answered_by == 'wrap_model_request'
+            return response
 
     summarize = Summarize()
     lifecycle = Lifecycle()
