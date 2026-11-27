@@ -225,13 +225,23 @@ def _deferred_tool_requests(
 
 
 def _with_deferred_tool_requests(
-    pending: DeferredToolRequests | None, new: DeferredToolRequests
+    pending: DeferredToolRequests | None,
+    new: DeferredToolRequests,
+    *,
+    order: Sequence[_messages.ToolCallPart] | None = None,
 ) -> DeferredToolRequests:
-    """`pending` with the calls in `new` added to it, or `new` when nothing else is pending."""
+    """`pending` with the calls in `new` added to it, or `new` when nothing else is pending.
+
+    With `order`, the merged calls and approvals are put in that order, the order the model made them.
+    """
     if pending is None:
         return new
     pending.calls.extend(new.calls)
     pending.approvals.extend(new.approvals)
+    if order is not None:
+        positions = {call.tool_call_id: index for index, call in enumerate(order)}
+        pending.calls.sort(key=lambda call: positions[call.tool_call_id])
+        pending.approvals.sort(key=lambda call: positions[call.tool_call_id])
     pending.metadata.update(new.metadata)
     pending.validated_args.update(new.validated_args)
     pending._kinds.update(new._kinds)  # pyright: ignore[reportPrivateUsage]
@@ -1226,6 +1236,21 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             async with aclosing(self._resolve_deferred_calls()) as events:
                 async for event in events:
                     yield event
+        elif (
+            self.final_result
+            and isinstance(self.final_result.output, DeferredToolRequests)
+            and any(self.deferred_calls.values())
+        ):
+            # `run_stream()` ends on the calls deferred by their tool's kind before any tool runs. Calls a tool
+            # deferred while running (`CallDeferred`, `ApprovalRequired`) are still pending, so add them too, in
+            # tool-call order as `run()` reports them.
+            _with_deferred_tool_requests(
+                self.final_result.output,
+                _deferred_tool_requests(
+                    self.deferred_calls, self.deferred_metadata, self.deferred_validated_args, order=self.tool_calls
+                ),
+                order=self.tool_calls,
+            )
 
     async def _collect_deferred_calls(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Stub deferred calls (a final result was reached) or validate-and-collect them for resolution."""

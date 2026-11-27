@@ -878,9 +878,16 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             yield self._run_result.output
             await self._marked_completed()
         elif self._stream_response is not None:
+            output: OutputDataT | None = None
             async for output in self._stream_response.stream_output(debounce_by=debounce_by):
                 yield output
             await self._marked_completed(self.response)
+            if isinstance(output, DeferredToolRequests):
+                # Calls a tool deferred while running join a `DeferredToolRequests` output only once the run has
+                # completed, so the final output is yielded again if they changed it.
+                processed = await self._stream_response.get_output()
+                if processed != output:
+                    yield processed
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
@@ -956,6 +963,10 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         elif self._stream_response is not None:
             output = await self._stream_response.get_output()
             await self._marked_completed(self.response)
+            if isinstance(output, DeferredToolRequests):
+                # Calls a tool deferred while running join a `DeferredToolRequests` output only once the run has
+                # completed, so read it again.
+                output = await self._stream_response.get_output()
             return output
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover

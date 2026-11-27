@@ -5462,6 +5462,85 @@ async def test_tool_raises_approval_required():
         assert result.is_complete
 
 
+@pytest.mark.parametrize('read', ['get_output', 'stream_output'])
+@pytest.mark.parametrize('deferral', ['call_deferred', 'approval_required'])
+async def test_run_stream_keeps_calls_deferred_while_running_next_to_approval_tool(read: str, deferral: str):
+    """A call a tool defers while running joins the `DeferredToolRequests` `run_stream()` ends on, and resumes.
+
+    It needs a scripted model that streams two tool calls with fixed IDs, one of which a tool defers while running
+    next to a `requires_approval` tool, so this is a unit test rather than a recorded one.
+    """
+
+    async def llm(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) > 1:
+            yield 'Done.'
+            return
+        yield {0: DeltaToolCall(name='get_weather', json_args='{"city": "Paris"}', tool_call_id='weather')}
+        yield {1: DeltaToolCall(name='delete_file', json_args='{"path": "a.txt"}', tool_call_id='delete')}
+
+    agent = Agent(FunctionModel(stream_function=llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        if deferral == 'call_deferred':
+            raise CallDeferred(metadata={'job': 'weather-1'})
+        raise ApprovalRequired(metadata={'job': 'weather-1'})
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        return 'deleted'  # pragma: no cover
+
+    async with agent.run_stream('Hello') as result:
+        if read == 'get_output':
+            output = await result.get_output()
+        else:
+            outputs = [item async for item in result.stream_output(debounce_by=None)]
+            output = outputs[-1]
+        messages = result.all_messages()
+
+    weather = ToolCallPart(tool_name='get_weather', args='{"city": "Paris"}', tool_call_id='weather')
+    delete = ToolCallPart(tool_name='delete_file', args='{"path": "a.txt"}', tool_call_id='delete')
+    assert isinstance(output, DeferredToolRequests)
+    if deferral == 'call_deferred':
+        assert (output.calls, output.approvals) == ([weather], [delete])
+    else:
+        assert (output.calls, output.approvals) == ([], [weather, delete])
+    assert output.metadata == {'weather': {'job': 'weather-1'}}
+    assert output.validated_args == {'weather': {'city': 'Paris'}}
+
+    # Resuming needs a result for every pending call, so it only works if none was dropped.
+    results = DeferredToolResults(approvals={'delete': ToolDenied('No.')})
+    if deferral == 'call_deferred':
+        results.calls['weather'] = 'sunny'
+    else:
+        results.approvals['weather'] = ToolDenied('No.')
+    async with agent.run_stream(message_history=messages, deferred_tool_results=results) as resumed:
+        assert await resumed.get_output() == 'Done.'
+
+
+async def test_run_stream_stream_output_adds_no_item_for_unchanged_deferred_requests():
+    """When no tool deferred while running, `stream_output()` yields no extra `DeferredToolRequests` after the run.
+
+    It needs a scripted model that streams a tool call with a fixed ID, so this is a unit test rather than a recorded one.
+    """
+
+    async def llm(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "a.txt"}', tool_call_id='delete')}
+
+    agent = Agent(FunctionModel(stream_function=llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        return 'deleted'  # pragma: no cover
+
+    async with agent.run_stream('Hello') as result:
+        outputs = [item async for item in result.stream_output(debounce_by=None)]
+
+    # The partial and the final output, as before: no extra item for an unchanged `DeferredToolRequests`.
+    assert len(outputs) == 2
+    assert all(isinstance(output, DeferredToolRequests) for output in outputs)
+
+
 async def test_deferred_tool_iter():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 
