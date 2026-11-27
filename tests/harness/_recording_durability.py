@@ -149,3 +149,9 @@ class ReplayingDurability(RecordingDurability):
     engine_spec = replace(
         RecordingDurability.engine_spec, replays_orchestrator_code=True, bounds_blocking_orchestrator_code=True
     )
+
+
+class UnboundedReplayingDurability(RecordingDurability):
+    """An engine like Azure Durable Task: it replays workflow code, on a loop other threads can't wake, and doesn't stop code that blocks."""
+
+    engine_spec = replace(RecordingDurability.engine_spec, replays_orchestrator_code=True, thread_wakeable_loop=False)

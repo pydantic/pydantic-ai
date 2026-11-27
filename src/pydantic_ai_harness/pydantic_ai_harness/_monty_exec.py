@@ -103,16 +103,32 @@ def in_durable_task_orchestration() -> bool:
     return bridge is not None and bridge.current_loop() is not None
 
 
+def _durability_spec(ctx: RunContext[object]) -> DurabilityEngineSpec | None:
+    """The spec of the run's durability capability whose durable container is running, or `None`.
+
+    Read from `ctx.capabilities`, so a capability passed with `agent.run(capabilities=[...])` counts
+    as one attached to the agent does.
+    """
+    return next(
+        (
+            capability.engine_spec
+            for capability in ctx.capabilities.values()
+            if isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
+        ),
+        None,
+    )
+
+
 def durable_engine_spec(ctx: RunContext[object]) -> DurabilityEngineSpec | None:
     """The spec of the durable engine whose workflow code this run executes in, or `None` outside one.
 
-    Read from the run's durability capability. The deprecated `TemporalAgent` runs a workflow without
-    one, so a Temporal workflow with none gets Temporal's spec. (`unbounded_replay_engine` refuses a
-    snippet in a Durable Task orchestration whose agent has none, so no fallback is needed there.)
+    Read from the run's durability capability, as `unbounded_replay_engine` reads it, so the two
+    always agree. The deprecated `TemporalAgent` runs a workflow without one, so a Temporal workflow
+    with none gets Temporal's spec. (`unbounded_replay_engine` refuses a snippet in a Durable Task
+    orchestration whose agent has none, so no fallback is needed there.)
     """
-    durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
-    if durability is not None and durability.in_durable_context:
-        return durability.engine_spec
+    if (spec := _durability_spec(ctx)) is not None:
+        return spec
     if in_temporal_workflow():
         # Only reached in a workflow, so `temporalio` is already imported.
         from pydantic_ai.durable_exec.temporal._spec import TEMPORAL_ENGINE_SPEC
@@ -132,14 +148,7 @@ def unbounded_replay_engine(ctx: RunContext[object]) -> DurabilityEngineSpec | N
     Sandboxed code there can't have an elapsed-time limit, since every replay must take the recorded
     path, and nothing else stops a snippet that computes forever, so it must not run there.
     """
-    spec = next(
-        (
-            capability.engine_spec
-            for capability in ctx.capabilities.values()
-            if isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
-        ),
-        None,
-    )
+    spec = _durability_spec(ctx)
     if spec is None and in_durable_task_orchestration():
         # An agent with no durability capability of its own, such as one an inline tool runs.
         from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability

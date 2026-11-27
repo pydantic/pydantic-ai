@@ -16,7 +16,13 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, Text
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeResourceLimits
 
-from .._recording_durability import RecordingDurability, ReplayingDurability, UnwakeableLoopDurability
+from .._recording_durability import (
+    RecordingDurability,
+    ReplayingDurability,
+    UnboundedReplayingDurability,
+    UnwakeableLoopDurability,
+)
+from .stored_sessions import SERVER, stored_session_pool
 
 _BUSY = 'total = 0\nfor item in range(100_000):\n    total += item\ntotal'
 """A snippet that runs far longer than a 1 µs elapsed-time limit."""
@@ -106,3 +112,45 @@ class TestCodeModeEngineSpec:
         part = await _run_code(_BUSY, durability_type(), resource_limits={'max_duration_seconds': 1e-6})
 
         assert (part.outcome == 'retried') is time_limited
+
+    @pytest.mark.parametrize('passed_for_run', [pytest.param(False, id='on-agent'), pytest.param(True, id='for-run')])
+    async def test_an_engine_passed_for_the_run_runs_turns_as_activities(self, passed_for_run: bool) -> None:
+        """A durability capability passed with `run(capabilities=...)` decides how snippets run, as one on the agent does.
+
+        In an engine that replays code it doesn't stop when it blocks, each turn must run as a durable
+        operation, where `max_duration_seconds` applies, instead of in workflow code with no limit.
+        """
+        durability = UnboundedReplayingDurability()
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('run_code', {'code': 'await probe()'})])
+            return ModelResponse(parts=[TextPart('done')])
+
+        code_mode = CodeMode[None](monty_sandbox=stored_session_pool)
+        agent = Agent(
+            FunctionModel(model),
+            name='engine_spec',
+            deps_type=type(None),
+            capabilities=[code_mode] if passed_for_run else [code_mode, durability],
+        )
+
+        @agent.tool_plain
+        def probe() -> str:
+            """Answer the snippet."""
+            return 'probed'
+
+        SERVER.reset()
+        try:
+            result = await agent.run('go', capabilities=[durability] if passed_for_run else None)
+        finally:
+            SERVER.reset()
+
+        request = result.all_messages()[2]
+        assert isinstance(request, ModelRequest)
+        [part] = request.parts
+        assert isinstance(part, ToolReturnPart)
+        assert part.outcome != 'retried'
+        # Each turn ran as a durable operation, and no Monty call ran through a portal in workflow code.
+        assert any(name.endswith('monty_turn') for name, _ in durability.calls)
+        assert _portal_threads() == []
