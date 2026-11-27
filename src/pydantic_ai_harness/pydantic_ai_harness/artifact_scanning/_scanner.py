@@ -9,8 +9,8 @@ from dataclasses import dataclass, field
 from types import MappingProxyType
 from typing import Any, Literal, TypeAlias, get_args
 
+from pydantic_ai.capabilities import record_decision
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.telemetry import record_decision, records_content
 from pydantic_ai.tools import RunContext
 
 ArtifactThreat: TypeAlias = Literal[
@@ -281,6 +281,6 @@ def record_flagged(
             'artifact_scan.source': result.source,
             'artifact_scan.excerpts': [finding.excerpt for finding in result.findings],
         }
-        if records_content(ctx)
+        if ctx.trace_include_content
         else None,
     )

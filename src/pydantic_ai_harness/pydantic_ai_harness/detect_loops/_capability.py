@@ -18,7 +18,7 @@ import anyio
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai._utils import ScopedTask
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapModelRequestHandler
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, WrapModelRequestHandler, record_decision
 from pydantic_ai.exceptions import AgentRunError, ModelRetry
 from pydantic_ai.messages import (
     AgentStreamEvent,
@@ -41,7 +41,6 @@ from pydantic_ai.messages import (
     ToolCallPartDelta,
     ToolReturnPart,
 )
-from pydantic_ai.telemetry import record_decision, records_content
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness.detect_loops._detectors import (
@@ -767,7 +766,7 @@ class DetectLoops(AbstractCapability[AgentDepsT]):
         # The names come from the model's tool calls, so one the run never offered is model output,
         # recorded only with content.
         tool_names = loop.tool_names
-        if not records_content(ctx):
+        if not ctx.trace_include_content:
             tool_names = tuple(name for name in tool_names if name in self._offered_tool_names)
         # Hashes of short arguments, such as a user id, can be reversed by trying candidate values.
         content: dict[str, AttributeValue] = {'detect_loops.fingerprints': loop.fingerprints}

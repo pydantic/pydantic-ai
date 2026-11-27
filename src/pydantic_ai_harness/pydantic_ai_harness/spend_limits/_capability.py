@@ -14,7 +14,7 @@ from typing import TYPE_CHECKING, Any, Literal, TypeGuard
 
 from pydantic import TypeAdapter
 
-from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, durable_operation, record_decision
 from pydantic_ai.exceptions import UsageLimitUnavailableWarning, UserError
 from pydantic_ai.messages import ModelMessagesTypeAdapter, ModelRequestAttempt, ModelResponse
 from pydantic_ai.models._continuation import (
@@ -23,7 +23,6 @@ from pydantic_ai.models._continuation import (
     observe_continuation_segments,
     resumed_response,
 )
-from pydantic_ai.telemetry import record_decision
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness.spend_limits._budget import (
