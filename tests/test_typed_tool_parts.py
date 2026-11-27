@@ -1296,15 +1296,16 @@ def test_is_output_tool_part_matches_a_function_tool_named_like_the_default_outp
         return 'not the output'
 
     messages = agent.run_sync('Go.').all_messages()
-    assert [(part.part_kind, part.tool_kind) for part in iter_tool_parts(messages)] == [
-        ('tool-call', None),
-        ('tool-return', None),
+    assert tool_parts(messages) == [
+        ('tool-call', 'final_result', None, ''),
+        ('tool-return', 'final_result', None, 'success'),
     ]
-    assert all(is_output_tool_part(part) for part in iter_tool_parts(messages))
-
-
-def iter_tool_parts(messages: list[ModelMessage]) -> list[ToolCallPart | ToolReturnPart]:
-    return [part for message in messages for part in message.parts if isinstance(part, ToolCallPart | ToolReturnPart)]
+    assert all(
+        is_output_tool_part(part)
+        for message in messages
+        for part in message.parts
+        if isinstance(part, ToolCallPart | ToolReturnPart)
+    )
 
 
 async def test_streamed_function_call_named_after_an_output_tool_prefix_is_not_marked():
