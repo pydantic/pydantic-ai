@@ -8056,6 +8056,9 @@ boxd = [
 cerebras = [
     { name = "pydantic-ai-pax", extra = ["cerebras"] },
 ]
+claude-agent = [
+    { name = "pydantic-ai-pax", extra = ["claude-agent"] },
+]
 cohere = [
     { name = "pydantic-ai-pax", extra = ["cohere"] },
 ]
@@ -8126,6 +8129,7 @@ requires-dist = [
     { name = "pydantic-ai-pax", extras = ["bedrock-mantle"], marker = "extra == 'bedrock-mantle'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["boxd"], marker = "extra == 'boxd'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["cerebras"], marker = "extra == 'cerebras'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["claude-agent"], marker = "extra == 'claude-agent'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["cohere"], marker = "extra == 'cohere'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["crusoe"], marker = "extra == 'crusoe'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["daytona"], marker = "extra == 'daytona'", editable = "src/pydantic_ai_pax" },
@@ -8147,7 +8151,7 @@ requires-dist = [
     { name = "pydantic-ai-pax", extras = ["xai"], marker = "extra == 'xai'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["zai"], marker = "extra == 'zai'", editable = "src/pydantic_ai_pax" },
 ]
-provides-extras = ["all", "anthropic", "bedrock", "bedrock-mantle", "boxd", "cerebras", "cohere", "crusoe", "daytona", "e2b", "google", "groq", "huggingface", "kubernetes", "local", "mistral", "modal", "openai", "openrouter", "opensandbox", "render", "snowflake", "sprites", "typesafe", "xai", "zai"]
+provides-extras = ["all", "anthropic", "bedrock", "bedrock-mantle", "boxd", "cerebras", "claude-agent", "cohere", "crusoe", "daytona", "e2b", "google", "groq", "huggingface", "kubernetes", "local", "mistral", "modal", "openai", "openrouter", "opensandbox", "render", "snowflake", "sprites", "typesafe", "xai", "zai"]
 
 [[package]]
 name = "pydantic-core"
