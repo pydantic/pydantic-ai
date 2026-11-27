@@ -75,13 +75,18 @@ async def write_locations(workspace: Workspace, path: str) -> list[str]:
         return [written]
 
 
-async def command_locations(workspace: Workspace, command: str, *, posix: bool) -> list[str]:
+async def command_locations(
+    workspace: Workspace, command: str, *, posix: bool, expand: bool = True
+) -> list[str] | None:
     """The paths `command`'s words could name, resolved against the working directory; none for a read-only command.
 
     Words are split as the shell would: quotes and, on POSIX, backslash escapes keep spaces in a word, and on
     Windows backslashes are separators. `~` and environment variables are expanded as in this process, and every
     word counts, redirection targets and `--option=value` values included. A command made only of programs that
     read the files they name, such as `cat` or `grep`, without redirection, names none.
+
+    With `expand=False`, as inside a durable run, where this process's environment may differ on replay and is not
+    the workspace's, nothing is expanded: `None` when a word would need it, as the paths it names can't be known.
     """
     if posix and _only_reads(command):
         return []
@@ -90,8 +95,19 @@ async def command_locations(workspace: Workspace, command: str, *, posix: bool) 
     except WorkspaceError:
         cwd = None
     paths = workspace.paths
-    expanded = [os.path.expanduser(os.path.expandvars(word)) for word in _words(command, posix=posix)]
+    expanded = _expanded(_words(command, posix=posix), posix=posix, expand=expand)
+    if expanded is None:
+        return None
     return [paths.normpath(word if cwd is None else paths.join(cwd, word)) for word in expanded]
+
+
+def _expanded(words: list[str], *, posix: bool, expand: bool) -> list[str] | None:
+    """`words` with `~` and variables expanded as in this process; unexpanded, or `None` if one needs it, without `expand`."""
+    if expand:
+        return [os.path.expanduser(os.path.expandvars(word)) for word in words]
+    if any(word.startswith('~') or '$' in word or (not posix and '%' in word) for word in words):
+        return None
+    return words
 
 
 def _words(command: str, *, posix: bool) -> list[str]:
