@@ -103,17 +103,16 @@ class ParentForkFinder(Generic[T]):
                 )
             return ParentFork[T](parent_fork_id, upstream_nodes)
 
-        visited: set[str] = set()
+        visited: set[T] = set()
         cur = join_id  # start at J and walk up the immediate dominator chain
 
         parent_fork: ParentFork[T] | None = None
         while True:
             cur = self._immediate_dominator(cur)
-            if cur is None:  # reached the root
+            # `None` means we reached the root. Nodes no start node reaches keep every node as a dominator,
+            # so the chain of a join that no start node reaches can loop back on itself instead.
+            if cur is None or cur in visited:
                 break
-
-            # The visited-tracking shouldn't be necessary, but I included it to prevent infinite loops if there are bugs
-            assert cur not in visited, f'Cycle detected in dominator tree: {join_id} → {cur} → {visited}'
             visited.add(cur)
 
             if cur not in self.fork_ids:
