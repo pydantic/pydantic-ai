@@ -2350,7 +2350,7 @@ alone says when compaction runs; the web UI's Plugins page has the same compacti
 A token count saves `threshold_tokens` and a share saves `threshold` and clears `threshold_tokens`.
 With `threshold_tokens` set, the chain runs once a request passes that many tokens, whatever the
 model's window, and `threshold` is ignored. Keep it below the model's window: above it, the provider rejects the
-request before compaction runs. `/compact` runs the same chain between turns regardless of that
+request before compaction runs, and saving such a count says so. `/compact` runs the same chain between turns regardless of that
 threshold, but it caps the protected tokens at half the conversation, so it usually has older
 messages to summarise; the protected tail can exceed that cap by the whole message that crosses it. Add free text to say what the summary must keep, for example
 `/compact don't lose the "auth" decisions`. The focus is passed to the summariser

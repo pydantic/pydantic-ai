@@ -194,7 +194,10 @@ class CompactionSource:
         return None
 
     def apply(self, row: FieldRow, raw: str) -> str:
-        self.host.save_settings(self._updated(row, raw))
+        settings = self._updated(row, raw)
+        self.host.save_settings(settings)
+        if row.key == COMPACT_AT and (note := _beyond_window(settings, self.host.status.window)):
+            return f'Saved {row.label}{note}.'
         return f'Saved {row.label}.'
 
     def reset(self, row: FieldRow) -> str:
@@ -273,6 +276,14 @@ def _trigger_text(settings: CompactionSettings) -> str:
     if (tokens := settings.threshold_tokens) is None:
         return _share(settings.threshold)
     return f'{tokens // 1000}k' if tokens % 1000 == 0 else str(tokens)
+
+
+def _beyond_window(settings: CompactionSettings, window: int | None) -> str:
+    """A note when the token count cannot trigger on this model, whose requests fail first; kept for a larger one."""
+    tokens = settings.threshold_tokens
+    if tokens is None or not window or tokens < window:
+        return ''
+    return f" (at or above this model's {_thousands(window)} window, so it will not trigger here)"
 
 
 def _trigger(settings: CompactionSettings) -> str:
@@ -403,8 +414,9 @@ class CompactionPlugin(Plugin[CompactionSettings]):
         if plugins is None:
             raise ValueError('/auto-compact needs a Pax session; use /plugins configure compaction.')
         # Loads the plugin again, so the next turn runs the new chain; this instance is unloaded.
+        window = self.host.status.window
         await plugins.save_settings(self.host.name, settings)
-        return f'Auto-compaction now runs {_trigger(settings)}.'
+        return f'Auto-compaction now runs {_trigger(settings)}{_beyond_window(settings, window)}.'
 
     def _terminal(self) -> bool:
         """Whether the settings menu can open here: a terminal, and not a surface that refuses one, as the web UI does."""

@@ -580,6 +580,10 @@ def test_compact_at_row_steps_through_shares_or_takes_a_token_count() -> None:
     assert row().choices[-1] == '150k', 'a token count is listed, so stepping can return to it'
     assert source.apply(row(), '150500') == 'Saved Compact at.'
     assert source.current(row()) == '150500'
+    assert source.apply(row(), '200k') == (
+        "Saved Compact at (at or above this model's 200k window, so it will not trigger here)."
+    ), 'saved all the same, for a larger model the user may switch to'
+    assert saved[-1] == {'threshold_tokens': 200_000}
     assert source.apply(row(), '75%') == 'Saved Compact at.'
     assert saved[-1] == {'threshold': 0.75}, 'a share clears the token count'
     assert row().choices[-1] == '75%'
