@@ -19,8 +19,8 @@ from pydantic import Field, GetCoreSchemaHandler, TypeAdapter
 from pydantic_core import core_schema
 from typing_extensions import TypeIs
 
+from pydantic_ai.capabilities import record_decision
 from pydantic_ai.exceptions import ApprovalRequired, ModelRetry, UserError
-from pydantic_ai.telemetry import record_decision, records_content
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._callable import takes_context
 from pydantic_ai_harness._warn import HarnessDeprecationWarning
@@ -521,7 +521,7 @@ def trace_redaction(
         ctx,
         f'guardrail redacted {direction}',
         attributes=decision_attributes(direction, 'replace', guard=None, position=None, tool_name=tool_name),
-        content={'guardrail.replacement': str(replacement)} if records_content(ctx) else None,
+        content={'guardrail.replacement': str(replacement)} if ctx.trace_include_content else None,
     )
 
 
@@ -548,5 +548,5 @@ def trace_approval(
             **decision_attributes(direction, 'approve', guard=guard, position=None, tool_name=tool_name),
             'guardrail.tool_call_id': tool_call_id,
         },
-        content={'guardrail.arguments': str(args)} if records_content(ctx) else None,
+        content={'guardrail.arguments': str(args)} if ctx.trace_include_content else None,
     )
