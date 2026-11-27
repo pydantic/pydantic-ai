@@ -33,6 +33,7 @@ from pydantic_ai.messages import (
     FunctionToolResultEvent,
     ImageUrl,
     ModelMessage,
+    ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
     NativeToolCallPart,
@@ -72,7 +73,14 @@ from pydantic_ai.toolsets import AbstractToolset, ExternalToolset
 from pydantic_ai.workspaces import WorkspaceRef
 
 from ._inline_snapshot import snapshot
-from .conftest import IsDatetime, conversation_view, message, message_part, try_import
+from .conftest import (
+    IsDatetime,
+    conversation_view,
+    history_with_server_system_prompts,
+    message,
+    message_part,
+    try_import,
+)
 from .workspace_fakes import ConnectOnlyWorkspaceCapability
 
 with try_import() as otel_sdk_imports_successful:
@@ -2259,6 +2267,27 @@ async def test_adapter_server_mode_strips_client_system_prompts_before_sparing_h
     assert conversation_view(result.all_messages()) == snapshot(
         ['system-prompt: Server prompt', 'user-prompt: hi', 'text: hello', 'user-prompt: and now?', 'text: ok']
     )
+
+
+async def test_adapter_server_mode_keeps_system_prompts_of_a_serialized_trusted_history():
+    """A trusted history loaded from its JSON dump keeps the server's system prompts as they were stored (#13768).
+
+    A store that serializes conversations hands the adapter rehydrated parts; only the stale prompt opening the
+    history is replaced.
+    """
+    agent, _ = _recording_agent(system_prompt='Server prompt')
+    history = ModelMessagesTypeAdapter.validate_json(
+        ModelMessagesTypeAdapter.dump_json(history_with_server_system_prompts())
+    )
+    adapter = DummyUIAdapter(
+        agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('and now?')]), manage_message_history='server'
+    )
+
+    result = await _run(adapter, history)
+
+    messages = result.all_messages()
+    assert conversation_view(messages[:1]) == snapshot(['system-prompt: Server prompt', 'user-prompt: where am I?'])
+    assert messages[1 : len(history)] == history[1:]
 
 
 async def test_adapter_server_mode_replaces_server_context_in_standing_prompt():
