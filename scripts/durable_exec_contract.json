@@ -3869,6 +3869,7 @@
     },
     "UsageLimitExceeded": {
       "engines": [
+        "hatchet",
         "prefect",
         "temporal"
       ],
@@ -3876,6 +3877,7 @@
         "import"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_operation_backend.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
       ]
@@ -8222,6 +8224,7 @@
     "WorkspaceOutputLimitError": {
       "engines": [
         "durable_exec",
+        "hatchet",
         "prefect",
         "temporal"
       ],
@@ -8230,6 +8233,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_operation_backend.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
       ]
@@ -8273,6 +8277,7 @@
     "WorkspaceReadOnlyError": {
       "engines": [
         "durable_exec",
+        "hatchet",
         "prefect",
         "temporal"
       ],
@@ -8281,6 +8286,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_operation_backend.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
       ]
@@ -8288,6 +8294,7 @@
     "WorkspaceTimeoutError": {
       "engines": [
         "durable_exec",
+        "hatchet",
         "prefect",
         "temporal"
       ],
@@ -8296,6 +8303,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_operation_backend.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
       ]
@@ -8327,6 +8335,7 @@
     "WorkspaceUnavailableError": {
       "engines": [
         "durable_exec",
+        "hatchet",
         "prefect",
         "temporal"
       ],
@@ -8335,6 +8344,7 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_workspace.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_operation_backend.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
       ]

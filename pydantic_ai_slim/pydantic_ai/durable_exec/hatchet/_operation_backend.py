@@ -27,6 +27,7 @@ from hatchet_sdk import (
 )
 from hatchet_sdk.types.priority import Priority
 from pydantic import BaseModel, JsonValue, TypeAdapter
+from pydantic.errors import PydanticUserError
 from typing_extensions import TypedDict
 
 from pydantic_ai.durable_exec._model_error_codec import decode_model_error, encode_model_error
@@ -63,9 +64,16 @@ from pydantic_ai.exceptions import (
     ModelAPIError,
     RetryModelRequest,
     UnexpectedModelBehavior,
+    UsageLimitExceeded,
     UserError,
 )
 from pydantic_ai.messages import ModelResponse
+from pydantic_ai.workspaces import (
+    WorkspaceOutputLimitError,
+    WorkspaceReadOnlyError,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
 
 from ._clock import advance_durable_clock
 from ._transports import TaskInput
@@ -129,7 +137,20 @@ _REGISTRATION_KEYS = frozenset(
 )
 _RUN_KEYS = frozenset({'priority', 'sticky', 'desired_worker_labels', 'additional_metadata'})
 
-NON_RETRYABLE_ERRORS: tuple[type[Exception], ...] = (UserError, UnexpectedModelBehavior, FallbackExceptionGroup)
+NON_RETRYABLE_ERRORS: tuple[type[Exception], ...] = (
+    UserError,
+    PydanticUserError,
+    UnexpectedModelBehavior,
+    FallbackExceptionGroup,
+    # Every attempt of a task checks the limit against the usage it was started with.
+    UsageLimitExceeded,
+    # A retry cannot fix a workspace timeout, output flood, read-only refusal, or lost environment;
+    # restarting a command could repeat its already-completed side effects.
+    WorkspaceTimeoutError,
+    WorkspaceOutputLimitError,
+    WorkspaceReadOnlyError,
+    WorkspaceUnavailableError,
+)
 """Errors a retry can't fix, which fail a task without Hatchet retrying it, subclasses included."""
 
 _RETRY_AFTER_MAXIMUM = 60.0

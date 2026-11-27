@@ -24,21 +24,36 @@ from pydantic_ai import (
     AgentStreamEvent,
     FunctionToolResultEvent,
     ModelMessage,
+    ModelRequest,
     ModelResponse,
     PartDeltaEvent,
     RunContext,
     TextPart,
     ToolCallPart,
     ToolReturnPart,
+    UserPromptPart,
 )
 from pydantic_ai.capabilities import ModelFallback, RetryOnModelErrors
 from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
-from pydantic_ai.exceptions import ModelAPIError, ModelHTTPError, ModelServerError, RunCancelled, UserError
+from pydantic_ai.exceptions import (
+    ModelAPIError,
+    ModelHTTPError,
+    ModelServerError,
+    RunCancelled,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.models import ModelRequestParameters
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult
 from pydantic_ai.usage import RunUsage
+from pydantic_ai.workspaces import (
+    WorkspaceOutputLimitError,
+    WorkspaceReadOnlyError,
+    WorkspaceTimeoutError,
+    WorkspaceUnavailableError,
+)
 
 from .._timeouts import READINESS_WAIT_TIMEOUT
 from ..conftest import try_import
@@ -157,6 +172,7 @@ class App:
     retrying: Scenario
     cancelling: StreamScenario
     parallel: StreamScenario
+    unretryable: Scenario
 
 
 def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
@@ -260,6 +276,7 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
         retrying=_build_retrying(hatchet),
         cancelling=_build_cancelling(hatchet),
         parallel=_build_parallel(hatchet),
+        unretryable=_build_unretryable(hatchet),
     )
     workflows: list[Any] = [
         run_weather,
@@ -277,6 +294,7 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
         *app.retrying.workflows,
         *app.cancelling.workflows,
         *app.parallel.workflows,
+        *app.unretryable.workflows,
     ]
     return app, workflows
 
@@ -366,6 +384,44 @@ def _build_retrying(hatchet: Hatchet) -> Scenario:
         raise AssertionError('the model error was not raised')  # pragma: no cover
 
     return Scenario(run=run, calls=model_calls, workflows=[run, *durability.workflows])
+
+
+UNRETRYABLE_ERRORS: dict[str, Exception] = {
+    'usage_limit': UsageLimitExceeded('over the limit'),
+    'workspace_timeout': WorkspaceTimeoutError('timed out'),
+    'workspace_output_limit': WorkspaceOutputLimitError('too much output', limit=1),
+    'workspace_read_only': WorkspaceReadOnlyError('read-only'),
+    'workspace_unavailable': WorkspaceUnavailableError('gone'),
+}
+
+
+def _build_unretryable(hatchet: Hatchet) -> Scenario:
+    """A tool raising the error its prompt names, in tasks Hatchet would retry."""
+    tool_calls: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        (request,) = messages
+        assert isinstance(request, ModelRequest)
+        (prompt,) = [part.content for part in request.parts if isinstance(part, UserPromptPart)]
+        return ModelResponse(parts=[ToolCallPart('fail', {'kind': prompt})])
+
+    durability = HatchetDurability[Any](hatchet, task_config={'retries': 1})
+    agent = Agent(FunctionModel(respond), name='unretryable', capabilities=[durability])
+
+    @agent.tool_plain
+    async def fail(kind: str) -> str:
+        tool_calls.append(kind)
+        raise UNRETRYABLE_ERRORS[kind]
+
+    @hatchet.durable_task(name='pydantic_ai_test_unretryable', input_validator=Prompt)
+    async def run(input: Prompt, ctx: DurableContext) -> dict[str, Any]:
+        try:
+            await agent.run(input.prompt)
+        except Exception as error:
+            return {'error': type(error).__name__}
+        raise AssertionError('the tool error was not raised')  # pragma: no cover
+
+    return Scenario(run=run, calls=tool_calls, workflows=[run, *durability.workflows])
 
 
 def _build_cancelling(hatchet: Hatchet) -> StreamScenario:
@@ -653,6 +709,25 @@ def test_model_error_with_unencodable_body_crosses_as_text():
     """A model error whose body isn't UTF-8 crosses as its message instead of failing the task with an encoding error."""
     error = ModelHTTPError(status_code=400, model_name='rejecting', body=b'\xff')
     assert _model_error_message(error) == str(error)
+
+
+@pytest.mark.parametrize('kind', list(UNRETRYABLE_ERRORS))
+async def test_errors_a_retry_cannot_fix_are_not_retried(app: App, kind: str):
+    """A usage limit or workspace error fails a task the same way on every attempt, so it isn't retried."""
+    app.unretryable.calls.clear()
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await app.unretryable.run.aio_run(Prompt(prompt=kind))
+    assert app.unretryable.calls == [kind]
+
+
+async def test_engine_without_durable_event_log_is_refused(app: App, monkeypatch: pytest.MonkeyPatch):
+    """An engine too old to record child tasks in the event log can't replay a run, so the run refuses to start."""
+    app.unserializable.calls.clear()
+    monkeypatch.setattr(DurableContext, '_supports_durable_eviction', property(lambda self: False))
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        output = await app.unserializable.run.aio_run(Prompt(prompt='hi'))
+    assert 'records no child tasks in the event log' in output['error']
+    assert app.unserializable.calls == []
 
 
 async def test_unserializable_tool_result_is_not_retried(app: App):

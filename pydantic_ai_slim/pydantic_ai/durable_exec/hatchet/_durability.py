@@ -11,6 +11,7 @@ from weakref import WeakKeyDictionary
 
 import anyio
 from hatchet_sdk import DurableContext, Hatchet, Standalone
+from hatchet_sdk.engine_version import MinEngineVersion
 from pydantic import JsonValue, TypeAdapter
 from pydantic_core import to_json
 
@@ -404,6 +405,13 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
                 'rather than through a `DynamicCapability`.'
             )
         durable_ctx = self._durable_context()
+        if not durable_ctx._supports_durable_eviction:  # pyright: ignore[reportPrivateUsage]
+            # Such an engine spawns child tasks as plain runs, outside the event log, so a replay runs them again.
+            raise UserError(
+                f'Hatchet engine {durable_ctx._engine_version or "of unknown version"} records no child tasks in the '  # pyright: ignore[reportPrivateUsage]
+                f'event log of a durable task, so it cannot replay an agent run. Upgrade it to '
+                f'{MinEngineVersion.DURABLE_EVICTION} or later.'
+            )
 
         async def durable_sleep(seconds: float) -> None:
             # Hatchet takes seconds to wake a durable task even from a zero-length sleep, which waits for nothing.
