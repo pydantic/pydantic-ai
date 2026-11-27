@@ -459,6 +459,7 @@ CASES: dict[str, CapabilityCase] = {
             _lowered_skills,
             durable_steps=DurableSteps(
                 dbos=_workspace_steps(22),
+                # Under Temporal, the tools' own workspace reads run inside their `call_tool` activities.
                 temporal=(*('capability__workspace__call',) * 8, *('toolset__skills_lowered__call_tool',) * 2),
             ),
         ),
