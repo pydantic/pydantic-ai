@@ -1,0 +1,5 @@
+{
+  "against": "v2.76.0",
+  "reason": "Pax 0.x: adds the built-in `planning` plugin, off by default, which binds harness `Planning` only after `/plugins enable planning`. Saved declarations are preserved, and every other declaration is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/15037"
+}
