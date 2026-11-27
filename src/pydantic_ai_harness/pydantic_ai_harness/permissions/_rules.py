@@ -503,7 +503,8 @@ def _path_glob(rule: str, glob: str, verdict: PermissionVerdict) -> str:
     """A rule string's `path` glob as a `PermissionRule` matches it: without a leading `./`.
 
     An ask or deny glob also matches the end of a longer path, so a leading `**/` is dropped there: kept, it would
-    miss a match at the top, such as `**/.env` missing `.env`.
+    miss a match at the top, such as `**/.env` missing `.env`. A glob ending in `/` names a directory and everything
+    under it, as in Claude Code, so `secrets/` becomes `secrets/**`, and `./` becomes `**`.
     """
     if glob.startswith(('/', '~')):
         raise UserError(
@@ -516,7 +517,9 @@ def _path_glob(rule: str, glob: str, verdict: PermissionVerdict) -> str:
         elif verdict != 'allow' and glob.startswith('**/'):
             glob = glob[3:]
         else:
-            return glob
+            break
+    # A path value is normalized without a trailing `/`, so `secrets/` as written would match nothing.
+    return f'{glob}**' if not glob or glob.endswith('/') else glob
 
 
 def _check_verdict(verdict: str, where: str) -> None:

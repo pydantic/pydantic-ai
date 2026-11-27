@@ -969,6 +969,28 @@ class TestParsePermissionRule:
     def test_a_leading_dot_slash_is_dropped(self, rule: str) -> None:
         assert parse_permission_rule(rule, 'deny') == PermissionRule('deny', tools=['read_file'], args={'path': '.env'})
 
+    @pytest.mark.parametrize(
+        ('rule', 'glob'),
+        [
+            ('write_file(secrets/)', 'secrets/**'),
+            ('read_file(./.git/)', '.git/**'),
+            ('read_file(**/.git/)', '.git/**'),
+            ('list_dir(./)', '**'),
+            ('list_dir(**/)', '**'),
+        ],
+    )
+    def test_a_trailing_slash_names_a_directory_and_everything_under_it(self, rule: str, glob: str) -> None:
+        parsed = parse_permission_rule(rule, 'deny')
+        assert parsed.args == {'path': glob}
+
+    async def test_a_directory_deny_refuses_a_file_under_it(self, tmp_path: Path) -> None:
+        (tmp_path / 'secrets').mkdir()
+        call = ('write_file', {'path': 'secrets/key', 'content': 'x'})
+        rules = parse_permission_rules({'deny': ['write_file(secrets/)']})
+        result = await _agent(tmp_path, _calls(call), 'full', rules=rules).run('go')
+        assert result.output == 'A permission rule denied this file write, so it did not run. Do not retry it.'
+        assert not (tmp_path / 'secrets' / 'key').exists()
+
     def test_other_arguments_keep_their_glob_as_written(self) -> None:
         assert parse_permission_rule('web_fetch(url=./x)', 'deny').args == {'url': './x'}
 
