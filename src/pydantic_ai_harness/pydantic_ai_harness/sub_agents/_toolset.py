@@ -19,6 +19,7 @@ import anyio
 from pydantic_ai import AgentStreamEvent, CapabilityEvent, capture_run_messages
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.durable_exec import BaseDurabilityCapability, DurableRunContext
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -69,6 +70,7 @@ from pydantic_ai_harness._sub_agent_output import (
 )
 from pydantic_ai_harness._usage import run_with_count_tokens_fallback
 from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
+from pydantic_ai_harness.permissions._capability import inherited_managed_permissions, managed_permissions_in
 from pydantic_ai_harness.sub_agents._control import (
     DynamicAgents,
     DynamicAgentSpec,
@@ -917,6 +919,12 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 '`inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, '
                 "`task_control`, or a delegate's `max_calls`."
             )
+        # The child workflow can't receive the parent's managed `Permissions`, so it would run without them.
+        if managed_permissions_in(leaf_capabilities(ctx.agent.root_capability)):
+            raise UserError(
+                'A `SubAgents` delegate tool running as a child workflow does not support a `Permissions` with '
+                '`max_mode` or `managed_rules` on the parent agent: the delegate would run without them.'
+            )
 
     async def _delegate_recorded(
         self, ctx: RunContext[AgentDepsT], agent_name: str, task: str, key: str | None, *, managed: bool = False
@@ -1574,13 +1582,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     ) -> list[AgentCapability[AgentDepsT]]:
         """The capabilities a child run gets.
 
-        The shared ones, the parent run's `DenyUnanswered`, task control's, then `serving_model` and the extras.
+        The shared ones, the parent run's `DenyUnanswered` and the managed layer of its `Permissions`, task
+        control's, then `serving_model` and the extras.
         """
         # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
         deny = find_deny_unanswered(ctx)
         capabilities: list[AgentCapability[AgentDepsT]] = [
             *self._shared_capabilities,
             *([deny] if deny is not None else []),
+            *inherited_managed_permissions(ctx),
         ]
         if owner is not None and record is not None:
             capabilities.append(DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id))

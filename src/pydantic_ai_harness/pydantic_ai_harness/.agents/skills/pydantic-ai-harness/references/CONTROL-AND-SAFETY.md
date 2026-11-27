@@ -442,8 +442,9 @@ text.
 organization's managed settings. `mode_for()` is the stricter of `mode` and `max_mode`. Managed rules are checked
 before `rules`, and every deny (managed or not) before any ask, so a managed deny refuses even an approved call and a
 managed ask holds what `rules` allows. Only a managed allow skips a `'read-only'` `max_mode`'s blanket ask, and it
-never loosens the person's own `rules` or `mode`. What a managed rule or `max_mode` holds is `person_only`. A
-sub-agent is held to them only when the `Permissions` reaches it through `SubAgents(shared_capabilities=[...])`.
+never loosens the person's own `rules` or `mode`. What a managed rule or `max_mode` holds is `person_only`.
+`SubAgents` adds that managed layer to every delegate's run, at every depth, without
+`shared_capabilities`; the person's `mode` and `rules` reach a delegate only through `shared_capabilities`.
 
 ```python {test="skip"}
 from pydantic_ai import Agent

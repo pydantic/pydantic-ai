@@ -3,13 +3,13 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Awaitable, Callable, MutableSet, Sequence
+from collections.abc import Awaitable, Callable, Iterable, MutableSet, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import Any, Literal, NamedTuple, cast
+from typing import Any, ClassVar, Literal, NamedTuple, cast
 
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, WrapperCapability
 from pydantic_ai.exceptions import ApprovalRequired, SkipToolExecution, UserError
 from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturn, ToolReturnPart
 from pydantic_ai.tools import (
@@ -183,7 +183,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
     The mode checks file writes, the `FileSystem` tools `write_file`, `edit_file`, and `create_directory`,
     recognized by their tool kind whatever they are named, and commands, the tools whose metadata declares
     `code_arg_language='shell'` and a `code_arg_name`, as the `Shell` tools that take a command do. Sub-agents'
-    runs this capability does not reach are not checked: pass it in `SubAgents(shared_capabilities=[...])`.
+    runs this capability does not reach are not checked by `mode` and `rules`: pass it in
+    `SubAgents(shared_capabilities=[...])`. Its `max_mode` and `managed_rules` reach every `SubAgents` delegate
+    on their own.
 
     `mode` can be a function of the run context. It is read on every call, so a mode changed during a run
     applies from the run's next call.
@@ -193,7 +195,8 @@ class Permissions(AbstractCapability[AgentDepsT]):
 
     `max_mode` and `managed_rules` are limits set by whoever configures the agent for the people who run it,
     such as an organization's managed settings: `mode` and `rules`, which the person running it may choose,
-    can't loosen them. Every `'deny'`, managed or not, is checked before any `'ask'`, so approving a call
+    can't loosen them, and `SubAgents` holds each delegate to them, and the delegate's own delegates, whatever
+    it shares. Every `'deny'`, managed or not, is checked before any `'ask'`, so approving a call
     never runs one a rule denies. A call held by a managed rule or by `max_mode` is `person_only`, like a
     protected change.
     """
@@ -592,3 +595,45 @@ def denial_message(request: PermissionRequest, *, reason: str | None = None) -> 
     """What the model is told when `request` is denied, with the person's `reason` when they gave one."""
     message = f'The user denied this {_WHAT[request.action]}, so it did not run.'
     return f'{message} Their reason: {reason}' if reason else message
+
+
+@dataclass
+class _InheritedPermissions(Permissions[AgentDepsT]):
+    """The managed layer of a parent run's `Permissions`, as `SubAgents` adds it to a delegate's run."""
+
+    # It holds no `protected_paths`, contributes no toolsets or durable operations, and every call it holds is for a
+    # person only, so it never records an approval: it decides from the call alone, and `SubAgents` can add it to a
+    # child run under durable execution.
+    _safe_at_runtime: ClassVar[bool] = True
+
+
+def inherited_managed_permissions(ctx: RunContext[AgentDepsT]) -> list[Permissions[AgentDepsT]]:
+    """The managed layer of each `Permissions` on `ctx`'s run, for a `SubAgents` delegate to inherit.
+
+    Each is a `Permissions` holding only `max_mode`, `managed_rules` and the `ask_commands` a `'auto'` `max_mode`
+    asks about, so the person's own `mode` and `rules` reach a delegate only through `shared_capabilities`.
+    """
+    try:
+        capabilities = ctx.capabilities
+    except UserError:
+        # A durable-run context does not carry capabilities across the engine boundary.
+        return []
+    return managed_permissions_in(capabilities.values())
+
+
+def managed_permissions_in(capabilities: Iterable[AbstractCapability[AgentDepsT]]) -> list[Permissions[AgentDepsT]]:
+    """The managed layer of each `Permissions` in `capabilities`, unwrapped from any `WrapperCapability` chain."""
+    inherited: list[Permissions[AgentDepsT]] = []
+    for capability in capabilities:
+        candidate: AbstractCapability[AgentDepsT] | None = capability
+        while candidate is not None:
+            if isinstance(candidate, Permissions) and (candidate.max_mode != 'full' or candidate.managed_rules):
+                inherited.append(
+                    _InheritedPermissions[AgentDepsT](
+                        max_mode=candidate.max_mode,
+                        managed_rules=candidate.managed_rules,
+                        ask_commands=candidate.ask_commands,
+                    )
+                )
+            candidate = candidate.wrapped if isinstance(candidate, WrapperCapability) else None
+    return inherited

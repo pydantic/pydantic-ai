@@ -2,17 +2,18 @@
 
 from __future__ import annotations
 
-from collections.abc import Mapping, Sequence
+from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import pytest
 
 from pydantic_ai import Agent, DeferredToolRequests, Tool
-from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace, WrapperCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolResults, RunContext, ToolApproved
 from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
+from pydantic_ai_harness.deny_unanswered import DenyUnanswered
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.permissions import (
     PermissionDecision,
@@ -400,3 +401,73 @@ class TestManagedRules:
             'auto',
             [PermissionRule[None]('deny', command='git push')],
         )
+
+
+def _delegating(*commands: str) -> FunctionModel:
+    """Delegates to itself while it can, and where it can't, runs each of `commands`, then answers."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        last = messages[-1]
+        if 'delegate_task' in [tool.name for tool in info.function_tools]:
+            if isinstance(last, ModelRequest) and any(isinstance(part, ToolReturnPart) for part in last.parts):
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('delegate_task', {'agent_name': 'self', 'task': 'clean up'})])
+        step = sum(isinstance(message, ModelResponse) for message in messages)
+        if step < len(commands):
+            return ModelResponse(parts=[ToolCallPart('run_command', {'command': commands[step]})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    return FunctionModel(respond)
+
+
+def _auto(ctx: RunContext[None]) -> PermissionMode:
+    return 'auto'
+
+
+class TestInheritedBySubAgents:
+    """`SubAgents` holds every delegate to the managed layer, whatever it shares; the person's own layer stays opt-in."""
+
+    async def _delegate(
+        self, tmp_path: Path, capability: AbstractCapability[None], *, max_depth: int = 2
+    ) -> tuple[bool, bool]:
+        """Whether a delegate's `touch made` ran, and whether its `rm -rf doomed` left `doomed` in place."""
+        (tmp_path / 'doomed').mkdir()
+        agent = Agent[None, str](
+            _delegating('touch made', 'rm -rf doomed'),
+            deps_type=type(None),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Shell(denied_commands=[]),
+                SubAgents(include_self=True, max_depth=max_depth, agent_folders=None),
+                DenyUnanswered[None](),
+            ],
+        )
+        await agent.run('go', capabilities=[capability])
+        return (tmp_path / 'made').exists(), (tmp_path / 'doomed').is_dir()
+
+    @pytest.mark.parametrize('max_depth', [2, 3])
+    async def test_a_managed_deny_reaches_every_delegate_and_the_persons_mode_does_not(
+        self, tmp_path: Path, max_depth: int
+    ) -> None:
+        """The person's `'read-only'` would hold `touch`, which runs; the managed deny refuses the `rm`."""
+        permissions = Permissions[None]('read-only', managed_rules=[PermissionRule('deny', command='rm')])
+        assert await self._delegate(tmp_path, permissions, max_depth=max_depth) == (True, True)
+
+    @pytest.mark.parametrize('max_mode', ['auto', _auto])
+    async def test_max_mode_reaches_a_delegate(
+        self, tmp_path: Path, max_mode: PermissionMode | Callable[[RunContext[None]], PermissionMode]
+    ) -> None:
+        """No one can be asked in the delegate, so the `rm` it holds is denied and `doomed` stays."""
+        permissions = Permissions[None]('full', max_mode=max_mode)
+        assert await self._delegate(tmp_path, permissions) == (True, True)
+
+    async def test_a_wrapped_permissions_is_found(self, tmp_path: Path) -> None:
+        permissions = Permissions[None](managed_rules=[PermissionRule('deny', command='rm')])
+        assert await self._delegate(tmp_path, WrapperCapability[None](wrapped=permissions)) == (True, True)
+
+    async def test_without_a_managed_layer_nothing_reaches_a_delegate(self, tmp_path: Path) -> None:
+        assert await self._delegate(tmp_path, Permissions[None]('read-only')) == (True, False)
+
+    async def test_a_delegate_asks_about_the_parents_ask_commands(self, tmp_path: Path) -> None:
+        permissions = Permissions[None]('full', max_mode='auto', ask_commands=[r'\btouch\b'])
+        assert await self._delegate(tmp_path, permissions) == (False, False)

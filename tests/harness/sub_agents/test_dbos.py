@@ -8,7 +8,7 @@ from pathlib import Path
 
 import pytest
 
-from pydantic_ai import Agent
+from pydantic_ai import Agent, Tool
 from pydantic_ai.capabilities import SetToolMetadata
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
@@ -16,6 +16,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness import DenyUnanswered
 from pydantic_ai_harness.ask_user import AskUser
 from pydantic_ai_harness.deny_unanswered import DEFAULT_QUESTION_MESSAGE
+from pydantic_ai_harness.permissions import PermissionRule, Permissions
 from pydantic_ai_harness.sub_agents import DynamicAgents, SubAgent, SubAgents, TaskControl
 from tests.conftest import try_import
 from tests.harness._deferred_tools import QUESTION, call_then_echo
@@ -135,6 +136,11 @@ async def test_durable_delegate_runs_as_a_child_workflow(dbos: DBOS) -> None:
             lambda: SubAgents[None](agents=[SubAgent(dbos_worker)], task_control=TaskControl()),
             id='task_control',
         ),
+        pytest.param(
+            'managed',
+            lambda: SubAgents[None](agents=[SubAgent(dbos_worker)]),
+            id='managed_permissions',
+        ),
     ],
 )
 async def test_child_workflow_rejects_options_that_need_the_parent_run(
@@ -146,6 +152,7 @@ async def test_child_workflow_rejects_options_that_need_the_parent_run(
         deps_type=type(None),
         capabilities=[
             sub_agents(),
+            *([Permissions[None](managed_rules=[PermissionRule('deny', command='rm')])] if name == 'managed' else []),
             SetToolMetadata(tools=['delegate_task'], dbos={'child_workflow': {}}),
             DBOSDurability[None](),
         ],
@@ -225,3 +232,37 @@ async def test_parent_deny_unanswered_reaches_a_durable_child_in_the_workflow(db
 
     assert await workflow() == 'parent done'
     assert observed == [DEFAULT_QUESTION_MESSAGE]
+
+
+async def test_the_parents_managed_permissions_reach_a_durable_child_in_the_workflow(dbos: DBOS) -> None:
+    """A delegate bound to `DBOSDurability` is held to the parent's managed rules without `shared_capabilities`."""
+    observed: list[str] = []
+    ran: list[str] = []
+
+    def run_command(command: str) -> str:
+        ran.append(command)
+        return 'ran'
+
+    child_agent = Agent(
+        call_then_echo('run_command', {'command': 'rm -rf doomed'}, 'c1', 'child done', observed),
+        name='managed_child',
+        tools=[Tool(run_command, metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'})],
+        capabilities=[DBOSDurability[object]()],
+    )
+    parent = Agent(
+        call_then_echo('delegate_task', {'agent_name': 'managed_child', 'task': 'clean up'}, 'd1', 'parent done'),
+        name='managed_parent',
+        capabilities=[
+            Permissions[object](managed_rules=[PermissionRule('deny', command='rm')]),
+            SubAgents[object](agents=[SubAgent(child_agent)]),
+            DBOSDurability[object](),
+        ],
+    )
+
+    @DBOS.workflow(name='managed_parent_workflow')
+    async def workflow() -> str:
+        return (await parent.run('delegate')).output
+
+    assert await workflow() == 'parent done'
+    assert ran == []
+    assert observed == ['A managed permission rule denied this command, so it did not run. Do not retry it.']
