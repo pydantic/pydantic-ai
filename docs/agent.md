@@ -297,6 +297,28 @@ if __name__ == '__main__':
 
 _(This example is complete, it can be run "as is")_
 
+#### Replaced responses {#replaced-responses}
+
+One request step can stream more than one response. A capability like [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] or [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] attempts the model again when the first attempt fails before streaming anything, a `wrap_model_request` hook can stop the model's stream and stream a response of its own instead, and under [durable execution](durable_execution/overview.md) the engine can run a model request again after it already streamed part of a response.
+
+Each model-stream event ([`PartStartEvent`][pydantic_ai.messages.PartStartEvent], [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent], [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] and [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent]) carries the [`ModelResponseOrigin`][pydantic_ai.messages.ModelResponseOrigin] it came from as `origin`: the run and request step, the attempt at that step, and the engine's execution of that attempt. Its [`response_id`][pydantic_ai.messages.ModelResponseOrigin.response_id] is the same for every execution of one attempt. A consumer that renders the stream keeps the latest origin it has seen for each request step and drops the events of any origin a later one [`supersedes`][pydantic_ai.messages.ModelResponseOrigin.supersedes]:
+
+```python {title="replaced_responses.py"}
+from pydantic_ai import ModelResponseOrigin
+
+latest: dict[tuple[str, int], ModelResponseOrigin] = {}
+
+
+def is_current(origin: ModelResponseOrigin) -> bool:
+    key = (origin.run_id, origin.run_step)
+    if (previous := latest.get(key)) is not None and previous.supersedes(origin):
+        return False  # a later attempt or execution replaced this response
+    latest[key] = origin
+    return True
+```
+
+Check every event, not only the first of each origin: a superseded execution's events can still arrive after its successor's. `origin` is left out of event equality and `repr()`, so read it from the event.
+
 ### Custom Events
 
 Alongside the framework's own events, a tool or code driving [`agent.iter()`](#iterating-over-an-agents-graph) can emit its own [`CustomEvent`][pydantic_ai.messages.CustomEvent]s into the same stream. This is useful for surfacing progress updates, intermediate results, or status information from long-running work to whoever is consuming the stream, without adding anything to the model's context.

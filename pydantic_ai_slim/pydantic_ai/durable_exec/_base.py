@@ -59,6 +59,7 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelRequest,
     ModelResponse,
+    ModelResponseOrigin,
     ModelResponseStreamEvent,
 )
 from pydantic_ai.models import (
@@ -1829,6 +1830,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     model_settings=request.model_settings,
                     model_request_parameters=request.model_request_parameters,
                     run_context=ctx,
+                    attempt=request.attempt,
                 )
             )
 
@@ -1840,6 +1842,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                     model_settings=request.model_settings,
                     model_request_parameters=request.model_request_parameters,
                     run_context=ctx,
+                    attempt=request.attempt,
                 )
             )
 
@@ -1982,11 +1985,23 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         streamed: StreamedResponse | None = None
         produced_output = False
 
+        run_id = params.run_context.run_id
+        origin = (
+            None
+            if run_id is None
+            else ModelResponseOrigin(
+                run_id=run_id,
+                run_step=params.run_context.run_step,
+                attempt=params.attempt,
+                execution_attempt=self.get_durable_operation_backend().execution_attempt(),
+            )
+        )
+
         async def events(stream: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
             nonlocal produced_output
             async for event in stream:
                 produced_output = True
-                yield event
+                yield event if origin is None else replace(event, origin=origin)
 
         try:
             async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (

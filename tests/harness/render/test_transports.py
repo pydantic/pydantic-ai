@@ -668,3 +668,28 @@ async def test_worker_context_names_tools_by_kind_on_copies() -> None:
 
     context = RecordingTaskContext()
     assert 'kinds checked' in await run_agent_in_task(agent, runtime, context)
+
+
+def test_model_request_transport_carries_the_attempt() -> None:
+    """The child task gets the attempt at the request step, which its stream events record as their origin's.
+
+    Not a VCR test: the claim is about the attempt crossing the Render payload boundary, which involves no provider
+    request.
+    """
+    from pydantic_ai.durable_exec import ModelRequestParams
+    from pydantic_ai.messages import ModelRequest
+    from pydantic_ai.models import ModelRequestParameters
+
+    agent = Agent(TestModel(), name='attempt-transport', capabilities=[RenderWorkflows(Workflows())])
+    runtime = RenderWorkflows.from_agent(agent)
+    assert runtime is not None
+    transport = runtime.get_durable_operation_backend().parameter_transports.model_request(ModelResponse)
+    params = ModelRequestParams(
+        None,
+        messages=[ModelRequest.user_text_prompt('hi')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        run_context=RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run', run_step=1),
+        attempt=3,
+    )
+    assert transport.load(transport.dump(params), runtime=None).attempt == 3

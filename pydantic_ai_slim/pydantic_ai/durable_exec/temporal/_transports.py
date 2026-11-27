@@ -223,6 +223,7 @@ class _RequestParams:
     telemetry_mcp_url_tool_names: set[str] | None = None
     serialized_run_context: Any
     model_id: str | None = None
+    attempt: int = 1
 
 
 @dataclass(kw_only=True)
@@ -383,6 +384,7 @@ class _ModelRequestTransport(TemporalParameterTransport[ModelRequestParams, tupl
                 telemetry_mcp_url_tool_names=params.model_request_parameters._telemetry_mcp_url_tool_names,  # pyright: ignore[reportPrivateUsage]
                 serialized_run_context=self._durability.run_context_type.serialize_run_context(ctx),
                 model_id=params.model_id,
+                attempt=params.attempt,
             ),
             ctx.deps,
         )
@@ -403,6 +405,7 @@ class _ModelRequestTransport(TemporalParameterTransport[ModelRequestParams, tupl
             model_settings=cast(ModelSettings | None, request.model_settings),
             model_request_parameters=request.model_request_parameters,
             run_context=ctx,
+            attempt=request.attempt,
         )
 
 

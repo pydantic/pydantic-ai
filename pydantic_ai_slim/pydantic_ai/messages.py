@@ -8196,12 +8196,84 @@ ModelResponsePartDelta = Annotated[
 """A partial update (delta) for any model response part."""
 
 
+@dataclass(frozen=True, kw_only=True)
+class ModelResponseOrigin:
+    """Which execution of which model response produced a model-stream event.
+
+    One request step can stream more than one response: a capability like
+    [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] or
+    [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] attempts the model again, or a
+    `wrap_model_request` hook streams a response of its own in place of the one it stopped. Under durable
+    execution, the engine can also run the same attempt again, like a Temporal activity that is retried
+    after it streamed part of a response. An agent run's model-stream events carry the origin they came
+    from, so a consumer can tell these apart.
+
+    A consumer that renders the stream keeps the latest origin it has seen for each `(run_id, run_step)`,
+    and drops the events of any origin a later one [`supersedes`][pydantic_ai.messages.ModelResponseOrigin.supersedes],
+    as their response was replaced. A superseded origin's events can still arrive after its successor's,
+    for instance from a durable unit that timed out but keeps publishing, so check every event, not only the
+    first one of an origin.
+    """
+
+    run_id: str
+    """The [`run_id`][pydantic_ai.messages.ModelResponse.run_id] of the agent run the response belongs to."""
+
+    run_step: int
+    """The request step the response answers, as [`RunContext.run_step`][pydantic_ai.tools.RunContext.run_step]."""
+
+    attempt: int = 1
+    """Which attempt at the request step streamed the response, starting at `1`.
+
+    This is the request context's [`attempt`][pydantic_ai.models.ModelRequestContext.attempt], which goes up when a
+    capability raises [`RetryModelRequest`][pydantic_ai.exceptions.RetryModelRequest] to attempt the model again.
+    A `wrap_model_request` hook that stops the stream and streams a response of its own instead streams it as the
+    next attempt. The agent graph counts attempts, so a replayed durable run streams the same ones.
+    """
+
+    execution_attempt: int = 1
+    """Which execution of the attempt's durable unit streamed the response, starting at `1`.
+
+    It goes up when the durable execution engine runs the same attempt again, like a retried Temporal activity.
+    Outside durable execution, and for engines that don't report it, it's `1`.
+    """
+
+    @property
+    def response_id(self) -> str:
+        """The identifier of the response the events build, the same for every execution of one attempt.
+
+        It's made of `run_id`, `run_step` and `attempt`, so a durable unit that runs again streams under the same
+        `response_id`, and a consumer can key the response it renders by it.
+        """
+        return f'{self.run_id}:{self.run_step}:{self.attempt}'
+
+    def supersedes(self, other: ModelResponseOrigin) -> bool:
+        """Whether this origin's response replaces `other`'s: a later attempt or execution of the same request step."""
+        return (self.run_id, self.run_step) == (other.run_id, other.run_step) and (
+            self.attempt,
+            self.execution_attempt,
+        ) > (other.attempt, other.execution_attempt)
+
+    __repr__ = _utils.dataclasses_no_defaults_repr
+
+
+_ModelResponseOriginField = Annotated[
+    ModelResponseOrigin | None, pydantic.Field(exclude_if=lambda origin: origin is None)
+]
+"""An event's `origin`, left out of its serialized form when it's `None`, so such events serialize as they did before.
+
+Equality and `repr()` leave it out too: it says where the event came from rather than what it is, so events compare
+and print as they did before it existed, and identical streams of two runs compare equal although their `run_id`s
+differ.
+"""
+
+
 @dataclass(repr=False, kw_only=True)
 class PartStartEvent:
     """An event indicating that a new part has started.
 
-    If multiple `PartStartEvent`s are received with the same index,
-    the new one should fully replace the old one.
+    If multiple `PartStartEvent`s are received with the same index and [`origin`][pydantic_ai.messages.PartStartEvent.origin],
+    the new one should fully replace the old one. A start at the same index with another origin belongs to
+    another response: see [`ModelResponseOrigin`][pydantic_ai.messages.ModelResponseOrigin].
     """
 
     index: int
@@ -8234,6 +8306,14 @@ class PartStartEvent:
     This lets UI event streams send it to the frontend alongside the part, so it survives a round trip through the client.
     """
 
+    origin: _ModelResponseOriginField = field(default=None, compare=False, repr=False)
+    """Which execution of which model response the event came from, set on the events of an agent run's model stream.
+
+    `None` for events that don't come from one, like those of [`Model.request_stream`][pydantic_ai.models.Model.request_stream]
+    used directly. See [`ModelResponseOrigin`][pydantic_ai.messages.ModelResponseOrigin] for dropping a replaced response's events.
+    Equality and `repr()` leave it out, so read it from the event.
+    """
+
     event_kind: Literal['part_start'] = 'part_start'
     """Event type identifier, used as a discriminator."""
 
@@ -8249,6 +8329,14 @@ class PartDeltaEvent:
 
     delta: ModelResponsePartDelta
     """The delta to apply to the specified part."""
+
+    origin: _ModelResponseOriginField = field(default=None, compare=False, repr=False)
+    """Which execution of which model response the event came from, set on the events of an agent run's model stream.
+
+    `None` for events that don't come from one, like those of [`Model.request_stream`][pydantic_ai.models.Model.request_stream]
+    used directly. See [`ModelResponseOrigin`][pydantic_ai.messages.ModelResponseOrigin] for dropping a replaced response's events.
+    Equality and `repr()` leave it out, so read it from the event.
+    """
 
     event_kind: Literal['part_delta'] = 'part_delta'
     """Event type identifier, used as a discriminator."""
@@ -8290,6 +8378,14 @@ class PartEndEvent:
     A part's `provider_name` can arrive in a delta, so this can be set when the part's `PartStartEvent.canonical_system` wasn't.
     """
 
+    origin: _ModelResponseOriginField = field(default=None, compare=False, repr=False)
+    """Which execution of which model response the event came from, set on the events of an agent run's model stream.
+
+    `None` for events that don't come from one, like those of [`Model.request_stream`][pydantic_ai.models.Model.request_stream]
+    used directly. See [`ModelResponseOrigin`][pydantic_ai.messages.ModelResponseOrigin] for dropping a replaced response's events.
+    Equality and `repr()` leave it out, so read it from the event.
+    """
+
     event_kind: Literal['part_end'] = 'part_end'
     """Event type identifier, used as a discriminator."""
 
@@ -8311,6 +8407,14 @@ class FinalResultEvent:
     """The name of the output tool that was called. `None` if the result is from text content and not from a tool."""
     tool_call_id: str | None
     """The tool call ID, if any, that this result is associated with."""
+    origin: _ModelResponseOriginField = field(default=None, compare=False, repr=False)
+    """Which execution of which model response the event came from, set on the events of an agent run's model stream.
+
+    `None` for events that don't come from one, like those of [`Model.request_stream`][pydantic_ai.models.Model.request_stream]
+    used directly. See [`ModelResponseOrigin`][pydantic_ai.messages.ModelResponseOrigin] for dropping a replaced response's events.
+    Equality and `repr()` leave it out, so read it from the event.
+    """
+
     event_kind: Literal['final_result'] = 'final_result'
     """Event type identifier, used as a discriminator."""
 

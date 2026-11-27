@@ -52,6 +52,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseOrigin,
     ModelSettings,
     PartDeltaEvent,
     PartEndEvent,
@@ -600,6 +601,49 @@ async def test_prefect_durability_model_error_reaches_flow_with_its_type() -> No
         return (await agent.run('Hello Prefect')).output
 
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
+
+
+async def test_prefect_durability_retried_model_task_streams_a_later_execution() -> None:
+    """A model task that fails after it streamed runs again as a later execution of the same response."""
+    executions = 0
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal executions
+        executions += 1
+        if executions == 1:
+            yield 'Hel'
+            raise RuntimeError('connection lost')
+        yield 'Hello'
+
+    origins: list[ModelResponseOrigin | None] = []
+
+    async def handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            if isinstance(event, PartStartEvent):
+                origins.append(event.origin)
+
+    agent = Agent(
+        FunctionModel(stream_function=stream),
+        name='prefect_durability_retried_stream',
+        deps_type=type(None),
+        capabilities=[
+            PrefectDurability(
+                event_stream_handler=handler, model_task_config=TaskConfig(retries=1, retry_delay_seconds=0)
+            )
+        ],
+    )
+
+    @flow(name='test_prefect_durability_retried_model_task_streams_a_later_execution')
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello Prefect')).output
+
+    assert await run_durable_agent() == 'Hello'
+
+    first, second = origins
+    assert first is not None and second is not None
+    assert (first.execution_attempt, second.execution_attempt) == (1, 2)
+    assert first.response_id == second.response_id
+    assert second.supersedes(first)
 
 
 @pytest.mark.parametrize('where', ['tool-task', 'user-task', 'flow-code'])

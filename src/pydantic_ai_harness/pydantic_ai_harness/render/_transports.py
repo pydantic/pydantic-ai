@@ -92,6 +92,7 @@ class _ModelRequestPayload:
     model_request_parameters: ModelRequestParameters
     run_context: JSONObject
     model_id: str | None = None
+    attempt: int = 1
 
 
 @dataclass(kw_only=True)
@@ -286,6 +287,7 @@ class RenderModelRequestTransport(Generic[AgentDepsT], RenderJSONTransport[Model
             model_request_parameters=params.model_request_parameters,
             run_context=self._context_codec.dump(params.run_context),
             model_id=params.model_id,
+            attempt=params.attempt,
         )
         return dump_json_object(_ModelRequestPayload, payload)
 
@@ -298,6 +300,7 @@ class RenderModelRequestTransport(Generic[AgentDepsT], RenderJSONTransport[Model
             model_settings=model_settings_from_json(decoded.model_settings),
             model_request_parameters=decoded.model_request_parameters,
             run_context=self._context_codec.load(decoded.run_context),
+            attempt=decoded.attempt,
         )
 
 

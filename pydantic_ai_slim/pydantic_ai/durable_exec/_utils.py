@@ -17,6 +17,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypeAlias, TypeVar
 
+from pydantic_ai._run_context import get_current_request_attempt
 from pydantic_ai._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
 from pydantic_ai._utils import disable_threads
 from pydantic_ai.agent import Agent, EventStreamHandler
@@ -255,6 +256,7 @@ class DurableModel(WrapperModel):
             messages=messages,
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
+            attempt=get_current_request_attempt(),
         )
         return await self._request_segment(segment_context)
 
@@ -271,6 +273,7 @@ class DurableModel(WrapperModel):
             messages=messages,
             model_settings=model_settings,
             model_request_parameters=model_request_parameters,
+            attempt=get_current_request_attempt(),
         )
 
         def replay_request_parameters() -> ModelRequestParameters:
