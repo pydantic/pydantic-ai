@@ -2864,7 +2864,6 @@ def test_groq_gpt_oss():
             'supported_native_tools': frozenset(
                 {CodeExecutionTool, FileSearchTool, ImageGenerationTool, MCPServerTool, WebSearchTool}
             ),
-            'supports_inline_system_prompts': True,
             'openai_chat_supports_multiple_system_messages': False,
             'default_framing_announcement': 'always',
             'supports_json_object_output': True,
