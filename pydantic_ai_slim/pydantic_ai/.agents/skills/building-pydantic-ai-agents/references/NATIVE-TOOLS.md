@@ -26,7 +26,7 @@ For DeepSeek native web search and fetch, use `DeepSeekResponsesModel` with `dee
 
 Restricting settings (`allowed_domains`, `blocked_domains`, `max_uses`, and `external_web_access=False` on web search;
 the first three on web fetch) are not dropped silently. On a model whose native tool can't apply one that is set
-(Gemini and DeepSeek apply none), the tool counts as unsupported: a local fallback runs in its place if one is configured, an
+(Gemini and DeepSeek's `deepseek-flash` web tools apply none), the tool counts as unsupported: a local fallback runs in its place if one is configured, an
 `optional=True` tool is left out, and `UserError` is raised otherwise.
 
 ## Native Tool Defaults

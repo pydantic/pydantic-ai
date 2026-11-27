@@ -144,9 +144,11 @@ class DeepSeekResponsesModel(OpenAIResponsesModel):
     @cached_property
     @override
     def profile(self) -> DeepSeekModelProfile:
+        # The provider merges `DeepSeekModelProfile` keys into the profile, which the base types more loosely.
         profile = cast(DeepSeekModelProfile, super().profile)
         if profile.get('deepseek_supports_web_tools', False):
-            # DeepSeek's `url_citation` offsets span the cited text: its content holds no citation markers.
+            # DeepSeek's `url_citation` offsets span the cited text: its content holds no citation markers. The flag is
+            # set here rather than by `DeepSeekProvider`, so `OpenAIResponsesModel` keeps its marker anchors.
             update = DeepSeekModelProfile(openai_responses_url_citation_content_offsets=True)
         else:
             update = DeepSeekModelProfile(

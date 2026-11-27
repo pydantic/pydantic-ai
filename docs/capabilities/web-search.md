@@ -13,7 +13,7 @@ For the local side, pass `local='duckduckgo'` (or `local=True`) for a [DuckDuckG
 Native configuration fields: `search_context_size`, `user_location`, `blocked_domains`, `allowed_domains`,
 `max_uses`, and OpenAI Responses' `external_web_access`. The domain and `max_uses` constraints require a native web
 search that applies them, as does `external_web_access=False`, because a local fallback cannot guarantee cached or
-indexed-only search. On a model whose native search can't apply one that is set (Gemini and DeepSeek's web search apply none of them; see
+indexed-only search. On a model whose native search can't apply one that is set (Gemini and DeepSeek's `deepseek-flash` web search apply none of them; see
 [restricting parameters](../native-tools.md#restricting-parameters)), `WebSearch` raises a
 [`UserError`][pydantic_ai.exceptions.UserError] rather than searching without the restriction.
 
