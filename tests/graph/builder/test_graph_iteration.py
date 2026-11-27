@@ -50,7 +50,8 @@ async def test_iter_basic():
     async with graph.iter(state=state) as run:
         async for event in run:
             events.append(event)
-        # A cancellation here would be absorbed when the run exits, skipping the rest of this block.
+        # A clean end must not cancel the caller's code inside the run, so this checkpoint returns. The flag is
+        # asserted after the exit, so the test fails whether a cancellation escapes the run or the exit absorbs it.
         await anyio.lowlevel.checkpoint()
         resumed_after_end = True
 
