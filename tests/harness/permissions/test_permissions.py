@@ -935,6 +935,7 @@ class TestPermissionsTelemetry:
         [
             ([], 'read-only', 'Read-only mode asks before every command.'),
             ([PermissionRule('allow', command='cat', reason='Reading is safe.')], 'read-only', 'Reading is safe.'),
+            ([PermissionRule('ask', command='cat', reason='Check what it reads.')], 'full', 'Check what it reads.'),
         ],
     )
     async def test_allowed_and_asked_calls_record_the_reason_with_content(
