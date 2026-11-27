@@ -298,10 +298,10 @@ class ClaudePool(Plugin):
     # The running turn keeps the model it bound, so `/accounts` opens at once instead of queueing.
     assert shell.commands.runs_during_turn('/accounts')
     try:
-        assert answers(await shell.session.resolved_model()) == ['default', 'work']
-        assert shell.context.set_setting(['accounts.pool', 'false']) == 'Saved accounts.pool. Applied.'
         assert answers(await shell.session.resolved_model()) == ['default']
-        assert store.load().pool_accounts is False
+        assert shell.context.set_setting(['accounts.pool', 'true']) == 'Saved accounts.pool. Applied.'
+        assert answers(await shell.session.resolved_model()) == ['default', 'work']
+        assert store.load().pool_accounts is True
     finally:
         await shell.loader.disable('claude_pool')
 

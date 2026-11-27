@@ -608,7 +608,7 @@ def test_saved_instructions_survive_a_build_without_them(tmp_path: Path, monkeyp
     assert SettingsStore(path).overrides() == {'run.instructions': 'Line one\nLine two'}
 
 
-def test_database_from_before_account_pooling_pools_and_keeps_its_settings(tmp_path: Path) -> None:
+def test_database_from_before_account_pooling_keeps_its_settings(tmp_path: Path) -> None:
     path = tmp_path / 'config.db'
     SettingsStore(path)
     # Literal rows an earlier build wrote, with a saved profile model and no `accounts.pool`.
@@ -619,12 +619,12 @@ def test_database_from_before_account_pooling_pools_and_keeps_its_settings(tmp_p
         )
     store = SettingsStore(path)
     settings = store.load()
-    # Turning pooling on for existing databases is the intended default; named profiles stay pinned.
-    assert settings.pool_accounts is True
+    # Pooling is opt-in, so an existing database without `accounts.pool` keeps running plain models on one account.
+    assert settings.pool_accounts is False
     assert settings.worktree_remove_commands == {}
     assert settings.model == 'claude-code@work:opus' and settings.thinking is False
-    config_command(store, ['set', 'accounts.pool', 'false'])
-    assert SettingsStore(path).load().pool_accounts is False
+    config_command(store, ['set', 'accounts.pool', 'true'])
+    assert SettingsStore(path).load().pool_accounts is True
     config_command(store, ['reset', 'accounts.pool'])
     assert SettingsStore(path).load() == settings
     with closing(sqlite3.connect(path)) as connection:
