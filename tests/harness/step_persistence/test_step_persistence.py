@@ -516,6 +516,37 @@ class TestFileStepStore:
         assert counts == [0, 1, 1, 1, 1]
         assert await store.list_events(run_id='r1') == events
 
+    async def test_keyed_event_append_rereads_a_log_rewritten_since_the_last_one(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        first = StepEvent(run_id='r1', kind='run_started', step_index=0, idempotency_key='event:0')
+        second = StepEvent(run_id='r1', kind='run_started', step_index=1, idempotency_key='event:1')
+        await store.append_event(first)
+        await store.append_event(second)
+        log = tmp_path / 'r1' / 'events.jsonl'
+        log.write_text(log.read_text(encoding='utf-8').splitlines(keepends=True)[1], encoding='utf-8')
+
+        await store.append_event(first)
+
+        assert await store.list_events(run_id='r1') == [second, first]
+
+    async def test_keyed_writes_stay_idempotent_across_more_runs_than_the_store_indexes(self, tmp_path: Path) -> None:
+        store = FileStepStore(tmp_path)
+        run_ids = [f'r{index}' for index in range(100)]
+        for run_id in run_ids:
+            await store.append_event(StepEvent(run_id=run_id, kind='run_started', step_index=0, idempotency_key='e'))
+            await store.save_snapshot(
+                ContinuableSnapshot(run_id=run_id, step_index=0, messages=[], idempotency_key='s')
+            )
+
+        for run_id in run_ids:
+            await store.append_event(StepEvent(run_id=run_id, kind='run_started', step_index=0, idempotency_key='e'))
+            await store.save_snapshot(
+                ContinuableSnapshot(run_id=run_id, step_index=0, messages=[], idempotency_key='s')
+            )
+
+        assert [len(await store.list_events(run_id=run_id)) for run_id in run_ids] == [1] * 100
+        assert [len(await store.list_snapshots(run_id=run_id)) for run_id in run_ids] == [1] * 100
+
     async def test_snapshot_scan_skips_a_partially_written_snapshot_file(self, tmp_path: Path) -> None:
         # The corrupt file is the only one in the directory on purpose: the key scan returns as soon as
         # it reads a snapshot carrying the same key, so a directory that also held a good one would only

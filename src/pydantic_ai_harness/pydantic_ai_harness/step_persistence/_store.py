@@ -51,7 +51,7 @@ write can hold the lock for seconds, longer than the 5 second `sqlite3.connect` 
 """
 
 
-def _atomic_write_text(path: Path, text: str) -> None:
+def _atomic_write_text(path: Path, text: str) -> os.stat_result:
     """Write `text` to `path` so a concurrent reader sees either the old file or the new one.
 
     Run and snapshot files are read while a run is still writing -- by a resuming
@@ -61,11 +61,16 @@ def _atomic_write_text(path: Path, text: str) -> None:
     the swap atomic on POSIX and Windows; the unique name keeps two concurrent
     writers from sharing a temporary. The suffix is `.tmp`, not `.json`, so a
     partial file never enters a `*.json` scan.
+
+    Returns the written file's stat, taken from the temporary: the swap keeps its
+    inode and modification time.
     """
     tmp = path.with_name(f'{path.name}.{uuid4().hex}.tmp')
     try:
         tmp.write_text(text, encoding='utf-8')
+        stat = tmp.stat()
         os.replace(tmp, path)
+        return stat
     except BaseException:
         tmp.unlink(missing_ok=True)
         raise
@@ -525,19 +530,64 @@ def _tool_effect_to_dict(record: ToolEffectRecord) -> dict[str, object]:
     }
 
 
+_KEY_INDEX_RUNS = 64
+"""How many runs `FileStepStore` keeps a `_RunKeyIndex` for; a run evicted reads its files again once."""
+
+
 @dataclass
 class _LogTail:
-    """The idempotency keys an append-only JSONL log held up to `offset`, the last time `FileStepStore` read it."""
+    """The idempotency keys the lines of an append-only JSONL log held up to `offset`, when last read."""
 
-    file_id: tuple[int, int]
-    """The log's `(st_dev, st_ino)`, so a log that was replaced is read again from the start."""
     offset: int = 0
+    last_line: bytes = b''
+    """The line that ends at `offset`, so a log rewritten since is read again from the start."""
     keys: set[str | None] = field(default_factory=set[str | None])
+
+
+@dataclass
+class _RunKeyIndex:
+    """What keyed writes of one `FileStepStore` run already read, so they read only what was written since."""
+
+    lock: threading.Lock = field(default_factory=threading.Lock)
+    """Held while the index is read or updated: worker threads share it."""
+    logs: dict[Path, _LogTail] = field(default_factory=dict[Path, _LogTail])
+    snapshot_keys: dict[tuple[str, int, int], object] = field(default_factory=dict[tuple[str, int, int], object])
+    """The `idempotency_key` of each snapshot file by its name, inode and modification time."""
 
 
 def _line_keys(data: bytes, line_key: Callable[[str], str | None]) -> set[str | None]:
     """The key `line_key` parses from each non-blank line of `data`."""
     return {line_key(raw) for raw in data.decode('utf-8').splitlines() if raw.strip()}
+
+
+def _log_has_key(tails: dict[Path, _LogTail], path: Path, key: str, line_key: Callable[[str], str | None]) -> bool:
+    """Whether a line of the append-only log at `path` carries `key`, parsing only lines new since the last call.
+
+    `line_key` validates a line as a full read would and returns its key, so a corrupt line still
+    raises. A log is read again from the start once it was removed, truncated, or rewritten so the
+    last line read is no longer where it was. A last line without its newline, which a writer is still
+    appending or a crash cut short, is parsed on every call but not remembered.
+    """
+    try:
+        file = path.open('rb')
+    except FileNotFoundError:
+        tails.pop(path, None)
+        return False
+    with file:
+        tail = tails.get(path)
+        if tail is not None:
+            file.seek(tail.offset - len(tail.last_line))
+            if file.read(len(tail.last_line)) != tail.last_line:
+                tail = None
+        if tail is None:
+            tail = tails[path] = _LogTail()
+        file.seek(tail.offset)
+        complete, newline, partial = file.read().rpartition(b'\n')
+        tail.keys |= _line_keys(complete, line_key)
+        if newline:
+            tail.offset += len(complete) + 1
+            tail.last_line = complete.rpartition(b'\n')[2] + newline
+        return key in _line_keys(partial, line_key) or key in tail.keys
 
 
 def _tool_effect_from_dict(data: dict[str, object]) -> ToolEffectRecord:
@@ -626,16 +676,22 @@ class FileStepStore:
             resolved = media_store
         self._media_store: MediaStore | None = resolved
         self._media_threshold_bytes = media_threshold_bytes
-        # What keyed writes already read of each run's logs and snapshot files, so a keyed write
-        # reads only what was written since, not every earlier line and snapshot. Worker threads
-        # share these, so they are only touched under the lock.
-        self._key_index_lock = threading.Lock()
-        self._log_tails: dict[Path, _LogTail] = {}
-        self._snapshot_file_keys: dict[Path, dict[str, object]] = {}
+        # By run directory, least recently used first.
+        self._key_indexes: dict[Path, _RunKeyIndex] = {}
+        self._key_indexes_lock = threading.Lock()
 
     def _run_dir(self, run_id: str) -> Path:
         _validate_id(run_id, field='run_id')
         return self._root / run_id
+
+    def _key_index(self, run_dir: Path) -> _RunKeyIndex:
+        """The key index of `run_dir`, keeping those of the `_KEY_INDEX_RUNS` most recently used runs only."""
+        with self._key_indexes_lock:
+            index = self._key_indexes.pop(run_dir, None) or _RunKeyIndex()
+            self._key_indexes[run_dir] = index
+            if len(self._key_indexes) > _KEY_INDEX_RUNS:
+                del self._key_indexes[next(iter(self._key_indexes))]
+            return index
 
     async def register_run(self, record: RunRecord) -> None:
         await anyio.to_thread.run_sync(self._sync_register_run, record)
@@ -689,12 +745,16 @@ class FileStepStore:
     def _sync_append_event(self, event: StepEvent) -> None:
         run_dir = self._run_dir(event.run_id)
         run_dir.mkdir(parents=True, exist_ok=True)
-        if event.idempotency_key is not None and self._log_has_key(
-            run_dir / 'events.jsonl',
-            event.idempotency_key,
-            lambda raw: _event_from_dict(_load_json_object(raw)).idempotency_key,
-        ):
-            return
+        if event.idempotency_key is not None:
+            index = self._key_index(run_dir)
+            with index.lock:
+                if _log_has_key(
+                    index.logs,
+                    run_dir / 'events.jsonl',
+                    event.idempotency_key,
+                    lambda raw: _event_from_dict(_load_json_object(raw)).idempotency_key,
+                ):
+                    return
         line = json.dumps(_event_to_dict(event))
         with (run_dir / 'events.jsonl').open('a', encoding='utf-8') as file:
             file.write(line + '\n')
@@ -727,8 +787,9 @@ class FileStepStore:
         snap_dir = run_dir / 'snapshots'
         snap_dir.mkdir(parents=True, exist_ok=True)
         key_path = run_dir / 'snapshot-keys.jsonl'
+        index = self._key_index(run_dir)
         if snapshot.idempotency_key is not None and self._snapshot_key_saved(
-            key_path, snap_dir, snapshot.idempotency_key
+            index, key_path, snap_dir, snapshot.idempotency_key
         ):
             return
         payload: dict[str, object] = {
@@ -743,66 +804,48 @@ class FileStepStore:
             'idempotency_key': snapshot.idempotency_key,
         }
         seq = self._next_snapshot_seq(snap_dir)
-        _atomic_write_text(snap_dir / f'{seq}.json', json.dumps(payload))
-        with self._key_index_lock:
-            self._snapshot_file_keys.setdefault(snap_dir, {})[f'{seq}.json'] = snapshot.idempotency_key
+        stat = _atomic_write_text(snap_dir / f'{seq}.json', json.dumps(payload))
+        with index.lock:
+            index.snapshot_keys[(f'{seq}.json', stat.st_ino, stat.st_mtime_ns)] = snapshot.idempotency_key
         if snapshot.idempotency_key is not None:
             with key_path.open('a', encoding='utf-8') as file:
                 file.write(json.dumps(snapshot.idempotency_key) + '\n')
         self._sync_prune_snapshots(snap_dir)
 
-    def _snapshot_key_saved(self, key_path: Path, snap_dir: Path, key: str) -> bool:
+    @staticmethod
+    def _snapshot_key_saved(index: _RunKeyIndex, key_path: Path, snap_dir: Path, key: str) -> bool:
         """Whether a snapshot with idempotency `key` was saved: in the key log, or in a snapshot file.
 
         The snapshot files cover a save whose file was written but whose key-log line was not.
         Nothing orders saves of one run, so that file need not be the newest one: a crash before
         the key-log line, followed by a later save, leaves an older file unlogged. Every file is
-        therefore checked, but each is read once per store: the key of a file this store wrote or
-        already read is remembered while the file exists, as snapshot files are never rewritten.
+        therefore checked, but a file that parses is read once while the index holds it: the key of
+        a file the store wrote or read is kept under its name, inode and modification time.
         """
-        if self._log_has_key(key_path, key, _STRING_ADAPTER.validate_json):
-            return True
-        names = {path.name for path in snap_dir.glob('*.json')}
-        with self._key_index_lock:
-            cached = self._snapshot_file_keys.get(snap_dir, {})
-            known = self._snapshot_file_keys[snap_dir] = {name: k for name, k in cached.items() if name in names}
+        with index.lock:
+            if _log_has_key(index.logs, key_path, key, _STRING_ADAPTER.validate_json):
+                return True
+            paths: dict[tuple[str, int, int], Path] = {}
+            for path in snap_dir.glob('*.json'):
+                try:
+                    stat = path.stat()
+                except FileNotFoundError:  # pragma: no cover -- pruned by another writer since the listing
+                    continue
+                paths[(path.name, stat.st_ino, stat.st_mtime_ns)] = path
+            known = index.snapshot_keys = {file: k for file, k in index.snapshot_keys.items() if file in paths}
             if key in known.values():
                 return True
-            for name in names - known.keys():
+            for file, path in paths.items():
+                if file in known:
+                    continue
                 try:
-                    prior = _load_json_object((snap_dir / name).read_text(encoding='utf-8'))
+                    prior = _load_json_object(path.read_text(encoding='utf-8'))
                 except (FileNotFoundError, ValueError, ValidationError):
                     continue
-                known[name] = prior.get('idempotency_key')
-                if known[name] == key:
+                known[file] = prior.get('idempotency_key')
+                if known[file] == key:
                     return True
         return False
-
-    def _log_has_key(self, path: Path, key: str, line_key: Callable[[str], str | None]) -> bool:
-        """Whether a line of the append-only log at `path` carries `key`, parsing only lines new since the last call.
-
-        `line_key` validates a line as a full read would and returns its key, so a corrupt line still
-        raises. A log that was removed, replaced, or truncated is read again from the start. A last line
-        without its newline, which a writer is still appending or a crash cut short, is parsed on every
-        call but not remembered.
-        """
-        try:
-            file = path.open('rb')
-        except FileNotFoundError:
-            with self._key_index_lock:
-                self._log_tails.pop(path, None)
-            return False
-        with file, self._key_index_lock:
-            stat = os.fstat(file.fileno())
-            file_id = (stat.st_dev, stat.st_ino)
-            tail = self._log_tails.get(path)
-            if tail is None or tail.file_id != file_id or stat.st_size < tail.offset:
-                tail = self._log_tails[path] = _LogTail(file_id)
-            file.seek(tail.offset)
-            complete, newline, partial = file.read().rpartition(b'\n')
-            tail.keys |= _line_keys(complete, line_key)
-            tail.offset += len(complete) + len(newline)
-            return key in _line_keys(partial, line_key) or key in tail.keys
 
     def _sync_prune_snapshots(self, snap_dir: Path) -> None:
         """Drop snapshot files outside the retain set when bounded.
