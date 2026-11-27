@@ -15,6 +15,9 @@ Classification mirrors the engines' own wrapping: only the leaf types the wrappe
 are rejected. A custom `AbstractToolset` leaf that executes I/O isn't recognized and passes through —
 the same blind spot the constructor-time `dbosify`/`prefectify`/`temporalize` wrapping already has for
 unknown leaf types.
+
+The deprecated durable wrapper agents also check their agent's capabilities here at construction time, in
+`reject_durable_unsupported_capabilities`, since they add no durability capability for one to refuse.
 """
 
 from __future__ import annotations
