@@ -328,7 +328,8 @@ def _mcp_server() -> FastMCP[None]:
 
     @server.tool()
     def extra_tool() -> str:
-        return 'extra'
+        # The contracts only list this server's tool; the public `CALLS['MCP']` calls one on its own server.
+        return 'extra'  # pragma: no cover
 
     return server
 
