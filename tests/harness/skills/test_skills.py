@@ -42,7 +42,6 @@ from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Wo
 from pydantic_ai_harness import ArtifactScanner
 from pydantic_ai_harness.artifact_scanning import ArtifactFinding, ArtifactScanResult
 from pydantic_ai_harness.skills import Skills, SkippedSkill
-from tests._inline_snapshot import snapshot
 from tests.harness.conftest import IsStr
 from tests.harness.file_system.test_windows_paths import DriveBackend
 from tests.workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend, RunOnlyWorkspaceBackend
