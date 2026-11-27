@@ -494,8 +494,9 @@ async def test_openai_responses_function_tool_call_cut_off_by_max_tokens(
         ),
     ):
         if stream:
-            async with agent.run_stream(prompt) as result:
-                await result.get_output()
+            # The cut-off call is the response's last part, so `run_stream()` raises as it's entered.
+            async with agent.run_stream(prompt):
+                pass
         else:
             await agent.run(prompt)
 
