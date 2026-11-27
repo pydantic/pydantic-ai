@@ -657,7 +657,7 @@ The notice is a `ResetNoticePart`, a data
 the model on the user channel in a `<context_cleared>` frame, like a [receipt](#compaction-receipts)
 on the user channel, and a later compaction or summary doesn't take it for the user's words. Its
 typed fields `number`, `work_log` (the log's handle) and `kept_responses` are never sent to the
-model; find notices in history by the type. The default text tells the model that its earlier messages were cleared and the task is unchanged, what the reset kept, that the work log holds what was cleared, to look an earlier call up there before repeating it, using the tools that search and read the log (under the names the model sees), to read only what its next step needs, and to read a file again before editing it, since a log entry can be out of date. That wording was measured live across providers; the docstring of `default_reset_notice` records the result. The handle is what the [store](../work_log/README.md#stores)'s `locate` returns: a file path or a workspace directory, and none for the in-memory store, whose log the agent can reach only through the tools.
+model; find notices in history by the type. The default text tells the model that the conversation before this point was cleared and it is continuing the same task, how many times this conversation has been cleared, that the work log holds its earlier tool calls and replies (the replies only when `WorkLog.record_text` is on), how to pick up where it left off with the tools that search and read the log (under the names the model sees), to read a file again before editing it, since a log entry can be out of date, and what the reset kept. Its mentions of calls made inside code and of calling the tools from code apply when [Code Mode](../code_mode/) is on the agent. That wording was measured live across providers. The handle is what the [store](../work_log/README.md#stores)'s `locate` returns: a file path or a workspace directory, and none for the in-memory store, whose log the agent can reach only through the tools.
 
 To write your own, pass `notice=`, a function from a `ResetNotice` to the text:
 
@@ -666,6 +666,7 @@ To write your own, pass `notice=`, a function from a `ResetNotice` to the text:
 | `number` | Resets in this conversation, this one included, counting from `1` |
 | `work_log` | The log's handle, or `None` for the in-memory store or when no conversation ID is known, such as `compact_now` without `conversation_id=` |
 | `search_tool`, `read_tool` | The names the model sees for `search_work_log` and `read_work_log` |
+| `replies_logged` | Whether the work log records the model's replies (`WorkLog.record_text`) |
 | `cleared_messages` | Messages this reset removed |
 | `kept_first_request` | Whether the first user request was kept |
 | `kept_user_turns` | User turns after the first kept ahead of the tail |

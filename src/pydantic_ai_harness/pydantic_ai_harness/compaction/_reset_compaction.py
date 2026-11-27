@@ -94,6 +94,9 @@ class ResetNotice:
     read_tool: str
     """The name the model sees for `read_work_log`."""
 
+    replies_logged: bool
+    """Whether the work log records the model's replies, as `WorkLog.record_text` sets."""
+
     cleared_messages: int
     """Messages this reset removed."""
 
@@ -113,38 +116,38 @@ class ResetNotice:
 def default_reset_notice(notice: ResetNotice) -> str:
     """The default text of the notice a reset leaves: that the conversation was cleared, and where the earlier work is.
 
-    The wording was measured on the first request after a reset whose next step needs a result the reset cleared,
-    on the newest model from five providers. The model looked the result up in the log in 107 of 120 runs, against
-    96 of 120 for a draft that told it to search first, and no run credited the notice to the user. What each part
-    is for: the first paragraph keeps the model on the task and says what is
-    still in front of it, so it doesn't search for that; "before you repeat an earlier call, look it up" is the rule
-    against running a call again, with its trigger; "read only what your next step needs" keeps the log from being
-    paged back in; the last paragraph keeps the model from editing a file from a stale copy.
+    It says the task continues and how many times the conversation has been cleared, names the work log and the tools
+    that search and read it, with a first move: list the newest entries or search, then read only the entries needed.
+    It asks the model to read a file again before editing it, since an entry shows the file as it was, and says what
+    the reset kept. It leaves out the model's replies when the work log doesn't record them.
     """
-    requests = "The user's requests are" if notice.kept_user_turns else "The user's original request is"
+    cleared = 'once' if notice.number == 1 else f'{notice.number} times'
+    log = 'the work log' if notice.work_log is None else f'the work log `{notice.work_log}`'
+    work = (
+        'Your earlier tool calls with full results, including calls made inside code, and your earlier replies are'
+        if notice.replies_logged
+        else 'Your earlier tool calls with full results, including calls made inside code, are'
+    )
+    requests = "The user's requests" if notice.kept_user_turns else "The user's original request"
     calls = (
-        'your latest tool call and its result'
+        'latest tool call and its result'
         if notice.kept_tool_calls == 1
-        else f'your {notice.kept_tool_calls} latest tool calls and their results'
+        else f'{notice.kept_tool_calls} latest tool calls and their results'
     )
     if notice.kept_first_request and notice.kept_tool_calls:
-        kept = f' {requests} still in this conversation, with {calls}.'
+        kept = f' {requests} and your {calls} are still in this conversation.'
     elif notice.kept_first_request:
-        kept = f' {requests} still in this conversation.'
+        kept = f' {requests} {"are" if notice.kept_user_turns else "is"} still in this conversation.'
     elif notice.kept_tool_calls:
-        kept = f' {calls[0].upper()}{calls[1:]} are still in this conversation.'
+        kept = f' Your {calls} are still in this conversation.'
     else:
         kept = ''
-    where = '' if notice.work_log is None else f' at `{notice.work_log}`'
     return (
-        'Your earlier messages in this conversation were cleared to free context. The task is unchanged: continue '
-        f'it from where you stopped.{kept}\n\n'
-        f'What was cleared is in the work log{where}: every earlier tool call with its full result, including calls '
-        'made from code, and your earlier replies. Before you repeat an earlier call, look it up: '
-        f'`{notice.search_tool}` with no query lists your most recent entries, and with keywords finds one; '
-        f'`{notice.read_tool}` returns one entry in full. Read only what your next step needs.\n\n'
-        'An entry shows things as they were when it was recorded. A file may have changed since, including by your '
-        'own edits, so read a file again before you edit it.'
+        'The conversation before this point was cleared to free context; you are continuing the same task '
+        f'(cleared {cleared} in this conversation). {work} in {log}. To pick up where you left off, call '
+        f'`{notice.search_tool}` with no query to list your most recent entries, or with keywords to find one, then '
+        f'read only the entries you need in full with `{notice.read_tool}`; both work as tools and from code. The '
+        f'log shows files as they were when read: read a file again before you edit it.{kept}'
     )
 
 
@@ -193,10 +196,14 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
     `compact_now`."""
 
     context_window: int | None = None
-    """Window override in tokens. `None` resolves it from the request's model. Only consulted alongside `max_fraction`."""
+    """Window override in tokens. `None` resolves it from the request's model.
+
+    Only consulted alongside `max_fraction`."""
 
     fallback_context_window: int = DEFAULT_CONTEXT_WINDOW
-    """Window assumed when the request's model is not in the pricing registry. Only consulted alongside `max_fraction`."""
+    """Window assumed when the request's model is not in the pricing registry.
+
+    Only consulted alongside `max_fraction`."""
 
     keep_messages: int = 2
     """Messages kept at the end of the conversation, after the notice.
@@ -263,7 +270,7 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
             )
 
     async def compact(self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT]) -> list[ModelMessage]:
-        """Clear everything but the first request, the notice, pins, loaded state, the latest user prompt and the tail."""
+        """Clear everything but the first request, the notice, pins, loaded state, the user's later turns and the tail."""
         cutoff = find_safe_cutoff(messages, self.keep_messages)
         if cutoff <= 0:
             return messages
@@ -284,6 +291,7 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
             work_log=None if log_id is None else self.work_log.store.locate(log_id),
             search_tool=ctx.tool_name_for_kind(WORK_LOG_SEARCH_KIND) or 'search_work_log',
             read_tool=ctx.tool_name_for_kind(WORK_LOG_READ_KIND) or 'read_work_log',
+            replies_logged=self.work_log.record_text,
             cleared_messages=cutoff - len(head) - len(turns),
             kept_first_request=first is not None,
             kept_user_turns=len(turns),
@@ -303,7 +311,12 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
             )
         ]
         if self.restate is not None and (state := await self._restate(ctx)):
-            parts.append(state if isinstance(state, CurrentStatePart) else self._state_part(state))
+            if isinstance(state, str):
+                # Text the code ran rather than wrote, such as command output: the callable's output.
+                name = getattr(self.restate, '__name__', None)
+                source = ToolResultSource(tool_name=name if isinstance(name, str) else 'restate')
+                state = CurrentStatePart(content=state, source=source)
+            parts.append(state)
         compacted = reinject_pinned(
             messages, [*head, ModelRequest(parts=parts), *turns, *tail], insert_at=len(head) + 1
         )
@@ -313,13 +326,6 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
             kept_from=len(compacted) - len(tail) - len(turns),
             deferred_ids=deferred_capability_ids(ctx),
             preserve=self.preserve_loaded_capabilities,
-        )
-
-    def _state_part(self, state: str) -> CurrentStatePart:
-        """`restate`'s text, as the output of the callable that produced it: text the code ran, not wrote."""
-        name = getattr(self.restate, '__name__', None)
-        return CurrentStatePart(
-            content=state, source=ToolResultSource(tool_name=name if isinstance(name, str) else 'restate')
         )
 
     @durable_operation('restate')

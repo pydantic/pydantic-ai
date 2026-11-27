@@ -137,7 +137,7 @@ class TestWorkLog:
         run_id = result.run_id
         assert await store.read(_CONVERSATION) == [
             {
-                'key': f'{run_id}:1:c1:lookup:0',
+                'key': f'{run_id}:1:c1:lookup:0:success',
                 'run_id': run_id,
                 'step': 1,
                 'context': 0,
@@ -225,6 +225,41 @@ class TestWorkLog:
             ('flaky', 'retried', 'try again'),
             ('flaky', 'success', 'ok'),
             ('gone', 'failed', 'ToolFailed: gone for good'),
+        ]
+
+    async def test_a_result_an_outer_hook_rejects_is_logged_as_retried_too(self) -> None:
+        class RejectFirst(AbstractCapability[None]):
+            async def after_tool_execute(
+                self,
+                ctx: RunContext[None],
+                *,
+                call: ToolCallPart,
+                tool_def: ToolDefinition,
+                args: ValidatedToolArgs,
+                result: object,
+            ) -> object:
+                if call.tool_call_id == 'c1':
+                    raise ModelRetry('not good enough')
+                return result
+
+        def lookup() -> str:
+            return 'ok'
+
+        store = InMemoryWorkLogStore()
+        agent = Agent(
+            _scripted([ToolCallPart('lookup', {}, tool_call_id='c1')], [ToolCallPart('lookup', {}, tool_call_id='c2')]),
+            deps_type=type(None),
+            capabilities=[RejectFirst(), WorkLog(store)],
+            tools=[lookup],
+        )
+
+        await agent.run('Go', conversation_id=_CONVERSATION)
+
+        # The outer hook runs after `WorkLog` recorded the result, and the model is told to retry.
+        assert _tool_entries(await store.read(_CONVERSATION)) == [
+            ('lookup', 'success', 'ok'),
+            ('lookup', 'retried', 'not good enough'),
+            ('lookup', 'success', 'ok'),
         ]
 
     async def test_an_exception_is_logged_as_failed_and_still_raised(self) -> None:
@@ -875,6 +910,18 @@ class TestWorkLogStores:
         assert (tmp_path / 'logs' / 'log.jsonl').read_text().count('\n') == 3
         assert reopened.locate('log') == str(tmp_path / 'logs' / 'log.jsonl')
         assert await reopened.read('missing') == []
+
+    async def test_file_store_drops_a_write_a_crash_cut_short(self, tmp_path: Path) -> None:
+        store = FileWorkLogStore(tmp_path)
+        await store.append('log', _record('k1'))
+        path = tmp_path / 'log.jsonl'
+        path.write_text(path.read_text() + '{"seq": 2, "ke')
+
+        reopened = FileWorkLogStore(tmp_path)
+
+        assert [entry['key'] for entry in await reopened.read('log')] == ['k1']
+        assert await reopened.append('log', _record('k2')) == 2
+        assert [entry['key'] for entry in await FileWorkLogStore(tmp_path).read('log')] == ['k1', 'k2']
 
     @pytest.mark.parametrize('log_id', ['.', '..', 'a/b', 'x' * 129])
     async def test_file_store_hashes_an_unsafe_log_id(self, tmp_path: Path, log_id: str) -> None:

@@ -303,14 +303,15 @@ def _record(
 
 
 def _tool_record(ctx: RunContext[Any], call: ToolCallPart, outcome: WorkLogOutcome, content: str) -> WorkLogRecord:
-    # The step is in the key because models reuse tool call ids across turns, and the tool name because
-    # `ToolBridge` runs a bridged tool under its `tool_call`'s id.
+    # The step is in the key because models reuse tool call ids across turns, the tool name because `ToolBridge`
+    # runs a bridged tool under its `tool_call`'s id, and the outcome because an outer `after_tool_execute` can
+    # reject a result already recorded as a success, which `wrap_tool_execute` then records as retried or failed.
     # A nested `ToolManager`, such as `run_code`'s, carries the context of the call that dispatched it;
     # a top-level call's manager carries the step's, which has no tool call id.
     dispatcher = ctx.tool_manager.ctx if ctx.tool_manager is not None else None
     return _record(
         ctx,
-        key=f'{ctx.run_id}:{ctx.run_step}:{call.tool_call_id}:{call.tool_name}:{ctx.retry}',
+        key=f'{ctx.run_id}:{ctx.run_step}:{call.tool_call_id}:{call.tool_name}:{ctx.retry}:{outcome}',
         kind='tool',
         content=content,
         tool_name=call.tool_name,
@@ -371,6 +372,7 @@ def _result_text(result: object) -> str:
 
 
 def _item_text(item: object) -> str:
+    """One item of a tool result as text; kept apart from `_result_text` to hold it under the complexity limit."""
     if isinstance(item, str):
         return item
     if isinstance(item, TextContent):

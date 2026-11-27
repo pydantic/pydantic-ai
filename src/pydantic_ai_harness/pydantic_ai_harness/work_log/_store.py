@@ -192,7 +192,9 @@ class FileWorkLogStore:
             return seq
 
     async def read(self, log_id: str, start: int = 1, stop: int | None = None) -> list[WorkLogEntry]:
-        entries = await anyio.to_thread.run_sync(self._load, log_id)
+        # Under the append lock: an append writes from a worker thread, so an unlocked read could see half a line.
+        async with self._locks[log_id]:
+            entries = await anyio.to_thread.run_sync(self._load, log_id)
         return [entry for entry in entries if start <= entry['seq'] and (stop is None or entry['seq'] < stop)]
 
     def locate(self, log_id: str) -> str:
@@ -203,13 +205,22 @@ class FileWorkLogStore:
         if not path.exists():
             return []
         # Split on newlines only: JSON leaves U+2028 and its kin unescaped, and `splitlines` would cut at them.
-        return [_ENTRY.validate_json(line) for line in path.read_text(encoding='utf-8').split('\n') if line]
+        # Every entry ends with a newline, so a last segment without one is a write a crash cut short: skip it.
+        *lines, _ = path.read_text(encoding='utf-8').split('\n')
+        return [_ENTRY.validate_json(line) for line in lines if line]
 
     def _write_line(self, log_id: str, line: str) -> None:
         path = self._path(log_id)
         path.parent.mkdir(parents=True, exist_ok=True)
-        with path.open('a', encoding='utf-8') as file:
-            file.write(line + '\n')
+        with path.open('a+b') as file:
+            size = file.seek(0, os.SEEK_END)
+            if size:
+                file.seek(size - 1)
+                if file.read(1) != b'\n':
+                    # A write a crash cut short, which `_load` skips: drop it, so this entry starts its own line.
+                    file.seek(0)
+                    file.truncate(file.read().rfind(b'\n') + 1)
+            file.write(f'{line}\n'.encode())
 
 
 _ENTRY_FILE = re.compile(r'(\d{8,})-([0-9a-f]{16})\.json')

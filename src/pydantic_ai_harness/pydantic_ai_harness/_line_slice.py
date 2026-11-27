@@ -57,7 +57,9 @@ class LineSlice:
     whole: int
     """Lines of the window that `text` holds whole, counted from the side the cap kept: `shown` unless `capped`."""
     cut_at: int | None
-    """The byte offset where the part of a line the cap cut, and `text` leaves out, starts; `None` when no line was cut."""
+    """The byte offset where the part of a line the cap cut, and `text` leaves out, starts.
+
+    `None` when no line was cut."""
 
 
 def slice_lines(
