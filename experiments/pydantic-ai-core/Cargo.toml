@@ -1,0 +1,17 @@
+[package]
+name = "pydantic-ai-core"
+version = "0.0.0"
+edition = "2024"
+rust-version = "1.88"
+publish = false
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# `preserve_order` keeps object keys in insertion order, as Python dicts do.
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[profile.release]
+opt-level = "s"
+lto = true
