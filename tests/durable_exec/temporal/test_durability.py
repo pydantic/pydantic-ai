@@ -9125,6 +9125,61 @@ async def test_durability_decide_span_in_activity(
     assert ('instructions' in attributes['pydantic_ai.decision.questions']) is include_content
 
 
+_content_flags_seen: list[bool] = []
+
+
+def _content_flag_agent(worker_content: bool) -> Agent[object, str]:
+    agent = Agent(
+        TestModel(call_tools=['read_flag']),
+        name=f'durability_content_flag_{worker_content}',
+        capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+    )
+    agent.instrument = InstrumentationSettings(include_content=worker_content)
+
+    @agent.tool
+    async def read_flag(ctx: RunContext[object]) -> str:
+        _content_flags_seen.append(ctx.trace_include_content)
+        return 'read'
+
+    return agent
+
+
+content_flag_agents = {worker_content: _content_flag_agent(worker_content) for worker_content in (False, True)}
+
+
+@workflow.defn
+class ContentFlagWorkflow:
+    @workflow.run
+    async def run(self, worker_content: bool) -> str:
+        # This run asks for content; the worker's agent may not allow it.
+        result = await content_flag_agents[worker_content].run(
+            'go', capabilities=[Instrumentation(settings=InstrumentationSettings(include_content=True))]
+        )
+        return result.output
+
+
+@pytest.mark.parametrize('worker_content', [False, True])
+async def test_a_tool_activity_records_content_only_if_the_worker_allows_it(client: Client, worker_content: bool):
+    """The run's content flag crosses into the activity, but its spans go to the worker's tracer.
+
+    So the activity records content only if the worker's instrumentation allows it too, as model requests do.
+    """
+    _content_flags_seen.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[ContentFlagWorkflow],
+        plugins=[AgentPlugin(agent) for agent in content_flag_agents.values()],
+    ):
+        await client.execute_workflow(
+            ContentFlagWorkflow.run,
+            args=[worker_content],
+            id=f'{ContentFlagWorkflow.__name__}_{worker_content}_{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+    assert _content_flags_seen == [worker_content]
+
+
 # --- Mid-run tool population changes (https://github.com/pydantic/pydantic-ai/issues/7251) ---
 
 

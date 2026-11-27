@@ -1288,7 +1288,8 @@
     },
     "RunContext.trace_include_content": {
       "engines": [
-        "durable_exec"
+        "durable_exec",
+        "temporal"
       ],
       "kinds": [
         "attribute_read"
@@ -1298,7 +1299,8 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.serialize_run_context"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.serialize_run_context",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::_restore_tracer"
       ]
     },
     "RunContext.tracer": {
@@ -5932,24 +5934,30 @@
   "pydantic_ai_slim/pydantic_ai/models/instrumented.py": {
     "InstrumentationSettings": {
       "engines": [
-        "durable_exec"
+        "durable_exec",
+        "render"
       ],
       "kinds": [
         "annotation_only"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
+        "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::<module>"
       ]
     },
     "InstrumentationSettings.include_content": {
       "engines": [
-        "durable_exec"
+        "durable_exec",
+        "render",
+        "temporal"
       ],
       "kinds": [
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._request_policy_scope"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._request_policy_scope",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::_restore_tracer",
+        "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::RenderRunContextCodec.load"
       ]
     },
     "InstrumentationSettings.tracer": {
@@ -5964,7 +5972,7 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._request_policy_scope",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_run_context.py::_restore_tracer",
-        "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::RenderRunContextCodec._resolve_tracer"
+        "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::RenderRunContextCodec.load"
       ]
     },
     "InstrumentedModel": {
@@ -5976,17 +5984,6 @@
       ],
       "sites": [
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::<module>"
-      ]
-    },
-    "InstrumentedModel.instrumentation_settings": {
-      "engines": [
-        "render"
-      ],
-      "kinds": [
-        "attribute_read"
-      ],
-      "sites": [
-        "src/pydantic_ai_harness/pydantic_ai_harness/render/_compat.py::RenderRunContextCodec._resolve_tracer"
       ]
     }
   },

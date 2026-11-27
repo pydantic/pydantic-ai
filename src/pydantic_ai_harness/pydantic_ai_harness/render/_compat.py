@@ -14,7 +14,7 @@ import json
 from abc import ABC
 from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeAlias, TypeVar, overload, runtime_checkable
 
-from opentelemetry.trace import NoOpTracer, Tracer
+from opentelemetry.trace import NoOpTracer
 from pydantic import TypeAdapter
 from typing_extensions import TypeVar as TypeVarExtensions
 
@@ -46,10 +46,11 @@ from pydantic_ai.durable_exec import (
     revalidate_function_call,
 )
 from pydantic_ai.durable_exec._toolset import opts_out_of_durable_unit
+from pydantic_ai.durable_exec._utils import agent_instrumentation_settings
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
-from pydantic_ai.models.instrumented import InstrumentedModel
+from pydantic_ai.models.instrumented import InstrumentationSettings, InstrumentedModel
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext, ToolDefinition
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, ToolsetTool
@@ -455,7 +456,15 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
         if not isinstance(tracer_enabled, bool):
             raise TypeError('Serialized tracer enablement must be a boolean.')
         model = self._resolve_model(context)
-        context['tracer'] = self._resolve_tracer(model) if tracer_enabled else NoOpTracer()
+        settings = self._resolve_instrumentation(model) if tracer_enabled else None
+        context['tracer'] = settings.tracer if settings is not None else NoOpTracer()
+        # The run's flag crossed the wire, but spans go to this worker's tracer, so they record content
+        # only if this worker's instrumentation allows it too.
+        # The default serialize_run_context always carries the flag.
+        if 'trace_include_content' in context:  # pragma: no branch
+            context['trace_include_content'] = (
+                context['trace_include_content'] is True and settings is not None and settings.include_content
+            )
         if model is not None:
             context['model'] = model
         # The codec validates against the complete type form. A second `isinstance`
@@ -468,20 +477,17 @@ class RenderRunContextCodec(Generic[AgentDepsT]):
             engine_spec=self._engine_spec,
         )
 
-    def _resolve_tracer(self, model: Model | None) -> Tracer:
+    def _resolve_instrumentation(self, model: Model | None) -> InstrumentationSettings | None:
         """Recover instrumentation from worker configuration, never from the wire."""
-        if isinstance(model, InstrumentedModel):
-            return model.instrumentation_settings.tracer
-        if isinstance(self._agent, Agent):  # pragma: no branch - binding supplies a concrete Agent
-            if isinstance(self._agent.model, InstrumentedModel):
-                return self._agent.model.instrumentation_settings.tracer
-            # Core has no public getter for the effective agent/global settings.
-            # Keep that lookup in this compatibility seam instead of duplicating
-            # its precedence or losing Agent.instrument_all's custom provider.
-            settings = self._agent._resolve_instrumentation_settings()  # pyright: ignore[reportPrivateUsage]
-            if settings is not None:
-                return settings.tracer
-        return NoOpTracer()
+        # Binding supplies a concrete Agent.
+        if not isinstance(self._agent, Agent):  # pragma: no cover
+            return None
+        instrumented = next((m for m in (model, self._agent.model) if isinstance(m, InstrumentedModel)), None)
+        # The agent's `Instrumentation` capability wins over an `InstrumentedModel`, as it does in the run.
+        return agent_instrumentation_settings(
+            self._agent,
+            model_instrumentation=instrumented.instrumentation_settings if instrumented is not None else None,
+        )
 
     def _resolve_model(self, context: Mapping[str, Any]) -> Model | None:
         """Resolve the serialized model ID against this worker's registry.
