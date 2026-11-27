@@ -783,9 +783,10 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
         """Raise `IncompleteToolCall` for a function tool call whose arguments the token limit cut off.
 
         Re-prompting the model with the same token limit would only cut the arguments off again, so the call isn't
-        retried, as an output tool call isn't.
+        retried, as an output tool call isn't. Once an earlier call in the response has produced the final result, the
+        call is retried as before instead, so a response that has a valid output doesn't fail the run.
         """
-        if not validated.args_valid:
+        if not validated.args_valid and self.final_result is None:
             self.ctx.state.check_incomplete_tool_call(validated.call)
 
     def _skip_function_call(self, call: _messages.ToolCallPart) -> Iterator[_messages.HandleResponseEvent]:

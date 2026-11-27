@@ -5342,28 +5342,27 @@ async def test_streamed_output_is_kept_when_a_later_function_tool_call_is_cut_of
     ] == snapshot([('final_result', 'success'), ('get_weather', 'retried')])
 
 
-def test_cut_off_function_tool_call_after_an_output_tool_call_raises_in_run():
-    """In `run()`, a cut-off function tool call after a valid output tool call raises instead of re-prompting.
+def test_cut_off_function_tool_call_after_an_output_tool_call_is_retried_in_run():
+    """In `run()`, a cut-off function tool call after a valid output tool call is retried instead of raising.
 
-    Under the default `'graceful'` end strategy, the function tool call's retry would set the output aside and re-prompt
-    the model with the same token limit, which would only cut the call off again.
+    The response has a valid output, so the run doesn't fail on it: under the default `'graceful'` end strategy, the
+    function tool call's retry sets the output aside and the model is re-prompted, as for any other invalid arguments.
 
     Not a VCR test: no provider reliably ends a response at `max_tokens` inside a function tool call that follows a
     complete output tool call; `test_openai_responses_function_tool_call_cut_off_by_max_tokens` records a cut-off function
     tool call on its own.
     """
-    requests = 0
 
     def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-        nonlocal requests
-        requests += 1
-        return ModelResponse(
-            parts=[
-                ToolCallPart(info.output_tools[0].name, '{"name": "Paris", "population": 3}'),
-                ToolCallPart('get_weather', '{"city": "Par'),
-            ],
-            finish_reason='length',
-        )
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(info.output_tools[0].name, '{"name": "Paris", "population": 3}'),
+                    ToolCallPart('get_weather', '{"city": "Par'),
+                ],
+                finish_reason='length',
+            )
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"name": "Lyon", "population": 2}')])
 
     agent = Agent(FunctionModel(respond), output_type=ToolOutput(_City))
 
@@ -5371,9 +5370,33 @@ def test_cut_off_function_tool_call_after_an_output_tool_call_raises_in_run():
     def get_weather(city: str) -> str:
         return 'sunny'  # pragma: no cover
 
-    with pytest.raises(IncompleteToolCall):
-        agent.run_sync('Hello')
-    assert requests == 1
+    result = agent.run_sync('Hello')
+    assert result.output == _City(name='Lyon', population=2)
+    assert [
+        (part.tool_name, part.content, part.outcome)
+        for part in result.all_messages()[2].parts
+        if isinstance(part, ToolReturnPart)
+    ] == snapshot(
+        [
+            (
+                'final_result',
+                'Output not used as the final result - addressing tool retries from this round first.',
+                'success',
+            ),
+            (
+                'get_weather',
+                [
+                    {
+                        'type': 'json_invalid',
+                        'loc': [],
+                        'msg': 'Invalid JSON: EOF while parsing a string at line 1 column 13',
+                        'input': '{"city": "Par',
+                    }
+                ],
+                'retried',
+            ),
+        ]
+    )
 
 
 def test_empty_response_with_finish_reason_length():
