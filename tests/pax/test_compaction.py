@@ -661,12 +661,16 @@ async def test_auto_compact_sets_the_trigger_for_the_next_turn(tmp_path: Path) -
         )
         assert await commands.execute_async('/auto-compact 1.5m') == 'Auto-compaction now runs above 1,500,000 tokens.'
         assert await commands.execute_async('/auto-compact 120,000') == 'Auto-compaction now runs above 120,000 tokens.'
+        assert await commands.execute_async('/auto-compact 4.1M') == 'Auto-compaction now runs above 4,100,000 tokens.'
+        assert await commands.execute_async('/auto-compact 1,500k') == (
+            'Auto-compaction now runs above 1,500,000 tokens.'
+        )
         assert await commands.execute_async('/auto-compact 70%') == (
             'Auto-compaction now runs above 70% of the context window.'
         )
         assert (chain().max_tokens, chain().max_fraction) == (None, 0.7)
         assert store.plugins()[0].settings == {'threshold': 0.7}
-        assert await commands.execute_async('/auto-compact reset') == (
+        assert await commands.execute_async('/auto-compact RESET') == (
             'Auto-compaction now runs above 85% of the context window.'
         )
         assert (chain().max_tokens, chain().max_fraction) == (None, 0.85)
@@ -678,8 +682,11 @@ async def test_auto_compact_sets_the_trigger_for_the_next_turn(tmp_path: Path) -
 @pytest.mark.parametrize(
     ('arguments', 'error'),
     [
-        ('lots', "'lots' is not a token count such as 150k or a share such as 70%."),
+        ('lots', "'lots' is not a token count such as 150k, a share such as 70%, or reset."),
+        ('1,5m', "'1,5m' is not a token count such as 150k, a share such as 70%, or reset."),
+        ('inf', "'inf' is not a token count such as 150k, a share such as 70%, or reset."),
         ('1.5', "'1.5' is not a whole number of tokens."),
+        ('1.0005k', "'1.0005k' is not a whole number of tokens."),
         ('0', '/auto-compact 0: Input should be greater than 0'),
         ('half%', "'half%' is not a share of the window such as 70%."),
         ('150%', '/auto-compact 150%: Input should be less than or equal to 1'),

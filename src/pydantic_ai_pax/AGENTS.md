@@ -287,8 +287,10 @@ only passes the setting, closes the chain in `on_session_end`, discards the summ
 conversations other than the shown one and its running tasks at each turn end and conversation
 change (not per task event, which would build one for every streamed event), and has `/compact` try the
 chain's `take_background_compaction` (without a focus) or `discard_background_compaction`
-(with one) before the capped chain. The status
-row's window does not depend on it: `Session.on_context_window` reports each
+(with one) before the capped chain. `/auto-compact` saves `threshold_tokens` or `threshold` through
+`host.plugins.save_settings`, so the plugin reloads itself from its own handler; after that call the
+handler only formats its reply, since the instance running it has been unloaded. The status
+row's window does not depend on the plugin: `Session.on_context_window` reports each
 streamed request model's window, and the shell fills it in when no gauge has.
 Until a turn on the selected model runs in the conversation, `show_model` sets
 `Status.model_window` from its profile (`infer_model_profile`; a plugin model's from

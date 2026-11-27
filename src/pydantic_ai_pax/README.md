@@ -423,7 +423,7 @@ These are on from the start:
   specialist to review another directory; see [delegate models](https://github.com/pydantic/pydantic-ai/blob/main/src/pydantic_ai_pax/docs/reference.md#delegate-models-and-review-directory).
 - `ask_user`: questions from the model
 - `repo_context`: reads `AGENTS.md` or `CLAUDE.md` from the folder, its parents, and subfolders
-- `compaction`: summarises older messages, and `/compact`
+- `compaction`: summarises older messages, `/compact`, and `/auto-compact`
 - `refinement`: `/refine`, which has the model review and revise its last answer
 - `persistence`: extra checkpoints so an interrupted session can recover
 - `mcp`: MCP servers, managed with `/mcp`

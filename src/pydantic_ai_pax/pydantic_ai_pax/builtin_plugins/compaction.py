@@ -1,13 +1,16 @@
-"""Keep long conversations inside the context window by summarizing older messages; adds /compact.
+"""Keep long conversations inside the context window by summarizing older messages; adds /compact and /auto-compact.
 
-The built-in `compaction` plugin: Code Puppy's compaction chain from harness, `/compact`, and a context gauge.
+The built-in `compaction` plugin: Code Puppy's compaction chain from harness, `/compact`, `/auto-compact` to
+move its trigger, and a context gauge.
 
 The chain is `FallbackCompaction` over `SummarizingCompaction` then `SlidingWindowCompaction`, so a
 failed or over-budget summary degrades to truncation. `compact_now` drives the chain for `/compact`.
 """
 
+import re
 from collections.abc import Sequence
 from dataclasses import dataclass
+from decimal import Decimal
 from typing import Literal, Self
 
 from pydantic import (
@@ -176,20 +179,19 @@ class CompactionSource:
         return f'Reset {row.label}.'
 
 
-_SUFFIXES = {'k': 1_000, 'm': 1_000_000}
+_TOKEN_COUNT = re.compile(r'(\d{1,3}(?:,\d{3})+|\d+(?:\.\d+)?)([km]?)', re.IGNORECASE)
+"""A count, commas only between thousands, and an optional `k` or `m`: `150000`, `150,000`, `150k`, `1.5m`."""
+
+_SUFFIXES = {'': 1, 'k': 1_000, 'm': 1_000_000}
 
 
 def _token_count(text: str) -> int:
     """`150000`, `150,000`, `150k` or `1.5m` as a token count; `ValueError` otherwise."""
-    number = text.lower().replace(',', '').replace('_', '')
-    scale = _SUFFIXES.get(number[-1:], 1)
-    if scale != 1:
-        number = number[:-1]
-    try:
-        count = float(number) * scale
-    except ValueError:
-        raise ValueError(f'{text!r} is not a token count such as 150k or a share such as 70%.') from None
-    if not count.is_integer():
+    if (match := _TOKEN_COUNT.fullmatch(text)) is None:
+        raise ValueError(f'{text!r} is not a token count such as 150k, a share such as 70%, or reset.')
+    # Decimal, so `4.1m` is exactly 4,100,000 rather than a float just under it.
+    count = Decimal(match[1].replace(',', '')) * _SUFFIXES[match[2].lower()]
+    if count != count.to_integral_value():
         raise ValueError(f'{text!r} is not a whole number of tokens.')
     return int(count)
 
@@ -314,7 +316,7 @@ class CompactionPlugin(Plugin[CompactionSettings]):
             raise ValueError('Give one value: /auto-compact 150k, /auto-compact 70%, or /auto-compact reset.')
         data: dict[str, JsonValue] = self.settings.model_dump(mode='json')
         data.pop('threshold_tokens', None)
-        if args[0] == 'reset':
+        if args[0].lower() == 'reset':
             data.pop('threshold', None)
         elif args[0].endswith('%'):
             data['threshold'] = _percent(args[0])

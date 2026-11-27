@@ -2345,12 +2345,12 @@ conversation sends nothing.
 
 The window comes from genai-prices, the same catalog the `/model add` menu shows
 context sizes from. A model it does not list (`test`, a local endpoint) is
-assumed to have 200,000 tokens, the harness default. To change any of this,
+assumed to have 200,000 tokens, the harness default. `/auto-compact` moves the trigger; to change any of this,
 run `/plugins configure compaction` (or press `c` on its `/plugins` row): each
 edit is validated and saved as you make it, and the plugin reloads so the next
 turn uses the new settings. A turn already running keeps the old ones.
 You can also redeclare the plugin with your own settings;
-`/plugins disable compaction` turns it off, `/compact` included:
+`/plugins disable compaction` turns it off, `/compact` and `/auto-compact` included:
 
 ```text
 /plugins add compaction pydantic_ai_pax.builtin_plugins.compaction '{"threshold": 0.7, "protected_tokens": 20000, "context_window": 200000}'
@@ -3517,7 +3517,7 @@ Pax sends every tool, MCP tool, and output tool with strict mode off, whatever t
 provider, and relies on argument repair and retries instead. A `NativeOutput` schema keeps
 the provider's mode, as Anthropic and Bedrock only offer native output in strict mode. The built-in `compaction`
 plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
-it summarises older messages before the context runs out and adds `/compact`.
+it summarises older messages before the context runs out and adds `/compact` and `/auto-compact`.
 The built-in `refinement` plugin adds `/refine`: the model reviews its last answer and gives it
 again, revised, as a turn of its own. Add words to say what to look at, such as
 `/refine check the error handling`. To have every answer reviewed without asking, add harness
