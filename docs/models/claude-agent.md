@@ -51,6 +51,8 @@ agent = Agent(ClaudeAgentModel('{{ anthropic:medium.name }}', provider=provider)
 
 Each request goes to a Claude Code process. Your agent's [instructions](../agent.md#instructions) replace Claude Code's own coding-agent system prompt, after the identity line and billing block Claude Code always puts first (see [what Claude Code adds](#what-claude-code-adds-to-the-request)), and its [function tools](../tools.md) reach Claude Code as tools of an in-process MCP server: when the model calls one, Pydantic AI runs it, as with any other model. Claude Code's own tools, settings files, `CLAUDE.md` files, skills, hooks, side requests, memory and automatic compaction are turned off, and so are your MCP servers and claude.ai connectors unless you [bring them](#your-own-mcp-servers-and-connectors).
 
+Claude Code reads your instructions from a temporary file that only your user can read, rather than from its command line, where other users on the machine could see them. Pydantic AI deletes the file when the process ends; if your program crashes first, the file stays behind in the system's temporary directory.
+
 A conversation keeps its Claude Code process for the length of an agent run, so the requests of one run continue in the same process and read from its prompt cache. To keep each conversation's process across runs too, for example one run per chat message, enter the agent (or the model) for as long as you serve the conversation:
 
 ```python {title="claude_agent_chat.py" test="skip - requires a Claude Code sign-in"}
@@ -100,6 +102,8 @@ With your instructions as its system prompt, Claude Code still adds:
 - in the first user message, a `<system-reminder>` with the email address of the Claude account;
 - after the latest user message, a system message describing the environment: the working directory, platform, shell, model name and date.
 
+Claude reads a `<system-reminder>` as coming from Claude Code. So a `<system-reminder>` or `</system-reminder>` tag in text from the user, a tool or a file gets a note saying who wrote it and that it has no authority, the same way a copied `<system>` tag does (see [mid-conversation system prompts](../message-history.md#mid-conversation-system-prompts)). The text itself reaches the model unchanged. Other providers leave these tags alone.
+
 Claude Code has no setting to leave the environment message out. An agent that announces its working directory itself, such as one with [`AnnounceWorkingDirectory`](../harness/announce-working-directory.md), gives the model both.
 
 Compared with the same agent on the [`anthropic` provider](anthropic.md), a request looks like this, with Claude Code's additions marked `+`:
@@ -122,7 +126,7 @@ Compared with the same agent on the [`anthropic` provider](anthropic.md), a requ
 
 ## Limitations
 
-- Claude Code sets up the request itself, so [`ClaudeAgentModel`][pydantic_ai.models.claude_agent.ClaudeAgentModel] ignores the sampling settings (`temperature`, `top_p`, `top_k`, `seed`, `presence_penalty`, `frequency_penalty` and `logit_bias`), as well as `stop_sequences`, `parallel_tool_calls=False`, `extra_headers`, `extra_body`, `service_tier` and `timeout`. `max_tokens`, `max_retries` (Pydantic AI retries a failed request, as Claude Code is set not to, but doesn't wait for a plan's usage limit to reset; a [durable execution](../durable_execution/overview.md) engine that retries the model request may still wait for it, until its `Retry-After`), [`thinking`][pydantic_ai.settings.ModelSettings.thinking], `tool_choice` (except values that force a tool call, which raise a `UserError`), `anthropic_thinking` and `anthropic_effort` apply. Other `anthropic_*` settings are ignored with an `UnsupportedSettingWarning`.
+- Claude Code sets up the request itself, so [`ClaudeAgentModel`][pydantic_ai.models.claude_agent.ClaudeAgentModel] ignores the sampling settings (`temperature`, `top_p`, `top_k`, `seed`, `presence_penalty`, `frequency_penalty` and `logit_bias`), as well as `stop_sequences`, `parallel_tool_calls=False`, `extra_headers`, `extra_body`, `service_tier` and `timeout`. `max_tokens`, `max_retries` (Pydantic AI retries a failed request, as Claude Code is set not to, but doesn't wait for a plan's usage limit to reset; a [durable execution](../durable_execution/overview.md) engine that retries the model request may still wait for it, until its `Retry-After`), [`thinking`][pydantic_ai.settings.ModelSettings.thinking], `tool_choice` (except values that force a tool call, which raise a `UserError`), `anthropic_thinking` and `anthropic_effort` apply.
 - Prompt caching is always on: Claude Code places its own cache breakpoints, so the unified [`cache`][pydantic_ai.settings.ModelSettings.cache] setting and [`CachePoint`][pydantic_ai.messages.CachePoint]s have no effect.
 - Of the `anthropic_*` settings, Claude Code takes `anthropic_thinking` and `anthropic_effort`. `anthropic_betas` and `anthropic_metadata` are ignored with an `UnsupportedSettingWarning`, since the request they shape no longer carries them; the other tuning settings, such as the `anthropic_cache_*` ones, are ignored silently.
 - The model can't be forced to call a tool, so structured output uses [tool output](../output.md#tool-output), with a retry when the model answers in text. Native (JSON schema) output isn't available.

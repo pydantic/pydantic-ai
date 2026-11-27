@@ -1510,7 +1510,7 @@ requires-dist = [{ name = "pydantic-ai", editable = "." }]
 
 [[package]]
 name = "claude-agent-sdk"
-version = "0.2.185"
+version = "0.2.186"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "anyio" },
@@ -1518,13 +1518,13 @@ dependencies = [
     { name = "mcp" },
     { name = "sniffio" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/12/71/00898ee41c9247024588a0f06245e3dca64eaf86ee8b1ae45d591f5580e6/claude_agent_sdk-0.2.185.tar.gz", hash = "sha256:55fbdbb5d613309bf20181eda11cfe9af9acc363c28fde1883a866ab0fad264a", size = 409303, upload-time = "2026-11-19T02:11:55.582Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/77/b5/b7d8d7bfea2dbabb5720dea092fd26e1494daa4c8e7d4ce4f271287df14b/claude_agent_sdk-0.2.186.tar.gz", hash = "sha256:16cb01af8309d371aae7c214b69d1a85f283a5aed06fc16054c1bc356c92f7a3", size = 409300, upload-time = "2026-11-19T23:00:29.394Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/38/26/f7a691384e1dc123a4ad82998a3f4bd827b1dd0dc25417d17100e70a3e42/claude_agent_sdk-0.2.185-py3-none-macosx_11_0_arm64.whl", hash = "sha256:008baaa0a07a5034b6f9552747a0e645ed4a138ff4884309386fba5fa27c41c5", size = 152539590, upload-time = "2026-11-19T02:12:02.151Z" },
-    { url = "https://files.pythonhosted.org/packages/62/d3/99bb7659b29c32da7cbf1c57218fb73b138fde6a2b0e6613100238f4c4e7/claude_agent_sdk-0.2.185-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:dc71b46d13a83464858b35e08a53eb0d9c494864b0ca76f97293833b208c8c28", size = 160197739, upload-time = "2026-11-19T02:12:08.423Z" },
-    { url = "https://files.pythonhosted.org/packages/83/ec/f80ae8b206df46c6e5c9647b0122d4efb76d93ab95c0f875d20b9f359ce0/claude_agent_sdk-0.2.185-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:282b115abed65be9e8b73d775308e554acf7c4278fa811eacbec08edca3b8c8d", size = 164044309, upload-time = "2026-11-19T02:12:15.039Z" },
-    { url = "https://files.pythonhosted.org/packages/a9/f5/5834c58cce005b75adf66a7fe655284b52969bf6da2fac3912b327d3c9a5/claude_agent_sdk-0.2.185-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:6ec5b15eecb55d8756b1adb49e6aa9f056bbfb2df0c65ba65bab8e00144cdd52", size = 164658738, upload-time = "2026-11-19T02:12:23.866Z" },
-    { url = "https://files.pythonhosted.org/packages/f3/b3/95694e58446a2ca5849b748794cd9fc6216e893f4d124f08d1f818203ce8/claude_agent_sdk-0.2.185-py3-none-win_amd64.whl", hash = "sha256:931eca36adc3a6d3a538390449be24bb1be7e58c9ac109269b3b41a135a4e17d", size = 167159353, upload-time = "2026-11-19T02:12:31.506Z" },
+    { url = "https://files.pythonhosted.org/packages/e4/23/c4a6dc2ae62899dcd15e5ec54e9da65fc62a6f88a00b67620aa8096109a8/claude_agent_sdk-0.2.186-py3-none-macosx_11_0_arm64.whl", hash = "sha256:4f98e05618a955fc49190465b4eb01cb3c2fca6e0b9319ee6e6c6dd042619bc6", size = 154587724, upload-time = "2026-11-19T23:00:37.622Z" },
+    { url = "https://files.pythonhosted.org/packages/aa/99/67caf906962bd7d3ecbe767cd058bb604bec10430a9eeba8c8a073f05a39/claude_agent_sdk-0.2.186-py3-none-macosx_11_0_x86_64.whl", hash = "sha256:0099f4701569b7a625ef7a9c097577cf203671b5f793fec1697192d21c0be6f5", size = 162280544, upload-time = "2026-11-19T23:00:44.65Z" },
+    { url = "https://files.pythonhosted.org/packages/3a/53/5d7f6619453a06af77eab4f4ffa7c9d5de4ab77f3124186f6a35c94c8c63/claude_agent_sdk-0.2.186-py3-none-manylinux_2_17_aarch64.whl", hash = "sha256:2cffab71ff508634e2a6841edbcaf0d6ac3cd698e2378967ff4ffceba1d2f1bd", size = 165619077, upload-time = "2026-11-19T23:00:52.858Z" },
+    { url = "https://files.pythonhosted.org/packages/86/d8/3868ce79df74ee364fe9c6f560348f793ce89fef2d81347cdf0d4b8483c8/claude_agent_sdk-0.2.186-py3-none-manylinux_2_17_x86_64.whl", hash = "sha256:3aedbd01e5727283339362a544506f05cc19863a3b4c26bb9e1656d3e3940c3d", size = 166232550, upload-time = "2026-11-19T23:01:00.82Z" },
+    { url = "https://files.pythonhosted.org/packages/b0/bb/27cd01b7a9771d0db926fced99b2b88e7b35d26f6c832dd3aba5e7e1f6a9/claude_agent_sdk-0.2.186-py3-none-win_amd64.whl", hash = "sha256:b68eefc87a966ec94d1d7d51ee97c01cd9849b8cef9da2e00066086a091c2716", size = 168765777, upload-time = "2026-11-19T23:01:09.879Z" },
 ]
 
 [[package]]
@@ -2884,15 +2884,15 @@ wheels = [
 
 [[package]]
 name = "genai-prices"
-version = "0.2.3"
+version = "0.2.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "httpx2" },
     { name = "pydantic" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/1d/ce/7b18aeb714493736513bffd919414551324cb73f0a4ac8d6f5ddc2373e6d/genai_prices-0.2.3.tar.gz", hash = "sha256:cdee9b0b2e44b1323c477ebe3c84e44ddbcdd1a3feb0ebce5bb2af1bc667d900", size = 163971, upload-time = "2026-11-10T21:51:42.828Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/c9/57/d35f58ac166442f4dd63cf6ace63445fd5bd46eb170241cebd5437b719e6/genai_prices-0.2.5.tar.gz", hash = "sha256:7e3ee897a16a39a1ac1cff328a3f9d839412f6f619028821dcb45b84338f5d3a", size = 166210, upload-time = "2026-11-19T17:55:07.367Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8e/e8/a8773a718b763c608dbbebec2124e6de873798f10bf3eaaf31e1e2810368/genai_prices-0.2.3-py3-none-any.whl", hash = "sha256:56976ce2b04ec206117f7d0e53f4849211a6724ab3a12119afec304eba63ee25", size = 173490, upload-time = "2026-11-10T21:51:41.625Z" },
+    { url = "https://files.pythonhosted.org/packages/ef/b7/b72d69ed599146e2a7ca1f484cda17878810205b9ce28fbf5c7a30138fee/genai_prices-0.2.5-py3-none-any.whl", hash = "sha256:864883e3b52031840b8240283c0a3b4ba22315b588e7fe2876025e38194179fc", size = 175874, upload-time = "2026-11-19T17:55:06.117Z" },
 ]
 
 [[package]]
@@ -7135,6 +7135,9 @@ groq = [
 huggingface = [
     { name = "pydantic-ai-slim", extra = ["huggingface"] },
 ]
+jsonschema = [
+    { name = "pydantic-ai-slim", extra = ["jsonschema"] },
+]
 mcp-tasks = [
     { name = "pydantic-ai-slim", extra = ["mcp-tasks"] },
 ]
@@ -7260,6 +7263,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["google-realtime"], marker = "extra == 'google-realtime'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["groq"], marker = "extra == 'groq'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["huggingface"], marker = "extra == 'huggingface'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["jsonschema"], marker = "extra == 'jsonschema'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["mcp-tasks"], marker = "extra == 'mcp-tasks'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["mistral"], marker = "extra == 'mistral'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["openai-realtime"], marker = "extra == 'openai-realtime'", editable = "pydantic_ai_slim" },
@@ -7278,7 +7282,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["xai"], marker = "extra == 'xai'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["xai-realtime"], marker = "extra == 'xai-realtime'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "exa", "examples", "google-realtime", "groq", "huggingface", "mcp-tasks", "mistral", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
+provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "exa", "examples", "google-realtime", "groq", "huggingface", "jsonschema", "mcp-tasks", "mistral", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
 
 [package.metadata.requires-dev]
 clai2-browser = [{ name = "playwright", specifier = ">=1.45" }]
@@ -7821,6 +7825,7 @@ cerebras = [
 claude-agent = [
     { name = "anthropic" },
     { name = "claude-agent-sdk" },
+    { name = "mcp" },
 ]
 cli = [
     { name = "argcomplete" },
@@ -7870,6 +7875,9 @@ huggingface = [
     { name = "hf-xet", version = "1.4.3", source = { registry = "https://pypi.org/simple" }, marker = "(python_full_version < '3.14' and platform_machine == 'AMD64') or (python_full_version < '3.14' and platform_machine == 'aarch64') or (python_full_version < '3.14' and platform_machine == 'amd64') or (python_full_version < '3.14' and platform_machine == 'arm64') or (python_full_version < '3.14' and platform_machine == 'x86_64')" },
     { name = "huggingface-hub", version = "1.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
     { name = "huggingface-hub", version = "1.16.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
+]
+jsonschema = [
+    { name = "jsonschema" },
 ]
 logfire = [
     { name = "logfire", extra = ["httpx"] },
@@ -7969,7 +7977,7 @@ requires-dist = [
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp'", specifier = ">=3.3.0,<5" },
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0,<5" },
-    { name = "genai-prices", specifier = ">=0.2.3" },
+    { name = "genai-prices", specifier = ">=0.2.4" },
     { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.30.0,<3" },
     { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.30.0,<3" },
     { name = "griffelib", specifier = ">=2.0" },
@@ -7978,8 +7986,10 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'retries'", specifier = ">=0.27" },
     { name = "httpx2", specifier = ">=2.7" },
     { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=1.3.4,<2.0.0" },
+    { name = "jsonschema", marker = "extra == 'jsonschema'", specifier = ">=4.18" },
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
+    { name = "mcp", marker = "extra == 'claude-agent'", specifier = ">=2.3.0,<3" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=3.1.0,<4" },
     { name = "openai", marker = "extra == 'bedrock-mantle'", specifier = ">=3.50.0,<4" },
     { name = "openai", marker = "extra == 'cerebras'", specifier = ">=3.50.0,<4" },
@@ -8028,7 +8038,7 @@ requires-dist = [
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.21.0,<2" },
     { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.21.0,<2" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "claude-agent", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "claude-agent", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "jsonschema", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
 
 [[package]]
 name = "pydantic-clai2"
@@ -8055,6 +8065,9 @@ boxd = [
 ]
 cerebras = [
     { name = "pydantic-ai-pax", extra = ["cerebras"] },
+]
+claude-agent = [
+    { name = "pydantic-ai-pax", extra = ["claude-agent"] },
 ]
 cohere = [
     { name = "pydantic-ai-pax", extra = ["cohere"] },
@@ -8126,6 +8139,7 @@ requires-dist = [
     { name = "pydantic-ai-pax", extras = ["bedrock-mantle"], marker = "extra == 'bedrock-mantle'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["boxd"], marker = "extra == 'boxd'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["cerebras"], marker = "extra == 'cerebras'", editable = "src/pydantic_ai_pax" },
+    { name = "pydantic-ai-pax", extras = ["claude-agent"], marker = "extra == 'claude-agent'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["cohere"], marker = "extra == 'cohere'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["crusoe"], marker = "extra == 'crusoe'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["daytona"], marker = "extra == 'daytona'", editable = "src/pydantic_ai_pax" },
@@ -8147,7 +8161,7 @@ requires-dist = [
     { name = "pydantic-ai-pax", extras = ["xai"], marker = "extra == 'xai'", editable = "src/pydantic_ai_pax" },
     { name = "pydantic-ai-pax", extras = ["zai"], marker = "extra == 'zai'", editable = "src/pydantic_ai_pax" },
 ]
-provides-extras = ["all", "anthropic", "bedrock", "bedrock-mantle", "boxd", "cerebras", "cohere", "crusoe", "daytona", "e2b", "google", "groq", "huggingface", "kubernetes", "local", "mistral", "modal", "openai", "openrouter", "opensandbox", "render", "snowflake", "sprites", "typesafe", "xai", "zai"]
+provides-extras = ["all", "anthropic", "bedrock", "bedrock-mantle", "boxd", "cerebras", "claude-agent", "cohere", "crusoe", "daytona", "e2b", "google", "groq", "huggingface", "kubernetes", "local", "mistral", "modal", "openai", "openrouter", "opensandbox", "render", "snowflake", "sprites", "typesafe", "xai", "zai"]
 
 [[package]]
 name = "pydantic-core"

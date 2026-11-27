@@ -72,7 +72,12 @@ DEFAULT_SECRET_PATTERNS: Mapping[str, str] = {
     'slack_app_token': r'\bxapp-\d-[A-Za-z0-9-]{10,}',
     'stripe_key': r'\b(?:sk|rk)_(?:live|test)_[A-Za-z0-9]{20,}',
     'stripe_webhook_secret': r'\bwhsec_[A-Za-z0-9]{20,}',
-    'google_api_key': r'\bAIza[A-Za-z0-9_-]{35}',
+    # AI Studio has issued `AQ.` keys since May 2026, beside legacy `AIza` keys.
+    # Known ones carry 50 characters after `AQ.`, but Google does not document a
+    # length. The floor keeps a dotted name such as `AQ.average_response_time`
+    # from being taken for a key. The ceiling keeps the scan linear, and the
+    # match must end there, so a longer run is left whole, not half redacted.
+    'google_api_key': r'\b(?:AIza[A-Za-z0-9_-]{35}|AQ\.[A-Za-z0-9_-]{40,200}(?![A-Za-z0-9_-]))',
     'google_oauth_secret': r'\bGOCSPX-[A-Za-z0-9_-]{20,}',
     # A `-` directly before `eyJ` ends the header segment, so a failed match does
     # not rescan the rest of the token from each `eyJ` in it. A header segment

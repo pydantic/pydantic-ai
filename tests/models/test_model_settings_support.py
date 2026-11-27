@@ -36,6 +36,9 @@ that records only path, body and headers on a live transport, while `timeout` is
 - `cache` is excluded for the same reason as `thinking`: it is gated per model name via
   `supports_cache`, and a provider that caches implicitly (OpenAI's automatic caching; Google,
   which warns instead) supports it while sending nothing at all.
+- `thinking_summary` is excluded for the same reason too: whether it moves the payload depends on the
+  model's reasoning support and on `thinking`, and some classes take only one of its two values
+  (OpenAI's Responses API sends `True`, Cerebras and OpenRouter only `False`).
 
 `max_retries` leaves the request it governs unchanged and changes only how many times it is sent, so it
 has its own probe at the end of this file, which answers with a retryable error and counts the attempts.
@@ -175,7 +178,7 @@ WARNED_SETTINGS = frozenset(
 )
 """The settings a model warns with `UnsupportedSettingWarning` about ignoring, rather than ignoring silently."""
 
-HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'cache'})
+HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'thinking_summary', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
 
 FRAMEWORK_ENFORCED = frozenset({'request_timeout', 'first_event_timeout', 'framing_announcement'})
@@ -464,7 +467,8 @@ async def claude_agent_probe(settings: ModelSettings) -> ProbeResult:
         recorder.record(
             {
                 'model': options.model,
-                'system_prompt': options.system_prompt,
+                # The prompt file's path is random per session: record what Claude Code read from it.
+                'system_prompt': session.system_prompt,
                 'thinking': options.thinking,
                 'effort': options.effort,
                 'env': options.env,

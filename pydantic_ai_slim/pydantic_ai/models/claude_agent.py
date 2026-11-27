@@ -9,6 +9,7 @@ from typing import Literal, cast
 from typing_extensions import override
 
 from .. import usage
+from .._framing import noting_transport_tags
 from ..exceptions import UnsupportedSettingWarning
 from ..messages import ModelMessage, ModelResponse
 from ..profiles import ModelProfileSpec
@@ -22,7 +23,7 @@ try:
     from ..providers.claude_agent import ClaudeAgentProvider
     from .anthropic import AnthropicModel, AnthropicModelName, AnthropicModelSettings
     from .anthropic._request_params import PreparedMessagesCreate
-except ImportError as _import_error:  # pragma: no cover
+except ImportError as _import_error:
     raise ImportError(
         'Please install the `anthropic` and `claude-agent-sdk` packages to use the Claude Agent model, '
         'you can use the `claude-agent` optional group — `pip install "pydantic-ai-slim[claude-agent]"`'
@@ -38,6 +39,10 @@ Claude Code builds the request itself and drops the other `anthropic_*` settings
 knobs, apart from those `AnthropicModel` already reports or rejects because the Claude Code profile turns them off
 (`anthropic_inference_geo`, `anthropic_speed`, `anthropic_task_budget`).
 """
+
+
+_CLAUDE_CODE_TAGS = ('system-reminder',)
+"""The tags Claude Code adds to a request in its own voice: copies in text from a user, a tool or a file get a note."""
 
 
 class ClaudeAgentModelSettings(AnthropicModelSettings, total=False):
@@ -115,6 +120,17 @@ class ClaudeAgentModel(AnthropicModel):
         if provider == 'claude-agent':
             provider = ClaudeAgentProvider()
         super().__init__(model_name, provider=provider, profile=profile, settings=settings)
+
+    @override
+    def prepare_messages(
+        self,
+        messages: list[ModelMessage],
+        model_request_parameters: ModelRequestParameters | None = None,
+    ) -> list[ModelMessage]:
+        # Claude Code adds `<system-reminder>` blocks of its own after the request leaves us, and Claude reads them as
+        # the client's. A copy in text from a user, a tool or a file gets the standard lookalike note naming its author.
+        with noting_transport_tags(_CLAUDE_CODE_TAGS):
+            return super().prepare_messages(messages, model_request_parameters)
 
     @override
     def _warn_unsupported_settings(

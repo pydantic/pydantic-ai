@@ -21,6 +21,8 @@ import asyncio
 import hashlib
 import json
 import math
+import os
+import tempfile
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -30,7 +32,7 @@ from typing import Literal, NotRequired, cast
 
 import anyio
 import httpx2
-from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from .. import __version__
@@ -58,19 +60,20 @@ try:
         HookInput,
         HookJSONOutput,
         HookMatcher,
+        McpSdkServerConfig,
         Message,
         RateLimitEvent,
         ResultError,
         ResultMessage,
-        SdkMcpTool,
         StreamEvent,
         ToolResultBlock,
         Transport,
         UserMessage,
-        create_sdk_mcp_server,
     )
-    from claude_agent_sdk.types import EffortLevel
-except ImportError as _import_error:  # pragma: no cover
+    from claude_agent_sdk.types import EffortLevel, SystemPromptFile
+    from mcp.server import Server, ServerRequestContext
+    from mcp.types import CallToolRequestParams, CallToolResult, ListToolsResult, PaginatedRequestParams, Tool
+except ImportError as _import_error:
     raise ImportError(
         'Please install `claude-agent-sdk` to use the Claude Agent provider, '
         'you can use the `claude-agent` optional group — `pip install "pydantic-ai-slim[claude-agent]"`'
@@ -159,29 +162,6 @@ class _Tool(BaseModel):
     name: str
     description: str = ''
     input_schema: dict[str, JsonValue]
-
-    @field_validator('input_schema')
-    @classmethod
-    def _local_references_only(cls, schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
-        """The Agent SDK validates tool arguments with `jsonschema`, which fetches a schema's remote references."""
-        if remote := sorted(_remote_references(schema)):
-            raise ValueError(f'A tool schema can only reference its own definitions, not {", ".join(remote)}.')
-        return schema
-
-
-_REFERENCE_KEYS = frozenset({'$ref', '$dynamicRef', '$recursiveRef'})
-
-
-def _remote_references(schema: JsonValue) -> Iterator[str]:
-    if isinstance(schema, dict):
-        for key, value in schema.items():
-            if key in _REFERENCE_KEYS and isinstance(value, str) and not value.startswith('#'):
-                yield value
-            else:
-                yield from _remote_references(value)
-    elif isinstance(schema, list):
-        for item in schema:
-            yield from _remote_references(item)
 
 
 class _TextBlock(BaseModel):
@@ -467,6 +447,8 @@ class _Session:
     """The configured names of the user's own MCP servers the session offers."""
     pending_results: list[ToolResultBlock] = field(default_factory=list[ToolResultBlock])
     """Results of Claude Code's own tool calls that came after the response with the call had ended."""
+    system_prompt_file: str = field(init=False)
+    """The file Claude Code reads the system prompt from, which is removed when the session closes."""
 
     def result(self, tool_use_id: str) -> asyncio.Future[dict[str, JsonValue]]:
         if (future := self.results.get(tool_use_id)) is None:
@@ -511,12 +493,26 @@ class _Session:
             if isinstance(block, ToolResultBlock) and block.tool_use_id in self.external_calls
         ]
 
-    def tool(self, tool: _Tool) -> SdkMcpTool[dict[str, JsonValue]]:
-        async def call(arguments: dict[str, JsonValue]) -> dict[str, JsonValue]:
-            tool_use_id = self.claims[_claim_key(f'{_TOOL_PREFIX}{tool.name}', arguments)].pop(0)
-            return await self.result(tool_use_id)
+    def server(self, tools: list[_Tool]) -> McpSdkServerConfig:
+        """The agent's tools as an MCP server, which hands each call to the agent to run and validate.
 
-        return SdkMcpTool(name=tool.name, description=tool.description, input_schema=tool.input_schema, handler=call)
+        Not the Agent SDK's `create_sdk_mcp_server`, which validates arguments itself with `jsonschema`: that
+        fetches a schema's remote references, and a `pattern` can take it exponential time.
+        """
+        listed = ListToolsResult(
+            tools=[Tool(name=tool.name, description=tool.description, input_schema=tool.input_schema) for tool in tools]
+        )
+
+        async def list_tools(ctx: ServerRequestContext, params: PaginatedRequestParams | None) -> ListToolsResult:
+            return listed
+
+        async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
+            arguments = params.arguments or {}
+            tool_use_id = self.claims[_claim_key(f'{_TOOL_PREFIX}{params.name}', arguments)].pop(0)
+            return CallToolResult.model_validate(await self.result(tool_use_id))
+
+        server = Server(_MCP_SERVER, on_list_tools=list_tools, on_call_tool=call_tool)
+        return McpSdkServerConfig(type='sdk', name=_MCP_SERVER, instance=server)
 
     def continuation(self, messages: list[_Message]) -> _Message | None:
         """The new user message, when `messages` is the session's history followed by one; otherwise `None`."""
@@ -573,11 +569,35 @@ class _Session:
                 return
         raise ClaudeCodeExited()
 
+    async def write_system_prompt(self) -> SystemPromptFile:
+        """The system prompt in a file only the user can read, not in Claude Code's arguments.
+
+        Other users can read a process's arguments, and Linux limits one argument to 128 KiB.
+        """
+        self.system_prompt_file = path = await anyio.to_thread.run_sync(_write_private_file, self.config.system_prompt)
+        return SystemPromptFile(type='file', path=path)
+
     async def close(self) -> None:
         self.broken = True
         for future in self.results.values():
             future.cancel()
-        await self.client.disconnect()
+        try:
+            await self.client.disconnect()
+        finally:
+            await self.remove_system_prompt()
+
+    async def remove_system_prompt(self) -> None:
+        # Shielded, so a cancelled scope, like Prefect's task timeout, doesn't leave the prompt on disk.
+        with anyio.CancelScope(shield=True):
+            await anyio.Path(self.system_prompt_file).unlink(missing_ok=True)
+
+
+def _write_private_file(text: str) -> str:
+    # `mkstemp` creates the file readable and writable by the user alone.
+    fd, path = tempfile.mkstemp(prefix='pydantic-ai-claude-agent-', suffix='.txt')
+    with os.fdopen(fd, 'w', encoding='utf-8') as file:
+        file.write(text)
+    return path
 
 
 def _claim_key(tool_name: str, arguments: Mapping[str, object]) -> str:
@@ -677,16 +697,17 @@ class ClaudeCodeSessions:
         session: _Session,
         request: _MessagesRequest,
         disallowed_tools: list[str],
+        system_prompt: SystemPromptFile,
         fork: _ForkPoint | None = None,
     ) -> ClaudeAgentOptions:
         config = session.config
-        server = create_sdk_mcp_server(_MCP_SERVER, tools=[session.tool(tool) for tool in request.callable_tools])
+        server = session.server(request.callable_tools)
         hooks = [HookMatcher(matcher=f'^{_TOOL_PREFIX}', hooks=[session.pre_tool_use])]
         if request.inherited_servers:
             hooks.append(HookMatcher(matcher=f'^{MCP_PREFIX}', hooks=[session.pre_external_tool_use]))
         return ClaudeAgentOptions(
             model=config.model,
-            system_prompt=config.system_prompt,
+            system_prompt=system_prompt,
             tools=[],
             mcp_servers={_MCP_SERVER: server},
             # Only `claude_agent_inherit_mcp_servers` lets Claude Code bring the user's own MCP servers and connectors.
@@ -765,9 +786,14 @@ class ClaudeCodeSessions:
     ) -> _Session:
         session = _Session(config=_SessionConfig.of(request), loop=asyncio.get_running_loop())
         disallowed_tools = await self._inherited_servers(session, request.inherited_servers)
-        options = self._client_options(session, request, disallowed_tools, fork)
-        transport = self.transport_factory(options) if self.transport_factory is not None else None
-        session.client = ClaudeSDKClient(options=options, transport=transport)
+        system_prompt = await session.write_system_prompt()
+        try:
+            options = self._client_options(session, request, disallowed_tools, system_prompt, fork)
+            transport = self.transport_factory(options) if self.transport_factory is not None else None
+            session.client = ClaudeSDKClient(options=options, transport=transport)
+        except BaseException:
+            await session.remove_system_prompt()
+            raise
         try:
             await session.client.connect()
             if request.inherited_servers:
@@ -980,8 +1006,12 @@ class ClaudeCodeTransport(httpx2.AsyncBaseTransport):
             body = _MessagesRequest.model_validate_json(await request.aread())
         except ValidationError as e:
             return _error_response(400, 'invalid_request_error', f"Claude Code can't serve this request: {e}")
-        # `ClaudeAgentModel` streams every request, and a request's history ends with the user's turn.
-        assert body.stream and body.messages[-1].role == 'user'
+        if not body.stream:
+            # Only `ClaudeAgentModel` streams every request, so this is another model given a `ClaudeAgentProvider`.
+            message = 'Claude Code only streams: use `ClaudeAgentModel` with a `ClaudeAgentProvider`.'
+            return _error_response(400, 'invalid_request_error', message, retry=False)
+        # A request's history ends with the user's turn.
+        assert body.messages[-1].role == 'user'
         if (inherit := request.headers.get(INHERIT_MCP_SERVERS_HEADER)) is not None:
             body.inherit_mcp_servers = _inherit_ta.validate_json(inherit)
 

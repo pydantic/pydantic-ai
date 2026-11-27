@@ -52,9 +52,12 @@ openai_dependencies = [Requirement(value) for value in requires('openai') or []]
 assert not any(requirement.name == 'httpx' for requirement in openai_dependencies)
 assert any(requirement.name == 'httpx2' for requirement in openai_dependencies)
 
+anthropic_extras = {'anthropic', 'claude-agent'}
 anthropic_requirements = [requirement for requirement in slim if requirement.name == 'anthropic']
-assert len(anthropic_requirements) == 1
-assert str(anthropic_requirements[0].marker) == 'extra == "anthropic"'
+assert len(anthropic_requirements) == len(anthropic_extras)
+for requirement in anthropic_requirements:
+    assert requirement.marker is not None
+    assert str(requirement.marker).removeprefix('extra == ').strip('"') in anthropic_extras
 
 anthropic_dependencies = [Requirement(value) for value in requires('anthropic') or []]
 assert not any(requirement.name == 'httpx' for requirement in anthropic_dependencies)

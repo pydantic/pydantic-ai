@@ -162,6 +162,14 @@ class CapabilityMethodDeclaration:
     def model_request_hook(self) -> bool:
         return self.model_request_parameter is not None
 
+    @property
+    def returns_model_request_context(self) -> bool:
+        """Whether the operation returns the request context it takes.
+
+        As `before_model_request` does, rather than a value of its own, as `after_model_request` does with its response.
+        """
+        return self.result_type is ModelRequestContextProjection
+
 
 class CapabilityCacheIdentity(CacheIdentity[CapabilityOperationParams]):
     """Project the model, validated arguments, and run context into the cache identity.
@@ -423,18 +431,24 @@ def _declaration(
         and signature.parameters[model_request_parameter].kind is inspect.Parameter.VAR_POSITIONAL
     ):
         raise UserError('ModelRequestContext cannot be used as a variadic positional parameter (`*args`)')
-    replacements = (
-        {model_request_parameter: ModelRequestContextProjection, 'return': ModelRequestContextProjection}
-        if model_request_parameter is not None
-        else {}
+    # An override of a built-in hook returns what that hook returns, whatever its own annotation says: the response,
+    # for `after_model_request`. Any other operation on the request context returns the context.
+    hook_return_hint = _hook_return_hint(capability, handler) if model_request_parameter is not None else None
+    returns_model_request_context = model_request_parameter is not None and (
+        hook_return_hint is None or hook_return_hint is ModelRequestContext
     )
+    replacements: dict[str, object] = {}
+    if model_request_parameter is not None:
+        replacements[model_request_parameter] = ModelRequestContextProjection
+    if returns_model_request_context:
+        replacements['return'] = ModelRequestContextProjection
     schema = _capability_operation_schema(
         bound, signature, ctx_parameter, type_hints, annotation_replacements=replacements
     )
     result_type = (
         ModelRequestContextProjection
-        if model_request_parameter is not None
-        else extract_return_schema_type(type_hints.get('return'), bound)
+        if returns_model_request_context
+        else extract_return_schema_type(hook_return_hint or type_hints.get('return'), bound)
     )
     return CapabilityMethodDeclaration(
         name=operation_name,
@@ -445,6 +459,19 @@ def _declaration(
         ctx_parameter=ctx_parameter,
         model_request_parameter=model_request_parameter,
     )
+
+
+def _hook_return_hint(capability: AbstractCapability[Any], handler: Callable[..., Any]) -> object:
+    """What an override of a built-in model request hook returns, as the hook declares it, or `None` for another method.
+
+    The override's own annotation may be missing, `Any` or a union, but the hook still returns what it always does: the
+    request context from `before_model_request`, the response from `after_model_request`. The hook is found by the
+    attribute the override is set as, which is the hook's name however the function itself was named.
+    """
+    for name, hook in vars(AbstractCapability).items():
+        if inspect.isfunction(hook) and getattr(type(capability), name, None) is handler:
+            return get_type_hints(hook, localns={'ModelRequestContext': ModelRequestContext}).get('return')
+    return None
 
 
 def _capability_operation_schema(
