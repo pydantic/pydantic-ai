@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import inspect
+import keyword
 import re
 import warnings
-from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
-from contextlib import AbstractContextManager, nullcontext
+from collections.abc import AsyncGenerator, Awaitable, Callable, Coroutine, Mapping, Sequence
+from contextlib import AbstractContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field, replace
 from functools import partial
 from itertools import islice
@@ -40,6 +41,7 @@ try:
     from pydantic_monty import (
         AbstractOS,
         AsyncMontyRemote,
+        ExternalModule,
         MontyComplete,
         MountDir,
         OsFunction,
@@ -74,6 +76,8 @@ from pydantic_ai_harness._monty_exec import (
     TurnFeed,
     in_durable_task_orchestration,
     in_temporal_workflow,
+    module_attrs,
+    module_functions,
 )
 from pydantic_ai_harness._monty_turns import MontyFailure, MontyTurn, TurnRequest, model_safe_result
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, renamed_duration_limit, warn_argument_renamed
@@ -511,12 +515,49 @@ def _jsonable_for_sandbox(value: Any) -> Any:
     return to_jsonable_python(value)
 
 
-_RUN_CODE_DESCRIPTION_HEAD = """\
+# Every module the sandbox imports, as `test_advertised_modules_cover_every_importable_module` checks against
+# Monty. The `run_code` description lists them, and `check_external_modules` refuses their top-level names, since
+# `import math` reaches Monty's module, never an external one of that name.
+_SANDBOX_MODULES = (
+    'sys',
+    'typing',
+    'asyncio',
+    'math',
+    'json',
+    're',
+    'unicodedata',
+    'datetime',
+    'time',
+    'random',
+    'os',
+    'pathlib',
+    'collections',
+    'itertools',
+    'functools',
+    'dataclasses',
+    'copy',
+    'base64',
+    'binascii',
+    'bisect',
+    'csv',
+    'decimal',
+    'fnmatch',
+    'hashlib',
+    'os.path',
+    'tomllib',
+    'annotationlib',
+    'colorsys',
+    'keyword',
+    'stat',
+    'statistics',
+)
+
+_RUN_CODE_DESCRIPTION_HEAD = f"""\
 Write and run Python code in a sandboxed environment.
 
 The sandbox uses Monty, a subset of Python. Key restrictions:
 - **No third-party libraries**: only the standard library modules listed below can be used
-- **Importable standard library modules**: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`, `hashlib`, `os.path`, `tomllib`, `annotationlib`, `colorsys`, `keyword`, `stat`, `statistics`. These must be imported before use, just like in regular Python."""
+- **Importable standard library modules**: {', '.join(f'`{name}`' for name in _SANDBOX_MODULES)}. These must be imported before use, just like in regular Python."""
 
 # Timing/OS restriction line, swapped depending on what host access the agent
 # configured. Three states, because `mount` and `os` enable different things:
@@ -591,7 +632,43 @@ def _policy_has_clock(os_policy: CodeModeOSPolicy | None) -> bool:
     return os_policy is not None and os_policy.get('datetime', 'call_host') != 'call_host'
 
 
-def _base_description(*, has_os: bool, has_mount: bool, has_clock: bool) -> str:
+def _module_stubs(modules: Mapping[str, ExternalModule]) -> dict[str, str | None]:
+    """Each module in `modules` and each of its submodules, by dotted name, with its `.pyi` stubs."""
+    return {name: module.stubs for name, module, _ in module_attrs(modules)}
+
+
+def check_external_modules(modules: Mapping[str, ExternalModule]) -> None:
+    """Reject module names the sandbox can't import, and modules without the stubs the model and type checker read."""
+    for name in modules:
+        if not name.isidentifier() or keyword.iskeyword(name):
+            raise UserError(
+                f'`external_modules` key {name!r} is not a module name. '
+                'Use a top-level name and nest submodules as `ExternalModule` attributes.'
+            )
+        if name in _SANDBOX_MODULES:
+            raise UserError(
+                f'`external_modules` key {name!r} names a module Monty already provides, '
+                'so the sandbox would import that one. Pick another name.'
+            )
+    if missing := [name for name, stubs in _module_stubs(modules).items() if not stubs]:
+        raise UserError(
+            '`external_modules` entries need `.pyi` stubs, which the model and the type checker read. '
+            f'Missing for: {", ".join(map(repr, missing))}. Pass them as `ExternalModule(..., stubs=...)`.'
+        )
+
+
+def _host_modules_note(modules: Mapping[str, ExternalModule]) -> str:
+    """The `run_code` description line that tells the model which host modules it can import, with their stubs."""
+    if not modules:
+        return ''
+    blocks = '\n\n'.join(f'# {name}\n{stubs}' for name, stubs in _module_stubs(modules).items())
+    return (
+        '- **Host modules**: these modules can also be imported, and their functions run on the host, '
+        f'outside the sandbox:\n\n```python\n{blocks}\n```'
+    )
+
+
+def _base_description(*, has_os: bool, has_mount: bool, has_clock: bool, host_modules: str) -> str:
     """Assemble the `run_code` base description with the right OS-access restriction line.
 
     `os` routes environment, clock, and filesystem calls; a `mount` alone only
@@ -599,6 +676,7 @@ def _base_description(*, has_os: bool, has_mount: bool, has_clock: bool) -> str:
     clock access (the model would generate calls that fail and burn retries).
     `has_clock` says `os_policy` gives the sandbox a clock of its own, which the
     note then advertises instead of calling it unavailable or routed to `os`.
+    `host_modules` is the `external_modules` line, empty without any.
     """
     if has_os:
         restriction = _OS_ENABLED_WITH_CLOCK_NOTE if has_clock else _OS_ENABLED_NOTE
@@ -608,6 +686,8 @@ def _base_description(*, has_os: bool, has_mount: bool, has_clock: bool) -> str:
         restriction = _NO_OS_WITH_CLOCK_NOTE if has_clock else _NO_OS_RESTRICTION
     if has_mount:
         restriction = f'{restriction}\n{_MOUNT_LIFETIME_NOTE}'
+    if host_modules:
+        restriction = f'{restriction}\n{host_modules}'
     return f'{_RUN_CODE_DESCRIPTION_HEAD}\n{restriction}\n{_RUN_CODE_DESCRIPTION_TAIL}'
 
 
@@ -822,6 +902,19 @@ def _started_calls_note(execution: RunCodeExecution) -> str:
     return f'\n\n{_describe_started_calls(execution.nested_calls, execution.nested_returns)}'
 
 
+def _refuse_after_output(execution: RunCodeExecution) -> None:
+    """Refuse a sandbox call once the code submitted the final output, or had a submission blocked.
+
+    Code that caught the stop doesn't get to run more functions, including after a submission an output
+    guardrail blocked, which only `_submit_output` records.
+    """
+    if execution.output_submission is not None or isinstance(execution.run_ending_error, OutputBlocked):
+        raise RuntimeError(
+            'This code already submitted the final output, or had a submission blocked, so it cannot call more '
+            'functions.'
+        )
+
+
 def _raise_run_ending_error(execution: RunCodeExecution) -> None:
     """Re-raise the error that ends the run, which the snippet may have caught at its call site."""
     if execution.run_ending_error is not None:
@@ -962,6 +1055,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     See [`CodeMode.os_policy`][pydantic_ai_harness.CodeMode.os_policy].
     """
 
+    external_modules: Mapping[str, ExternalModule] | None = field(default=None, kw_only=True)
+    """Host modules sandboxed code can import, keyed by module name.
+
+    See [`CodeMode.external_modules`][pydantic_ai_harness.CodeMode.external_modules].
+    """
+
     monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, kw_only=True, repr=False
     )
@@ -1028,12 +1127,20 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     # step. Reset on `for_run` because each run gets a fresh instance.
     _warned_missing_return_schema: set[str] = field(default_factory=set[str], init=False, repr=False)
 
+    # Derived from `external_modules` in `__post_init__`.
+    _module_functions: dict[str, Callable[..., object]] = field(init=False, repr=False, compare=False)
+    _host_modules_note: str = field(init=False, repr=False, compare=False)
+
     def __post_init__(self) -> None:
         # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
         self.os_access = as_os_handler(self.os_access)
         self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeModeToolset')
         self.monty_sandbox_url = None
         self.resource_limits = renamed_duration_limit(self.resource_limits, 'CodeModeToolset')
+        modules = self.external_modules or {}
+        check_external_modules(modules)
+        self._module_functions = module_functions(modules)
+        self._host_modules_note = _host_modules_note(modules)
 
     @property
     def id(self) -> str | None:
@@ -1067,9 +1174,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         sandbox = self.monty_sandbox
         if isinstance(sandbox, str):
             _check_monty_sandbox_url(sandbox)
-            run_state = MontyRunState(monty_sandbox_url=sandbox, os_policy=self.os_policy)
+            run_state = MontyRunState(
+                monty_sandbox_url=sandbox, os_policy=self.os_policy, external_modules=self.external_modules
+            )
         elif sandbox is None or callable(sandbox):
-            run_state = MontyRunState(pool_factory=sandbox, os_policy=self.os_policy)
+            run_state = MontyRunState(
+                pool_factory=sandbox, os_policy=self.os_policy, external_modules=self.external_modules
+            )
         else:
             raise UserError('`monty_sandbox` takes a URL or a function that returns the pool, not the pool itself.')
         await self.wrapped.__aenter__()
@@ -1199,11 +1310,17 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         has_mount = self.mount is not None
         has_clock = _policy_has_clock(self.os_policy)
         if self.dynamic_catalog:
-            description = _base_description(has_os=has_os, has_mount=has_mount, has_clock=has_clock)
+            description = _base_description(
+                has_os=has_os, has_mount=has_mount, has_clock=has_clock, host_modules=self._host_modules_note
+            )
             self._last_catalog = self._render_catalog(callable_defs)
         else:
             description = self._build_description(
-                callable_defs, has_os=has_os, has_mount=has_mount, has_clock=has_clock
+                callable_defs,
+                has_os=has_os,
+                has_mount=has_mount,
+                has_clock=has_clock,
+                host_modules=self._host_modules_note,
             )
             self._last_catalog = ''
 
@@ -1520,7 +1637,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
         # Type-check only the first executed snippet. Monty's checker can reject valid later
         # snippets that reuse imports or pass a runtime-validated dict to a TypedDict parameter.
-        type_check = fresh_repl and bool(callable_defs)
+        type_check = fresh_repl and bool(callable_defs or self.external_modules)
         type_check_stubs = self._build_type_check_stubs(callable_defs) if type_check else None
 
         # One collector is reused across eager feeds. This keeps the same output cap and error
@@ -1549,6 +1666,8 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             max_sleep_seconds=configured.get('max_feed_duration_secs'),
             # Already converted in `__post_init__`; this narrows the field's type.
             os_handler=as_os_handler(self.os_access),
+            module_functions=self._module_functions,
+            module_call_guard=partial(self._module_call_guard, ctx, execution),
         )
 
         async def run_feed() -> MontyComplete | TurnComplete:
@@ -1708,13 +1827,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         Refusing here means no task is created; the executor hands the error to the sandbox at
         the call site, so calls that already completed keep their recorded results.
         """
-        if execution.output_submission is not None or isinstance(execution.run_ending_error, OutputBlocked):
-            # Code that caught the stop doesn't get to run more tools after submitting, including a submission an
-            # output guardrail blocked, which only `_submit_output` records.
-            raise RuntimeError(
-                'This code already submitted the final output, or had a submission blocked, so it cannot call more '
-                'functions.'
-            )
+        _refuse_after_output(execution)
         original_name = tool.sanitized_to_original.get(sandbox_name, sandbox_name)
         tool_call_id = execution.next_tool_call_id(max_tool_calls=self.max_tool_calls)
         args = schema_arg_names(tool.callable_defs[sandbox_name], kwargs)
@@ -1729,6 +1842,22 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             if claimed is not None:
                 return speculation.adopt(ctx, execution, claimed, call_part)
         return self._run_tool_call(ctx, execution, tool_manager, sandbox_name, call_part)
+
+    @asynccontextmanager
+    async def _module_call_guard(
+        self, ctx: RunContext[AgentDepsT], execution: RunCodeExecution, name: str
+    ) -> AsyncGenerator[None]:
+        """Refuse a host module call a tool call would be refused for, and bracket it for speculation.
+
+        Eager statements run while the model streams, so a module function waits for a parallel input
+        guard's verdict as a tool call does. It may write state a speculative read already saw, so it is
+        an unsafe call.
+        """
+        _refuse_after_output(execution)
+        if not await input_guardrails_allow(ctx):
+            raise RuntimeError(f'{name!r} did not run: an input guardrail did not allow the prompt.')
+        with self.speculation.unsafe_call() if self.speculation is not None else nullcontext():
+            yield
 
     async def _run_tool_call(
         self,
@@ -1808,10 +1937,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     @staticmethod
     def _build_description(
-        callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool, has_clock: bool
+        callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool, has_clock: bool, host_modules: str
     ) -> str:
         """Render the `run_code` description: base prose + TypedDicts + function signatures."""
-        base = _base_description(has_os=has_os, has_mount=has_mount, has_clock=has_clock)
+        base = _base_description(has_os=has_os, has_mount=has_mount, has_clock=has_clock, host_modules=host_modules)
         catalog = CodeModeToolset._render_catalog(callable_defs)
         if not catalog:
             return base
