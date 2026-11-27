@@ -22,8 +22,8 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        config: [t3-h6144, t2-h6144, t3-h4096, t2-h4096, pyright-rs]
-        run: [1, 2]
+        config: [t3-h4096]
+        run: [1, 2, 3]
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
@@ -75,13 +75,14 @@ jobs:
           sampler=$!
           start=$(date +%s)
           set +e
-          make typecheck-pyright > "$RUNNER_TEMP/pyright.out" 2>&1
+          PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run pyright --threads "$PYRIGHT_THREADS" --verbose > "$RUNNER_TEMP/pyright.out" 2>&1
           status=$?
           set -e
           end=$(date +%s)
           kill "$sampler"
           tail -n 30 "$RUNNER_TEMP/pyright.out"
           echo "config=$CONFIG status=$status seconds=$((end - start))"
+          echo "cache emptied: $(grep -ci "emptying type cache" "$RUNNER_TEMP/pyright.out")"; grep -i "emptying type cache" "$RUNNER_TEMP/pyright.out" | head -3 || true
           echo "unused-import findings: $(grep -c reportUnusedImport "$RUNNER_TEMP/pyright.out")"
           grep reportUnusedImport "$RUNNER_TEMP/pyright.out" || true
           awk -F'\t' 'NR==1 {minavail=$2} {if ($2<minavail) minavail=$2; if ($4>maxsum) maxsum=$4; if ($5>maxone) maxone=$5; if ($3>maxswap) maxswap=$3; if ($6>maxn) maxn=$6}
