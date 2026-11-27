@@ -292,6 +292,29 @@ records a model request's or tool call's span, and a model request's token and c
 invocation that ran it, and an agent run's span in each invocation that did work for it. A resumed
 execution's traces show only the work that invocation did, and costs are counted once.
 
+Upgrading Pydantic AI to a version in which stateless
+[`OpenAICompaction`](../models/openai.md#message-compaction) emits
+[compaction events](../capabilities/compaction.md#compaction-events) adds two
+`{name}__event_stream_handler` steps, one per event, to a run in which it compacts, so executions
+already in flight that compact this way and have an `event_stream_handler` resume with a different
+step sequence: deploy under a new published version and let in-flight executions drain on the
+previous one. Runs without an `event_stream_handler`, or that don't use
+`OpenAICompaction(stateless=True)`, are unaffected by that.
+
+With [`ModelFallback`](../capabilities/model-fallback.md), or a hook of your own that raises
+[`RetryModelRequest`](../capabilities/custom.md#model-request-attempts), stateless
+`OpenAICompaction` now compacts in each request attempt, for the model serving it. Every attempt
+that reaches compaction emits a compaction start event, even when its candidate isn't an
+`OpenAIResponsesModel` and declines to compact; only an `OpenAIResponsesModel` candidate makes the
+compaction call. When an attempt fails, its compaction is discarded and a later
+`OpenAIResponsesModel` candidate compacts again. Stateless `OpenAICompaction` also makes a run retry
+a request that exceeds the model's context window, even without `ModelFallback`: the request is
+compacted and sent again, which is one more compaction call and one more model request. An execution
+already in flight that used stateless `OpenAICompaction` and hits either case can therefore resume
+with extra steps; deploy under a new published version and let in-flight executions drain on the
+previous one. Without `ModelFallback`, a hook that raises `RetryModelRequest`, or an overflow, a
+step makes one attempt and compacts once, as before.
+
 ## Constraints
 
 - **Steps are at least once, and retried by default.** A step is checkpointed after it runs, so an
