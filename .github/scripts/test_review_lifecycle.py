@@ -368,17 +368,26 @@ def test_unrelated_label_events_cannot_evict_pending_reviews(action: str, label:
     assert evaluate_expression(concurrency['cancel-in-progress'], values) == cancels
 
 
+BOTS = '.github/workflows/bots.yml'
+REVIEW_CHECKS = '.github/workflows/pr-review-checks.yml'
+REVIEW_GATES_EVENTS = '.github/workflows/pr-review-gates-events.yml'
+
+
 @pytest.mark.parametrize(
-    ('event', 'conclusion', 'group', 'cancels', 'evaluates'),
+    ('event', 'run_event', 'path', 'conclusion', 'group', 'cancels'),
     [
-        ('workflow_run', 'success', f'feature-{HEAD}', True, True),
-        ('workflow_run', 'failure', f'feature-{HEAD}', True, True),
-        ('workflow_run', 'cancelled', 'run-456', True, False),
-        ('merge_group', '', 'run-456', False, True),
+        ('workflow_run', 'pull_request', BOTS, 'success', f'feature-{HEAD}', True),
+        ('workflow_run', 'pull_request', BOTS, 'skipped', f'feature-{HEAD}', True),
+        ('workflow_run', 'pull_request_review', REVIEW_GATES_EVENTS, 'failure', f'feature-{HEAD}', True),
+        ('workflow_run', 'pull_request_review', REVIEW_GATES_EVENTS, 'cancelled', 'run-456', True),
+        ('workflow_run', 'pull_request', REVIEW_CHECKS, 'success', f'feature-{HEAD}', True),
+        ('workflow_run', 'pull_request', REVIEW_CHECKS, 'skipped', 'run-456', True),
+        ('workflow_run', 'merge_group', REVIEW_CHECKS, 'success', 'run-456', True),
+        ('merge_group', '', '', '', 'run-456', False),
     ],
 )
 def test_review_gate_wake_ups_collapse_per_head(
-    event: str, conclusion: str, group: str, cancels: bool, evaluates: bool
+    event: str, run_event: str, path: str, conclusion: str, group: str, cancels: bool
 ):
     workflow = TypeAdapter(dict[str | bool, object]).validate_python(
         yaml.safe_load((ROOT / '.github/workflows/pr-review-gates.yml').read_text())
@@ -387,6 +396,8 @@ def test_review_gate_wake_ups_collapse_per_head(
     jobs = TypeAdapter(dict[str, dict[str, object]]).validate_python(workflow['jobs'])
     values: dict[str, str | bool | int] = {
         'github.event_name': event,
+        'github.event.workflow_run.event': run_event,
+        'github.event.workflow_run.path': path,
         'github.event.workflow_run.conclusion': conclusion,
         'github.event.workflow_run.head_branch': 'feature',
         'github.event.workflow_run.head_sha': HEAD,
@@ -396,6 +407,8 @@ def test_review_gate_wake_ups_collapse_per_head(
     assert prefix == 'pr-review-gates-'
     assert evaluate_expression(expression, values) == group
     assert evaluate_expression(concurrency['cancel-in-progress'], values) == cancels
+    # A wake-up that skips the evaluation must not share, and so cancel, the head's group.
+    evaluates = event == 'merge_group' or group != 'run-456'
     assert evaluate_expression(TypeAdapter(str).validate_python(jobs['review-target']['if']), values) == evaluates
 
 
