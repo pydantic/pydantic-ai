@@ -12,6 +12,7 @@ import asyncio
 import warnings
 from dataclasses import dataclass, replace
 
+import anyio
 import pytest
 from inline_snapshot import snapshot
 
@@ -102,7 +103,7 @@ async def test_safe_options_and_our_prompt():
     options = session.options
     assert {
         'model': options.model,
-        'system_prompt': options.system_prompt,
+        'system_prompt': session.system_prompt,
         'tools': options.tools,
         'mcp_servers': list(options.mcp_servers) if isinstance(options.mcp_servers, dict) else options.mcp_servers,
         'strict_mcp_config': options.strict_mcp_config,
@@ -290,6 +291,22 @@ async def test_a_new_session_replays_the_history():
     assert replayed_call['name'] == 'mcp__pydantic_ai__get_weather'
 
 
+async def test_the_system_prompt_goes_in_a_file_only_the_user_can_read():
+    """Not in Claude Code's arguments, which other users can read and Linux limits to 128 KiB each."""
+    instructions = 'Be terse. ' * 20_000
+    model, fake = claude_agent(FakeResponse([text('Ok.')]))
+
+    await Agent(model, instructions=instructions).run('Hi')
+
+    [session] = fake.sessions
+    assert session.system_prompt == instructions.strip()
+    assert session.system_prompt_mode == 0o600
+    system_prompt = session.options.system_prompt
+    assert isinstance(system_prompt, dict) and system_prompt['type'] == 'file'
+    assert session.closed
+    assert not await anyio.Path(system_prompt['path']).exists()
+
+
 async def test_changed_instructions_start_a_new_session():
     """A session's system prompt is fixed when it starts, so new instructions replay the history into a new one."""
     model, fake = claude_agent(FakeResponse([text('One.')]), FakeResponse([text('Two.')]))
@@ -298,7 +315,7 @@ async def test_changed_instructions_start_a_new_session():
         first = await Agent(model, instructions='Be terse.').run('Count.')
         await Agent(model, instructions='Be verbose.').run('Again.', message_history=first.all_messages())
 
-    assert [session.options.system_prompt for session in fake.sessions] == ['Be terse.', 'Be verbose.']
+    assert [session.system_prompt for session in fake.sessions] == ['Be terse.', 'Be verbose.']
     assert frame_shape(fake.sessions[1]) == snapshot(
         [('user', ['text'], False), ('assistant', ['text'], True), ('user', ['text'], True)]
     )

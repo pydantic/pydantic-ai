@@ -20,6 +20,8 @@ from __future__ import annotations as _annotations
 import asyncio
 import json
 import math
+import os
+import tempfile
 import time
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Collection, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager
@@ -66,7 +68,7 @@ try:
         Transport,
         UserMessage,
     )
-    from claude_agent_sdk.types import EffortLevel
+    from claude_agent_sdk.types import EffortLevel, SystemPromptFile
     from mcp.server import Server, ServerRequestContext
     from mcp.types import CallToolRequestParams, CallToolResult, ListToolsResult, PaginatedRequestParams, Tool
 except ImportError as _import_error:
@@ -438,6 +440,8 @@ class _Session:
     """The configured names of the user's own MCP servers the session offers."""
     pending_results: list[ToolResultBlock] = field(default_factory=list[ToolResultBlock])
     """Results of Claude Code's own tool calls that came after the response with the call had ended."""
+    system_prompt_file: str = field(init=False)
+    """The file Claude Code reads the system prompt from, which is removed when the session closes."""
 
     def result(self, tool_use_id: str) -> asyncio.Future[dict[str, JsonValue]]:
         if (future := self.results.get(tool_use_id)) is None:
@@ -558,11 +562,30 @@ class _Session:
                 return
         raise ClaudeCodeExited()
 
+    async def write_system_prompt(self) -> SystemPromptFile:
+        """The system prompt in a file only the user can read, not in Claude Code's arguments.
+
+        Other users can read a process's arguments, and Linux limits one argument to 128 KiB.
+        """
+        self.system_prompt_file = path = await anyio.to_thread.run_sync(_write_private_file, self.config.system_prompt)
+        return SystemPromptFile(type='file', path=path)
+
     async def close(self) -> None:
         self.broken = True
         for future in self.results.values():
             future.cancel()
-        await self.client.disconnect()
+        try:
+            await self.client.disconnect()
+        finally:
+            await anyio.Path(self.system_prompt_file).unlink(missing_ok=True)
+
+
+def _write_private_file(text: str) -> str:
+    # `mkstemp` creates the file readable and writable by the user alone.
+    fd, path = tempfile.mkstemp(prefix='pydantic-ai-claude-agent-', suffix='.txt')
+    with os.fdopen(fd, 'w', encoding='utf-8') as file:
+        file.write(text)
+    return path
 
 
 def _claim_key(tool_name: str, arguments: Mapping[str, object]) -> str:
@@ -614,7 +637,11 @@ class ClaudeCodeSessions:
             await self.release_lease()
 
     def _client_options(
-        self, session: _Session, request: _MessagesRequest, disallowed_tools: list[str]
+        self,
+        session: _Session,
+        request: _MessagesRequest,
+        disallowed_tools: list[str],
+        system_prompt: SystemPromptFile,
     ) -> ClaudeAgentOptions:
         config = session.config
         server = session.server(request.callable_tools)
@@ -623,7 +650,7 @@ class ClaudeCodeSessions:
             hooks.append(HookMatcher(matcher=f'^{MCP_PREFIX}', hooks=[session.pre_external_tool_use]))
         return ClaudeAgentOptions(
             model=config.model,
-            system_prompt=config.system_prompt,
+            system_prompt=system_prompt,
             tools=[],
             mcp_servers={_MCP_SERVER: server},
             # Only `claude_agent_inherit_mcp_servers` lets Claude Code bring the user's own MCP servers and connectors.
@@ -683,7 +710,7 @@ class ClaudeCodeSessions:
     async def _start(self, request: _MessagesRequest) -> _Session:
         session = _Session(config=_SessionConfig.of(request), loop=asyncio.get_running_loop())
         disallowed_tools = await self._inherited_servers(session, request.inherited_servers)
-        options = self._client_options(session, request, disallowed_tools)
+        options = self._client_options(session, request, disallowed_tools, await session.write_system_prompt())
         transport = self.transport_factory(options) if self.transport_factory is not None else None
         session.client = ClaudeSDKClient(options=options, transport=transport)
         try:

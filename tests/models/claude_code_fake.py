@@ -14,10 +14,12 @@ from __future__ import annotations
 import asyncio
 import json
 import re
+import stat
 from collections.abc import AsyncIterator
 from dataclasses import dataclass, field
 from typing import Any, Literal
 
+import anyio
 from claude_agent_sdk import ClaudeAgentOptions, CLIConnectionError, CLINotFoundError, ProcessError, Transport
 
 
@@ -111,6 +113,10 @@ class FakeSession(Transport):
         self.tool_names: list[str] = []
         """The tools the SDK's MCP server offered when the last turn started."""
         self.closed = False
+        self.system_prompt: str | None = None
+        """The system prompt Claude Code read from its file when it started."""
+        self.system_prompt_mode: int | None = None
+        """The permission bits of that file."""
         self.write_error: BaseException | None = None
         """Writing to the process fails with this error, as when it fails between requests."""
         self._outbox: asyncio.Queue[dict[str, Any] | BaseException | None] = asyncio.Queue()
@@ -125,6 +131,10 @@ class FakeSession(Transport):
     async def connect(self) -> None:
         if self.script.missing:
             raise CLINotFoundError('Claude Code not found')
+        if isinstance(self.options.system_prompt, dict) and self.options.system_prompt['type'] == 'file':
+            path = anyio.Path(self.options.system_prompt['path'])
+            self.system_prompt = await path.read_text(encoding='utf-8')
+            self.system_prompt_mode = stat.S_IMODE((await path.stat()).st_mode)
 
     def is_ready(self) -> bool:  # pragma: no cover
         return not self.closed

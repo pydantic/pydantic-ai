@@ -32,7 +32,7 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent
 
-from ..conftest import try_import
+from ..conftest import IsStr, try_import
 
 with try_import() as imports_successful:
     from anthropic import AsyncAnthropic
@@ -97,7 +97,7 @@ async def test_claude_code_runs_with_exactly_these_options():
     assert chosen_options(session.options) == snapshot(
         {
             'tools': [],
-            'system_prompt': 'Be brief.',
+            'system_prompt': {'type': 'file', 'path': IsStr()},
             'mcp_servers': {'pydantic_ai': 'sdk'},
             'strict_mcp_config': True,
             'model': 'claude-sonnet-5-5',
@@ -134,6 +134,8 @@ async def test_claude_code_runs_with_exactly_these_options():
             'client_app': f'pydantic-ai/{__version__}',
         }
     )
+    # The agent's instructions replace Claude Code's own system prompt, read from a file the user alone can read.
+    assert (session.system_prompt, session.system_prompt_mode) == ('Be brief.', 0o600)
 
 
 async def test_claude_code_identifies_the_client_as_pydantic_ai():
