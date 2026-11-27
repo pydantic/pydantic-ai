@@ -39,6 +39,7 @@ from pydantic_ai.providers.system_one import SystemOneProvider
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage, RunUsage, UsageLimits
 from pydantic_ai_harness.compaction import (
+    CompactionReceiptPart,
     FallbackCompaction,
     RelevanceCompaction,
     SlidingWindowCompaction,
@@ -140,6 +141,8 @@ def _shape(messages: list[ModelMessage]) -> list[str]:
                 out.append(f'user {content}')
             elif isinstance(part, TextPart):
                 out.append(f'text {part.content}')
+            elif isinstance(part, CompactionReceiptPart):
+                out.append(f'receipt {part.content}')
             # Every history here is built from the parts above.
             else:  # pragma: no cover
                 out.append(type(part).__name__)
@@ -698,9 +701,8 @@ Say more.
         result = await compact_now(compaction, history, model=TestModel())
 
         assert _shape(result)[2:5] == [
-            "user TextContent(content='[History before this point (2 messages, ~703 tokens) was dropped by "
-            'RelevanceCompaction. That context is no longer in the window; re-verify critical facts against '
-            "primary sources.]', metadata='pydantic-ai-harness.compaction.receipt.v1')",
+            'receipt [History before this point (2 messages, ~703 tokens) was dropped by RelevanceCompaction. '
+            'That context is no longer in the window; re-verify critical facts against primary sources.]',
             'call c0',
             'return c0 103',
         ]

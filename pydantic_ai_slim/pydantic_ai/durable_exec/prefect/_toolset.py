@@ -8,7 +8,7 @@ from pydantic.errors import PydanticUserError
 
 from pydantic_ai import AbstractToolset, FunctionToolset, ToolsetTool
 from pydantic_ai.durable_exec._toolset import guard_run_context
-from pydantic_ai.exceptions import UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import SuspendedResponseExpired, UnexpectedModelBehavior, UsageLimitExceeded, UserError
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.workspaces import (
@@ -31,6 +31,7 @@ _NON_RETRYABLE_ERRORS = (
     PydanticUserError,
     UnexpectedModelBehavior,
     UsageLimitExceeded,
+    SuspendedResponseExpired,
     # As on Temporal: a retry cannot fix these, and restarting a command could repeat its completed side effects.
     WorkspaceTimeoutError,
     WorkspaceOutputLimitError,
