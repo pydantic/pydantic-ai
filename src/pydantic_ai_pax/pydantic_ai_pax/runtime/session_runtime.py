@@ -69,7 +69,7 @@ from pydantic_ai_pax.config import (
     Settings,
 )
 from pydantic_ai_pax.config.project_settings import ProjectSettings
-from pydantic_ai_pax.config.settings_store import SettingsStore
+from pydantic_ai_pax.config.settings_store import SettingsStore, canonical_plugin_declarations
 from pydantic_ai_pax.errors import error_message
 from pydantic_ai_pax.models import login_names
 from pydantic_ai_pax.models.chains import settings_model as chain_settings_model
@@ -178,14 +178,36 @@ async def _default_model_name(*, store: SettingsStore, fallback: Model | str | N
 
 
 def _process(
-    *, process: ClaiProcess[DepsT] | None, store: SettingsStore | None, builtin_plugins: Sequence[PluginSettings]
+    *,
+    process: ClaiProcess[DepsT] | None,
+    store: SettingsStore | None,
+    builtin_plugins: Sequence[PluginSettings],
+    launch_plugins: Sequence[str],
 ) -> ClaiProcess[DepsT]:
-    """The process a session joins: `process`, else a new one over `store` with `builtin_plugins`."""
+    """The process a session joins: `process`, else a new one over `store` with `builtin_plugins` and `launch_plugins`."""
     if process is not None and store is not None:
         raise TypeError('create_shell takes `store` or `process`, not both: the process holds its store.')
     return process or ClaiProcess[DepsT].open(
-        store, builtin_plugins=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins)
+        store,
+        builtin_plugins=tuple(PluginSettings.model_validate(plugin.model_dump()) for plugin in builtin_plugins),
+        launch_plugins=launch_plugins,
     )
+
+
+def _check_launch(
+    names: Sequence[str],
+    *,
+    process: ClaiProcess[DepsT],
+    project: ProjectSettings,
+    load_plugins: bool,
+    console: Console,
+) -> None:
+    """Fail on `launch_plugins` a session can't load: unknown, only the project's, or with plugins off."""
+    if not names:
+        return
+    if not load_plugins:
+        raise ValueError('`launch_plugins` needs `load_plugins=True`: a session without plugins loads none of them.')
+    process.plugins.check_launch(canonical_plugin_declarations(project.plugins), console=console)
 
 
 def _fast_command(
@@ -277,15 +299,18 @@ def create_shell(
     process: ClaiProcess[DepsT] | None = None,
     signals: bool = True,
     settings_for: Callable[[ProjectSettings], Settings] | None = None,
+    launch_plugins: Sequence[str] = (),
     trust: WorkspaceTrust | None = None,
 ) -> 'SessionRuntime[DepsT, OutputT]':
     """Build one session's runtime, without attaching terminal input in headless mode.
 
     `workspace` is the directory the session works in, by default the current one. `process` holds
     what the session shares with the others in this Pax, its built-in plugins included; without one,
-    it gets its own over `store` and `builtin_plugins`, which are otherwise unused.
+    it gets its own over `store`, `builtin_plugins` and `launch_plugins`, which are otherwise unused.
     `signals` lets Ctrl+C cancel this session's turns; only the session the terminal shows takes it.
     `settings_for` gives the settings Pax starts with beside a project file, which `/project` applies from.
+    A `launch_plugins` name that no plugin has, or one only `project` declares, raises `ValueError`, as does
+    `launch_plugins` with `load_plugins=False`.
     `trust` is whether you trust the session's directory; by default, what you decided before, else untrusted.
     """
     settings = (
@@ -293,7 +318,8 @@ def create_shell(
         if settings is not None
         else Settings(model=None)
     )
-    process = _process(process=process, store=store, builtin_plugins=builtin_plugins)
+    process = _process(process=process, store=store, builtin_plugins=builtin_plugins, launch_plugins=launch_plugins)
+    _check_launch(launch_plugins, process=process, project=project, load_plugins=load_plugins, console=console)
     store, conversations = process.store, process.conversations
     session = Session(
         agent,
@@ -571,7 +597,7 @@ def create_shell(
     ) -> AskUserResponse | None:
         return await shell.ask_in_composer(request, approval=approval, preamble=preamble)
 
-    status = Status(fields=lambda: context.settings.footer_fields)
+    status = Status(fields=lambda: context.settings.footer_fields, permissions=lambda: context.settings.permissions)
     _attach_trust(session, trust, process=process, status=status, commands=commands)
     status.restore_text_age(session.messages)
     loader = SessionPlugins[DepsT](
@@ -966,6 +992,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             # A conversation named with `--session-id` keeps its ID until its first prompt saves it.
             new_session_id=summary.id if not summary.revision and self.sessions.chosen else None,
             web=web,
+            launch_plugins=sorted(self.process.plugins.launch),
         )
 
     @property

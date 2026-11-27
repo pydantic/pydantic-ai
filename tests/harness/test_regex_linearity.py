@@ -546,9 +546,18 @@ def test_a_super_linear_pattern_fails(pattern: str, failure: str):
     ],
 )
 def test_the_step_counter_matches_like_re(pattern: str, flags: int, text: str):
-    """The counter is only evidence if it backtracks the way `re` does: it finds the same matches."""
-    assert StepCounter(pattern, flags).scan(text, budget=10_000).spans == [
-        m.span() for m in re.finditer(pattern, text, flags)
+    """The counter is only evidence if it backtracks the way `re` does: it finds the same matches.
+
+    That holds for a scan of the whole text, and for a search or match from each position in it.
+    """
+    counter, compiled = StepCounter(pattern, flags), re.compile(pattern, flags)
+    assert counter.scan(text, budget=10_000).spans == [m.span() for m in compiled.finditer(text)]
+    positions = range(len(text) + 1)
+    assert [counter.search(text, 10_000, p).spans for p in positions] == [
+        [m.span()] if (m := compiled.search(text, p)) else [] for p in positions
+    ]
+    assert [counter.match(text, 10_000, p).spans for p in positions] == [
+        [m.span()] if (m := compiled.match(text, p)) else [] for p in positions
     ]
 
 

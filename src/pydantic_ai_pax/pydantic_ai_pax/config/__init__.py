@@ -37,6 +37,7 @@ TrustLevel = Literal['trusted', 'untrusted']
 FooterField = Literal[
     'model',
     'workspace',
+    'permissions',
     'context',
     'output',
     'cost',

@@ -76,12 +76,14 @@ from pydantic_ai import (
     WebSearchUserLocation,
     XSearchTool,
 )
+from pydantic_ai._ssrf import DownloadTooLargeError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import (
     BatchModelRequests,
     Capability,
     DynamicCapability,
+    FileUnderstanding,
     Hooks,
     ImageGeneration,
     Instrumentation,
@@ -254,6 +256,7 @@ with workflow.unsafe.imports_passed_through():
 
     # Loads `vcr`, which Temporal doesn't like without passing through the import
     from ...conftest import IsDatetime, IsInt, IsList, IsSameStr, IsStr
+    from ...models.conftest import scale_download_limits, serve_text_files
     from ...workspace_fakes import FakeWorkspace
     from ..decision_spans import ShipIt, ShipItDecisionModel, decide_span_lineage
     from ..preamble_text import (
@@ -9782,3 +9785,67 @@ async def test_realtime_session_with_durability_outside_workflow_does_not_warn()
     async with agent.realtime(_RealtimeModel()).session() as session:
         async for _ in session:
             pass
+
+
+# --- `FileUnderstanding`'s text downloads ---
+
+
+_file_understanding_agent = Agent(
+    FunctionModel(
+        lambda messages, info: ModelResponse(parts=[TextPart('ok')]),
+        profile=ModelProfile(supports_document_input=False),
+    ),
+    name='file_understanding_text',
+    capabilities=[
+        FileUnderstanding(fallback_subagent_model=TestModel()),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class FileUnderstandingTextWorkflow:
+    @workflow.run
+    async def run(self, urls: list[str]) -> str:
+        result = await _file_understanding_agent.run([DocumentUrl(url) for url in urls])
+        return result.output
+
+
+@pytest.mark.vcr(ignore_hosts=['93.184.215.14'])
+async def test_durability_file_understanding_text_downloads_have_the_per_file_limit_only(
+    client: Client, monkeypatch: pytest.MonkeyPatch
+):
+    """Each `describe` operation runs in an activity of its own, which the request's download total doesn't reach.
+
+    Eleven 1000-byte documents are downloaded past the 10 KiB total, which refuses them outside Temporal, while a
+    document over the 1 KiB per-file limit is still refused. Carrying the total into the activities is tracked in
+    https://github.com/pydantic/pydantic-ai/issues/14950.
+    """
+    sizes = {**{f'doc{i}': 1000 for i in range(11)}, 'big': 2000}
+    in_flight = serve_text_files(monkeypatch, sizes)
+    scale_download_limits(monkeypatch)
+
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FileUnderstandingTextWorkflow],
+        plugins=[AgentPlugin(_file_understanding_agent)],
+    ):
+        output = await client.execute_workflow(
+            FileUnderstandingTextWorkflow.run,
+            args=[[f'https://93.184.215.14/doc{i}.txt' for i in range(11)]],
+            id=f'{FileUnderstandingTextWorkflow.__name__}-within-the-per-file-limit',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+        with workflow_activity_raises(DownloadTooLargeError, 'Download exceeds the maximum size of 1024 bytes.'):
+            await client.execute_workflow(
+                FileUnderstandingTextWorkflow.run,
+                args=[['https://93.184.215.14/big.txt']],
+                id=f'{FileUnderstandingTextWorkflow.__name__}-past-the-per-file-limit',
+                task_queue=TASK_QUEUE,
+                execution_timeout=timedelta(seconds=30),
+            )
+
+    assert output == 'ok'
+    assert len(in_flight) == 12

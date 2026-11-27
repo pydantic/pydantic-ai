@@ -79,7 +79,7 @@ from ._framing import (
     frame_tags,
     model_visible_name_error,
 )
-from ._instrumentation import redact_binary_content, serialize_any
+from ._instrumentation import serialize_any, tool_result_otel_value
 from ._utils import generate_tool_call_id as _generate_tool_call_id, now_utc as _now_utc
 from ._uuid import uuid7
 from ._warnings import PydanticAIDeprecationWarning
@@ -1678,6 +1678,15 @@ def _convert_uploaded_file_to_otel_part(
     return file_part
 
 
+def multi_modal_otel_part(part: MultiModalContent, settings: InstrumentationSettings) -> _otel_messages.MessagePart:
+    """The OTel message part a media item is recorded as, wherever it appears: in a prompt or in a tool result."""
+    if isinstance(part, BinaryContent):
+        return _convert_binary_to_otel_part(part.media_type, lambda: part.base64, settings)
+    if isinstance(part, UploadedFile):
+        return _convert_uploaded_file_to_otel_part(part, settings)
+    return _convert_media_url_to_otel_part(part, settings)
+
+
 @dataclass(repr=False)
 class UserPromptPart:
     """A user prompt, generally written by the end user.
@@ -1728,12 +1737,8 @@ class UserPromptPart:
             if isinstance(part, str | TextContent):
                 content_str = part if isinstance(part, str) else part.content
                 parts.append(_otel_messages.text_part(content_str, include_content=settings.include_content))
-            elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl):
-                parts.append(_convert_media_url_to_otel_part(part, settings))
-            elif isinstance(part, BinaryContent):
-                parts.append(_convert_binary_to_otel_part(part.media_type, lambda p=part: p.base64, settings))
-            elif isinstance(part, UploadedFile):
-                parts.append(_convert_uploaded_file_to_otel_part(part, settings))
+            elif isinstance(part, ImageUrl | AudioUrl | DocumentUrl | VideoUrl | BinaryContent | UploadedFile):
+                parts.append(multi_modal_otel_part(part, settings))
             elif isinstance(part, CachePoint):
                 # CachePoint is a marker, not actual content - skip it for otel
                 pass
@@ -2810,7 +2815,7 @@ class BaseToolReturnPart(_RecordsContentFiles, Generic[ContentT_co, MetadataT_co
         )
 
         if settings.include_content and self.content is not None:
-            part['result'] = serialize_any(redact_binary_content(self.content, settings))
+            part['result'] = serialize_any(tool_result_otel_value(self.content, settings))
 
         return [part]
 
@@ -6222,7 +6227,7 @@ class ModelResponse:
                     builtin=True,
                 )
                 if settings.include_content and part.content is not None:  # pragma: no branch
-                    return_part['result'] = serialize_any(redact_binary_content(part.content, settings))
+                    return_part['result'] = serialize_any(tool_result_otel_value(part.content, settings))
 
                 parts.append(return_part)
             elif isinstance(part, SpeechPart):

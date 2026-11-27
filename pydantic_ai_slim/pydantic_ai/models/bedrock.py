@@ -1840,8 +1840,9 @@ class BedrockConverseModel(Model[BaseClient]):
         # system prompt/instructions) always needs a synthetic user turn. Beyond that, most model
         # families also reject a conversation that starts with an assistant turn (e.g. a
         # `message_history` that begins with a `ModelResponse`) with "A conversation must start with
-        # a user message...", so we synthesize a leading user turn for them too. Anthropic and Qwen
-        # accept a leading assistant turn, so we leave their history untouched.
+        # a user message...", so we synthesize a leading user turn for them too. Models with
+        # `bedrock_supports_leading_assistant_message` (e.g. Anthropic and Qwen) accept a leading
+        # assistant turn, so we leave their history untouched.
         # Note: several models reject whitespace-only text, so we use a period.
         if not processed_messages or (
             processed_messages[0]['role'] != 'user'
@@ -2457,8 +2458,8 @@ def _merge_consecutive_user_messages(
     """Merge together sequential user messages.
 
     Some models reject a user message that co-locates a `toolResult` block with other content: Anthropic rejects
-    documents and video next to it, while Llama and Mistral reject anything sharing the turn (the `toolResult` must be
-    alone). When the combined content isn't co-locatable (per `colocatable_content`), split the turns instead of
+    documents and video next to it, while Llama and Pixtral Large reject anything sharing the turn (the `toolResult`
+    must be alone). When the combined content isn't co-locatable (per `colocatable_content`), split the turns instead of
     merging. See https://github.com/pydantic/pydantic-ai/issues/6081 and `bedrock_tool_result_colocatable_content`.
     `cachePoint` blocks are cache markers, not content, so they never force a split.
     """

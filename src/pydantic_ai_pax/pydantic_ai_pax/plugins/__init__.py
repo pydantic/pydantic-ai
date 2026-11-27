@@ -1200,6 +1200,8 @@ class PluginHost(Generic[DepsT]):
     def save_settings(self, settings: BaseModel, /) -> None:
         """Remember new settings for this plugin, as `plugins add` would; they are stored in plaintext.
 
+        A plugin loaded for one launch with `pax -x` keeps its saved enabled flag as it was.
+
         Never save a secret: keep it in `/keys` and save a `KeyReference` naming it. A host built
         outside the loader keeps the change for this load only. Raises `ValueError`, saving nothing,
         when the dump is not a JSON object that validates back into the model, as `host.settings`

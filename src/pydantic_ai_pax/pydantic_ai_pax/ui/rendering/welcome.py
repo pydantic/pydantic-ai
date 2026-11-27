@@ -23,6 +23,8 @@ def print_welcome(project: ProjectSettings, console: Console, *, worktree: Workt
         style=theme.color(theme.MUTED),
     )
     _report_project(project, console)
+    # Sets the first prompt off from the welcome, as each later prompt is set off from the reply before it.
+    console.print()
 
 
 def _report_project(project: ProjectSettings, console: Console) -> None:

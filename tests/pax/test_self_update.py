@@ -67,6 +67,7 @@ from pydantic_ai_pax.ui.menus.update_menu import ABOUT_MAX_AGE, VERSION, AboutSo
 from tests.pax.dialog_script import Back, Confirm, ScriptedDialogs
 from tests.pax.menu_script import Script, make_context, pick
 from tests.pax.test_app_edges import inputs
+from tests.pax.test_plugin_flag import PROBE
 
 SHA = '4bd401a5539aa96b9b67753092fd7f8b90e4dc8a'
 NEWER = '9e08a34ee0000000000000000000000000000000'
@@ -785,7 +786,7 @@ async def test_restart_imports_nothing_after_the_install(tmp_path: Path, monkeyp
 
 def _args(**options: object) -> argparse.Namespace:
     defaults: dict[str, object] = dict(
-        agent=None, model=None, request_limit=None, database=None, web=False, port=None, token_file=None
+        agent=None, model=None, request_limit=None, database=None, web=False, port=None, token_file=None, plugin=[]
     )
     return argparse.Namespace(**(defaults | options))
 
@@ -828,6 +829,17 @@ def test_relaunch_argv(tmp_path: Path) -> None:
         str(tmp_path / 'c.db'),
         '--resume',
         'abc',
+    ]
+    # The launch's `-x` plugins still loaded restart too; one dropped since launch (`gone`) stays off.
+    plugins = _args(plugin=['sandbox', 'gone', 'mcp'])
+    assert relaunch_argv(plugins, executable='/b/pax', session_id='s', launch_plugins=['sandbox', 'mcp']) == [
+        '/b/pax',
+        '--plugin',
+        'sandbox',
+        '--plugin',
+        'mcp',
+        '--resume',
+        's',
     ]
 
 
@@ -895,6 +907,42 @@ def test_cli_hands_the_web_ui_to_the_new_build(tmp_path: Path, monkeypatch: pyte
     ]
     assert WEB_TOKEN not in ' '.join(argv)
     assert os.environ['CLAI_RELAUNCH_WEB'] == f'4321 {WEB_TOKEN}'
+
+
+def test_update_restarts_with_the_plugins_still_launched(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """A plugin disabled during the launch stays off after `/update`, as after `/reload`."""
+    updates, _ = _updates(['main'])
+
+    def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
+        return updates
+
+    monkeypatch.setattr(session_runtime, 'Updates', build)
+    inputs(monkeypatch, ['/plugins disable first', '/update now', '/exit'])
+    real_chat = app.chat
+
+    async def chat(*args: object, store: SettingsStore, launch_plugins: Sequence[str], **kwargs: object) -> None:
+        # The CLI's own session, over plugins that load without a model or network.
+        await real_chat(
+            Agent(TestModel()),
+            deps=None,
+            settings=Settings(model='test', update_channel='main'),
+            console=Console(file=StringIO(), width=200),
+            store=store,
+            builtin_plugins=[PROBE.model_copy(update={'id': name}) for name in ('first', 'second')],
+            launch_plugins=launch_plugins,
+        )
+
+    execs: list[list[str]] = []
+
+    def execv(path: str, argv: list[str]) -> None:
+        execs.append(argv)
+
+    monkeypatch.setattr(app, 'chat', chat)
+    monkeypatch.setattr(os, 'execv', execv)
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr('sys.argv', ['pax', '--database', 'config.db', '-x', 'first', '-x', 'second'])
+    cli_module.run()
+    assert execs == [['/tools/pax', '--plugin', 'second', '--database', str(tmp_path / 'config.db')]]
 
 
 @pytest.mark.parametrize(

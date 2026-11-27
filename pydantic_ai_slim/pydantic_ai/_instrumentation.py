@@ -8,7 +8,7 @@ from contextlib import AbstractContextManager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
 from decimal import Decimal
-from functools import lru_cache
+from functools import lru_cache, partial
 from typing import TYPE_CHECKING, Any, ClassVar, Literal, Protocol, TypeAlias, cast
 from urllib.parse import urlparse
 
@@ -31,7 +31,7 @@ if TYPE_CHECKING:
     from genai_prices.types import PriceCalculation
 
     from pydantic_ai.capabilities.abstract import AbstractCapability
-    from pydantic_ai.messages import InstructionPart, ModelMessage, ModelRequest, ModelResponse
+    from pydantic_ai.messages import InstructionPart, ModelMessage, ModelRequest, ModelResponse, MultiModalContent
     from pydantic_ai.models import AbstractModel, ModelRequestContext, ModelRequestParameters
     from pydantic_ai.models.instrumented import InstrumentationSettings
     from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
@@ -351,9 +351,43 @@ def redact_binary_content(value: Any, settings: InstrumentationSettings) -> obje
     """
     if settings.include_binary_content:
         return value
+    return _walk_binary_content(value, media_part=None, redact=True)
+
+
+def tool_result_otel_value(value: Any, settings: InstrumentationSettings) -> object:
+    """Prepare what a tool or output function returned for a span attribute, with its media as message parts.
+
+    The GenAI semantic conventions leave a tool's result untyped (`gen_ai.tool.call.result`, and the
+    `tool_call_response` message part), so nothing there says how an image in it is recorded. Each
+    `BinaryContent`, media URL and uploaded file in the result becomes the `blob`, `uri` or `file` part a
+    user prompt records it as, instead of the type's own serialization, so a backend that renders media in
+    messages renders it here too. The part honors `include_binary_content` itself, so the result needs no
+    separate redaction.
+
+    Walked to the depth `redact_binary_content` walks: containers and `ToolReturn`, not a user's own model.
+    """
+    from pydantic_ai.messages import multi_modal_otel_part
+
+    return _walk_binary_content(
+        value,
+        media_part=lambda item: multi_modal_otel_part(item, settings),
+        redact=not settings.include_binary_content,
+    )
+
+
+def _walk_binary_content(
+    value: Any, *, media_part: Callable[[MultiModalContent], object] | None, redact: bool
+) -> object:
+    """Walk `value` replacing its media: with `media_part`'s message part, or, without one, `BinaryContent` redacted.
+
+    `redact` also drops the base64 data an MCP Apps record in a `ToolReturn`'s metadata keeps in wire form.
+    """
     try:
-        return _redact_binary_content(value, set())
+        return _replace_binary_content(value, set(), media_part, redact)
     except Exception as e:
+        if not redact:
+            # Nothing is being excluded, so the caller's own serialization fallback is safe to use.
+            return value
         # Instrumentation must not fail an otherwise-successful run, and the value can't be handed
         # back to make that happen: the callers fall back to `str(value)`, whose `BinaryContent`
         # repr prints the very data the flag excludes. Only the exception's type is reported for
@@ -361,16 +395,22 @@ def redact_binary_content(value: Any, settings: InstrumentationSettings) -> obje
         return f'Unable to redact binary content: {type(e).__name__}'
 
 
-def _redact_binary_content(value: Any, active: set[int]) -> object:
+def _replace_binary_content(
+    value: Any, active: set[int], media_part: Callable[[MultiModalContent], object] | None, redact: bool
+) -> object:
     from pydantic_ai._deferred import DeferredToolRequests
     from pydantic_ai._mcp_apps import redact_mcp_app_binary
-    from pydantic_ai.messages import BinaryContent, ToolReturn
+    from pydantic_ai.messages import BinaryContent, ToolReturn, is_multi_modal_content
 
+    if media_part is not None and is_multi_modal_content(value):
+        return media_part(value)
     identity = id(value)
     if not isinstance(value, (BinaryContent, ToolReturn, DeferredToolRequests, Mapping, list, tuple)):
         return value
     if identity in active:
         return CIRCULAR_REFERENCE_PLACEHOLDER
+
+    walk = partial(_replace_binary_content, active=active, media_part=media_part, redact=redact)
 
     # Tracks the objects on the path currently being walked, not every object seen, so that the
     # same `BinaryContent` appearing twice side by side is redacted twice rather than the second
@@ -381,15 +421,15 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
             return {
                 'media_type': value.media_type,
                 # Typed `dict[str, Any]`, so it can hold binary content of its own.
-                'vendor_metadata': _redact_binary_content(value.vendor_metadata, active),
+                'vendor_metadata': walk(value.vendor_metadata),
                 'kind': value.kind,
                 'identifier': value.identifier,
             }
         if isinstance(value, ToolReturn):
             return {
-                'return_value': _redact_binary_content(value.return_value, active),
-                'content': _redact_binary_content(value.content, active),
-                'metadata': _redact_binary_content(redact_mcp_app_binary(value.metadata), active),
+                'return_value': walk(value.return_value),
+                'content': walk(value.content),
+                'metadata': walk(redact_mcp_app_binary(value.metadata) if redact else value.metadata),
                 # Tool names, so never binary.
                 'tools': value.tools,
                 'kind': value.kind,
@@ -398,20 +438,17 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
             # Carries the metadata a deferring tool attached, so the run's own output has to drop
             # the same binary the tool's span already did.
             return {
-                'calls': _redact_binary_content(value.calls, active),
-                'approvals': _redact_binary_content(value.approvals, active),
-                'metadata': _redact_binary_content(value.metadata, active),
+                'calls': walk(value.calls),
+                'approvals': walk(value.approvals),
+                'metadata': walk(value.metadata),
                 # `validated_args` is left out: it's already dumped to JSON, where a validation hook's
                 # `BinaryContent` or `bytes` is base64 text that can't be told apart from other text.
                 # Kind names, so never binary; serialized only when there are questions, as the type does.
                 **({'_kinds': value._kinds} if value._kinds else {}),  # pyright: ignore[reportPrivateUsage]
             }
         if isinstance(value, Mapping):
-            return {  # pyright: ignore[reportUnknownVariableType]
-                key: _redact_binary_content(item, active)
-                for key, item in value.items()  # pyright: ignore[reportUnknownVariableType]
-            }
-        return [_redact_binary_content(item, active) for item in value]  # pyright: ignore[reportUnknownVariableType]
+            return {key: walk(item) for key, item in value.items()}  # pyright: ignore[reportUnknownVariableType]
+        return [walk(item) for item in value]  # pyright: ignore[reportUnknownVariableType]
     finally:
         active.discard(identity)
 

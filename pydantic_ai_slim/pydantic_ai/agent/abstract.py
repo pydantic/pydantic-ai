@@ -40,6 +40,7 @@ from .. import (
     usage as _usage,
 )
 from .._cancel import CancellationToken, RunBinding, provide_run_binding
+from .._compaction_requests import compaction_only_run
 from .._json_schema import JsonSchema
 from .._output import types_from_output_spec
 from .._run_context import set_current_run_context
@@ -49,7 +50,7 @@ from ..conversation import Conversation
 from ..exceptions import RunCancelled
 from ..output import OutputDataT, OutputSpec, PendingModelResponse
 from ..result import AgentStream, FinalResult, StreamedRunResult
-from ..run import AgentRun, AgentRunResult, AgentRunResultEvent
+from ..run import AgentRun, AgentRunResult, AgentRunResultEvent, CompactionRunResult
 from ..settings import ModelSettings
 from ..template import TemplateStr
 from ..tool_manager import ToolManager
@@ -927,6 +928,134 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 spec=spec,
             )
         )
+
+    async def compact_history(
+        self,
+        message_history: Sequence[_messages.ModelMessage],
+        *,
+        focus: str | None = None,
+        reason: _messages.CompactionReason = 'manual',
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
+        usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
+    ) -> CompactionRunResult:
+        """Compact a message history without continuing the conversation, for example while the user is idle.
+
+        It's a run that ends after its compaction step: like [`run()`][pydantic_ai.agent.AbstractAgent.run] with
+        `compact=`, it compacts the history before its first model request, with the capabilities'
+        [`compact_history`](../capabilities/compaction.md#the-compaction-hook) hooks and the
+        [compaction events](../capabilities/compaction.md#compaction-events), and then ends instead of sending that
+        request. Its whole lifecycle runs, so `after_run` gets its result, with an `output` of `None`, and under
+        [durable execution](../durable_execution/overview.md) it's a run like any other. No model request is sent, so
+        `after_model_request` hooks don't run.
+
+        If no capability compacts, or a [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent] listener
+        cancels the compaction, the result holds the history as it was given and no compactions. On an agent with no
+        capability that has a `compact_history` hook, no compaction starts and the run also warns, with a
+        `UserWarning`, that the request was dropped. A capability that answers the request itself, like a
+        `wrap_model_request` that doesn't call its handler, or that ends the step another way, such as with a retry or
+        a submitted output, also means nothing is compacted: its response is discarded, and the run never continues
+        the conversation. A message a hook queues during the run with
+        [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] isn't answered, so `all_messages()` ends with it
+        as a request, and the next run sends it with its prompt.
+
+        It relies on this agent's [`run()`][pydantic_ai.agent.AbstractAgent.run] reaching an
+        [`Agent`][pydantic_ai.agent.Agent] run, and the first `Agent` run it starts is the one that compacts: a
+        `run()` that first runs another agent, like a router or a guardrail, has that one compact instead. A `run()`
+        that never reaches an `Agent` run raises [`UserError`][pydantic_ai.exceptions.UserError] once it returns.
+
+        Example:
+        ```python {test="skip"}
+        from pydantic_ai import Agent
+        from pydantic_ai.capabilities import NativeCompaction
+
+        agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[NativeCompaction()])
+
+        async def main():
+            result = await agent.run('Our API uses PostgreSQL 17 behind pgbouncer. Note that down.')
+            compacted = await agent.compact_history(result.all_messages(), focus='the infrastructure decisions')
+            result = await agent.run('Which database do we use?', message_history=compacted.all_messages())
+        ```
+
+        Args:
+            message_history: The history to compact. It can't end with tool calls that weren't answered yet, or with
+                a suspended response, which a run has to continue first.
+            focus: What the compaction should keep, like the argument to a `/compact` command, given to the hooks as
+                [`CompactionRequest.focus`][pydantic_ai.capabilities.CompactionRequest.focus].
+            reason: Why the history is compacted, reported on the compaction events and the result's
+                [`compactions`][pydantic_ai.agent.CompactionRunResult.compactions], like `'cache_expiry'` when
+                compacting before the prompt cache expires.
+            conversation_id: ID of the conversation the history belongs to. If omitted, falls back to the most
+                recent `conversation_id` on `message_history`, as for [`run()`][pydantic_ai.agent.AbstractAgent.run].
+            run_id: Optional ID for this run, as for [`run()`][pydantic_ai.agent.AbstractAgent.run].
+            model: Optional model to compact for, required if `model` was not set when creating the agent.
+            instructions: Optional additional instructions for the conversation's request the history is compacted
+                with.
+            deps: Optional dependencies to use for this run.
+            model_settings: Optional settings for the conversation's request the history is compacted with.
+            usage_limits: Optional limits on token usage.
+            cancellation_token: Token used to cancel this run from another task or thread.
+            timeout: Optional maximum duration of the run, in seconds.
+            usage: Optional usage to start with.
+            metadata: Optional metadata to attach to this run.
+            infer_name: Whether to try to infer the agent name from the call frame if it's not set.
+            toolsets: Optional additional toolsets for this run.
+            event_stream_handler: Optional handler for this run's events, such as the compaction events.
+            capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/)
+                for this run, merged with the agent's configured capabilities.
+            spec: Optional agent spec to apply for this run. At run time, spec values are additive.
+
+        Returns:
+            The compacted history, the compaction's record and the run's usage.
+        """
+        if infer_name and self.name is None:
+            self._infer_name(inspect.currentframe())
+
+        compact: CompactionOptions = {'reason': reason}
+        if focus is not None:
+            compact['focus'] = focus
+        # Through `run()`, so an agent wrapper's run methods, like a durable agent's, see a run like any other.
+        with compaction_only_run() as pending:
+            run_result = await self.run(
+                message_history=message_history,
+                conversation_id=conversation_id,
+                run_id=run_id,
+                model=model,
+                instructions=instructions,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                cancellation_token=cancellation_token,
+                timeout=timeout,
+                usage=usage,
+                metadata=metadata,
+                infer_name=False,
+                toolsets=toolsets,
+                event_stream_handler=event_stream_handler,
+                capabilities=capabilities,
+                compact=compact,
+                spec=spec,
+            )
+        if not pending.claimed:
+            # The run that returned ran however its `run()` runs, so its history may well continue the conversation.
+            raise exceptions.UserError(
+                f'`compact_history()` needs the `run()` of {type(self).__name__} to reach an `Agent` run, which '
+                'compacts the history and ends, but it returned without starting one: nothing was compacted.'
+            )
+        return CompactionRunResult._of(run_result)  # pyright: ignore[reportPrivateUsage]
 
     @overload
     def run_stream(

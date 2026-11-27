@@ -163,10 +163,11 @@ class PluginEntry(Generic[DepsT]):
         """Human-readable enabled/loaded/failed state."""
         if self.included_in is not None:
             return f'included in {self.included_in}'
+        if self.loaded is not None:
+            # Disabled but loaded only for this launch, as `pax -x NAME` loads it: off again next time.
+            return 'enabled, loaded' if self.declaration.enabled else 'disabled, loaded for this launch'
         if not self.declaration.enabled:
             return 'disabled'
-        if self.loaded is not None:
-            return 'enabled, loaded'
         return f'enabled, failed: {self.error}' if self.error else 'enabled, not loaded'
 
 
@@ -464,11 +465,21 @@ class SessionPlugins(Generic[DepsT]):
         for failure in failures:
             await self.fire(failure)
 
+    def wanted(self, entry: PluginEntry[DepsT]) -> bool:
+        """Whether `entry` should be loaded: enabled, or named by `pax -x` for this launch.
+
+        `-x` never loads the project's own declaration, which `declared` passes through as is: that waits
+        for `/plugins enable`, which approves it. Once approved, the saved approval stands in for it.
+        """
+        return entry.declaration.enabled or (
+            entry.name in self._process.launch and entry.declaration is not self._project.get(entry.name)
+        )
+
     def _loads_at_start(self, entry: PluginEntry[DepsT]) -> bool:
-        """Whether `load_all` loads `entry`: enabled, not loaded yet, and not included in a loaded plugin."""
+        """Whether `load_all` loads `entry`: enabled or launched, not loaded yet, and not included in a loaded plugin."""
         # From what is loaded now: a plugin loaded earlier in this loop may include this one.
         return (
-            entry.declaration.enabled
+            self.wanted(entry)
             and entry.loaded is None
             and included_by(entry.declaration.factory, self._loaded_includes()) is None
         )
@@ -533,10 +544,12 @@ class SessionPlugins(Generic[DepsT]):
     def _host(self, entry: PluginEntry[DepsT], declaration: PluginSettings, *, process: bool) -> PluginHost[DepsT]:
         """The plugin's host. A process-scoped plugin's follows the session being handled, else this one."""
         host: PluginHost[DepsT] | None = None
+        # Taken now: `/plugins disable` or `remove` drops the name from the launch before other sessions unload it.
+        launched = entry.name in self._process.launch
 
         def save(settings: dict[str, JsonValue]) -> None:
             assert host is not None, 'settings are saved once the plugin is built'
-            self._save(entry, host, settings)
+            self._save(entry, host, settings, launched=launched)
 
         def here() -> PluginHost[None]:
             return self._process.here(self)._base
@@ -636,10 +649,13 @@ class SessionPlugins(Generic[DepsT]):
         declaration = PluginSettings.model_validate({**saved.model_dump(), 'settings': applied.settings})
         return declaration, ignored_notice(entry.name, applied.ignored)
 
-    def _save(self, entry: PluginEntry[DepsT], host: PluginHost[DepsT], settings: dict[str, JsonValue]) -> None:
+    def _save(
+        self, entry: PluginEntry[DepsT], host: PluginHost[DepsT], settings: dict[str, JsonValue], *, launched: bool
+    ) -> None:
         """Persist a host's saved settings, or, while `/plugins add` is trying them, update what it will save.
 
         Saved values this build ignored are written back unchanged, with their tags: it cannot judge them.
+        A plugin `launched` for this launch only leaves the saved declaration as enabled or disabled as it is.
         """
         update: dict[str, object] = {'settings': settings, 'enabled': True}
         store = self._process.store
@@ -649,6 +665,8 @@ class SessionPlugins(Generic[DepsT]):
             return
         # The declaration saved now, not at load: another Pax process may have replaced it since.
         stored = self._process.stored(entry.name)
+        if launched:
+            update['enabled'] = (stored or entry.declaration).enabled
         if stored is None:
             store.save_plugin(entry.declaration.model_copy(update=update), requires=host.requirements)
             return
@@ -818,10 +836,10 @@ class SessionPlugins(Generic[DepsT]):
         if entry is None or self._is_shared(name):
             return
         try:
-            if entry.loaded is not None and (again or not entry.declaration.enabled):
+            if entry.loaded is not None and (again or not self.wanted(entry)):
                 await self.unload(name)
             now = next((entry for entry in self.entries() if entry.name == name), None)
-            if now is not None and now.declaration.enabled and now.loaded is None and now.included_in is None:
+            if now is not None and self.wanted(now) and now.loaded is None and now.included_in is None:
                 await self.load(name)
         except PluginError as exc:
             self._console.print(str(exc), style=theme.color(theme.ERROR), markup=False)
@@ -864,6 +882,8 @@ class SessionPlugins(Generic[DepsT]):
         _requested('disable', name)
         requires = self._requirements(entry)
         await self.unload(name)
+        # Disabled on purpose: a session started later in this launch doesn't load it again.
+        self._process.launch -= {name}
         self._process.store.save_plugin(entry.declaration.model_copy(update={'enabled': False}), requires=requires)
         await self._load_released(entry)
 
@@ -876,6 +896,8 @@ class SessionPlugins(Generic[DepsT]):
         _requested('remove', name)
         requires = self._requirements(entry)
         await self.unload(name)
+        # Removed on purpose, like a disable: a session started later in this launch doesn't load it again.
+        self._process.launch -= {name}
         checkout_notice = ''
         # A relative path never names a drop-in, only an approval saved before paths were anchored: forget it.
         if entry.path is not None and entry.path.is_absolute() and not entry.shipped:
@@ -909,7 +931,7 @@ class SessionPlugins(Generic[DepsT]):
         """Load the enabled plugins `owner` could include that it no longer keeps off."""
         included = INCLUDED.get(owner.declaration.factory, {})
         for entry in self._registration_order():
-            if entry.declaration.factory in included and entry.declaration.enabled and entry.included_in is None:
+            if entry.declaration.factory in included and self.wanted(entry) and entry.included_in is None:
                 # Like `load_all`: one that fails is reported and keeps its error, and the rest still load.
                 try:
                     await self.load(entry.name)
@@ -921,7 +943,7 @@ class SessionPlugins(Generic[DepsT]):
         await self._process.change(name, lambda: self._reload(name), origin=self, again=True)
 
     async def _reload(self, name: str) -> None:
-        if not self._entry(name).declaration.enabled:
+        if not self.wanted(self._entry(name)):
             raise ValueError(f'Plugin {name} is disabled; enable it before reloading.')
         _requested('reload', name)
         await self._load_again(name, fresh=True)

@@ -50,6 +50,7 @@ from ...messages import (
 from ...native_tools import (
     AbstractNativeTool,
     CodeExecutionTool,
+    ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -60,6 +61,7 @@ from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ...profiles.google import GoogleModelProfile, google_interactions_model_profile
 from ...providers import Provider, infer_provider
 from ...settings import ModelSettings, ThinkingEffort
+from ...usage import RequestUsage
 from .. import (
     Model,
     ModelRequestParameters,
@@ -228,9 +230,16 @@ class GoogleInteractionsModel(Model[Client]):
         return self._provider._configured_model_profile(model_name) or {}  # pyright: ignore[reportPrivateUsage]
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        """Add the Interactions API's profile, and `deprecation` from the schedule of the API the client reaches."""
+        """Add the Interactions API's profile, and `deprecation` from the schedule of the API the client reaches.
+
+        `google_supports_computer_use` is turned off on Google Cloud, as `GoogleModel` turns it off there, so a
+        `ComputerTool` error names `GoogleModel` only where it sends the tool.
+        """
         profile = merge_profile(profile, google_interactions_model_profile(self.model_name))
-        return _google_common.with_deprecation(self.model_name, profile, google_cloud=bool(self.client.vertexai))
+        google_cloud = bool(self.client.vertexai)
+        if google_cloud:
+            profile = merge_profile(profile, GoogleModelProfile(google_supports_computer_use=False))
+        return _google_common.with_deprecation(self.model_name, profile, google_cloud=google_cloud)
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
@@ -281,6 +290,39 @@ class GoogleInteractionsModel(Model[Client]):
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
         """Return all of `native_tool`'s restricting settings, as Interactions' native tools apply none of them."""
         return native_tool.restricting_settings
+
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        # Check before base validation so a computer use model points at `GoogleModel`, which sends the tool, not the
+        # generic error.
+        if self.profile.get('google_supports_computer_use', False) and _google_common.rejects_native_tool(
+            self, model_request_parameters, ComputerTool
+        ):
+            # The `google:` prefix uses the Gemini API, so a Google Cloud model isn't pointed at it.
+            prefix = '' if self.client.vertexai else ', with the `google:` prefix,'
+            raise UserError(
+                f'`ComputerTool` is not supported by `GoogleInteractionsModel`. Use `GoogleModel`{prefix} for computer '
+                f'use with {self.model_name!r}.'
+            )
+        return super().prepare_request(model_settings, model_request_parameters)
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        raise NotImplementedError(
+            'Token counting ahead of the request is not supported by `GoogleInteractionsModel`, as the Interactions '
+            'API has no token-counting endpoint. Use `GoogleModel` to count tokens.'
+        )
+
+    def _no_batch_api_message(self) -> str:
+        return (
+            f'`GoogleInteractionsModel` {self.model_name!r} has no batch API: batch it with `GoogleModel` through the '
+            'Gemini API, with the `google:` provider.'
+        )
 
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         overrides: list[str] = []
