@@ -286,6 +286,7 @@ With transcription disabled:
   are skipped when seeding another realtime session;
 - transcript-less assistant audio cannot be handed off or seeded on any provider.
 
-If a future session must be portable across providers or models, retain transcripts. Filter or
-transform unsupported parts before passing `message_history`; history-processing capabilities do
-not run during realtime seeding.
+If a future session must be portable across providers or models, retain transcripts. To filter or
+transform unsupported parts, filter `message_history` before passing it, or use a
+[history processor](capabilities.md#processing-seeded-history), which runs once over the history
+before it's seeded.

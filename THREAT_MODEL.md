@@ -83,7 +83,7 @@ Canonical guidance: [UI deployment](docs/ui/overview.md) and [web interface](doc
 
 A browser on a WebRTC call can send provider-native control events and read the shared conversation, including seeded history and its tool results. A client-secret flow also gives it a short-lived provider credential. Authorize tools against trusted dependencies, and seed a call only with history its participants may read.
 
-Seeded `message_history` is trusted server-side state, as in a standard run, and history-processing capabilities do not run on it. Sanitize client-supplied history before seeding.
+Seeded `message_history` is trusted server-side state, as in a standard run. `ProcessHistory` and other `before_realtime_connect` hooks run on it once before the session connects, as `before_model_request` does before a standard run's request ([processing seeded history](docs/realtime/capabilities.md#processing-seeded-history)), but that is not a substitute for sanitizing client-supplied history before seeding.
 
 A sideband does not own the call. Closing it detaches the server while the browser's call stays up, and billed, until the browser hangs up or, where the provider supports it, the server does.
 
