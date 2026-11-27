@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Mapping, Sequenc
 from copy import deepcopy
 from datetime import datetime
 from functools import cache
-from typing import TYPE_CHECKING, Any, Generic, Literal, NotRequired, Required, cast, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, NotRequired, Required, Self, cast, overload
 
 import anyio
 from pydantic import ConfigDict, GetJsonSchemaHandler, TypeAdapter, model_serializer, model_validator, with_config
@@ -30,7 +30,7 @@ from ._run_context import (
     CustomEventT,
     no_workspace,
 )
-from ._run_conversation import conversation_from_state, full_history, keep_full_history
+from ._run_conversation import conversation_from_state
 from .capabilities._pending_messages import drain_pending_messages_at_end
 from .conversation import Conversation
 from .output import OutputDataT
@@ -57,14 +57,12 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     run_id: NotRequired[str]
     conversation_id: NotRequired[str]
     conversation_revision: NotRequired[str | None]
-    conversation_unsaved: NotRequired[list[_messages.ModelMessage]]
+    # How many of the conversation's messages its store has, when that's known, and whether they need checking.
+    conversation_stored: NotRequired[int]
     conversation_unchecked: NotRequired[bool]
-    conversation_saved: NotRequired[bool]
-    conversation_merged_tail: NotRequired[_messages.ModelRequest]
-    # Only when a capability dropped or rewrote messages the run was given or added: the conversation's full
-    # history, where an int stands for the message at that index of `messages`, and where the run's own start.
+    # Only when the conversation isn't `messages`, say because a capability trimmed what the model saw: its messages,
+    # where an int stands for the message at that index of `messages`.
     conversation_messages: NotRequired[list[_messages.ModelMessage | int]]
-    conversation_run_start: NotRequired[int]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
 
@@ -85,12 +83,9 @@ class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
     run_id: str
     conversation_id: str
     conversation_revision: str | None
-    conversation_unsaved: list[_messages.ModelMessage]
+    conversation_stored: int
     conversation_unchecked: bool
-    conversation_saved: bool
-    conversation_merged_tail: _messages.ModelRequest
     conversation_messages: list[_messages.ModelMessage | int]
-    conversation_run_start: int
     metadata: dict[str, Any] | None
     traceparent: str | None
 
@@ -129,10 +124,6 @@ _STATE_KEYS = (
     'run_id',
     'conversation_id',
     'conversation_revision',
-    'conversation_unsaved',
-    'conversation_unchecked',
-    'conversation_saved',
-    'conversation_merged_tail',
     'metadata',
 )
 """Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
@@ -570,7 +561,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
         _utils.raise_if_cancelling()
         if isinstance(result, End):
-            keep_full_history(self.ctx.state)
+            self.ctx.state.conversation_log.ended(self.ctx.state.message_history)
         return result
 
     async def _run_node_with_hooks(
@@ -635,7 +626,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                 self._sync_graph_state(result)
             await self._deliver_leftover_events(result, events_handler)
             if isinstance(result, End):
-                keep_full_history(self.ctx.state)
+                self.ctx.state.conversation_log.ended(self.ctx.state.message_history)
             return result
         finally:
             # See _node_error: cached tracebacks must not retain this run or bound callbacks.
@@ -965,29 +956,42 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
 
 def _conversation_log_data(data: dict[str, Any]) -> dict[str, Any]:
-    """The `GraphAgentState.conversation_log` a serialized result's `conversation_messages` and `conversation_run_start` describe.
+    """The `GraphAgentState.conversation_log` a serialized result's conversation keys describe.
 
     An int in `conversation_messages` stands for the message at that index of `messages`; one out of range fails
-    validation, as does a `conversation_run_start` outside the conversation.
+    validation. Without `conversation_messages`, the conversation is `messages`. Older payloads said which messages were
+    stored with `conversation_unsaved`, `conversation_saved` and `conversation_merged_tail`, which are ignored: none is
+    known to be stored, so the store compares the conversation with what it has.
     """
+    log: dict[str, Any] = {}
+    stored = data.get('conversation_stored')
+    if stored is not None:
+        if type(stored) is not int or stored < 0:
+            raise ValueError(f'`conversation_stored` must be a non-negative int, not {stored!r}.')
+        log['stored'] = stored
+        log['checked'] = data.get('conversation_unchecked') is not True
+    if 'conversation_messages' in data:
+        messages_data = _conversation_messages_data(data)
+        log['messages'] = messages_data
+        log['run_start'] = len(messages_data)
+    return log
+
+
+def _conversation_messages_data(data: dict[str, Any]) -> list[Any]:
+    """`conversation_messages`, with each int replaced by the message at that index of `messages`."""
     messages = data.get('messages')
     history = cast('list[Any]', messages) if isinstance(messages, list) else []
-    full = data['conversation_messages']
-    if not isinstance(full, list):
+    listed = data['conversation_messages']
+    if not isinstance(listed, list):
         raise ValueError('`conversation_messages` must be a list.')
     messages_data: list[Any] = []
-    for item in cast('list[Any]', full):
+    for item in cast('list[Any]', listed):
         if type(item) is int and not 0 <= item < len(history):
             raise ValueError(
                 f'`conversation_messages` refers to message {item}, but `messages` holds {len(history)} messages.'
             )
         messages_data.append(history[item] if type(item) is int else item)
-    run_start = data.get('conversation_run_start', 0)
-    if type(run_start) is not int or not 0 <= run_start <= len(messages_data):
-        raise ValueError(
-            f'`conversation_run_start` is {run_start}, but `conversation_messages` holds {len(messages_data)} messages.'
-        )
-    return {'messages': messages_data, 'new_message_index': run_start, 'full': True}
+    return messages_data
 
 
 def _from_legacy_shape(data: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -1076,8 +1080,7 @@ class AgentRunResult(Generic[OutputDataT]):
         for key in _STATE_KEYS:
             if key in data:
                 state_data[key] = data[key]
-        if 'conversation_messages' in data:
-            state_data['conversation_log'] = _conversation_log_data(data)
+        state_data['conversation_log'] = _conversation_log_data(data)
 
         validated: dict[str, Any] = {
             '_output_tool_name': data.get('output_tool_name'),
@@ -1089,6 +1092,12 @@ class AgentRunResult(Generic[OutputDataT]):
             # Left out when absent so the dataclass reports it missing rather than rejecting `None`.
             validated['output'] = data['output']
         return validated
+
+    @model_validator(mode='after')
+    def _restore_conversation(self) -> Self:
+        """Note the loaded history as the one the run ended with, so edits made to it from now on can be told."""
+        self._state.conversation_log.ended(self._state.message_history)
+        return self
 
     @model_serializer(mode='wrap')
     def _serialize(self, handler: SerializerFunctionWrapHandler, info: SerializationInfo) -> _AgentRunResultData[Any]:
@@ -1111,31 +1120,26 @@ class AgentRunResult(Generic[OutputDataT]):
         # Only for a run that continued a stored conversation, so other results keep their shape.
         if self._state.conversation_revision is not None:
             data['conversation_revision'] = self._state.conversation_revision
-        if self._state.conversation_unsaved is not None:
-            data['conversation_unsaved'] = self._state.conversation_unsaved
-        if self._state.conversation_unchecked:
-            data['conversation_unchecked'] = True
-        if self._state.conversation_saved:
-            data['conversation_saved'] = True
-        if self._state.conversation_merged_tail is not None:
-            data['conversation_merged_tail'] = self._state.conversation_merged_tail
-        if (full := full_history(self._state)) is not None:
-            # The messages the history still holds are referred to by their index in it rather than repeated.
-            positions = {id(message): index for index, message in enumerate(self._state.message_history)}
-            data['conversation_messages'] = [positions.get(id(message), message) for message in full[0]]
-            data['conversation_run_start'] = full[1]
+        history = self._state.message_history
+        messages, stored, checked = self._state.conversation_log.conversation(history)
+        if stored is not None:
+            data['conversation_stored'] = stored
+            if not checked:
+                data['conversation_unchecked'] = True
+        if len(messages) != len(history) or any(a is not b for a, b in zip(messages, history)):
+            # The messages the history holds are referred to by their index in it rather than repeated.
+            positions = {id(message): index for index, message in enumerate(history)}
+            data['conversation_messages'] = [positions.get(id(message), message) for message in messages]
         if 'output' in serialized:
             # Absent when the caller filtered it out: an explicit `exclude={'output'}`, or
             # `exclude_none=True` on a `None` output. The handler applies those filters to the
             # stand-in, so honor them here instead of failing the dump that was asked for.
             data['output'] = serialized['output']
         filtered = _filter_serialized(data, info)
-        if filtered.get('messages') is not self._state.message_history:
-            # The caller left out messages, which the full history would hold again and its indices point into,
-            # and the merged tail would hold again.
-            filtered.pop('conversation_messages', None)
-            filtered.pop('conversation_run_start', None)
-            filtered.pop('conversation_merged_tail', None)
+        if filtered.get('messages') is not history:
+            # The caller left out messages, which the conversation would hold again and its indices point into.
+            for key in ('conversation_messages', 'conversation_stored', 'conversation_unchecked'):
+                filtered.pop(key, None)
         return cast('_AgentRunResultData[Any]', filtered)
 
     @overload
@@ -1263,39 +1267,39 @@ class AgentRunResult(Generic[OutputDataT]):
         [`revision`][pydantic_ai.conversation.Conversation.revision] of the conversation it saves,
         so keep that one in a variable to carry into the next run or save again.
 
+        The messages are the history this run was given, as given, then every message the run added.
+        [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] is what the model saw, which
+        can differ: the run tidies the history before sending it, say merging an output tool's stored
+        result and the prompt you appended after it into one request, and a capability like
+        [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory] can trim or rewrite it. Those
+        changes reach only the model, except for three, each matched by object identity: messages
+        appended to the end of the history, a copy of an unsaved request that keeps all of its parts and
+        adds more, which takes the request's place, and a new message holding a
+        [`CompactionPart`][pydantic_ai.messages.CompactionPart], a summary, which goes before the next
+        message the history kept, after any stored ones. Changing a message object in place isn't
+        supported.
+
         When this run continued a conversation that knows which of its messages are stored, its
         [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index] points at
         the messages the store doesn't have yet: the ones this run added, and any the conversation
-        hadn't saved before the run.
+        hadn't saved before the run. When the run changed a stored message, like completing a stored
+        suspended response, the store compares the messages before the index with its own and
+        branches where they differ.
 
-        A capability that trims or rewrites the history, like
-        [`ProcessHistory`][pydantic_ai.capabilities.ProcessHistory], changes what the model is sent
-        and what [`all_messages()`][pydantic_ai.agent.AgentRunResult.all_messages] returns, not the
-        conversation: when it dropped or rewrote messages this run was given or added, the messages
-        are the history as the run was given it followed by every message the run added, with any
-        message the capability put in the history, like a summary, right after the ones it dropped.
-        Storing or carrying the conversation keeps them all, and the capability trims or compacts the
-        full history again on the next run. That full history is fixed when the run ends, so an edit
-        to `all_messages()` after the run doesn't reach it. Otherwise the messages are the same as
-        `all_messages()`, including any message a capability added, and edits to it after the run.
-
-        The run sends a stored request and the request you appended after it, like an output tool's
-        result and your next prompt, as one request. The conversation keeps them apart, as they
-        were stored and appended, so its store gets neither again.
+        Messages appended to `all_messages()` after the run are added to the conversation. Any other
+        edit to it after the run makes the conversation the edited messages, with none known to be
+        stored, so a store compares them all, when the conversation was the same as `all_messages()`.
+        Otherwise the conversation stays as the run ended.
         """
         output = self.output
         return conversation_from_state(
-            self._state,
-            self._new_message_index,
-            messages=list(self.all_messages()),
-            deferred_tool_requests=output if isinstance(output, DeferredToolRequests) else None,
+            self._state, deferred_tool_requests=output if isinstance(output, DeferredToolRequests) else None
         )
 
-    def _conversation_saved(self, revision: str) -> None:
-        """Record that a store saved this result's conversation, so its `conversation` continues from the new revision."""
+    def _conversation_saved(self, revision: str, messages: list[_messages.ModelMessage]) -> None:
+        """Record that a store saved `messages` as this result's conversation, so its `conversation` continues from them."""
         self._state.conversation_revision = revision
-        self._state.conversation_unchecked = False
-        self._state.conversation_saved = True
+        self._state.conversation_log.saved(messages)
 
     @property
     def timestamp(self) -> datetime:

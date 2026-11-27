@@ -550,20 +550,8 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
                     'anyOf': [{'type': 'string'}, {'type': 'null'}],
                     'title': 'Conversation Revision',
                 },
-                'conversation_unsaved': {
-                    'items': {
-                        'discriminator': {
-                            'mapping': {'request': '#/$defs/ModelRequest', 'response': '#/$defs/ModelResponse'},
-                            'propertyName': 'kind',
-                        },
-                        'oneOf': [{'$ref': '#/$defs/ModelRequest'}, {'$ref': '#/$defs/ModelResponse'}],
-                    },
-                    'title': 'Conversation Unsaved',
-                    'type': 'array',
-                },
+                'conversation_stored': {'title': 'Conversation Stored', 'type': 'integer'},
                 'conversation_unchecked': {'title': 'Conversation Unchecked', 'type': 'boolean'},
-                'conversation_saved': {'title': 'Conversation Saved', 'type': 'boolean'},
-                'conversation_merged_tail': {'$ref': '#/$defs/ModelRequest'},
                 'conversation_messages': {
                     'items': {
                         'anyOf': [
@@ -580,7 +568,6 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
                     'title': 'Conversation Messages',
                     'type': 'array',
                 },
-                'conversation_run_start': {'title': 'Conversation Run Start', 'type': 'integer'},
                 'metadata': {
                     'anyOf': [{'additionalProperties': True, 'type': 'object'}, {'type': 'null'}],
                     'title': 'Metadata',
@@ -678,7 +665,7 @@ async def test_a_trimmed_run_result_dumped_without_its_messages_leaves_out_its_w
     for exclude in ({'messages'}, {'messages': {0}}):
         dumped = TYPE_ADAPTER.dump_python(result, exclude=exclude)
         assert 'conversation_messages' not in dumped
-        assert 'conversation_run_start' not in dumped
+        assert 'conversation_stored' not in dumped
         TYPE_ADAPTER.validate_json(TYPE_ADAPTER.dump_json(result, exclude=exclude))
 
 
@@ -697,29 +684,33 @@ async def test_a_run_result_whose_prompt_merged_into_a_stored_request_dumped_wit
     loaded.messages.append(ModelRequest(parts=[UserPromptPart('two')]))
     result = await agent.run(conversation=loaded)
     adapter: TypeAdapter[AgentRunResult[_Answer]] = TypeAdapter(AgentRunResult[_Answer])
-    assert 'conversation_merged_tail' in adapter.dump_python(result)
+    # The conversation keeps the stored request apart from the prompt the run merged into it.
+    assert 'conversation_messages' in adapter.dump_python(result)
 
     for exclude in ({'messages'}, {'messages': {0}}):
-        assert 'conversation_merged_tail' not in adapter.dump_python(result, exclude=exclude)
+        assert 'conversation_messages' not in adapter.dump_python(result, exclude=exclude)
         revived = adapter.validate_json(adapter.dump_json(result, exclude=exclude))
         assert revived.conversation.new_message_index is None
 
 
-def test_a_run_result_whose_merged_tail_is_past_its_messages_leaves_its_conversation_unsplit() -> None:
-    tail = ModelRequest(parts=[UserPromptPart('stored')])
+def test_a_run_result_serialized_by_an_older_version_has_its_conversation_compared() -> None:
+    """The keys older versions said which messages were stored with are ignored, so the store compares them all."""
+    messages = [ModelRequest(parts=[UserPromptPart('stored')]), ModelRequest(parts=[UserPromptPart('appended')])]
     revived = TYPE_ADAPTER.validate_python(
         {
             'output': 'done',
-            'messages': [],
+            'messages': messages,
             'new_message_index': 2,
-            'conversation_unsaved': [ModelRequest(parts=[UserPromptPart('appended')])],
-            'conversation_merged_tail': tail,
+            'conversation_unsaved': messages[1:],
+            'conversation_saved': True,
+            'conversation_merged_tail': messages[0],
+            'conversation_run_start': 1,
         }
     )
 
     conversation = revived.conversation
 
-    assert conversation.messages == []
+    assert conversation.messages == messages
     assert conversation.new_message_index is None
 
 
@@ -730,23 +721,15 @@ def test_a_run_result_whose_whole_conversation_refers_past_its_messages_fails_va
                 'output': 'done',
                 'messages': [{'kind': 'request', 'parts': []}],
                 'conversation_messages': [0, 1],
-                'conversation_run_start': 1,
             }
         )
 
 
-@pytest.mark.parametrize('run_start', [-1, 2, 2.0])
-def test_a_run_result_whose_whole_conversation_starts_outside_it_fails_validation(run_start: float) -> None:
-    with pytest.raises(
-        ValidationError, match=f'`conversation_run_start` is {run_start}, but `conversation_messages` holds 1'
-    ):
+@pytest.mark.parametrize('stored', [-1, 2.0, True])
+def test_a_run_result_whose_stored_count_is_not_a_count_fails_validation(stored: float) -> None:
+    with pytest.raises(ValidationError, match=f'`conversation_stored` must be a non-negative int, not {stored!r}'):
         TYPE_ADAPTER.validate_python(
-            {
-                'output': 'done',
-                'messages': [{'kind': 'request', 'parts': []}],
-                'conversation_messages': [0],
-                'conversation_run_start': run_start,
-            }
+            {'output': 'done', 'messages': [{'kind': 'request', 'parts': []}], 'conversation_stored': stored}
         )
 
 
@@ -757,7 +740,6 @@ def test_a_run_result_whose_whole_conversation_holds_a_bool_does_not_read_it_as_
                 'output': 'done',
                 'messages': [{'kind': 'request', 'parts': []}, {'kind': 'request', 'parts': []}],
                 'conversation_messages': [True],
-                'conversation_run_start': 0,
             }
         )
 
@@ -769,6 +751,5 @@ def test_a_run_result_whose_whole_conversation_is_not_a_list_fails_validation() 
                 'output': 'done',
                 'messages': [{'kind': 'request', 'parts': []}],
                 'conversation_messages': {'0': 0},
-                'conversation_run_start': 0,
             }
         )
