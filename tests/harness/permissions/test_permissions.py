@@ -2158,12 +2158,9 @@ class TestInheritedBySubAgents:
         assert await self._delegate(tmp_path, Permissions[None]('full', max_mode=max_mode)) == (True, True)
         assert prompts and set(prompts) == {'go'}
 
-    async def test_a_reviewers_approval_of_a_delegates_own_hold_does_not_answer_the_ceiling(
-        self, tmp_path: Path
-    ) -> None:
-        """The delegate's own `'read-only'` holds the call and the reviewer approves it; the inherited ceiling holds it
-        again. The run's handlers have answered this round, so the delegate ends with the call held and the run fails
-        instead of running it; one approval decision point in core (#14593) would let a person be asked instead."""
+    async def test_a_delegates_inherited_ceiling_is_left_to_a_person_not_the_reviewer(self, tmp_path: Path) -> None:
+        """The inherited ceiling holds the call for a person before the delegate's own `'read-only'` asks anyone, so
+        the reviewer leaves it alone and `DenyUnanswered`, standing in for a person who didn't answer, denies it."""
         agent = Agent[None, str](
             _delegating('touch made'),
             deps_type=type(None),
@@ -2176,8 +2173,7 @@ class TestInheritedBySubAgents:
                 DenyUnanswered[None](),
             ],
         )
-        with pytest.raises(UserError, match='`DeferredToolRequests` is not among output types'):
-            await agent.run('go', capabilities=[Permissions[None]('full', max_mode='read-only')])
+        await agent.run('go', capabilities=[Permissions[None]('full', max_mode='read-only')])
         assert not (tmp_path / 'made').exists()
 
 
