@@ -4042,7 +4042,7 @@ class DocumentCitationSource:
     __repr__ = _utils.dataclasses_no_defaults_repr
 
 
-@dataclass(repr=False, kw_only=True, frozen=True)
+@dataclass(repr=False)
 class WorkspaceLocation:
     """A file in the [workspace](../workspace.md) the response ran in,
     [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref].
@@ -4052,6 +4052,8 @@ class WorkspaceLocation:
 
     path: str
     """The file's absolute path inside the workspace, as the model wrote it."""
+
+    _: KW_ONLY
 
     kind: Literal['workspace'] = 'workspace'
     """Location type identifier, used as a discriminator for deserialization."""

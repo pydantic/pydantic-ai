@@ -779,10 +779,14 @@ class Workspace(WorkspaceBackend):
         backend: WorkspaceBackend = self
         while isinstance(backend, Workspace):
             backend = backend._backend
-        if not isinstance(backend, (SupportsRealpath, SupportsCommands)):
+        if '\0' in path or not isinstance(backend, (SupportsRealpath, SupportsCommands)):
             return None
-        target = await self.realpath(await self.resolve(path))
-        return target if is_within(target, await self.working_dir(), sep=self.paths.sep) else None
+        working_dir, resolved = await self.working_dir(), await self.resolve(path)
+        # Checked as text first, so a path such as a Windows UNC share is refused before resolving it touches it.
+        if not is_within(resolved, working_dir, sep=self.paths.sep):
+            return None
+        target = await self.realpath(resolved)
+        return target if is_within(target, working_dir, sep=self.paths.sep) else None
 
     async def write_text(self, path: str, content: str, *, encoding: str = 'utf-8') -> None:
         """Write text to a file."""

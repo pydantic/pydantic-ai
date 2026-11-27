@@ -78,6 +78,8 @@ async def test_in_working_dir(tmp_path: Path):
     assert await workspace.in_working_dir(f'{root}/out/report.csv')
     assert not await workspace.in_working_dir(f'{root}/../secret.txt')
     assert not await workspace.in_working_dir('/etc/passwd')
+    assert not await workspace.in_working_dir('//attacker.example/share/x')  # refused before it is resolved
+    assert not await workspace.in_working_dir(f'{root}/a\0b')  # from history a client sent
     assert not await workspace.in_working_dir(f'{root}/out/link.txt')
 
 
