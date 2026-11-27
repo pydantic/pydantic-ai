@@ -10,11 +10,12 @@ from dataclasses import replace
 
 import pytest
 
-from pydantic_ai import Agent, ModelRequest, ModelResponse, UserPromptPart
+from pydantic_ai import Agent, ModelRequest, ModelResponse, ToolReturnPart, UserPromptPart
+from pydantic_ai.models import ModelRequestParameters
 
 from .._inline_snapshot import snapshot
 from ..conftest import try_import
-from .mock_xai import MockXai, create_response, get_grok_text_chunk, get_mock_chat_create_kwargs
+from .mock_xai import MockXai, create_response, create_tool_call, get_grok_text_chunk, get_mock_chat_create_kwargs
 
 with try_import() as imports_successful:
     from pydantic_ai.models.xai import XaiModel, XaiModelSettings
@@ -103,3 +104,34 @@ async def test_xai_previous_response_id_starts_over_without_a_stored_digest(allo
     assert [message['role'] for message in second_kwargs['messages']] == snapshot(
         ['ROLE_SYSTEM', 'ROLE_USER', 'ROLE_ASSISTANT', 'ROLE_USER']
     )
+
+
+async def test_xai_previous_response_id_orders_tool_results_by_the_stored_responses_calls(allow_model_requests: None):
+    """The stored response isn't sent, but its tool calls still set the order the results that follow it go out in.
+
+    `Model.prepare_messages` already puts tool results in call order, so this sends the continued request unprepared
+    to check `XaiModel`'s own ordering.
+    """
+    calls = [create_tool_call('call_a', 'a', {}), create_tool_call('call_b', 'b', {})]
+    mock_client = MockXai.create_mock([create_response(tool_calls=calls), create_response(content='done')])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    params = ModelRequestParameters()
+    history: list[ModelRequest | ModelResponse] = [ModelRequest(parts=[UserPromptPart('hello')])]
+    stored = await m.request(m.prepare_messages(history, params), XaiModelSettings(xai_store_messages=True), params)
+    assert stored.history_digest is not None
+    results = ModelRequest(
+        parts=[
+            ToolReturnPart(tool_name='b', content='from b', tool_call_id='call_b'),
+            ToolReturnPart(tool_name='a', content='from a', tool_call_id='call_a'),
+        ]
+    )
+
+    await m.request(
+        [*history, stored, results],
+        XaiModelSettings(xai_store_messages=True, xai_previous_response_id='grok-123'),
+        params,
+    )
+
+    second_kwargs = get_mock_chat_create_kwargs(mock_client)[1]
+    assert second_kwargs['previous_response_id'] == 'grok-123'
+    assert [message['tool_call_id'] for message in second_kwargs['messages']] == snapshot(['call_a', 'call_b'])
