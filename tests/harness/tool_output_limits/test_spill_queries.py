@@ -7,7 +7,7 @@ from pathlib import Path
 import pytest
 from inline_snapshot import snapshot
 
-from pydantic_ai_harness.tool_output_limits import GREP_TOOL_NAME
+from pydantic_ai_harness.tool_output_limits import GREP_TOOL_NAME, READ_TOOL_NAME
 from tests.harness.tool_output_limits._spill_query import query_spill
 
 _LOG = '\n'.join(f'ERROR {i}' if i in {5, 7, 15} else f'line {i}' for i in range(1, 21))
@@ -168,3 +168,18 @@ class TestGrepToolResult:
         out = await query_spill(tmp_path, _LOG, GREP_TOOL_NAME, {'pattern': 'line'})
         assert len(out) > 50
         assert 'Tool output too large' not in out
+
+
+class TestReadToolResultPastEnd:
+    async def test_line_offset_past_the_end_names_the_bad_offset(self, tmp_path: Path) -> None:
+        out = await query_spill(tmp_path, _LOG, READ_TOOL_NAME, {'offset': 100})
+        assert out.endswith(': 20 matching line(s); showing 0; offset is at or past the end]')
+
+    async def test_byte_offset_past_the_end_names_the_bad_offset(self, tmp_path: Path) -> None:
+        payload = 'x' * 100
+        out = await query_spill(tmp_path, payload, READ_TOOL_NAME, {'unit': 'bytes', 'offset': 1000, 'limit': 10})
+        assert out.endswith(f'of {len(payload.encode())} (end exclusive); offset is at or past the end]')
+
+    async def test_offset_within_the_result_stays_quiet(self, tmp_path: Path) -> None:
+        out = await query_spill(tmp_path, _LOG, READ_TOOL_NAME, {'offset': 1, 'limit': 2})
+        assert 'at or past the end' not in out

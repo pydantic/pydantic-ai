@@ -1120,7 +1120,14 @@ async def _line_slice(
     next_lines = reader.call(f'offset={first + page.shown}{filtered}')
     more = f'the next lines are at {next_lines}' if page.shown < len(window) else ''
     capped = await _capped(store, page, more, reader)
-    return '\n'.join([f'[handle {handle!r}: {total:,} matching line(s); showing {page.shown}{capped}]', *page.lines])
+    # An empty window can mean "nothing left" (a valid final page) or "the
+    # offset is at/past the end" (a bad offset). Say which, so a model that
+    # walked past the last line retries with a smaller offset instead of
+    # reading the empty page as a failed result.
+    past_end = '; offset is at or past the end' if offset > 0 and offset >= total else ''
+    return '\n'.join(
+        [f'[handle {handle!r}: {total:,} matching line(s); showing {page.shown}{capped}{past_end}]', *page.lines]
+    )
 
 
 async def _aiter(entries: Iterable[_Entry]) -> AsyncIterator[_GroupedEntry]:
@@ -1150,7 +1157,8 @@ async def _byte_slice(store: OverflowStore, handle: str, offset: int, limit: int
     else:
         start = min(offset, total)
         end = start + len(kept)
-    header = f'[handle {handle!r}: bytes {start}-{end} of {total} (end exclusive)]'
+    past_end = '; offset is at or past the end' if offset > 0 and offset >= total else ''
+    header = f'[handle {handle!r}: bytes {start}-{end} of {total} (end exclusive){past_end}]'
     return '\n'.join([header, kept.decode('utf-8', errors='replace')]) if kept else header
 
 
