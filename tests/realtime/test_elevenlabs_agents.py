@@ -992,8 +992,7 @@ async def test_tool_sync_creates_updates_and_repoints() -> None:
     # `'sync'` mode: create the missing tool, update the differing one (its id resolved through the
     # workspace tool listing, since resolved agent tools don't carry ids), and re-point the agent's
     # `tool_ids` at the synced set behind the untouched server-side tools.
-    # A timeout raised on the ElevenLabs side survives the update, which would otherwise reset it.
-    differing = dict(WEATHER_TOOL_REMOTE, description='Stale description.', response_timeout_secs=60)
+    differing = dict(WEATHER_TOOL_REMOTE, description='Stale description.')
     webhook: dict[str, Any] = {'type': 'webhook', 'name': 'crm_lookup'}
     unchanged: dict[str, Any] = {
         'type': 'client',
@@ -1059,12 +1058,63 @@ async def test_tool_sync_creates_updates_and_repoints() -> None:
                 'properties': {'city': {'type': 'string', 'description': 'City name'}},
                 'required': ['city'],
             },
-            'response_timeout_secs': 60,
         }
     }
     repointed = json.loads(recorder.requests[5].content)
     assert repointed == {
         'conversation_config': {'agent': {'prompt': {'tool_ids': ['tool_9', 'tool_new', 'tool_1', 'tool_5']}}}
+    }
+
+
+async def test_tool_sync_update_keeps_the_tools_elevenlabs_settings() -> None:
+    # An update replaces the whole tool config, resetting every setting it leaves out to its default (verified
+    # live), so the settings made on the ElevenLabs side, which Pydantic AI has no counterpart for, go along with it.
+    elevenlabs_settings: dict[str, Any] = {
+        'response_timeout_secs': 45,
+        'disable_interruptions': True,
+        'pre_tool_speech': 'force',
+        'tool_call_sound': 'typing',
+        'tool_call_sound_behavior': 'always',
+        'execution_mode': 'post_tool_speech',
+        'tool_error_handling_mode': 'hide',
+        'assignments': [{'source': 'response', 'dynamic_variable': 'summary', 'value_path': 'summary'}],
+        'dynamic_variables': {'dynamic_variable_placeholders': {'store_id': 'abc'}},
+    }
+    differing = dict(WEATHER_TOOL_REMOTE, description='Stale description.', **elevenlabs_settings)
+    recorder = RestRecorder(
+        agent_json(tools=[differing], tool_ids=['tool_1']),
+        extra={
+            ('GET', '/v1/convai/tools'): httpx2.Response(200, json=tools_listing(('tool_1', 'client', 'get_weather'))),
+            ('PATCH', '/v1/convai/tools/tool_1'): httpx2.Response(200, json={'id': 'tool_1'}),
+        },
+    )
+    ws = FakeWebSocket([HANDSHAKE_FRAME])
+    model = _model(recorder)
+    settings = ElevenLabsAgentsRealtimeModelSettings(elevenlabs_agents_tool_sync='sync')
+    with patched_connect(ws):
+        async with _connect(model, tools=[WEATHER_TOOL], model_settings=settings):
+            pass
+    assert recorder.request_summaries() == [
+        f'GET /v1/convai/agents/{AGENT_ID}',
+        'GET /v1/convai/tools',
+        'GET /v1/convai/tools/tool_1/dependent-agents',
+        'PATCH /v1/convai/tools/tool_1',
+        'GET /v1/convai/conversation/get-signed-url',
+    ]
+    patched = json.loads(recorder.requests[3].content)
+    assert patched == {
+        'tool_config': {
+            'type': 'client',
+            'name': 'get_weather',
+            'description': 'Get the weather.',
+            'expects_response': True,
+            'parameters': {
+                'type': 'object',
+                'properties': {'city': {'type': 'string', 'description': 'City name'}},
+                'required': ['city'],
+            },
+            **elevenlabs_settings,
+        }
     }
 
 
