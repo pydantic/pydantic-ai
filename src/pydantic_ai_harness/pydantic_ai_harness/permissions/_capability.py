@@ -46,7 +46,6 @@ PermissionMode = Literal['full', 'auto', 'read-only']
 
 _STRICTNESS: dict[PermissionMode, int] = {'full': 0, 'auto': 1, 'read-only': 2}
 
-_ModeSource = PermissionMode | Callable[[RunContext[AgentDepsT]], PermissionMode]
 
 PermissionAction = Literal['command', 'write']
 """What a call that asks would do: run a shell command, or write a file."""
@@ -437,8 +436,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
             return None
         command = shell_command(tool_def, args)
         posix = ctx.workspace.platform != 'windows'
-        for rules in (self.managed_rules, self.rules):
-            rule = await _decided(ctx, rules, tool_def=tool_def, args=args, command=command, posix=posix)
+        # Managed rules match strictly here too, as in `_asks`, so no one is asked about a call it will refuse.
+        for rules, strict in ((self.managed_rules, True), (self.rules, False)):
+            rule = await _decided(ctx, rules, tool_def=tool_def, args=args, command=command, posix=posix, strict=strict)
             if rule is not None and rule.verdict == 'deny':
                 # Left to `before_tool_execute`, which refuses it.
                 return None
@@ -512,7 +512,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
         return None
 
 
-def _read(mode: _ModeSource[AgentDepsT], ctx: RunContext[AgentDepsT]) -> PermissionMode:
+def _read(
+    mode: PermissionMode | Callable[[RunContext[AgentDepsT]], PermissionMode], ctx: RunContext[AgentDepsT]
+) -> PermissionMode:
     return mode(ctx) if callable(mode) else mode
 
 
