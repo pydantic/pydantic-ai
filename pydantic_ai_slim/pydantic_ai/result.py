@@ -954,11 +954,13 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             await self._marked_completed()
             return output
         elif self._stream_response is not None:
-            await self._stream_response.get_output()
+            output = await self._stream_response.get_output()
             await self._marked_completed(self.response)
-            # Read the output once the run has completed: calls a tool deferred while running join a
-            # `DeferredToolRequests` output only then.
-            return await self._stream_response.get_output()
+            if isinstance(output, DeferredToolRequests):
+                # Calls a tool deferred while running join a `DeferredToolRequests` output only once the run has
+                # completed, so read it again.
+                output = await self._stream_response.get_output()
+            return output
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
