@@ -1,5 +1,5 @@
 {
-  "against": "v2.74.0",
+  "against": "v2.75.0",
   "reason": "Adds `honors_only_first_system_message` to `DEFAULT_PROFILE`, with the value `False`; every existing entry is unchanged.",
   "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14521"
 }
