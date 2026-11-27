@@ -6734,9 +6734,6 @@ async def test_xai_stream_intermediate_chunks_keep_finish_reason_unset(allow_mod
     assert all(reason == 'stop' for reason in finish_reasons[2:])
 
 
-# End of tests
-
-
 async def test_xai_previous_response_id_sends_only_what_follows_the_stored_response(allow_model_requests: None):
     """The stored response holds the history it was created from and the instructions, so neither is sent again."""
     mock_client = MockXai.create_mock([create_response(content='first'), create_response(content='second')])
@@ -6793,3 +6790,28 @@ async def test_xai_streamed_response_records_its_history_digest(allow_model_requ
         await result.get_output()
     [*_, stored] = result.all_messages()
     assert isinstance(stored, ModelResponse) and stored.history_digest is not None
+
+
+async def test_xai_previous_response_id_starts_over_without_a_stored_digest(allow_model_requests: None):
+    """A response stored by an earlier release has no digest to check against: send everything, without the id."""
+    mock_client = MockXai.create_mock([create_response(content='first'), create_response(content='second')])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client))
+    agent = Agent(m, instructions='Be brief.', model_settings=XaiModelSettings(xai_store_messages=True))
+
+    first = await agent.run('hello')
+    *history, stored = first.all_messages()
+    assert isinstance(stored, ModelResponse)
+    await agent.run(
+        'again',
+        message_history=[*history, replace(stored, history_digest=None)],
+        model_settings=XaiModelSettings(xai_previous_response_id='grok-123'),
+    )
+
+    second_kwargs = get_mock_chat_create_kwargs(mock_client)[1]
+    assert 'previous_response_id' not in second_kwargs
+    assert [message['role'] for message in second_kwargs['messages']] == snapshot(
+        ['ROLE_SYSTEM', 'ROLE_USER', 'ROLE_ASSISTANT', 'ROLE_USER']
+    )
+
+
+# End of tests
