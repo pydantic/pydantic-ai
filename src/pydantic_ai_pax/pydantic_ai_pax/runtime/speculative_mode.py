@@ -635,7 +635,9 @@ def speculative_capabilities(
             mount_mode=mode,
             permissions=permissions,
             os_access=OSAccess(),
-            resource_limits='unlimited',
+            # Bounded, unlike `'unlimited'`: Monty can't interrupt a running snippet, so only
+            # `max_duration_seconds` ends a runaway loop, and it also sets the sleep allowance.
+            resource_limits={'max_duration_seconds': 600, 'max_memory': 2 * 1024**3},
             repl_store=repl_states,
         ),
         EagerTiming(),

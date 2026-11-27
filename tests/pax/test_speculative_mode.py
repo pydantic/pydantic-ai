@@ -1062,7 +1062,10 @@ class TestSandboxCallDisplay:
 
 
 async def test_run_code_sleeps_past_the_default_allowance(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pax's sandbox runs with unlimited resources, so a sleep longer than the default 30s isn't refused."""
+    """Pax's sandbox raises CodeMode's default limits, so a sleep longer than the default 30s isn't refused."""
+    [sandbox, *_] = speculative_capabilities(SpeculationCounters(), None)
+    assert isinstance(sandbox, WorkspaceCodeMode)
+    assert sandbox.resource_limits == {'max_duration_seconds': 600, 'max_memory': 2 * 1024**3}
     slept: list[float] = []
 
     async def fake_sleep(seconds: float) -> None:
