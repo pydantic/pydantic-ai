@@ -162,7 +162,7 @@ from pydantic_ai_harness.permissions import PermissionRule, Permissions
 
 permissions = Permissions(
     'full',
-    max_mode='auto',
+    max_mode='read-only',
     managed_rules=[
         PermissionRule('deny', command='curl', reason='Use the corporate proxy.'),
         PermissionRule('ask', command='git push'),
@@ -171,7 +171,7 @@ permissions = Permissions(
 )
 ```
 
-- **`max_mode`** is the widest mode `mode` may take, or a function returning it for a run. `mode_for()` returns the stricter of the two, so with the example above the agent runs in `'auto'`. A wider `mode` acts as `max_mode`.
+- **`max_mode`** is the widest mode `mode` may take, or a function returning it for a run. `mode_for()` returns the stricter of the two, so with the example above the agent runs in `'read-only'`, and the managed `'allow'` lets `git status` through without asking. A wider `mode` acts as `max_mode`.
 - **`managed_rules`** are checked before `rules`. A managed `'deny'` refuses a call even when it was approved, and a managed `'ask'` holds a call even when a rule in `rules` allows it.
 - Every `'deny'`, managed or not, is checked before any `'ask'`, so approving a call never runs one that a rule in `rules` denies: the person running the agent can still make it stricter.
 - `max_mode` is checked on its own, after the person's `mode`. Only an `'allow'` in `managed_rules` skips the blanket ask of a `'read-only'` `max_mode`, and it doesn't skip a `'deny'` or `'ask'` in `rules`, a stricter `mode`, or `protected_paths`.

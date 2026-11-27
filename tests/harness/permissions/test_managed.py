@@ -151,6 +151,37 @@ class TestMaxMode:
         await agent.run('go', capabilities=[permissions])
         assert seen == ['auto', 'read-only', 'full']
 
+    async def test_a_rules_ask_under_it_is_still_for_a_person_only(self, tmp_path: Path) -> None:
+        """The person's own ask rule doesn't turn the ceiling's hold into one a reviewer or memory may answer."""
+        agent = Agent[None, 'str | DeferredToolRequests'](
+            _calls(ECHO),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Shell(denied_commands=[]),
+                Permissions('full', max_mode='read-only', rules=[PermissionRule('ask', command='echo')]),
+                _safe_reviewer(),
+            ],
+        )
+        held = await agent.run('go')
+        assert isinstance(held.output, DeferredToolRequests)
+        assert [(request.subject, request.person_only) for request in permission_requests(held.output)] == [
+            ('echo hi', True)
+        ]
+
+    async def test_a_function_is_read_on_every_gated_call(self, tmp_path: Path) -> None:
+        ceilings: list[PermissionMode] = ['full', 'read-only', 'full']
+        person = await _run(
+            tmp_path,
+            ('run_command', {'command': 'echo one'}),
+            ('run_command', {'command': 'echo two'}),
+            ('run_command', {'command': 'echo three'}),
+            permissions=Permissions('full', max_mode=lambda ctx: ceilings[ctx.run_step - 1]),
+            person=_Person(PermissionDecision(approved=True)),
+        )
+        assert [(asked.subject, asked.person_only) for asked in person.asked] == [('echo two', True)]
+
     async def test_a_rules_allow_does_not_lift_a_call_over_it_and_a_managed_allow_does(self, tmp_path: Path) -> None:
         allow = [PermissionRule[None]('allow', command='echo')]
         person = await _run(tmp_path, ECHO, permissions=Permissions('full', max_mode='read-only', rules=allow))
