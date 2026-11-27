@@ -14,10 +14,12 @@ from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
+from unittest.mock import MagicMock
 
 import pytest
 from dirty_equals import IsJson, IsPartialDict
 from pydantic import BaseModel, Field, Json, TypeAdapter, ValidationError
+from pytest_mock import MockerFixture
 
 from pydantic_ai import (
     AgentRunResultEvent,
@@ -186,6 +188,28 @@ with try_import() as imports_successful:
 with try_import() as anthropic_imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
+
+with try_import() as google_imports_successful:
+    from google.genai.types import Candidate, Content, FunctionCall as GeminiFunctionCall, GenerateContentResponse, Part
+
+    from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.providers.google import GoogleProvider
+
+with try_import() as openai_imports_successful:
+    from openai.types.chat import ChatCompletionMessage
+    from openai.types.responses import ResponseOutputMessage, ResponseOutputText
+
+    from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
+    from pydantic_ai.providers.openai import OpenAIProvider
+
+    from .models.mock_openai import (
+        MockOpenAI,
+        MockOpenAIResponses,
+        completion_message as openai_completion_message,
+        get_mock_chat_completion_kwargs,
+        get_mock_responses_kwargs,
+        response_message as openai_response_message,
+    )
 
 with try_import():
     # `ReasoningMessage` was added in ag-ui-protocol 0.1.11 (`ENCRYPTED_VALUE_VERSION`), which also
@@ -2934,6 +2958,330 @@ def test_dump_load_roundtrip_canonical_system() -> None:
     reloaded = AGUIAdapter.load_messages(ag_ui_msgs, preserve_file_data=True)
     _sync_load_bookkeeping(original, reloaded)
     assert reloaded == original
+
+
+def _gemini_model(mocker: MockerFixture, *responses: Sequence[Part]) -> tuple[GoogleModel, MagicMock]:
+    """A `GoogleModel` whose client answers with `responses`, one list of parts per request, and its `generate_content`."""
+    model = GoogleModel('gemini-3-flash-preview', provider=GoogleProvider(api_key='test'))
+    generate = mocker.patch.object(
+        model.client.aio.models,
+        'generate_content',
+        side_effect=[
+            GenerateContentResponse(
+                candidates=[Candidate(content=Content(parts=list(parts), role='model'))],
+                model_version='gemini-3-flash-preview',
+            )
+            for parts in responses
+        ],
+    )
+    return model, generate
+
+
+async def _gemini_history(mocker: MockerFixture, text: str = 'Let me check.') -> list[ModelMessage]:
+    """A run whose answer has text and a function call that both carry a thought signature, as Gemini 3 sends them."""
+    model, _ = _gemini_model(
+        mocker,
+        [
+            Part(text=text, thought_signature=b'text-sig'),
+            Part(
+                function_call=GeminiFunctionCall(name='lookup', args={'q': 1}, id='call-1'),
+                thought_signature=b'call-sig',
+            ),
+        ],
+        [Part(text='Found it.')],
+    )
+    agent = Agent(model)
+
+    @agent.tool_plain
+    def lookup(q: int) -> str:
+        return 'found'
+
+    return (await agent.run('Look it up')).all_messages()
+
+
+async def _gemini_signatures(mocker: MockerFixture, history: list[ModelMessage]) -> list[bytes | None]:
+    """The thought signatures of the model turns `GoogleModel` sends to continue `history`."""
+    model, generate = _gemini_model(mocker, [Part(text='Done.')])
+    await Agent(model).run('Again', message_history=history)
+    return [
+        part.get('thought_signature')
+        for content in generate.call_args.kwargs['contents']
+        if content['role'] == 'model'
+        for part in content['parts']
+    ]
+
+
+@requires_ag_ui('0.1.11')
+@pytest.mark.skipif(not google_imports_successful(), reason='google-genai not installed')
+@pytest.mark.parametrize('text', [pytest.param('Let me check.', id='text'), pytest.param('', id='empty-text')])
+async def test_dump_load_roundtrip_gemini_thought_signatures(
+    allow_model_requests: None, mocker: MockerFixture, text: str
+) -> None:
+    """Gemini's thought signatures on text and function calls come back from the round trip, and are sent again.
+
+    `GoogleModel` keeps them in the parts' `provider_details`, and sends them only to the system that issued them, so
+    the parts' `provider_name` and the response's `canonical_system` come back too. Lost, the text's signature is
+    dropped and the function call gets the dummy `skip_thought_signature_validator`. Gemini can sign empty text, which
+    `GoogleModel` keeps for its signature, so that comes back too.
+
+    The client is mocked rather than recorded because the claim is that two renderings match: the request that
+    continues the reloaded history sends what the request continuing the server's own history sends.
+    """
+    history = await _gemini_history(mocker, text)
+    reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(history, ag_ui_version='0.1.11'))
+
+    sent = await _gemini_signatures(mocker, reloaded)
+    assert sent == snapshot([b'text-sig', b'call-sig', None])
+    assert sent == await _gemini_signatures(mocker, history)
+
+
+def _openai_history(text: TextPart, call: ToolCallPart) -> list[ModelMessage]:
+    """A history whose OpenAI response holds `text` and `call`, answered by a tool result."""
+    return [
+        ModelRequest(parts=[UserPromptPart(content='Look it up')]),
+        ModelResponse(parts=[text, call], provider_name='openai'),
+        ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='found', tool_call_id='call-1')]),
+    ]
+
+
+async def _openai_responses_phases(history: list[ModelMessage]) -> list[object]:
+    """The `phase` of each assistant message `OpenAIResponsesModel` sends to continue `history`."""
+    client = MockOpenAIResponses.create_mock(
+        openai_response_message(
+            [
+                ResponseOutputMessage(
+                    id='msg-2',
+                    content=[ResponseOutputText(text='Done.', type='output_text', annotations=[])],
+                    role='assistant',
+                    status='completed',
+                    type='message',
+                )
+            ]
+        )
+    )
+    await Agent(OpenAIResponsesModel('gpt-5.5', provider=OpenAIProvider(openai_client=client))).run(
+        'Again', message_history=history
+    )
+    return [
+        item.get('phase') for item in get_mock_responses_kwargs(client)[0]['input'] if item.get('role') == 'assistant'
+    ]
+
+
+@requires_ag_ui('0.1.11')
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_dump_load_roundtrip_openai_responses_phase(allow_model_requests: None) -> None:
+    """The `phase` OpenAI Responses labels a message with comes back from the round trip, and is sent again.
+
+    A hand-built history in the shape `OpenAIResponsesModel` records, with a mocked client: the claim is that the
+    request continuing the reloaded history sends what the request continuing the server's own history sends.
+    """
+    history = _openai_history(
+        TextPart(content='Checking.', provider_name='openai', provider_details={'phase': 'commentary'}),
+        ToolCallPart(tool_name='lookup', args={'q': 1}, tool_call_id='call-1', provider_name='openai'),
+    )
+    reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(history, ag_ui_version='0.1.11'))
+
+    sent = await _openai_responses_phases(reloaded)
+    assert sent == snapshot(['commentary'])
+    assert sent == await _openai_responses_phases(history)
+
+
+async def _openai_chat_tool_calls(history: list[ModelMessage]) -> list[object]:
+    """The tool calls `OpenAIChatModel` sends to continue `history`."""
+    client = MockOpenAI.create_mock(openai_completion_message(ChatCompletionMessage(content='Done.', role='assistant')))
+    await Agent(OpenAIChatModel('gemini-3.1-flash-lite', provider=OpenAIProvider(openai_client=client))).run(
+        'Again', message_history=history
+    )
+    return [
+        message['tool_calls']
+        for message in get_mock_chat_completion_kwargs(client)[0]['messages']
+        if message['role'] == 'assistant'
+    ]
+
+
+@requires_ag_ui('0.1.11')
+@pytest.mark.skipif(not openai_imports_successful(), reason='openai not installed')
+async def test_dump_load_roundtrip_openai_chat_extra_content(allow_model_requests: None) -> None:
+    """A tool call's `extra_content`, where Gemini's OpenAI-compatible API puts its thought signature, is sent again.
+
+    A hand-built history in the shape `OpenAIChatModel` records, with a mocked client: the claim is that the request
+    continuing the reloaded history sends what the request continuing the server's own history sends.
+    """
+    history = _openai_history(
+        TextPart(content='Checking.'),
+        ToolCallPart(
+            tool_name='lookup',
+            args={'q': 1},
+            tool_call_id='call-1',
+            provider_name='openai',
+            provider_details={'extra_content': {'google': {'thought_signature': 'c2ln'}}},
+        ),
+    )
+    reloaded = AGUIAdapter.load_messages(AGUIAdapter.dump_messages(history, ag_ui_version='0.1.11'))
+
+    sent = await _openai_chat_tool_calls(reloaded)
+    assert sent == snapshot(
+        [
+            [
+                {
+                    'id': 'call-1',
+                    'type': 'function',
+                    'function': {'name': 'lookup', 'arguments': '{"q":1}'},
+                    'extra_content': {'google': {'thought_signature': 'c2ln'}},
+                }
+            ]
+        ]
+    )
+    assert sent == await _openai_chat_tool_calls(history)
+
+
+@requires_ag_ui('0.1.11')
+def test_dump_load_part_provider_fields() -> None:
+    """Text parts dumped into one assistant message reload as one, keeping the provider fields the parts agree on.
+
+    Not simply the first part's: Gemini can sign the final part of a response. When parts carry different fields,
+    none are kept, so one part's data is never sent as another's, like a `'commentary'` phase on a final answer.
+    """
+    original: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Look it up')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Let me '),
+                TextPart(content='check.', provider_name='google', provider_details={'thought_signature': 'dGV4dA=='}),
+                ToolCallPart(
+                    tool_name='lookup',
+                    args={'q': 1},
+                    tool_call_id='call-1',
+                    provider_name='google',
+                    provider_details={'thought_signature': 'Y2FsbA=='},
+                ),
+            ],
+            provider_name='google',
+            canonical_system='google-cloud',
+        ),
+        ModelRequest(parts=[ToolReturnPart(tool_name='lookup', content='found', tool_call_id='call-1')]),
+        ModelResponse(
+            parts=[
+                TextPart(content='Found it. ', provider_name='openai', provider_details={'phase': 'commentary'}),
+                TextPart(content='Paris.', provider_name='openai', provider_details={'phase': 'final_answer'}),
+            ],
+            provider_name='openai',
+        ),
+    ]
+
+    dumped = AGUIAdapter.dump_messages(original, ag_ui_version='0.1.11')
+    assistant = next(message for message in dumped if isinstance(message, AssistantMessage))
+    assert assistant.encrypted_value is not None and assistant.tool_calls is not None
+    assert [
+        json.loads(assistant.encrypted_value),
+        json.loads(assistant.tool_calls[0].encrypted_value or ''),
+    ] == snapshot(
+        [
+            {
+                'pydantic_ai': {
+                    'text': {
+                        '0': {
+                            'provider_name': 'google',
+                            'provider_details': {'thought_signature': 'dGV4dA=='},
+                            'canonical_system': 'google-cloud',
+                        }
+                    }
+                }
+            },
+            {
+                'pydantic_ai': {
+                    'provider_name': 'google',
+                    'provider_details': {'thought_signature': 'Y2FsbA=='},
+                    'canonical_system': 'google-cloud',
+                }
+            },
+        ]
+    )
+
+    reloaded = AGUIAdapter.load_messages(dumped)
+    response, answer = reloaded[1], reloaded[3]
+    assert isinstance(response, ModelResponse) and isinstance(answer, ModelResponse)
+    assert response.parts == [
+        TextPart(content='Let me check.', provider_name='google', provider_details={'thought_signature': 'dGV4dA=='}),
+        ToolCallPart(
+            tool_name='lookup',
+            args='{"q":1}',
+            tool_call_id='call-1',
+            provider_name='google',
+            provider_details={'thought_signature': 'Y2FsbA=='},
+        ),
+    ]
+    assert (response.provider_name, response.canonical_system) == ('google', 'google-cloud')
+    assert answer.parts == [TextPart(content='Found it. Paris.')]
+
+
+@requires_ag_ui('0.1.11')
+@pytest.mark.parametrize(
+    'claim',
+    [
+        pytest.param('{"thought_signature": "c2ln"}', id='not-json-claim'),
+        pytest.param({'provider_details': {'thought_signature': 'c2ln'}}, id='not-namespaced'),
+        pytest.param({'pydantic_ai': {'text': 'c2ln'}}, id='text-not-an-object'),
+        pytest.param({'pydantic_ai': {'text': {'0': 'c2ln'}}}, id='text-entry-not-an-object'),
+        pytest.param(
+            {
+                'pydantic_ai': {
+                    'text': {'0': {'provider_name': 1, 'provider_details': 'c2ln', 'canonical_system': ['google']}},
+                    'provider_name': 1,
+                    'provider_details': 'c2ln',
+                    'canonical_system': ['google'],
+                }
+            },
+            id='wrong-types',
+        ),
+    ],
+)
+def test_load_malformed_part_provider_claims(claim: str | dict[str, Any]) -> None:
+    """Provider fields the client mangled or wrote outside our namespace read as absent, like every other claim.
+
+    The text and the tool call still load, just without provider fields.
+    """
+    encrypted_value = claim if isinstance(claim, str) else json.dumps(claim)
+    loaded = AGUIAdapter.load_messages(
+        [
+            UserMessage(id='user-1', content='Look it up'),
+            AssistantMessage(
+                id='assistant-1',
+                content='Let me check.',
+                encrypted_value=encrypted_value,
+                tool_calls=[
+                    ToolCall(
+                        id='call-1',
+                        function=FunctionCall(name='lookup', arguments='{"q":1}'),
+                        encrypted_value=encrypted_value,
+                    )
+                ],
+            ),
+        ]
+    )
+    response = loaded[1]
+    assert isinstance(response, ModelResponse)
+    assert response.parts == [
+        TextPart(content='Let me check.'),
+        ToolCallPart(tool_name='lookup', args='{"q":1}', tool_call_id='call-1'),
+    ]
+    assert (response.provider_name, response.canonical_system) == (None, None)
+
+
+@pytest.mark.skipif(not google_imports_successful(), reason='google-genai not installed')
+async def test_dump_gemini_thought_signatures_below_0_1_11(allow_model_requests: None, mocker: MockerFixture) -> None:
+    """Before 0.1.11 there's no `encrypted_value` to carry the signatures in, so they're lost, as they always were.
+
+    The dump doesn't warn: the loss predates the carrier, so warning would change what a dump for an old client does.
+    """
+    history = await _gemini_history(mocker)
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        dumped = AGUIAdapter.dump_messages(history, ag_ui_version='0.1.10')
+
+    assert await _gemini_signatures(mocker, AGUIAdapter.load_messages(dumped)) == snapshot(
+        [None, b'skip_thought_signature_validator', None]
+    )
 
 
 def _stamped_script(messages: list[ModelMessage]) -> list[ModelResponsePart]:

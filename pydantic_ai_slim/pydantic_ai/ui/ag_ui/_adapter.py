@@ -141,17 +141,22 @@ try:
         REASONING_VERSION,
         TOOL_AVAILABILITY_DELTA_ACTIVITY_TYPE,
         UPLOADED_FILE_ACTIVITY_TYPE,
+        PartProviderMetadata,
         dump_tool_return_content,
         parse_ag_ui_version,
         parse_builtin_tool_call_id,
         parse_encrypted_outcome,
+        parse_encrypted_provider_metadata,
         parse_encrypted_retry_feedback,
         parse_encrypted_structured_content,
+        parse_encrypted_text_provider_metadata,
         parse_encrypted_tool_kind,
         parse_encrypted_tool_retry,
+        part_provider_metadata,
         rehydrate_tool_return_content,
         retry_feedback_encrypted_value_kwargs,
         structured_content_encrypted_value_kwargs,
+        text_provider_encrypted_value_kwargs,
         thinking_encrypted_metadata,
         tool_kind_encrypted_value_kwargs,
         warn_encrypted_value_not_persisted,
@@ -759,13 +764,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
                 case ThinkingPart():
                     _dump_thinking_part(part, context)
                 case ToolCallPart():
-                    context.tool_calls_list.append(
-                        ToolCall(
-                            id=part.tool_call_id,
-                            function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
-                            **tool_kind_encrypted_value_kwargs(part.tool_kind, supported=context.use_encrypted_value),
-                        )
-                    )
+                    _dump_tool_call_part(part, context)
                 case NativeToolCallPart():
                     _dump_native_tool_call_part(part, context)
                 case NativeToolReturnPart():
@@ -808,10 +807,18 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
           message never takes it; a message that dumps to activity messages alone puts it on the last of them.
         - A response's [`canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system] comes back,
           with its `provider_name`, only from a part that carries the response's `provider_name`: a
-          `ThinkingPart`, a `CompactionPart`, or a `FilePart` with `preserve_file_data=True`. Its other
-          provider fields, such as `provider_url`, are lost.
-        - `TextPart.id`, `.provider_name`, `.provider_details`, `.citations` are lost.
-        - `ToolCallPart.id`, `.provider_name`, `.provider_details` are lost.
+          `ThinkingPart`, a `CompactionPart`, a `FilePart` with `preserve_file_data=True`, or, from
+          `ag_ui_version='0.1.11'`, a `TextPart` or `ToolCallPart`. Its other provider fields, such as
+          `provider_url`, are lost.
+        - `TextPart.id` and `.citations` are lost, and so are `.provider_name` and `.provider_details`
+          when `ag_ui_version < '0.1.11'`. From 0.1.11 those two ride the `AssistantMessage`'s
+          `encrypted_value`, so Gemini's thought signatures come back.
+        - Text parts dumped into one `AssistantMessage` reload as one `TextPart`. It keeps the
+          `.provider_name` and `.provider_details` the parts that have either agree on, and none when
+          they differ. Parts that have neither don't count, so the merged text can carry fields that
+          only some of its parts had.
+        - `ToolCallPart.id` is lost, and so are `.provider_name` and `.provider_details` when
+          `ag_ui_version < '0.1.11'`. From 0.1.11 those two ride the `ToolCall`'s `encrypted_value`.
         - `ToolCallPart.args` and `NativeToolCallPart.args` that don't parse as a JSON object are
           rewritten to `'{"INVALID_JSON":"<raw args>"}'` (see
           [`args_as_json_str`][pydantic_ai.messages.BaseToolCallPart.args_as_json_str]), so the raw
@@ -980,10 +987,21 @@ def _load_assistant_message(assistant_msg: AssistantMessage, context: _LoadMessa
     last = builder.messages[-1] if builder.messages else None
     if (content or tool_calls_list) and isinstance(last, ModelResponse) and last.parts == [TextPart(content='')]:
         builder.messages.pop()
+    provider = parse_encrypted_text_provider_metadata(
+        assistant_msg.encrypted_value if context.use_encrypted_value else None
+    )
     # An empty answer still keeps its place as a response, so the request after it doesn't
-    # merge into the one before it.
-    if content or (content == '' and not tool_calls_list):
-        builder.add(TextPart(content=content))
+    # merge into the one before it. Empty text that carries provider fields, such as a Gemini
+    # thought signature, is kept beside tool calls too.
+    if content or (content == '' and (not tool_calls_list or provider)):
+        builder.add(
+            TextPart(
+                content=content,
+                provider_name=provider.get('provider_name'),
+                provider_details=provider.get('provider_details'),
+            )
+        )
+        restore_canonical_system(builder, provider.get('provider_name'), provider.get('canonical_system'))
     if tool_calls_list:
         for tool_call in tool_calls_list:
             _load_tool_call(tool_call, context)
@@ -1014,14 +1032,18 @@ def _load_tool_call(tool_call: ToolCall, context: _LoadMessagesContext) -> None:
             )
         )
     else:
+        provider = parse_encrypted_provider_metadata(tool_call.encrypted_value if context.use_encrypted_value else None)
         context.builder.add(
             ToolCallPart(
                 tool_name=tool_name,
                 tool_call_id=tool_call_id,
                 args=tool_call.function.arguments,
                 tool_kind=tool_kind,
+                provider_name=provider.get('provider_name'),
+                provider_details=provider.get('provider_details'),
             )
         )
+        restore_canonical_system(context.builder, provider.get('provider_name'), provider.get('canonical_system'))
 
 
 def _load_tool_message(tool_msg: ToolMessage, context: _LoadMessagesContext) -> None:
@@ -1350,6 +1372,8 @@ class _DumpResponseContext:
     builtin_returns: dict[str, NativeToolReturnPart]
     result: list[Message] = field(default_factory=list[Message])
     text_content: list[str] = field(default_factory=list[str])
+    text_providers: list[PartProviderMetadata] = field(default_factory=list[PartProviderMetadata])
+    """The provider fields of each `TextPart` in `text_content` that has any."""
     tool_calls_list: list[ToolCall] = field(default_factory=list[ToolCall])
     tool_messages: list[ToolMessage] = field(default_factory=list[ToolMessage])
 
@@ -1357,15 +1381,26 @@ class _DumpResponseContext:
 def _flush_assistant_content(context: _DumpResponseContext) -> None:
     if not context.text_content and not context.tool_calls_list:
         return
+    # The message's text reloads as one `TextPart`, so it keeps provider fields only when every part that has any
+    # agrees on them. Combining different ones would send one part's data as another's: a `'commentary'` phase on a
+    # final answer, or two Gemini signatures merged into one, which Google says not to do (see
+    # `_thought_signature_details` in `models/google.py`). Parts without fields don't count, so a signature Gemini
+    # put on the last part of a text still comes back.
+    providers = context.text_providers
+    text_provider: PartProviderMetadata = (
+        providers[0] if providers and all(provider == providers[0] for provider in providers) else {}
+    )
     context.result.append(
         AssistantMessage(
             id=_new_message_id(),
             content='\n'.join(context.text_content) if context.text_content else None,
             tool_calls=context.tool_calls_list if context.tool_calls_list else None,
+            **text_provider_encrypted_value_kwargs(text_provider, supported=context.use_encrypted_value),
         )
     )
     context.result.extend(context.tool_messages)
     context.text_content = []
+    context.text_providers = []
     context.tool_calls_list = []
     context.tool_messages = []
 
@@ -1378,6 +1413,10 @@ def _dump_text_part(part: TextPart, index: int, context: _DumpResponseContext) -
         context.text_content[-1] += part.content
     else:
         context.text_content.append(part.content)
+    if provider := part_provider_metadata(
+        part, canonical_system=part_canonical_system(context.msg, part.provider_name)
+    ):
+        context.text_providers.append(provider)
 
 
 def _dump_thinking_part(part: ThinkingPart, context: _DumpResponseContext) -> None:
@@ -1394,6 +1433,19 @@ def _dump_thinking_part(part: ThinkingPart, context: _DumpResponseContext) -> No
             id=_new_message_id(),
             content=part.content,
             encrypted_value=json.dumps(encrypted) if encrypted else None,
+        )
+    )
+
+
+def _dump_tool_call_part(part: ToolCallPart, context: _DumpResponseContext) -> None:
+    provider = part_provider_metadata(part, canonical_system=part_canonical_system(context.msg, part.provider_name))
+    context.tool_calls_list.append(
+        ToolCall(
+            id=part.tool_call_id,
+            function=FunctionCall(name=part.tool_name, arguments=part.args_as_json_str()),
+            **tool_kind_encrypted_value_kwargs(
+                part.tool_kind, supported=context.use_encrypted_value, provider=provider
+            ),
         )
     )
 
