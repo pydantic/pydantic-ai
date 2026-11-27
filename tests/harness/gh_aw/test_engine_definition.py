@@ -284,7 +284,7 @@ def behaviors() -> _Behaviors:
     return definition().engine.behaviors
 
 
-def test_install_pins_clai2_and_installs_spec_extra_for_yaml_agents() -> None:
+def test_install_pins_pax_and_installs_spec_extra_for_yaml_agents() -> None:
     requirements = [
         argument
         for step in definition().pre_agent_steps
@@ -302,11 +302,12 @@ def test_install_pins_clai2_and_installs_spec_extra_for_yaml_agents() -> None:
         for line in step.run.splitlines()
         if line.strip().startswith('python3 -P -m pip install ')
         for argument in shlex.split(line)
-        if argument.startswith(('pydantic-ai-harness[coder]==', 'pydantic-clai2=='))
+        if argument.startswith(('pydantic-ai-harness', 'pydantic-ai-pax', 'pydantic-clai2'))
     ]
+    # `pydantic-clai2` stops at its last 0.x release, so a harness 1.x pin must not install it.
     assert harness_requirements == [
         'pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}',
-        'pydantic-clai2==${GH_AW_ENGINE_VERSION}',
+        'pydantic-ai-pax==${GH_AW_ENGINE_VERSION}',
     ]
     assert requirement == 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0'
 
@@ -324,7 +325,7 @@ def test_host_installer_adds_logfire_only_for_an_otlp_endpoint(tmp_path: Path, e
     python.write_text('#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$INSTALL_LOG"\n')
     python.chmod(0o755)
     home = tmp_path / 'home'
-    cli = home / '.local/bin/clai2'
+    cli = home / '.local/bin/pax'
     cli.parent.mkdir(parents=True)
     cli.write_text('#!/bin/sh\nexit 0\n')
     cli.chmod(0o755)
@@ -1849,6 +1850,56 @@ def test_the_generated_recorder_uses_the_dedicated_capture_descriptor(tmp_path: 
     parsed = parse_log(tmp_path, completed.stderr)
     assert parsed.log_entries[-1].type == 'session.result'
     assert parsed.log_entries[-1].data['status'] == 'success'
+
+
+# Runs the launcher where `pydantic_clai2` cannot be imported, as in an environment with only `pydantic-ai-pax`
+# installed: `pydantic-clai2` has no release for a harness version after its last 0.x.
+PAX_ONLY_PROBE = """import sys
+from importlib.abc import MetaPathFinder
+
+
+class WithoutClai2(MetaPathFinder):
+    def find_spec(self, fullname, path, target=None):
+        if fullname.partition('.')[0] == 'pydantic_clai2':
+            raise ModuleNotFoundError(f'No module named {fullname!r}', name=fullname)
+        return None
+
+
+sys.meta_path.insert(0, WithoutClai2())
+exec(compile(sys.argv.pop(1), '<launcher>', 'exec'))
+"""
+
+
+@pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
+@requires_clai2
+def test_the_launcher_runs_pax_without_pydantic_clai2(tmp_path: Path) -> None:
+    invocation = launch(
+        tmp_path,
+        {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'pax_only_agent:agent'},
+        extra_python_path=CLAI2_SOURCE,
+    )
+    (Path(invocation.cwd) / 'pax_only_agent.py').write_text(
+        "from pydantic_ai import Agent\nagent = Agent(name='simple', instructions='Answer briefly.')\n",
+        encoding='utf-8',
+    )
+    arguments = invocation.argv[3:]
+    arguments[arguments.index('-m') + 1] = 'test'
+    completed = subprocess.run(
+        [sys.executable, '-P', '-c', PAX_ONLY_PROBE, invocation.program, *arguments, *code_mode_off_args(tmp_path)],
+        cwd=invocation.cwd,
+        env=invocation.env,
+        input=invocation.stdin,
+        capture_output=True,
+        text=True,
+        check=False,
+    )
+
+    assert completed.returncode == 0, f'{completed.stdout}\n{completed.stderr}'
+    parsed = parse_log(tmp_path, completed.stderr)
+    assert parsed.log_entries[-1].type == 'session.result'
+    assert parsed.log_entries[-1].data['status'] == 'success'
+    # The deprecated `clai2` entry point names its replacement on stderr; `pax` does not.
+    assert '`clai2` is now `pax`' not in completed.stderr
 
 
 @pytest.mark.subprocess(reason='verifies SIGTERM handling in the generated launcher process')

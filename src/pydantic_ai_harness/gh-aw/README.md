@@ -10,7 +10,7 @@ A workflow has to write the `imports:` line itself. gh-aw's engine catalog maps
 the `pydantic-ai` id to this path, but only to suggest it: naming the engine
 without the import fails to compile with a tip carrying the line to add.
 
-The engine runs [Pax](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_clai2)
+The engine runs [Pax](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax)
 with the harness's `Coder` composition by default, in a `LocalWorkspace` on the checkout,
 providing filesystem access and unrestricted shell commands inside the sandbox, plus the
 gh-aw gateway's MCP tools. Shell commands get the step's environment minus provider credential variables
@@ -47,8 +47,8 @@ inside it decides which harness release runs. A workflow's own `engine: version:
 overrides the package version the definition pins, because gh-aw applies the
 imported definition's version only when the workflow left it empty
 (`applyEngineImportDefaults` in `pkg/workflow/compiler_orchestrator_engine.go`). The
-override has to be 0.59.0 or newer: each harness release pins its own
-`pydantic-ai-slim`, and the definition installs `pydantic-ai-slim>=2.59.0` alongside it.
+override has to be 0.73.0 or newer: the definition installs `pydantic-ai-pax` at that
+version, and 0.73.0 is its first release.
 
 `model` is required and must be `provider/model`. gh-aw accepts `copilot`,
 `anthropic`, `openai` and `codex` as the provider segment; it selects which backend
@@ -76,7 +76,7 @@ The engine creates a generated module with a private wrapper around either the h
 `Coder` composition or the agent selected by `PAI_AGENT`. It resolves an import target or
 JSON/YAML spec once, retaining import tracebacks. Pax runs the wrapper with `-a`,
 `engine.model` as `-m <provider:model>`, and the prompt with `-p`. The engine installs
-`pydantic-clai2` and `pydantic-ai-harness` at the release `engine.version` pins, plus
+`pydantic-ai-pax` and `pydantic-ai-harness` at the release `engine.version` pins, plus
 `pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0`; the explicit provider extras keep
 Anthropic and OpenAI model support available. Gateway MCP tools are attached
 through Pydantic AI's public dynamic toolset interface, preserving the agent's existing

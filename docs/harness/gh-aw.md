@@ -344,9 +344,8 @@ import a commit SHA that contains `src/pydantic_ai_harness/gh-aw/pydantic.md`, o
 tag cut after the harness moved into this repository; older tags do not carry the file and
 return a 404 at compile time. That ref pins the definition. The harness package version
 is pinned separately, by `engine: version:` in the definition, and a workflow's own
-`engine: version:` overrides it. An override has to be 0.59.0 or newer: each harness
-release pins its own `pydantic-ai-slim`, and the definition installs
-`pydantic-ai-slim>=2.59.0` alongside it.
+`engine: version:` overrides it. An override has to be 0.73.0 or newer: the definition
+installs `pydantic-ai-pax` at that version, and 0.73.0 is its first release.
 
 ## Compile and commit
 
