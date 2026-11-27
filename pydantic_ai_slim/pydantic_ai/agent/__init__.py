@@ -87,7 +87,6 @@ from .._instructions import AgentInstructions, lowered_block_id
 from .._output import OutputToolset
 from .._run_context import RealtimeEventBuffer, dispatch_event_stream, set_current_run_context
 from .._run_conversation import failed_run_conversation
-from .._telemetry import publish_run_telemetry, run_telemetry_scope
 from .._template import validate_from_spec_args
 from .._warnings import PydanticAIDeprecationWarning
 from ..capabilities import (
@@ -355,15 +354,10 @@ async def _run_lifecycle_hooks(  # noqa: C901
     run_capability._prepare_run_context(run_ctx)  # pyright: ignore[reportPrivateUsage]
 
     outer_context = contextvars.copy_context()
-    # Code without a `RunContext`, such as a workspace, reads the run's telemetry from the context `wrap_run`'s task
-    # and the run body inherit. `Instrumentation.wrap_run` publishes it while the run's span is open; outside it,
-    # including in a nested run's outer `wrap_run` hooks, there is none, rather than the parent's.
-    wrap_context = outer_context.copy()
-    wrap_context.run(publish_run_telemetry, None)
     # Teardown after the run body returns, raises, or exits early waits for `wrap_run` through `ScopedTask`, so a
     # cancellation of the caller reaches it in the form it arrived: shielded cleanup in `wrap_run` finishes under a
     # cancelled `anyio` scope, and `on_run_error` is still reached. `_SHUTDOWN_EXCEPTIONS` cancel and drain it instead.
-    _wrap = wrap_context.run(_utils.ScopedTask, run_capability.wrap_run(run_ctx, handler=_do_run))
+    _wrap = _utils.ScopedTask(run_capability.wrap_run(run_ctx, handler=_do_run))
     # Wait for handler to start or wrap_run to complete (short-circuit).
     _ready_waiter = asyncio.create_task(_run_ready.wait())
     try:
@@ -1638,35 +1632,32 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        # Setup, including `for_run` hooks, runs in the caller's context, such as a parent run's tool call.
-        # With no telemetry published, code there without a `ctx` can't trace onto the parent.
-        with run_telemetry_scope(None):
-            prepared = await self._prepare_run(
-                user_prompt,
-                output_type=output_type,
-                message_history=message_history,
-                deferred_tool_results=deferred_tool_results,
-                conversation_id=conversation_id,
-                conversation_revision=conversation_revision,
-                conversation_unsaved=conversation_unsaved,
-                conversation_unchecked=conversation_unchecked,
-                conversation_deferred_tool_requests=conversation.deferred_tool_requests if conversation else None,
-                run_id=run_id,
-                model=model,
-                instructions=instructions,
-                deps=deps,
-                model_settings=model_settings,
-                usage_limits=usage_limits,
-                cancellation_token=cancellation_token,
-                timeout=timeout,
-                usage=usage,
-                metadata=metadata,
-                retries=retries,
-                toolsets=toolsets,
-                capabilities=capabilities,
-                workspace=workspace,
-                spec=spec,
-            )
+        prepared = await self._prepare_run(
+            user_prompt,
+            output_type=output_type,
+            message_history=message_history,
+            deferred_tool_results=deferred_tool_results,
+            conversation_id=conversation_id,
+            conversation_revision=conversation_revision,
+            conversation_unsaved=conversation_unsaved,
+            conversation_unchecked=conversation_unchecked,
+            conversation_deferred_tool_requests=conversation.deferred_tool_requests if conversation else None,
+            run_id=run_id,
+            model=model,
+            instructions=instructions,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            cancellation_token=cancellation_token,
+            timeout=timeout,
+            usage=usage,
+            metadata=metadata,
+            retries=retries,
+            toolsets=toolsets,
+            capabilities=capabilities,
+            workspace=workspace,
+            spec=spec,
+        )
         async with prepared.open() as agent_run:
             yield agent_run
 
@@ -4205,157 +4196,150 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         from ..realtime import RealtimeModel, infer_realtime_model
         from ..realtime._utils import resolve_realtime_request_tools, session_instructions
 
-        # Setup, including `for_run` hooks, may run inside a parent run's tool call. With no telemetry
-        # published, code there without a `ctx` can't trace onto the parent, as in `iter`.
-        with run_telemetry_scope(None):
-            if not isinstance(model, RealtimeModel):
-                model = infer_realtime_model(model)
+        if not isinstance(model, RealtimeModel):
+            model = infer_realtime_model(model)
 
-            deps = self._get_deps(deps)
-            # Resolved, not passed through: a session inherits the conversation it continues and mints a fresh
-            # id otherwise, so telemetry and a later handoff line up with a classic run — and `'new'` means
-            # "fork off this history" here too rather than becoming a literal id shared by every such session.
-            conversation_id = _agent_graph.resolve_conversation_id(conversation_id, message_history)
-            run_id = _agent_graph.resolve_run_id(run_id, message_history)
-            max_tool_retries = self._resolve_tool_retries()
-            cancellation = RunCancellation() if run_lifecycle else None
-            run_context = RunContext[AgentDepsT](
-                deps=deps,
-                agent=self,
-                model=model,
-                usage=usage if usage is not None else _usage.RunUsage(),
-                # `RunContext.usage_limits` is documented as always set during a run. Unlike a classic run,
-                # an unset `usage_limits` enforces nothing here (limits are opt-in for a session — a whole
-                # conversation, where the classic 50-request default would cut a long voice conversation
-                # short), so the context carries an explicitly limitless `UsageLimits` rather than the
-                # classic default: what hooks read must match what the session enforces.
-                usage_limits=usage_limits if usage_limits is not None else _usage.UsageLimits(request_limit=None),
-                model_settings=None,
-                conversation_id=conversation_id,
-                run_id=run_id,
-                # Seed `ctx.messages` from `message_history` like `iter` does, so dynamic `@agent.instructions`
-                # functions and capability `for_run` hooks see the prior conversation. KEEP IN SYNC with `iter`.
-                messages=list(message_history) if message_history else [],
-                max_retries=max_tool_retries,
-                # Only a session is a run that `emit` can deliver into; signaling just resolves configuration.
-                _event_stream_buffer=RealtimeEventBuffer() if run_lifecycle else None,
-            )
-            # Both need the context that only exists once it's built, so they're assigned rather than passed —
-            # the graph does the same via `replace`. Without them a tool validated in a session sees a
-            # different Pydantic context, and a capability introspecting the chain sees none, than in a run.
-            run_context.validation_context = _agent_graph.build_validation_context(
-                self._validation_context, run_context
-            )
+        deps = self._get_deps(deps)
+        # Resolved, not passed through: a session inherits the conversation it continues and mints a fresh
+        # id otherwise, so telemetry and a later handoff line up with a classic run — and `'new'` means
+        # "fork off this history" here too rather than becoming a literal id shared by every such session.
+        conversation_id = _agent_graph.resolve_conversation_id(conversation_id, message_history)
+        run_id = _agent_graph.resolve_run_id(run_id, message_history)
+        max_tool_retries = self._resolve_tool_retries()
+        cancellation = RunCancellation() if run_lifecycle else None
+        run_context = RunContext[AgentDepsT](
+            deps=deps,
+            agent=self,
+            model=model,
+            usage=usage if usage is not None else _usage.RunUsage(),
+            # `RunContext.usage_limits` is documented as always set during a run. Unlike a classic run,
+            # an unset `usage_limits` enforces nothing here (limits are opt-in for a session — a whole
+            # conversation, where the classic 50-request default would cut a long voice conversation
+            # short), so the context carries an explicitly limitless `UsageLimits` rather than the
+            # classic default: what hooks read must match what the session enforces.
+            usage_limits=usage_limits if usage_limits is not None else _usage.UsageLimits(request_limit=None),
+            model_settings=None,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            # Seed `ctx.messages` from `message_history` like `iter` does, so dynamic `@agent.instructions`
+            # functions and capability `for_run` hooks see the prior conversation. KEEP IN SYNC with `iter`.
+            messages=list(message_history) if message_history else [],
+            max_retries=max_tool_retries,
+            # Only a session is a run that `emit` can deliver into; signaling just resolves configuration.
+            _event_stream_buffer=RealtimeEventBuffer() if run_lifecycle else None,
+        )
+        # Both need the context that only exists once it's built, so they're assigned rather than passed —
+        # the graph does the same via `replace`. Without them a tool validated in a session sees a
+        # different Pydantic context, and a capability introspecting the chain sees none, than in a run.
+        run_context.validation_context = _agent_graph.build_validation_context(self._validation_context, run_context)
 
-            # Instrumentation: inject an `Instrumentation` capability (outermost) so tool spans flow through
-            # `ToolManager.handle_call`'s `wrap_tool_execute` hook — the single, canonical source of tool
-            # spans — exactly as `run`/`iter` do (via `_resolve_run_capabilities` below). A realtime model is
-            # a `RealtimeModel`, never an `InstrumentedModel`, so there's no wrapped model to unwrap; the
-            # settings come straight from `_resolve_instrumentation_settings()`. The helper skips injection if
-            # the user already supplied an `Instrumentation` capability (agent- or call-level).
-            extra_capabilities = self._bind_run_capabilities(wrap_capability_funcs(capabilities))
-            instrumentation_settings = self._resolve_instrumentation_settings()
-            instrumentation_cap = (
-                InstrumentationCap(settings=instrumentation_settings) if instrumentation_settings is not None else None
-            )
+        # Instrumentation: inject an `Instrumentation` capability (outermost) so tool spans flow through
+        # `ToolManager.handle_call`'s `wrap_tool_execute` hook — the single, canonical source of tool
+        # spans — exactly as `run`/`iter` do (via `_resolve_run_capabilities` below). A realtime model is
+        # a `RealtimeModel`, never an `InstrumentedModel`, so there's no wrapped model to unwrap; the
+        # settings come straight from `_resolve_instrumentation_settings()`. The helper skips injection if
+        # the user already supplied an `Instrumentation` capability (agent- or call-level).
+        extra_capabilities = self._bind_run_capabilities(wrap_capability_funcs(capabilities))
+        instrumentation_settings = self._resolve_instrumentation_settings()
+        instrumentation_cap = (
+            InstrumentationCap(settings=instrumentation_settings) if instrumentation_settings is not None else None
+        )
 
-            # The session-level `realtime` span and per-response `chat` spans are hand-managed by
-            # `RealtimeSession`; run-lifecycle hooks have no per-exchange boundary on which to build them.
-            # Drive them, and the `RunContext` (as `iter` does), from the settings that will actually win:
-            # an explicit `Instrumentation` capability's (agent- or call-level) over the
-            # `instrument=`-derived ones, matching the precedence `_resolve_run_capabilities` applies to the
-            # tool spans. Resolve metadata after, and before `for_run`, so capability/toolset hooks see it
-            # (same ordering as the graph run).
-            base_capability, base_is_override = self._base_run_capability()
-            _set_run_context_instrumentation(
-                run_context,
-                _run_instrumentation_settings([base_capability, *extra_capabilities], default=instrumentation_settings),
-            )
-            run_context.metadata = self._get_metadata(run_context, metadata)
+        # The session-level `realtime` span and per-response `chat` spans are hand-managed by
+        # `RealtimeSession`; run-lifecycle hooks have no per-exchange boundary on which to build them.
+        # Drive them, and the `RunContext` (as `iter` does), from the settings that will actually win:
+        # an explicit `Instrumentation` capability's (agent- or call-level) over the
+        # `instrument=`-derived ones, matching the precedence `_resolve_run_capabilities` applies to the
+        # tool spans. Resolve metadata after, and before `for_run`, so capability/toolset hooks see it
+        # (same ordering as the graph run).
+        base_capability, base_is_override = self._base_run_capability()
+        _set_run_context_instrumentation(
+            run_context,
+            _run_instrumentation_settings([base_capability, *extra_capabilities], default=instrumentation_settings),
+        )
+        run_context.metadata = self._get_metadata(run_context, metadata)
 
-            # Resolve the capability layers and extract their contributions, exactly as `run`/`iter` do via
-            # the shared helpers (`_base_run_capability` honors `override(root_capability=...)` the same way).
-            # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, once-only model settings
-            # (below), and the `_keep_native` drop plus the shared native ↔ local-tool swap (below). Keep
-            # this in sync with the `iter` call site.
-            resolved_caps = await self._resolve_run_capabilities(
-                run_context,
-                base_capability=base_capability,
-                extra_capabilities=extra_capabilities,
-                instrumentation_cap=instrumentation_cap,
-                inject_deferred_loader=True,
-                base_is_override=base_is_override,
-            )
-            run_capability = resolved_caps.run_capability
-            if run_capability._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
-                # Realtime does not select a workspace yet; don't suggest attaching a capability that is already here.
-                run_context.workspace = Workspace(
-                    UnavailableWorkspace('Realtime sessions do not support workspaces yet.')
-                )
-            # Read back off the resolved tree, as `iter` does, so an `Instrumentation` only a `for_run`
-            # contributed drives the session's spans and context too.
-            session_instrumentation_settings = _run_instrumentation_settings([run_capability])
-            _set_run_context_instrumentation(run_context, session_instrumentation_settings)
-            # The session starts from where its history leaves off, as `iter` does: what the model loaded and had
-            # revealed there is loaded and revealed here, so those tools go out when the session opens.
-            # KEEP IN SYNC with `iter`.
-            run_context.loaded_capability_ids.update(
-                registered_loaded_capability_ids(message_history or (), run_context.capabilities.keys())
-            )
-            run_context.discovered_tool_names.update(parse_discovered_tools(message_history or ()))
-            model_profile = model.profile
-            deferred_capability_ids = _realtime_deferred_capability_ids(run_context, model)
-            _warn_realtime_uncalled_hooks(run_capability)
-            # `_resolve_run_capabilities` already registered `run_context.capabilities` for the toolset/connect
-            # `for_run` below, exactly as the graph run relies on. The root of that chain has to be published
-            # too, or the context contradicts itself: `capabilities` populated while `root_capability` is
-            # `None`, so anything delegating through the effective chain sees none of it.
-            run_context.root_capability = run_capability
-            # The state an `AgentRunResult` is built from when the session closes. `run_id` and
-            # `conversation_id` are the ones already resolved above, so the result, the run context, and
-            # every message the session stamps all agree.
-            result_state = _agent_graph.GraphAgentState(
-                message_history=[],
-                usage=run_context.usage,
-                run_id=run_id,
-                conversation_id=conversation_id,
-                metadata=run_context.metadata,
-            )
+        # Resolve the capability layers and extract their contributions, exactly as `run`/`iter` do via
+        # the shared helpers (`_base_run_capability` honors `override(root_capability=...)` the same way).
+        # Realtime keeps its own surroundings: no `InstrumentedModel` unwrap, once-only model settings
+        # (below), and the `_keep_native` drop plus the shared native ↔ local-tool swap (below). Keep
+        # this in sync with the `iter` call site.
+        resolved_caps = await self._resolve_run_capabilities(
+            run_context,
+            base_capability=base_capability,
+            extra_capabilities=extra_capabilities,
+            instrumentation_cap=instrumentation_cap,
+            inject_deferred_loader=True,
+            base_is_override=base_is_override,
+        )
+        run_capability = resolved_caps.run_capability
+        if run_capability._has_get_workspace:  # pyright: ignore[reportPrivateUsage]
+            # Realtime does not select a workspace yet; don't suggest attaching a capability that is already here.
+            run_context.workspace = Workspace(UnavailableWorkspace('Realtime sessions do not support workspaces yet.'))
+        # Read back off the resolved tree, as `iter` does, so an `Instrumentation` only a `for_run`
+        # contributed drives the session's spans and context too.
+        session_instrumentation_settings = _run_instrumentation_settings([run_capability])
+        _set_run_context_instrumentation(run_context, session_instrumentation_settings)
+        # The session starts from where its history leaves off, as `iter` does: what the model loaded and had
+        # revealed there is loaded and revealed here, so those tools go out when the session opens.
+        # KEEP IN SYNC with `iter`.
+        run_context.loaded_capability_ids.update(
+            registered_loaded_capability_ids(message_history or (), run_context.capabilities.keys())
+        )
+        run_context.discovered_tool_names.update(parse_discovered_tools(message_history or ()))
+        model_profile = model.profile
+        deferred_capability_ids = _realtime_deferred_capability_ids(run_context, model)
+        _warn_realtime_uncalled_hooks(run_capability)
+        # `_resolve_run_capabilities` already registered `run_context.capabilities` for the toolset/connect
+        # `for_run` below, exactly as the graph run relies on. The root of that chain has to be published
+        # too, or the context contradicts itself: `capabilities` populated while `root_capability` is
+        # `None`, so anything delegating through the effective chain sees none of it.
+        run_context.root_capability = run_capability
+        # The state an `AgentRunResult` is built from when the session closes. `run_id` and
+        # `conversation_id` are the ones already resolved above, so the result, the run context, and
+        # every message the session stamps all agree.
+        result_state = _agent_graph.GraphAgentState(
+            message_history=[],
+            usage=run_context.usage,
+            run_id=run_id,
+            conversation_id=conversation_id,
+            metadata=run_context.metadata,
+        )
 
-            # Regular agent and capability model settings intentionally do not apply to realtime sessions.
-            # A future capability hook dedicated to realtime settings can add that behavior deliberately.
-            # Merged by the model, so a provider that translates a deprecated setting does so per layer.
-            effective_model_settings = model._merge_model_settings(model_settings)  # pyright: ignore[reportPrivateUsage]
-            # Realtime settings are fixed at connect time, so the merged settings hold for the whole
-            # session — unlike a classic run, where this is re-stamped before each model request.
-            run_context.model_settings = effective_model_settings
+        # Regular agent and capability model settings intentionally do not apply to realtime sessions.
+        # A future capability hook dedicated to realtime settings can add that behavior deliberately.
+        # Merged by the model, so a provider that translates a deprecated setting does so per layer.
+        effective_model_settings = model._merge_model_settings(model_settings)  # pyright: ignore[reportPrivateUsage]
+        # Realtime settings are fixed at connect time, so the merged settings hold for the whole
+        # session — unlike a classic run, where this is re-stamped before each model request.
+        run_context.model_settings = effective_model_settings
 
-            # Native (provider built-in) tools, e.g. via `capabilities=[NativeTool(WebSearchTool())]`. Dynamic
-            # native-tool functions are resolved once against the connect-time context — like dynamic
-            # instructions, since a session's tool list is fixed from the moment the connection opens. The
-            # auto-injected optional `ToolSearchTool` is dropped (mirroring the graph's corpus-empty drop):
-            # there's no tool-search corpus and realtime providers don't support it. The helper already
-            # folded in `override(native_tools=...)` and any per-call capability native tools.
-            # KEEP IN SYNC with the graph's resolution in `_prepare_request_parameters`.
-            native_tools: list[AbstractNativeTool] = []
-            for native_tool in resolved_caps.native_tools:
-                if not isinstance(native_tool, AbstractNativeTool):
-                    resolved_native = native_tool(run_context)
-                    if inspect.isawaitable(resolved_native):
-                        resolved_native = await resolved_native
-                    if resolved_native is None:
-                        continue
-                    native_tool = resolved_native
-                if not (isinstance(native_tool, ToolSearchTool) and native_tool.optional):
-                    native_tools.append(native_tool)
+        # Native (provider built-in) tools, e.g. via `capabilities=[NativeTool(WebSearchTool())]`. Dynamic
+        # native-tool functions are resolved once against the connect-time context — like dynamic
+        # instructions, since a session's tool list is fixed from the moment the connection opens. The
+        # auto-injected optional `ToolSearchTool` is dropped (mirroring the graph's corpus-empty drop):
+        # there's no tool-search corpus and realtime providers don't support it. The helper already
+        # folded in `override(native_tools=...)` and any per-call capability native tools.
+        # KEEP IN SYNC with the graph's resolution in `_prepare_request_parameters`.
+        native_tools: list[AbstractNativeTool] = []
+        for native_tool in resolved_caps.native_tools:
+            if not isinstance(native_tool, AbstractNativeTool):
+                resolved_native = native_tool(run_context)
+                if inspect.isawaitable(resolved_native):
+                    resolved_native = await resolved_native
+                if resolved_native is None:
+                    continue
+                native_tool = resolved_native
+            if not (isinstance(native_tool, ToolSearchTool) and native_tool.optional):
+                native_tools.append(native_tool)
 
-            toolset = self._get_toolset(
-                output_toolset=None,
-                additional_toolsets=toolsets,
-                cap_toolsets=resolved_caps.toolsets,
-                run_capability=run_capability,
-            )
-            toolset = await toolset.for_run(run_context)
+        toolset = self._get_toolset(
+            output_toolset=None,
+            additional_toolsets=toolsets,
+            cap_toolsets=resolved_caps.toolsets,
+            run_capability=run_capability,
+        )
+        toolset = await toolset.for_run(run_context)
 
         # The hooks run before the session exists — and a `wrap_run` that short-circuits means it never
         # will — so the session and the result standing in for it are handed back through this holder.
