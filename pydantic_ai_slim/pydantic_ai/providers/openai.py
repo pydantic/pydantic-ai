@@ -9,6 +9,7 @@ from pydantic_ai._file_input import KNOWN_IMAGE_MEDIA_TYPES
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, ComputerTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
+from pydantic_ai.profiles.meta import muse_model_profile
 from pydantic_ai.profiles.openai import (
     _GPT_6_2_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
     _GPT_6_MODEL_PREFIXES,  # pyright: ignore[reportPrivateUsage]
@@ -228,6 +229,13 @@ class OpenAIProvider(_OpenAISDKProvider):
                 rejects_unpaired_tool_calls=True,
             ),
             special_token_route_profile('openai', model_name),
+            # Muse ids reach `OpenAIProvider` through OpenAI-compatible routes such as the Gateway's (a BYOK route to
+            # Meta's API, or Doubleword's vLLM), not from OpenAI. Meta's API rejects a forced `tool_choice` with a 400
+            # ("only "auto" is supported"), and Doubleword answers one with the tool call written as text, so forcing
+            # falls back to `auto` as on `MetaProvider`. https://github.com/pydantic/pydantic-ai/issues/14996
+            OpenAIModelProfile(supports_forced_tool_choice=False)
+            if muse_model_profile(model_name.rpartition('/')[2]) is not None
+            else None,
             # `gpt-5-search-api` matches the shared `'gpt-5'` reasoning row, but OpenAI's API rejects any
             # `reasoning_effort` on it with a 400, so unified `thinking` sends none; sampling parameters stay dropped,
             # as it rejects `temperature` too (verified live, 2026-11). Set here rather than in `openai_model_profile`

@@ -6419,6 +6419,28 @@ async def test_tool_choice_fallback(allow_model_requests: None) -> None:
     assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == 'auto'
 
 
+@pytest.mark.parametrize('model_name', ['muse-wonder-1.0', 'meta/muse-spark-open'])
+async def test_muse_tool_choice_falls_back_to_auto_on_openai_provider(allow_model_requests: None, model_name: str):
+    """Muse ids on an OpenAI-compatible route, such as the Gateway's, never force a tool.
+
+    Meta's API rejects a forced `tool_choice`, and Doubleword's vLLM answers one with the tool call written as text:
+    https://github.com/pydantic/pydantic-ai/issues/14996
+    """
+    mock_client = MockOpenAI.create_mock(completion_message(ChatCompletionMessage(content='ok', role='assistant')))
+    model = OpenAIChatModel(model_name, provider=OpenAIProvider(openai_client=mock_client))
+
+    params = ModelRequestParameters(function_tools=[ToolDefinition(name='x')], allow_text_output=False)
+
+    await model._completions_create(  # pyright: ignore[reportPrivateUsage]
+        messages=[],
+        stream=False,
+        model_settings={},
+        model_request_parameters=params,
+    )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['tool_choice'] == 'auto'
+
+
 async def test_tool_choice_fallback_response_api(allow_model_requests: None) -> None:
     """Ensure tool_choice falls back to 'auto' for Responses API when 'required' unsupported."""
     profile = merge_profile(OpenAIModelProfile(supports_forced_tool_choice=False), openai_model_profile('stub'))
