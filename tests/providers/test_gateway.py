@@ -391,8 +391,8 @@ class _CompactsOnce(AbstractCapability[Any]):
     async def before_model_request(
         self, ctx: RunContext[Any], request_context: ModelRequestContext
     ) -> ModelRequestContext:
-        if ctx.run_step == 1:
-            ctx.request_compaction(reason='threshold')
+        # The run has a single step, so the compaction runs once.
+        ctx.request_compaction(reason='threshold')
         return request_context
 
     async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult:
