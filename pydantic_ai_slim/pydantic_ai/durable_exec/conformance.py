@@ -435,24 +435,39 @@ class DurableEngineSuite:
 _REQUIRE_EXTRAS_VARIABLE = 'PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS'
 """The environment variable that, set to `1` or `true`, fails a case whose extra isn't installed instead of skipping."""
 
+_OWN_PACKAGES = ('pydantic_ai', 'pydantic_ai_harness')
+"""Packages a case's build imports from, which are installed whenever the suite is: a module missing from one is a
+broken install, not an extra."""
+
+
+def _extras_required() -> bool:
+    """Whether `PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS` asks to fail a case whose extra isn't installed."""
+    value = os.environ.get(_REQUIRE_EXTRAS_VARIABLE, '').strip().lower()
+    if value in ('', '0', 'false'):
+        return False
+    if value in ('1', 'true'):
+        return True
+    raise ValueError(f'`{_REQUIRE_EXTRAS_VARIABLE}` must be `1`, `true`, `0` or `false`, not {value!r}')
+
 
 async def _build(
     name: str, calls: Calls, directory: Path
 ) -> Sequence[AbstractCapability[None] | AbstractToolset[None]]:
     """What the case `name`'s calls run against, skipping the case when its build can't find an optional module.
 
-    Only a module that isn't installed skips it: any other `ImportError`, such as a name a mismatched version lacks,
-    fails it. With `PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS` set, a missing module fails it too.
+    Only a module that isn't installed skips it, and only one outside `pydantic_ai` and `pydantic_ai_harness`: any
+    other `ImportError`, such as a name a mismatched version lacks, fails it. With
+    `PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS` set, a missing module fails it too.
     """
     try:
         # A build may write the files its stand-ins read, so it runs off the event loop.
         return await anyio.to_thread.run_sync(calls.build, directory)  # workflow-nondeterminism-ok: test-side
     except ImportError as error:
         missing = _missing_module(error)
-        if missing is None:
+        if missing is None or missing.partition('.')[0] in _OWN_PACKAGES:
             raise
         message = f'{name} needs `{missing}`, from an optional dependency that is not installed'
-        if os.environ.get(_REQUIRE_EXTRAS_VARIABLE, '').lower() in ('1', 'true'):
+        if _extras_required():
             pytest.fail(f'{message}, and `{_REQUIRE_EXTRAS_VARIABLE}` is set: {error}')
         pytest.skip(f'{message}: {error}')
 

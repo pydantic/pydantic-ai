@@ -460,7 +460,9 @@ capabilities' cases added. Subclass it instead to check your engine against both
 
 A case whose capability needs an optional dependency that isn't installed is skipped, naming the missing module, so
 run pytest with `-rs` to see what went unchecked. Set the `PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS` environment
-variable to `1` to fail those cases instead, in a CI job that installs every extra. The cases that need one are:
+variable to `1` (or `true`) to fail those cases instead, in a CI job that installs every extra; `0`, `false` or unset
+keeps them skipped, and any other value is an error. A module missing from `pydantic_ai` or `pydantic_ai_harness`
+themselves always fails. The cases that need one are:
 
 | Case | Needs |
 |---|---|

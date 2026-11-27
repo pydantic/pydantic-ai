@@ -253,6 +253,39 @@ async def test_an_import_error_that_is_no_missing_module_fails(tmp_path: Path) -
         await suite.test_case('case', _Engine(), True, dict, tmp_path)
 
 
+def _misses_its_own_module(directory: Path, /) -> Sequence[AbstractCapability[None]]:
+    raise ModuleNotFoundError("No module named 'pydantic_ai_harness.gone'", name='pydantic_ai_harness.gone')
+
+
+async def test_a_module_missing_from_the_suites_own_packages_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A module missing from `pydantic_ai` or `pydantic_ai_harness` is a broken install, not an extra: the case fails."""
+    monkeypatch.delenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', raising=False)
+    suite = _suite(cases={'case': Calls((('work', {}),), build=_misses_its_own_module)})
+    with pytest.raises(ModuleNotFoundError, match=r'pydantic_ai_harness\.gone'):
+        await suite.test_case('case', _Engine(), True, dict, tmp_path)
+
+
+@pytest.mark.parametrize('value', ['0', 'false', ''])
+async def test_extras_are_optional_unless_required(value: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`0`, `false` or an empty value leave a missing extra a skip."""
+    monkeypatch.setenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', value)
+    suite = _suite(cases={'case': Calls((('work', {}),), build=_needs_a_missing_dependency)})
+    with pytest.raises(pytest.skip.Exception):
+        await suite.test_case('case', _Engine(), True, dict, tmp_path)
+
+
+async def test_an_unknown_value_of_the_extras_variable_is_rejected(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A value the suite doesn't know, such as `yes`, is an error rather than silently leaving extras optional."""
+    monkeypatch.setenv('PYDANTIC_AI_REQUIRE_CONFORMANCE_EXTRAS', 'yes')
+    suite = _suite(cases={'case': Calls((('work', {}),), build=_needs_a_missing_dependency)})
+    with pytest.raises(ValueError, match='must be `1`, `true`, `0` or `false`'):
+        await suite.test_case('case', _Engine(), True, dict, tmp_path)
+
+
 @dataclass
 class _BrokenEngine(_Engine):
     def durability(self) -> BaseDurabilityCapability[None]:
