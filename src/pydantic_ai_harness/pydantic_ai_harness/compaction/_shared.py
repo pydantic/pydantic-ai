@@ -1245,7 +1245,7 @@ def iter_tool_pairs(messages: Sequence[ModelMessage]) -> list[ToolPair]:
     for message_index, message in enumerate(messages):
         if isinstance(message, ModelResponse):
             _queue_calls(message, message_index, open_calls)
-        elif isinstance(message, ModelRequest):  # pragma: no branch
+        else:
             _settle_returns(message, message_index, open_calls, pairs)
     return pairs
 

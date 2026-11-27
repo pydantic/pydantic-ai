@@ -181,8 +181,8 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
         if self.keep_turns is None:
             clearable = self._outside_kept_pairs(messages)
         else:
-            # Only the messages before the kept turns are rebuilt, so a tool call id a provider reuses
-            # in a kept turn can't reach back into it.
+            # Only pairs whose call and return both come before the kept turns are cleared, and only
+            # those messages are rebuilt, so the kept turns go out unchanged.
             boundary = self._kept_turns_start(messages, self.keep_turns)
             older, kept = messages[:boundary], messages[boundary:]
             clearable = iter_tool_pairs(older)
@@ -245,7 +245,7 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
         return replace(request_context, messages=compacted)
 
     def _outside_kept_pairs(self, messages: list[ModelMessage]) -> list[ToolPair]:
-        """The pairs older than the newest `keep_pairs`, matched by tool call id across the whole history.
+        """The pairs older than the newest `keep_pairs`, matched in history order, each call before its return.
 
         With `tools`, the window holds only the listed tools' pairs, so other tools' calls can't push a
         listed result out of it.
