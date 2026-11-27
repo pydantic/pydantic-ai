@@ -547,6 +547,9 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
         """Report cold sandbox calls as they run; hold speculative results for the claim."""
         nested = NESTED_CALL.fullmatch(call.tool_call_id)
         if nested is None:
+            # Only a `run_code` call can have paused launches to settle, so other direct calls keep no value.
+            if tool_def.tool_kind != 'code_mode.run_code':
+                return await handler(args)
             return await self._settle(ctx, call, args, handler)
         speculative = nested['speculative'] is not None
         # An approved call runs again under the same id, and its start was already reported.
@@ -595,7 +598,7 @@ class ShowSandboxCalls(AbstractCapability[AgentDepsT]):
         args: ValidatedToolArgs,
         handler: WrapToolExecuteHandler,
     ) -> object:
-        """Run a direct call, then close the paused calls it made whose result no hook reported."""
+        """Run a `run_code` call, then close the paused calls it made whose result no hook reported."""
         try:
             value = await handler(args)
         except Exception as exc:

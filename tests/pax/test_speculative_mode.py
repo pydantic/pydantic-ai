@@ -4,9 +4,11 @@ import pytest
 
 pytest.importorskip('pydantic_monty')
 
+import gc
 import io
 import json
 import re
+import weakref
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
 from dataclasses import dataclass, field, replace
 from pathlib import Path
@@ -1344,10 +1346,33 @@ class TestPausedSandboxCalls:
         # would fail, as this context has no stream.
         assert (
             await show.wrap_tool_execute(
-                context(), call=parent, tool_def=ToolDefinition(name='run_code'), args={}, handler=settle
+                context(),
+                call=parent,
+                tool_def=ToolDefinition(name='run_code', tool_kind='code_mode.run_code'),
+                args={},
+                handler=settle,
             )
             == 'settled'
         )
+
+    async def test_direct_call_other_than_run_code_keeps_no_result(self) -> None:
+        """Only a `run_code` call can have paused launches to close, so another direct call's result is not kept."""
+        show = ShowSandboxCalls[None]()
+
+        class Written:
+            pass
+
+        async def write(args: dict[str, object]) -> Written:
+            return Written()
+
+        call = ToolCallPart(tool_name='write_file', tool_call_id='direct')
+        result = await show.wrap_tool_execute(
+            context(), call=call, tool_def=ToolDefinition(name='write_file'), args={}, handler=write
+        )
+        kept = weakref.ref(result)
+        del result
+        gc.collect()
+        assert kept() is None
 
     @pytest.mark.parametrize('state', ['pending', 'ready'])
     async def test_paused_launch_evicted_before_its_claim_is_never_shown(
