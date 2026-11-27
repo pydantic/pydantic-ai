@@ -7,6 +7,7 @@ import os
 import re
 import ssl
 import warnings
+import weakref
 from abc import ABC
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager
@@ -945,6 +946,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     _headers_func: MCPHeadersFunc[AgentDepsT] | None = None
     _static_auth: HTTPAuth | Literal['oauth'] | str | None = None
     _static_headers: dict[str, str] | None = None
+    # Bumped by each tools `list_changed` notification, so a `tools/list` response that was in flight
+    # when it arrived isn't cached.
+    _tools_cache_generation: int = 0
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:
@@ -1354,6 +1358,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         return self._server_capabilities is not None
 
     def _invalidate_tools_cache(self) -> None:
+        self._tools_cache_generation += 1
         self._cached_tools = None
 
     def _invalidate_resources_cache(self) -> None:
@@ -1484,8 +1489,10 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         if self.cache_tools and self._cached_tools is not None:
             return self._cached_tools
         async with self._connected():
+            generation = self._tools_cache_generation
             tools = await self.client.list_tools()
-            if self.cache_tools:
+            # A `list_changed` notification that arrived while the request was in flight makes this list stale.
+            if self.cache_tools and generation == self._tools_cache_generation:
                 self._cached_tools = tools
             return tools
 
@@ -1963,15 +1970,21 @@ def _build_message_handler(toolset: MCPToolset[Any], user_handler: MessageHandle
 
     The toolset's own cache invalidation runs first, then the user-supplied handler (if any).
     """
+    # Hold the toolset weakly. FastMCP's stdio connection task keeps this handler alive while the
+    # server runs, so a strong reference would keep the toolset, its client and its transport alive
+    # too, and the transport's finalizer, which stops the server, would never run.
+    toolset_ref = weakref.ref(toolset)
 
     async def handler(message: Any) -> None:
-        notification = getattr(message, 'root', message)
-        if isinstance(notification, mcp_types.ToolListChangedNotification):
-            toolset._invalidate_tools_cache()  # pyright: ignore[reportPrivateUsage]
-        elif isinstance(notification, mcp_types.ResourceListChangedNotification):
-            toolset._invalidate_resources_cache()  # pyright: ignore[reportPrivateUsage]
-        elif isinstance(notification, mcp_types.PromptListChangedNotification):
-            toolset._invalidate_prompts_cache()  # pyright: ignore[reportPrivateUsage]
+        current_toolset = toolset_ref()
+        if current_toolset is not None:
+            notification = getattr(message, 'root', message)
+            if isinstance(notification, mcp_types.ToolListChangedNotification):
+                current_toolset._invalidate_tools_cache()  # pyright: ignore[reportPrivateUsage]
+            elif isinstance(notification, mcp_types.ResourceListChangedNotification):
+                current_toolset._invalidate_resources_cache()  # pyright: ignore[reportPrivateUsage]
+            elif isinstance(notification, mcp_types.PromptListChangedNotification):
+                current_toolset._invalidate_prompts_cache()  # pyright: ignore[reportPrivateUsage]
         if user_handler is not None:
             await user_handler(message)
 

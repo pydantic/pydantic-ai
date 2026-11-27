@@ -37,10 +37,15 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
     or [`ctx.enqueue`][pydantic_ai.tools.RunContext.enqueue]) are kept.
 
     The UI adapters automatically add this capability in `manage_system_prompt='server'` mode
-    with `replace_existing=True`. Add it explicitly with
+    with `replace_existing=True`. They strip the client's system prompts themselves, so their
+    reinjector replaces only the system prompts the history opens with, every rendering of the
+    agent's dynamic system prompts and any copy of its configured prompt, and keeps server-side
+    history's other system prompts. Add it explicitly with
     `Agent(..., capabilities=[ReinjectSystemPrompt()])` or per-run via the `capabilities=`
-    argument on [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] to get the same behavior
-    anywhere.
+    argument on [`Agent.run`][pydantic_ai.agent.AbstractAgent.run] to reinject the system prompt
+    anywhere. An instance you add with `replace_existing=True` can't tell a client's system prompt
+    from one an earlier server-side run persisted, so it replaces every system prompt in the
+    history the run starts with, including one an earlier run enqueued.
     """
 
     replace_existing: bool = False
@@ -59,7 +64,11 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
     """
 
     _history_parts: list[SystemPromptPart] = field(default_factory=list[SystemPromptPart], init=False, repr=False)
-    """With `replace_existing=True`, the system prompt parts in the history this run started with."""
+    """With `replace_existing=True`, the system prompt parts in the history this run started with that it replaces."""
+
+    _spared_parts: list[SystemPromptPart] = field(default_factory=list[SystemPromptPart], init=False, repr=False)
+    """With `replace_existing=True`, the other system prompt parts in the history this run started with, which it
+    keeps unless they repeat the configured prompt."""
 
     _head: list[SystemPromptPart] | None = field(default=None, init=False, repr=False)
     """The parts this run last put at the head of the history, or `None` while the head is still the
@@ -70,19 +79,27 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
             return self
         # Only the history the run starts with can carry a system prompt the caller didn't author
         # (e.g. one a UI client sent), so that's what gets replaced. It can't tell a client's
-        # prompt from one an earlier server-side run persisted, so it replaces both.
+        # prompt from one an earlier server-side run persisted, so it replaces both, unless a
+        # caller that can tell them apart spares the server's in `_spared_history_parts`.
         run_capability = replace(self)
+        spared = self._spared_history_parts(ctx.messages)
+        spared_ids = {id(part) for part in spared}
+        run_capability._spared_parts = spared
         run_capability._history_parts = [
             part
             for message in ctx.messages
             if isinstance(message, ModelRequest)
             for part in message.parts
-            if isinstance(part, SystemPromptPart)
+            if isinstance(part, SystemPromptPart) and id(part) not in spared_ids
         ]
         # With a history, the agent adds no system prompt, so the head only holds the parts
         # snapshotted above and any added since (e.g. a compaction summary), which are kept.
         run_capability._head = [] if ctx.messages else None
         return run_capability
+
+    def _spared_history_parts(self, messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:
+        """The system prompt parts of the history the run starts with that `replace_existing=True` keeps: none."""
+        return []
 
     async def before_model_request(
         self,
@@ -127,10 +144,11 @@ class ReinjectSystemPrompt(AbstractCapability[AgentDepsT]):
         if self.replace_existing:
             # A head part matching the configured prompt is that prompt, e.g. as another
             # reinjector already prepended it this step, unlike a summary a capability put there.
+            # So is a spared part of the starting history that repeats it.
             configured = {(part.content, part.dynamic_ref) for part in sys_parts}
             replaceable += [
                 part
-                for part in _standing_system_prompt(persistent_messages)
+                for part in [*_standing_system_prompt(persistent_messages), *self._spared_parts]
                 if (part.content, part.dynamic_ref) in configured
             ]
             self._head = sys_parts
