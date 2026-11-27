@@ -1,0 +1,64 @@
+# TEMPORARY experiment for merge-group fail-fast; never merged.
+name: Fail fast probe
+
+on:
+  push:
+    branches:
+      - ci-fail-fast-probe
+
+permissions:
+  contents: read
+
+jobs:
+  # Variant A: the failing job cancels the run itself.
+  fails-and-cancels:
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+      contents: read
+    steps:
+      - run: exit 1
+      - if: failure()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
+
+  # Variant B source: fails by timeout, with no step of its own.
+  times-out:
+    runs-on: ubuntu-latest
+    timeout-minutes: 1
+    steps:
+      - run: sleep 600
+
+  # Variant B: a companion job with no PR code cancels after its job fails or times out.
+  cancel-after-times-out:
+    needs: times-out
+    if: failure()
+    runs-on: ubuntu-latest
+    permissions:
+      actions: write
+    steps:
+      - env:
+          GH_TOKEN: ${{ github.token }}
+        run: echo "cancelling at $(date -u +%T)"; gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY"
+
+  slow:
+    runs-on: ubuntu-latest
+    steps:
+      - run: sleep 900
+
+  after-slow:
+    needs: slow
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo never
+
+  check:
+    if: always()
+    needs: [fails-and-cancels, times-out, slow, after-slow]
+    runs-on: ubuntu-latest
+    steps:
+      - run: echo "check started at $(date -u +%T)"
+      - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
+        with:
+          jobs: ${{ toJSON(needs) }}
