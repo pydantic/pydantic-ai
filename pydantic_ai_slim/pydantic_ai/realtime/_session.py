@@ -34,7 +34,13 @@ from typing_extensions import TypeAliasType
 from .. import _agent_graph, _instructions, _system_prompt
 from .._capability_parts import render_capability_parts_for_live_channel
 from .._deferred_capabilities import LoadCapabilityCallPart, registered_loaded_capability_ids
-from .._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
+from .._enqueue import (
+    EnqueueContent,
+    PendingMessage,
+    PendingMessagePlacement,
+    PendingMessagePriority,
+    PendingMessageQueue,
+)
 from .._framing import SYSTEM_TAG, frame
 from .._instrumentation import annotate_tool_call_otel_metadata
 from .._parts_manager import tool_def_ui_visibility
@@ -1962,6 +1968,7 @@ class RealtimeSession:
         self,
         *content: EnqueueContent,
         priority: PendingMessagePriority = 'asap',
+        placement: PendingMessagePlacement = 'append',
     ) -> str | None:
         """Enqueue content to be delivered to the model when the session is ready for it.
 
@@ -1992,18 +1999,24 @@ class RealtimeSession:
                     progress is allowed to finish first.
                 `'when_idle'` — only once the model is idle: no response is in flight and all
                     `'asap'` items have been delivered.
+            placement: Accepted for parity with
+                [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue], with the same restriction:
+                `'before_prompt'` takes only [`DataCapabilityPart`][pydantic_ai.messages.DataCapabilityPart]
+                kinds. A realtime session has no prompt request to place content in, so it's delivered as
+                `'append'` delivers it.
 
         Returns:
             The `enqueue_id` of the queued message, or `None` when there was nothing to enqueue.
 
         Raises:
-            UserError: If the session has not been entered or is closed, or the content cannot be
-                delivered over the live input channel.
+            UserError: If the session has not been entered or is closed, the content cannot be
+                delivered over the live input channel, or content placed `'before_prompt'` is anything
+                but data capability parts.
         """
         if not self._entered:
             raise UserError('Enter the realtime session with `async with` before enqueuing content.')
         self._ensure_can_send()
-        pending = PendingMessage.from_content(*content, priority=priority)
+        pending = PendingMessage.from_content(*content, priority=priority, placement=placement)
         if pending is None:
             return None
         self._pending_messages.append(pending)

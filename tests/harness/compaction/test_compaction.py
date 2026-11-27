@@ -6365,7 +6365,7 @@ class TestHarnessData:
 
         comp = SummarizingCompaction(
             model=FunctionModel(summarize_fn),
-            max_messages=3,
+            max_messages=2,
             keep_messages=1,
             keep_user_messages=True,
             bridge_prefix=False,
