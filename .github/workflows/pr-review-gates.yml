@@ -6,7 +6,7 @@ name: PR Review Gates
 
 on:
   workflow_run: # zizmor: ignore[dangerous-triggers] -- no artifacts or upstream code are consumed; reevaluates live metadata
-    workflows: [PR Bots, PR Review Gates Events]
+    workflows: [PR Bots, PR Review Gates Events, PR Review Checks]
     types: [completed]
   # Review requirements are admission-only; report success on the merge-group SHA.
   merge_group:
@@ -17,6 +17,12 @@ permissions: {}
 jobs:
   review-target:
     name: Resolve review gate target
+    # PR Review Checks also runs on merge groups, which have no PR to evaluate, and skips its job for unrelated
+    # label and edit events, which change nothing the gates read.
+    if: >-
+      github.event_name != 'workflow_run' || (github.event.workflow_run.event != 'merge_group' &&
+      (github.event.workflow_run.path != '.github/workflows/pr-review-checks.yml' ||
+      github.event.workflow_run.conclusion != 'skipped'))
     runs-on: ubuntu-latest
     timeout-minutes: 5
     permissions:
@@ -44,6 +50,8 @@ jobs:
               // REST name includes custom run-name titles; identify the workflow by path.
               const events = {
                 '.github/workflows/bots.yml': ['pull_request'],
+                // Its review and findings are written with `GITHUB_TOKEN`, which wakes no observer.
+                '.github/workflows/pr-review-checks.yml': ['pull_request'],
                 '.github/workflows/pr-review-gates-events.yml': ['pull_request', 'pull_request_review', 'pull_request_review_comment']
               };
               if (!events[run.path]?.includes(run.event) ||
@@ -96,7 +104,7 @@ jobs:
             core.setOutput('repository', repository);
 
   review-statuses:
-    name: Publish size-dependent review gates
+    name: Publish review gates
     needs: review-target
     runs-on: ubuntu-latest
     timeout-minutes: 10
@@ -107,6 +115,8 @@ jobs:
     permissions:
       contents: read
       actions: read
+      # `Tracked in #N` reads the issue it names.
+      issues: read
       pull-requests: read
       statuses: write
     steps:
@@ -133,7 +143,8 @@ jobs:
               }
               head = pull.head.sha;
             }
-            for (const gate of ['Gate: clean douwebot approval', 'Gate: .github changes by a maintainer']) {
+            for (const gate of ['Gate: clean douwebot approval', 'Gate: .github changes by a maintainer',
+                                'Gate: review findings dispositioned']) {
               await github.rest.repos.createCommitStatus({
                 ...context.repo, sha: head, context: gate,
                 state: 'pending', description: 'Reading current files, size and reviews.',
