@@ -864,7 +864,7 @@ class TestPermissionRules:
 
 
 def _lookup(x: int = 0) -> str:
-    return 'ran'
+    raise NotImplementedError
 
 
 async def _decisions(
@@ -929,12 +929,32 @@ class TestPermissionsTelemetry:
             }
         ]
 
-    async def test_asked_calls_record_the_reason_only_with_content(self) -> None:
-        call = ('run_command', {'command': 'cat x'})
+    @pytest.mark.parametrize(
+        ('rules', 'mode', 'reason'),
+        [
+            ([], 'read-only', 'Read-only mode asks before every command.'),
+            ([PermissionRule('allow', command='cat', reason='Reading is safe.')], 'read-only', 'Reading is safe.'),
+        ],
+    )
+    async def test_allowed_and_asked_calls_record_the_reason_with_content(
+        self, rules: list[PermissionRule], mode: PermissionMode, reason: str
+    ) -> None:
+        [decision] = await _decisions(rules, mode, ('run_command', {'command': 'cat x'}), include_content=True)
 
-        [held] = await _decisions([], 'read-only', call, include_content=True)
+        assert decision['permissions.reason'] == reason
 
-        assert held['permissions.reason'] == 'Read-only mode asks before every command.'
+    async def test_an_uninstrumented_run_leaves_the_current_span_alone(self) -> None:
+        """Without `Instrumentation`, the open span is the application's own, not a tool span."""
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        agent = _rules_agent(_calls(('run_command', {'command': 'rm -rf /'})), _RULES)
+
+        with provider.get_tracer('app').start_as_current_span('request'):
+            await agent.run('go')
+
+        [span] = exporter.get_finished_spans()
+        assert not [key for key in span.attributes or {} if key.startswith('permissions.')]
 
     async def test_approved_and_remembered_calls_say_why_they_ran(self) -> None:
         person = _Person(PermissionDecision(approved=True, remember=True))
