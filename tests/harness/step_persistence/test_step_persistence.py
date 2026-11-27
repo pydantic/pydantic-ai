@@ -9,10 +9,11 @@ from __future__ import annotations
 
 import json
 import logging
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, NoReturn, cast
+from typing import Any, NoReturn, ParamSpec, cast
 from uuid import UUID
 
 import anyio
@@ -412,6 +413,19 @@ def _without_file_records(node: Any) -> Any:
     return node
 
 
+_P = ParamSpec('_P')
+
+
+def _counting(calls: list[None], function: Callable[_P, None]) -> Callable[_P, None]:
+    """`function`, appending to `calls` each time it is called."""
+
+    def counted(*args: _P.args, **kwargs: _P.kwargs) -> None:
+        calls.append(None)
+        function(*args, **kwargs)
+
+    return counted
+
+
 class TestFileStepStore:
     async def test_keyed_writes_are_idempotent_after_snapshot_pruning(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path, max_snapshots_per_run=1)
@@ -464,10 +478,10 @@ class TestFileStepStore:
         reads: list[str] = []
         read_text = Path.read_text
 
-        def counting_read_text(path: Path, *args: Any, **kwargs: Any) -> str:
+        def counting_read_text(path: Path, encoding: str | None = None, errors: str | None = None) -> str:
             if path.parent.name == 'snapshots':
                 reads.append(path.name)
-            return read_text(path, *args, **kwargs)
+            return read_text(path, encoding, errors)
 
         monkeypatch.setattr(Path, 'read_text', counting_read_text)
 
@@ -497,20 +511,13 @@ class TestFileStepStore:
             StepEvent(run_id='r1', kind='run_started', step_index=index, idempotency_key=f'event:{index}')
             for index in range(4)
         ]
-        parsed = 0
-        init = StepEvent.__init__
-
-        def counting_init(event: StepEvent, **kwargs: Any) -> None:
-            nonlocal parsed
-            parsed += 1
-            init(event, **kwargs)
-
-        monkeypatch.setattr(StepEvent, '__init__', counting_init)
+        parsed: list[None] = []
+        monkeypatch.setattr(StepEvent, '__init__', _counting(parsed, StepEvent.__init__))
         counts: list[int] = []
         for event in [*events, events[0]]:
-            parsed = 0
+            parsed.clear()
             await store.append_event(event)
-            counts.append(parsed)
+            counts.append(len(parsed))
         monkeypatch.undo()
 
         assert counts == [0, 1, 1, 1, 1]
