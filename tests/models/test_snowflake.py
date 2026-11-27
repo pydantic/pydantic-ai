@@ -359,6 +359,23 @@ async def test_snowflake_tool_output_unsupported_family(allow_model_requests: No
         await agent.run('The capital of Mexico')
 
 
+async def test_snowflake_function_tools_unsupported_family(allow_model_requests: None, provider: SnowflakeProvider):
+    """Cortex errors on `tools` for non-OpenAI/Claude families, so function tools are rejected client-side too.
+
+    Not a VCR test: the request is rejected before any request is made.
+    """
+    from pydantic_ai.exceptions import UserError
+
+    agent = Agent(SnowflakeModel('llama4-maverick', provider=provider))
+
+    @agent.tool_plain
+    def get_capital() -> str:
+        return 'Mexico City'  # pragma: no cover
+
+    with pytest.raises(UserError, match='Tools are not supported by this model'):
+        await agent.run('The capital of Mexico')
+
+
 async def test_snowflake_openai_model(allow_model_requests: None, live_provider: SnowflakeProvider):
     """OpenAI models return a proper `finish_reason` that passes through the coercion unchanged."""
     model = SnowflakeModel('openai-gpt-4.1', provider=live_provider)
