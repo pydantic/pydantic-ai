@@ -437,6 +437,7 @@ def test_main_rejects_waiver_for_listed_model_name_literal(
         ('v2.100.0', False, False),
     ],
 )
+@pytest.mark.parametrize('absolute', [False, True])
 def test_main_checks_the_waiver_against_the_baseline_release(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -444,6 +445,7 @@ def test_main_checks_the_waiver_against_the_baseline_release(
     waived_against: str | None,
     released: bool,
     allowed: bool,
+    absolute: bool,
 ):
     finding = Finding('pydantic_ai', 'messages.py', 12, 'RequestPart: Attribute value was changed: Old -> New')
     waivers = {} if waived_against is None else {f'{finding.fingerprint}.json': {**WAIVER, 'against': waived_against}}
@@ -454,6 +456,7 @@ def test_main_checks_the_waiver_against_the_baseline_release(
     if not released:
         _write_waivers(tmp_path, waivers)
     monkeypatch.chdir(tmp_path)
+    directory = str(tmp_path / 'waivers') if absolute else 'waivers'
 
     def run_griffe(package: str, search_path: str, against: str) -> list[Finding]:
         assert (package, search_path, against) == ('pydantic_ai', 'pydantic_ai_slim', 'v2.32.1')
@@ -463,7 +466,7 @@ def test_main_checks_the_waiver_against_the_baseline_release(
     monkeypatch.setattr(check_api_compatibility, 'run_griffe', run_griffe)
     monkeypatch.setattr(
         'sys.argv',
-        ['check_api_compatibility.py', '--against', 'v2.32.1', '--allowlist', str(allowlist), '--waivers', 'waivers'],
+        ['check_api_compatibility.py', '--against', 'v2.32.1', '--allowlist', str(allowlist), '--waivers', directory],
     )
 
     if allowed:
@@ -478,7 +481,7 @@ def test_main_checks_the_waiver_against_the_baseline_release(
         assert 'Allowed by https://github.com/pydantic/pydantic-ai/pull/123' in output
     else:
         assert '::error file=messages.py,line=12::' in output
-        assert f'with a waiver in `waivers/{finding.fingerprint}.json`' in output
+        assert f'with a waiver in `{directory}/{finding.fingerprint}.json`' in output
         stale = f'waives it against {waived_against}; replace its contents with a waiver against v2.32.1.'
         assert (stale in output) is (waived_against is not None)
 
