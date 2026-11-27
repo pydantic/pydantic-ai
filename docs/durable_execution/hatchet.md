@@ -103,6 +103,12 @@ Tool calls still run in parallel in a durable task, but their events are emitted
 
 A run's `timeout=` counts from the time the durable task first started the run, which its event log records, so a replayed run keeps the deadline it started with.
 
+!!! warning "Values a replay doesn't reproduce yet"
+    Two values made in the durable task come out different on a replay, and a child task whose input carries one fails the replay with Hatchet's `NonDeterminismError`:
+
+    - the IDs that [`ctx.enqueue()`][pydantic_ai.tools.RunContext.enqueue] gives the content it enqueues, which an `event_stream_handler` task gets with the [`EnqueuedMessagesEvent`][pydantic_ai.messages.EnqueuedMessagesEvent], and later model requests with the enqueued parts, e.g. from Pydantic AI Harness's `ReportRemainingBudget`
+    - the `request_timeout` that [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] gives a retry, which is what's left of the first attempt's when a `request_timeout` is set
+
 ### Streaming
 
 `event_stream_handler` sees the run's events: model events are handled live inside the model request task, and every other event in a task of its own that the durable task spawns.
