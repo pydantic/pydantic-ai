@@ -3,13 +3,21 @@
 from __future__ import annotations
 
 from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, field
 from pathlib import Path
 
 import pytest
 
-from pydantic_ai import Agent, DeferredToolRequests, Tool
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, Tool
 from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import (
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.workspaces import Workspace, WorkspaceRef, WorkspaceUnavailableError
 from pydantic_ai_harness.approval_reviewer import ApprovalReviewer
@@ -202,6 +210,123 @@ class TestProtectedPaths:
         assert (permissions.protected_paths, permissions.protected_commands) == (['.pax/*'], ['pax config'])
 
 
+def _approval_required_shell(ran: list[str]) -> Tool[None]:
+    """A shell tool registered with `requires_approval=True`, so core defers it before any `before_tool_execute` hook."""
+
+    def run_command(command: str) -> str:
+        ran.append(command)
+        return 'ran'
+
+    return Tool(
+        run_command,
+        requires_approval=True,
+        metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'},
+    )
+
+
+@dataclass
+class _KeepingResults(AbstractCapability[None]):
+    """Hands deferred calls to `reviewer`, and keeps what it answered."""
+
+    reviewer: ApprovalReviewer[None]
+    results: list[DeferredToolResults | None] = field(default_factory=list[DeferredToolResults | None])
+
+    async def handle_deferred_tool_calls(
+        self, ctx: RunContext[None], *, requests: DeferredToolRequests
+    ) -> DeferredToolResults | None:
+        result = await self.reviewer.handle_deferred_tool_calls(ctx, requests=requests)
+        self.results.append(result)
+        return result
+
+
+class TestProtectedCallsDeferredBeforePermissions:
+    """A protected call deferred by `requires_approval=True` is still for a person only."""
+
+    async def test_a_reviewer_leaves_it_to_the_person(self, tmp_path: Path) -> None:
+        ran: list[str] = []
+        person = _Person()
+        agent = Agent[None, str](
+            _calls(('run_command', {'command': 'echo x > .pax/settings.json'})),
+            deps_type=type(None),
+            tools=[_approval_required_shell(ran)],
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Permissions('auto', protected_paths=PROTECTED),
+                ApprovalReviewer[None](_safe_reviewer(), question='Could this call do harm?'),
+                HandleDeferredToolCalls[None](approval_ask(person)),
+            ],
+        )
+        await agent.run('go')
+        assert [(asked.subject, asked.person_only) for asked in person.asked] == [('echo x > .pax/settings.json', True)]
+        assert ran == []
+
+    async def test_an_unprotected_call_still_goes_to_the_reviewer(self, tmp_path: Path) -> None:
+        ran: list[str] = []
+        person = _Person()
+        agent = Agent[None, str](
+            _calls(('run_command', {'command': 'echo x > notes.md'})),
+            deps_type=type(None),
+            tools=[_approval_required_shell(ran)],
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Permissions('auto', protected_paths=PROTECTED),
+                ApprovalReviewer[None](_safe_reviewer(), question='Could this call do harm?'),
+                HandleDeferredToolCalls[None](approval_ask(person)),
+            ],
+        )
+        await agent.run('go')
+        assert person.asked == []
+        assert ran == ['echo x > notes.md']
+
+    async def test_a_reviewer_approval_on_resume_still_asks_a_person(self, tmp_path: Path) -> None:
+        """Results a reviewer gave for the call where nothing marked it protected, such as before the path was."""
+        command = 'echo x > .pax/settings.json'
+        reviewer = _KeepingResults(ApprovalReviewer[None](_safe_reviewer(), question='Could this call do harm?'))
+        unprotected = Agent[None, str](
+            _calls(('run_command', {'command': command})),
+            deps_type=type(None),
+            tools=[_approval_required_shell([])],
+            capabilities=[reviewer],
+        )
+        await unprotected.run('go')
+        [approvals] = reviewer.results
+        assert approvals is not None
+        assert list(approvals.approvals) == ['call0']
+
+        ran: list[str] = []
+        protected = Agent[None, 'str | DeferredToolRequests'](
+            _calls(('run_command', {'command': command})),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            tools=[_approval_required_shell(ran)],
+            capabilities=[LocalWorkspace(tmp_path), Permissions('auto', protected_paths=PROTECTED)],
+        )
+        held = await protected.run('go')
+        resumed = await protected.run(message_history=held.all_messages(), deferred_tool_results=approvals)
+        assert isinstance(resumed.output, DeferredToolRequests)
+        assert [(r.subject, r.person_only) for r in permission_requests(resumed.output)] == [(command, True)]
+        assert ran == []
+
+    async def test_a_person_approval_on_resume_runs_it(self, tmp_path: Path) -> None:
+        ran: list[str] = []
+        command = 'echo x > .pax/settings.json'
+        agent = Agent[None, 'str | DeferredToolRequests'](
+            _calls(('run_command', {'command': command})),
+            deps_type=type(None),
+            output_type=[str, DeferredToolRequests],
+            tools=[_approval_required_shell(ran)],
+            capabilities=[LocalWorkspace(tmp_path), Permissions('auto', protected_paths=PROTECTED)],
+        )
+        held = await agent.run('go')
+        assert isinstance(held.output, DeferredToolRequests)
+        assert [r.person_only for r in permission_requests(held.output)] == [True]
+        resumed = await agent.run(
+            message_history=held.all_messages(), deferred_tool_results=DeferredToolResults(approvals={'call0': True})
+        )
+        assert resumed.output == 'ran'
+        assert ran == [command]
+
+
 class _DBOSDurability(AbstractCapability[None]):
     in_durable_context = True
 
@@ -322,6 +447,100 @@ class TestMatching:
         assert await command_locations(workspace, 'cat .pax/x', posix=False) != []
         assert await command_locations(workspace, 'cat $X .pax/x', posix=True) != []
         assert await command_locations(workspace, 'cat ' + 'x' * 70_000, posix=True) != []
+
+
+class TestCommandWords:
+    """A protected path a command names is seen however the shell spells it."""
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            'echo x > "/home/u/my dir/.pax/settings.json"',
+            "echo x > '/home/u/my dir/.pax/settings.json'",
+            'echo x > /home/u/my\\ dir/.pax/settings.json',
+            'echo x >"/home/u/my dir/.pax/settings.json";true',
+            'tool --out="/home/u/my dir/.pax/settings.json"',
+            'echo `cat a`>/home/u/my\\ dir/.pax/settings.json',
+            'echo "x > /home/u/my dir/.pax/settings.json',
+        ],
+        ids=['double-quotes', 'single-quotes', 'escaped-space', 'operators', 'option-value', 'backticks', 'unbalanced'],
+    )
+    async def test_posix_spellings(self, command: str) -> None:
+        assert await _names_protected(Workspace(_NoWorkspace()), command, posix=True)
+
+    @pytest.mark.parametrize(
+        'command',
+        [
+            'Set-Content .pax\\settings.json x',
+            'Set-Content C:\\Users\\u\\.pax\\settings.json x',
+            'echo x > "C:\\Users\\Alice Smith\\.pax\\settings.json"',
+            "Set-Content 'C:\\Users\\Alice Smith\\.PAX\\Settings.json' x",
+            'copy hook C:\\repo\\.git\\hooks\\pre-commit',
+        ],
+        ids=['relative', 'absolute', 'quoted-space', 'single-quoted-case', 'hooks'],
+    )
+    async def test_windows_spellings(self, command: str) -> None:
+        assert await _names_protected(Workspace(_WindowsWorkspace()), command, posix=False)
+
+    async def test_a_quoted_path_is_one_word(self) -> None:
+        workspace = Workspace(_NoWorkspace())
+        assert await command_locations(workspace, 'echo x > "my dir/.pax/x"', posix=True) == [
+            'echo',
+            'x',
+            'my dir/.pax/x',
+        ]
+        assert await command_locations(workspace, 'tool --out=a', posix=True) == ['tool', '--out=a', '--out', 'a']
+
+    async def test_windows_paths_resolve_against_the_working_directory(self) -> None:
+        workspace = Workspace(_WindowsWorkspace())
+        assert await command_locations(workspace, 'Set-Content ".pax\\my settings.json"', posix=False) == [
+            'C:\\Repo\\Set-Content',
+            'C:\\Repo\\.pax\\my settings.json',
+        ]
+
+    async def test_other_commands_name_no_protected_path(self) -> None:
+        assert not await _names_protected(Workspace(_NoWorkspace()), 'echo ".pax is a folder" > notes.md', posix=True)
+        assert not await _names_protected(Workspace(_WindowsWorkspace()), 'Set-Content notes.pax x', posix=False)
+
+    async def test_case_is_ignored_on_posix_too(self) -> None:
+        """macOS file systems ignore case by default, so `.PAX` there is `.pax`."""
+        assert await _names_protected(Workspace(_NoWorkspace()), 'cp x .PAX/settings.json', posix=True)
+        assert matches('/repo/.Git/Hooks/pre-commit', PROTECTED, posix=True)
+
+    async def test_a_very_long_command_counts_as_protected(self, tmp_path: Path) -> None:
+        """Too long to split in reasonable time, though none of its short words is a protected path."""
+        person = await _run(tmp_path, ('run_command', {'command': 'echo' + ' x' * 40_000}))
+        assert [asked.person_only for asked in person.asked] == [True]
+
+    async def test_a_very_long_command_without_protection_is_not_held(self, tmp_path: Path) -> None:
+        person = _Person()
+        agent = Agent[None, str](
+            _calls(('run_command', {'command': 'echo' + ' x' * 40_000})),
+            deps_type=type(None),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Shell(denied_commands=[]),
+                Permissions('auto'),
+                HandleDeferredToolCalls[None](approval_ask(person)),
+            ],
+        )
+        await agent.run('go')
+        assert person.asked == []
+
+
+async def _names_protected(workspace: Workspace, command: str, *, posix: bool) -> bool:
+    locations = await command_locations(workspace, command, posix=posix)
+    return any(matches(location, PROTECTED, posix=posix) for location in locations)
+
+
+class _WindowsWorkspace:
+    """A Windows backend working in `C:\\Repo`."""
+
+    ref: WorkspaceRef | None = None
+    workspace_platform = 'windows'
+
+    async def working_dir(self) -> str:
+        return 'C:\\Repo'
 
 
 class _NoWorkspace:
