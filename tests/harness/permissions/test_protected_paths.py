@@ -81,6 +81,7 @@ async def _run(
     mode: PermissionMode = 'auto',
     rules: Sequence[PermissionRule[None]] = (),
     protected_commands: Sequence[str] = (),
+    protected_paths: Sequence[str] = PROTECTED,
     extra: Sequence[AbstractCapability[None]] = (),
 ) -> _Person:
     person = _Person()
@@ -92,7 +93,7 @@ async def _run(
             LocalWorkspace(tmp_path),
             FileSystem(),
             Shell(denied_commands=[]),
-            Permissions(mode, rules=rules, protected_paths=PROTECTED, protected_commands=protected_commands),
+            Permissions(mode, rules=rules, protected_paths=protected_paths, protected_commands=protected_commands),
             *extra,
             HandleDeferredToolCalls[None](approval_ask(person)),
         ],
@@ -180,6 +181,18 @@ class TestProtectedPaths:
             tmp_path, *(('run_command', {'command': c}) for c in commands), protected_commands=['settings set']
         )
         assert [(asked.subject, asked.person_only) for asked in person.asked] == [(commands[0], True)]
+
+    async def test_protected_commands_alone_leave_paths_unchecked(self, tmp_path: Path) -> None:
+        """With no `protected_paths`, only the protected command asks; a write the paths would cover runs."""
+        commands = ['settings set model x', 'mkdir -p .pax && echo x > .pax/settings.json']
+        person = await _run(
+            tmp_path,
+            *(('run_command', {'command': c}) for c in commands),
+            protected_commands=['settings set'],
+            protected_paths=(),
+        )
+        assert [asked.subject for asked in person.asked] == [commands[0]]
+        assert (tmp_path / '.pax' / 'settings.json').exists()
 
     async def test_a_reviewer_never_approves_a_protected_call(self, tmp_path: Path) -> None:
         """A reviewer that says every call is safe approves the `git push`, but the protected write goes to the person."""
@@ -413,7 +426,9 @@ class TestDurableRunsDoNotExpandFromTheProcess:
 
     CONFIG = ('/home/me/.config/pydantic-ai-pax', '/home/me/.config/pydantic-ai-pax/*')
 
-    async def _asked(self, command: str, *, durable: bool) -> list[str]:
+    async def _asked(
+        self, command: str, *, durable: bool, paths: Sequence[str] = CONFIG, commands: Sequence[str] = ()
+    ) -> list[str]:
         def run_command(command: str) -> str:
             return 'ran'
 
@@ -424,7 +439,7 @@ class TestDurableRunsDoNotExpandFromTheProcess:
             tools=[Tool(run_command, metadata={'code_arg_language': 'shell', 'code_arg_name': 'command'})],
             capabilities=[
                 *([_DBOSDurability()] if durable else []),
-                Permissions('auto', protected_paths=self.CONFIG),
+                Permissions('auto', protected_paths=paths, protected_commands=commands),
                 HandleDeferredToolCalls[None](handler=lambda ctx, requests: ask_permissions(requests, person)),
             ],
         )
@@ -444,6 +459,11 @@ class TestDurableRunsDoNotExpandFromTheProcess:
             monkeypatch.setenv('CONFIG_HOME', f'{home}/.config')
             decisions.append(await self._asked(command, durable=True))
         assert decisions == [[command], [command]]
+
+    async def test_with_only_protected_commands_a_word_to_expand_runs(self) -> None:
+        """No `protected_paths` to match, so a `~` word needs no expanding, even in a durable run."""
+        command = 'echo x > ~/notes.txt'
+        assert await self._asked(command, durable=True, paths=(), commands=['pax config']) == []
 
     async def test_outside_a_durable_run_the_environment_is_expanded(self, monkeypatch: pytest.MonkeyPatch) -> None:
         command = 'echo x > ~/.config/pydantic-ai-pax/config.db'
