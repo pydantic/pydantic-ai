@@ -77,7 +77,7 @@ _OPENING = (
     '{subject} was imported from Claude Code session {session_id}. Up to the note at its end, it ran in '
     "Claude Code's harness: the tool calls in it (such as Bash, Read, Edit, Write, Agent, SendMessage, Skill and "
     "ToolSearch), its `<system-reminder>` blocks and the other context it added are Claude Code's, and its "
-    "sub-agents' reports appear as `<task_output>` blocks."
+    "sub-agents' reports appear as task reports."
 )
 _SELF = 'self'
 """The agent name Pax runs Claude Code's `general-purpose` sub-agents under: itself."""

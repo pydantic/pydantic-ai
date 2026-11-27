@@ -343,7 +343,11 @@ class TestDirectoryBlockShape:
         assert isinstance(guidance, str)
         directory = 'Memory files are in `.agent-memory/main/` in the workspace; read them with the file-reading tool.'
         assert directory in instructions
-        [snapshot] = [text for text in recorder.user_text if text.startswith("[TextContent(content='<memory>")]
+        [snapshot] = [
+            text
+            for text in recorder.user_text
+            if text.startswith('[TextContent(content=\'<pyai:data kind="memory.snapshot">')
+        ]
         snapshot_text = snapshot.split("content='", 1)[1].rsplit("', metadata", 1)[0]
         assert len(guidance) + len(directory) + len(snapshot_text) <= 400 * 4
 

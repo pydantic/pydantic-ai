@@ -658,7 +658,7 @@ class TestInputGuardrailRedaction:
                 for part in message.parts
                 if isinstance(part, UserPromptPart) and isinstance(part.content, list)
             ]
-            results = [text for text in texts if text.startswith('<tool_result')]
+            results = [text for text in texts if text.startswith('<pyai:data kind="background_tools.tool_result"')]
             if results:
                 sent.append(results[-1])
                 return ModelResponse(parts=[TextPart('done')])
@@ -681,7 +681,13 @@ class TestInputGuardrailRedaction:
         assert resumed.output == 'done'
         # The run has no prompt of its own, so the guard screens the latest one in history, as after a task report.
         assert guard_calls == ['go', 'go']
-        assert sent == ['<tool_result tool_name="lookup" tool_call_id="tool-1">answer</tool_result>'] * 2
+        assert (
+            sent
+            == [
+                '<pyai:data kind="background_tools.tool_result" tool_name="lookup" tool_call_id="tool-1">answer</pyai:data>'
+            ]
+            * 2
+        )
 
     async def test_replace_with_non_str_is_a_usage_error(self):
         agent = Agent(

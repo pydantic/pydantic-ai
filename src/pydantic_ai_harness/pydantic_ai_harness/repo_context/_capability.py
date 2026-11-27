@@ -88,7 +88,8 @@ class ContextFilePart(
 
     `RepoContext(nested_inject='contents')` surfaces nested files this way, and the walk-up sends an ancestor's file
     this way when it's below `'operator'` [authority][pydantic_ai.workspaces.Workspace.authority_of]. Repository data
-    on the user channel, in a `<context_file>` tag naming the file. Find them in history by this type.
+    on the user channel, in a `<pyai:data kind="repo_context.context_file">` frame naming the file. Find them in
+    history by this type.
     """
 
     path: str

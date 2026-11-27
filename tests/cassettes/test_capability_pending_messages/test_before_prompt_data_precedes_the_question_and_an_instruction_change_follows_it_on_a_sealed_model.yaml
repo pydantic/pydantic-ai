@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1605"
+      - "1645"
       content-type:
       - application/json
       host:
@@ -23,11 +23,11 @@ interactions:
         messages:
         - role: user
           content:
-          - text: <context>
+          - text: <pyai:data kind="test_before_prompt.context">
             type: text
           - text: memory 1
             type: text
-          - text: </context>
+          - text: </pyai:data>
             type: text
           - text: "Reply with one word: hello."
             type: text
@@ -56,11 +56,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=75
+      - x-originResponse;dur=56
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-f401039c940cac731b12d0dbe9dccec2-d9239e3b1f92aad6-01
+      - 00-9ebcb096bf8904c85cf59b8e7bb915d0-4ad3d59424b51632-01
       transfer-encoding:
       - chunked
       vary:
@@ -69,30 +69,30 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011ChNchoESUArqEta3xdQa2","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":301,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}     }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011ChSgUiX39yEa2RsZACFdF","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":316,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":1,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}             }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}    }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}       }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}        }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Hello"}          }
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}               }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"!"}             }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0}
+        data: {"type":"content_block_stop","index":0            }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":301,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5} }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":316,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":5}              }
 
         event: message_stop
-        data: {"type":"message_stop"             }
+        data: {"type":"message_stop"       }
 
-  recorded_at: 2026-11-24T23:25:01.953201+00:00
+  recorded_at: 2026-11-27T02:56:55.934365+00:00
 - request:
     method: POST
     uri: https://api.anthropic.com/v1/messages?beta=true
@@ -104,7 +104,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1985"
+      - "2065"
       content-type:
       - application/json
       host:
@@ -116,11 +116,11 @@ interactions:
         messages:
         - role: user
           content:
-          - text: <context>
+          - text: <pyai:data kind="test_before_prompt.context">
             type: text
           - text: memory 1
             type: text
-          - text: </context>
+          - text: </pyai:data>
             type: text
           - text: "Reply with one word: hello."
             type: text
@@ -130,11 +130,11 @@ interactions:
             type: text
         - role: user
           content:
-          - text: <context>
+          - text: <pyai:data kind="test_before_prompt.context">
             type: text
           - text: memory 1
             type: text
-          - text: </context>
+          - text: </pyai:data>
             type: text
           - text: "Reply with one word: goodbye."
             type: text
@@ -168,11 +168,11 @@ interactions:
       content-type:
       - text/event-stream; charset=utf-8
       server-timing:
-      - x-originResponse;dur=42
+      - x-originResponse;dur=40
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
       traceresponse:
-      - 00-cac6d1c64a971ad86897ea0eea399bc1-96d6277635fa2de7-01
+      - 00-9ed0dd6c3cb4f3f69adfbf113ebb49c9-87bb20814010d2cd-01
       transfer-encoding:
       - chunked
       vary:
@@ -181,24 +181,24 @@ interactions:
       type: text
       content: |+
         event: message_start
-        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011ChNchqTsi4sYxadRcZ5FN","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":354,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":6,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
+        data: {"type":"message_start","message":{"model":"claude-sonnet-4-6","id":"msg_011ChSgUsMMd4eRmEXmYkF5k","type":"message","role":"assistant","content":[],"container":null,"stop_reason":null,"stop_sequence":null,"stop_details":null,"usage":{"input_tokens":384,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"cache_creation":{"ephemeral_5m_input_tokens":0,"ephemeral_1h_input_tokens":0},"output_tokens":6,"service_tier":"standard","inference_geo":"global","speed":"standard"},"diagnostics":null}            }
 
         event: content_block_start
-        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}  }
+        data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}   }
 
         event: ping
         data: {"type": "ping"}
 
         event: content_block_delta
-        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Goodbye."}              }
+        data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"Goodbye."} }
 
         event: content_block_stop
-        data: {"type":"content_block_stop","index":0    }
+        data: {"type":"content_block_stop","index":0              }
 
         event: message_delta
-        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":354,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":6}  }
+        data: {"type":"message_delta","delta":{"stop_reason":"end_turn","stop_sequence":null,"stop_details":null,"container":null},"usage":{"input_tokens":384,"cache_creation_input_tokens":0,"cache_read_input_tokens":0,"output_tokens":6}               }
 
         event: message_stop
-        data: {"type":"message_stop"               }
+        data: {"type":"message_stop"  }
 
-  recorded_at: 2026-11-24T23:25:02.406112+00:00
+  recorded_at: 2026-11-27T02:56:57.936807+00:00

@@ -45,13 +45,13 @@ def _user_text(part: UserPromptPart) -> str:
 
 
 def _parent(messages: list[ModelMessage], background: bool) -> ModelResponse:
-    # The model is sent the report rendered from its `TaskOutputPart`: user text in a `<task_output>` frame.
+    # The model is sent the report rendered from its `TaskOutputPart`: user text in a `<pyai:data kind="subagents.task_output">` frame.
     reports = [
         text
         for message in messages
         if isinstance(message, ModelRequest)
         for part in message.parts
-        if isinstance(part, UserPromptPart) and '<task_output ' in (text := _user_text(part))
+        if isinstance(part, UserPromptPart) and '<pyai:data kind="subagents.task_output" ' in (text := _user_text(part))
     ]
     if reports:
         return ModelResponse(parts=[TextPart(reports[-1])])

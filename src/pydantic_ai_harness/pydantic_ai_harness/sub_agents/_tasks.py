@@ -152,7 +152,7 @@ class DelegationTask:
     process leaves it to that process while it runs. `None` once settled, and in a task saved by an older version."""
 
     def report(self) -> TaskOutputPart:
-        """The settled task's report: the child's output, as `<task_output>` data on the user channel.
+        """The settled task's report: the child's output, as `<pyai:data kind="subagents.task_output">` data on the user channel.
 
         The output was written by a model and may carry instructions from whatever the child read, so it
         never enters system voice. The frame's attributes identify the task (its id, agent name, and an

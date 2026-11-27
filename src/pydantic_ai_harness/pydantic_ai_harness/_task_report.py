@@ -28,7 +28,7 @@ class TaskOutputPart(
 ):
     """A settled background task's report: the child's output, as its parent receives it.
 
-    Data on the user channel in a `<task_output>` tag naming the task, as the child's model wrote it, with a note that
+    Data on the user channel in a `<pyai:data kind="subagents.task_output">` frame naming the task, as the child's model wrote it, with a note that
     the sub-agent wrote it, not the user or the application. Find reports in history by this type, or with
     [`is_task_report`][pydantic_ai_harness.sub_agents.is_task_report].
     """
@@ -40,7 +40,7 @@ class TaskOutputPart(
     """The name of the sub-agent that ran the task."""
 
     outcome: str | None = None
-    """How the task settled, when it didn't succeed: like a background tool's `<tool_result>`, the frame only says so then."""
+    """How the task settled, when it didn't succeed: like a background tool's result, the frame only says so then."""
 
     generation: int = 0
     """Which run of the task this reports on. Never sent to the model."""

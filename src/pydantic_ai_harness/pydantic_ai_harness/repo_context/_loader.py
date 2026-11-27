@@ -199,7 +199,7 @@ def render_context_file(file: ContextFile, *, label: str) -> str:
 def context_file_part_content(file: ContextFile) -> str:
     """A nested file's text as a `ContextFilePart` holds it: as written, without trailing line terminators.
 
-    Pydantic AI sends a data part's content byte for byte: text in it that opens or closes the `<context_file>` frame, or
+    Pydantic AI sends a data part's content byte for byte: text in it that opens or closes its `<pyai:data>` frame, or
     looks like one of the application's frames, gets a note saying the file's author wrote it.
     """
     return file.content.rstrip('\r\n')

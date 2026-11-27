@@ -3517,9 +3517,9 @@ async def test_before_prompt_data_precedes_the_question_and_an_instruction_chang
         texts.append(text.strip().splitlines()[0][:60])
     assert texts == snapshot(
         [
-            '<context>',
+            '<pyai:data kind="test_before_prompt.context">',
             'memory 1',
-            '</context>',
+            '</pyai:data>',
             'Reply with one word: goodbye.',
             '<system verified><pyai:context id="agent:tone">',
         ]
