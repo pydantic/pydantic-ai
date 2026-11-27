@@ -20090,6 +20090,7 @@ async def test_request_stream_model_response_with_parts(allow_model_requests: No
         model_name='gpt-4o',
         provider_name='azure',
         finish_reason='content_filter',
+        pricing_provider='doubleword',
     )
 
     async def mock_responses_create(
@@ -20112,6 +20113,8 @@ async def test_request_stream_model_response_with_parts(allow_model_requests: No
     model_response = request_stream.get()
     assert model_response.parts == [TextPart('filtered content')]
     assert model_response.finish_reason == 'content_filter'
+    # The response's pricing identity carries over, as its other provider fields do.
+    assert model_response.pricing_provider == 'doubleword'
     # Parts are set up via handle_part in __post_init__, but _get_event_iterator yields nothing
     assert events == []
 

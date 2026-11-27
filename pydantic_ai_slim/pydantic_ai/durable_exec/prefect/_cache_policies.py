@@ -19,6 +19,7 @@ from pydantic_ai.messages import (
     CapabilityInstructionSource,
     CapabilityPart,
     CapabilitySource,
+    ModelResponse,
     RunInstructionSource,
     ToolsetInstructionSource,
 )
@@ -241,6 +242,9 @@ def _excluded_fields(obj: object, *, is_framework: bool) -> frozenset[str]:
         # Left out while unset, so keys stay what they were before the field was added; a set stamp stays in the key,
         # since the model task's cached response carries it.
         excluded_fields |= {'ui_visibility'}
+    elif isinstance(obj, ModelResponse) and obj.pricing_provider is None:
+        # Left out while unset, for the same reason: keys stay what they were before the field was added.
+        excluded_fields |= {'pricing_provider'}
     return excluded_fields
 
 

@@ -1152,6 +1152,7 @@ async def test_google_model_safety_settings(allow_model_requests: None, google_p
                 'provider_name': 'google',
                 'provider_url': 'https://generativelanguage.googleapis.com/',
                 'canonical_system': 'google',
+                'pricing_provider': None,
                 'provider_details': {
                     'finish_reason': 'SAFETY',
                     'safety_ratings': [

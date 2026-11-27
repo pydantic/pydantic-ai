@@ -175,7 +175,7 @@ def fill_response_cost(response: ModelResponse) -> None:
                 response.usage,
                 model_name=response.model_name,
                 provider_api_url=response.provider_url,
-                provider_name=response.provider_name,
+                provider_name=response.pricing_provider or response.provider_name,
                 genai_request_timestamp=response.timestamp,
                 price_context=response.provider_details,
             )

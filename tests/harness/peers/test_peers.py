@@ -378,6 +378,7 @@ class TestPeers:
     "kind": "response",
     "provider_name": null,
     "provider_url": null,
+    "pricing_provider": null,
     "canonical_system": null,
     "provider_details": null,
     "provider_response_id": null,

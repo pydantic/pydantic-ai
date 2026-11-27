@@ -5970,6 +5970,15 @@ class ModelResponse:
     provider_url: str | None = None
     """The base URL of the LLM provider that generated the response."""
 
+    pricing_provider: str | None = None
+    """The [`genai-prices`](https://github.com/pydantic/genai-prices) provider to price this response as, when it isn't `provider_name`.
+
+    Set by the model when its provider's prices are another provider's, such as a Pydantic AI Gateway route that
+    serves Doubleword models over the OpenAI API (`gateway/doubleword:...`): `provider_name` stays `'openai'`, which
+    history replay keys on, and [`cost()`][pydantic_ai.messages.ModelResponse.cost] looks the model up under
+    `'doubleword'`.
+    """
+
     canonical_system: str | None = None
     """The system whose keys verify the stateless signed or encrypted data in this response, when it isn't evident from `provider_name`.
 
@@ -6150,11 +6159,12 @@ class ModelResponse:
         already holds the gateway-reported cost when available, whereas `cost()` always computes a local estimate
         via `genai-prices`.
 
-        If `cost()` raises `LookupError` because the provider wasn't matched, call `genai_prices.calc_price` directly
-        with an explicit `provider_id`:
+        If `cost()` raises `LookupError` because the provider wasn't matched, set
+        [`pricing_provider`][pydantic_ai.messages.ModelResponse.pricing_provider] to the `genai-prices` provider whose
+        prices apply:
 
         ```python
-        from genai_prices import calc_price
+        from dataclasses import replace
 
         from pydantic_ai import ModelResponse, RequestUsage, TextPart
 
@@ -6166,24 +6176,14 @@ class ModelResponse:
             provider_name='openai',
         )
 
-        try:
-            price = response.cost()
-        except LookupError:
-            assert response.model_name
-            price = calc_price(
-                response.usage,
-                response.model_name,
-                provider_id='doubleword',
-                genai_request_timestamp=response.timestamp,
-                price_context=response.provider_details,
-            )
+        price = replace(response, pricing_provider='doubleword').cost()
         ```
 
         Raises:
             ValueError: If the response has no `model_name`, omitted usage (`usage.unmeasured_requests` is non-zero)
                 or contains inconsistent usage counts.
             LookupError: If `genai-prices` has no pricing data for the provider or model — for example, on a custom
-                OpenAI-compatible endpoint whose provider `genai-prices` can't infer.
+                OpenAI-compatible endpoint whose provider `genai-prices` can't infer. Set `pricing_provider`, as above.
         """
         if not self.model_name:
             raise ValueError('Model name is required to calculate price')
@@ -6196,7 +6196,7 @@ class ModelResponse:
             self.usage,
             model_name=self.model_name,
             provider_api_url=self.provider_url,
-            provider_name=self.provider_name,
+            provider_name=self.pricing_provider or self.provider_name,
             genai_request_timestamp=self.timestamp,
             price_context=self.provider_details,
         )

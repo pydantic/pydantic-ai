@@ -764,6 +764,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                 provider_name=self._provider.name,
                 provider_url=self._provider.base_url,
                 canonical_system=self._canonical_system_stamp,
+                pricing_provider=self._pricing_provider_stamp,
                 finish_reason='content_filter',
             )
 
@@ -799,6 +800,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             provider_name=self._provider.name,
             provider_url=self._provider.base_url,
             canonical_system=self._canonical_system_stamp,
+            pricing_provider=self._pricing_provider_stamp,
             finish_reason=finish_reason,
         )
 
@@ -910,6 +912,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             _model_settings=model_settings,
         )
         streamed_response.canonical_system = self._canonical_system_stamp
+        streamed_response.pricing_provider = self._pricing_provider_stamp
         return streamed_response
 
     @property

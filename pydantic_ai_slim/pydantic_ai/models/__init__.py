@@ -1569,6 +1569,13 @@ class Model(AbstractModel, Generic[InterfaceClient]):
             return canonical_system
         return None if canonical_system == self.system else canonical_system
 
+    @property
+    def _pricing_provider_stamp(self) -> str | None:
+        """The `pricing_provider` to set on a response this model creates: its provider's, when that isn't `system`."""
+        provider = self.provider
+        pricing_provider = provider._pricing_provider if provider is not None else None  # pyright: ignore[reportPrivateUsage]
+        return None if pricing_provider == self.system else pricing_provider
+
     _honors_compaction_boundaries: ClassVar[bool] = False
     """Whether the adapter drops the history before a compaction part it sends, with `_trim_before_compaction`."""
 
@@ -3166,6 +3173,8 @@ class StreamedResponse(ABC):
     provider_details: dict[str, Any] | None = field(default=None, init=False)
     canonical_system: str | None = field(default=None, init=False)
     """See [`ModelResponse.canonical_system`][pydantic_ai.messages.ModelResponse.canonical_system]. Set by the model that opened the stream."""
+    pricing_provider: str | None = field(default=None, init=False)
+    """See [`ModelResponse.pricing_provider`][pydantic_ai.messages.ModelResponse.pricing_provider]. Set by the model that opened the stream."""
     finish_reason: FinishReason | None = field(default=None, init=False)
     state: ModelResponseState = field(default='complete', init=False)
     """Lifecycle state of the response."""
@@ -3407,6 +3416,7 @@ class StreamedResponse(ABC):
             provider_name=self.provider_name,
             provider_url=self.provider_url,
             canonical_system=self.canonical_system,
+            pricing_provider=self.pricing_provider,
             provider_response_id=self.provider_response_id,
             provider_details=self.provider_details,
             finish_reason=self.finish_reason,
@@ -3583,6 +3593,7 @@ class CompletedStreamedResponse(StreamedResponse):
         self.response = response
         self.state = response.state
         self.canonical_system = response.canonical_system
+        self.pricing_provider = response.pricing_provider
         self._replay_events = replay_events
 
     def __aiter__(self) -> AsyncIterator[ModelResponseStreamEvent]:

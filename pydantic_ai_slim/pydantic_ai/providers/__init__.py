@@ -77,6 +77,12 @@ class Provider(ABC, Generic[InterfaceClient]):
     _own_client_loop: asyncio.AbstractEventLoop | None = None
     _entered_count: int = 0
     _model_id_namespace: str | None = None
+    _pricing_provider: str | None = None
+    """The `genai-prices` provider this provider's responses are priced as, when it isn't `name`.
+
+    Set for a Pydantic AI Gateway route that speaks another provider's API, like the OpenAI-compatible
+    `doubleword` route: its responses keep `name` as their `provider_name`, which history replay keys on.
+    """
 
     @functools.cached_property
     def _enter_lock(self) -> anyio.Lock:

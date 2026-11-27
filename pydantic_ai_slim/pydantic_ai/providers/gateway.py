@@ -24,6 +24,7 @@ if TYPE_CHECKING:
 
     from pydantic_ai.providers import Provider
     from pydantic_ai.providers.anthropic import AsyncAnthropicClient
+    from pydantic_ai.providers.openai import OpenAIProvider
 
 
 _gateway_providers: weakref.WeakSet[Provider[Any]] = weakref.WeakSet()
@@ -180,15 +181,7 @@ def gateway_provider(
         return provider
 
     if canonical in ('openai', 'openai-chat', 'openai-responses'):
-        from .openai import OpenAIProvider
-
-        return _build_gateway_provider(
-            lambda client: OpenAIProvider(api_key=api_key, base_url=base_url, http_client=client),
-            api_key=api_key,
-            base_url=base_url,
-            http_client=http_client,
-            create_http_client=create_async_httpx2_client,
-        )
+        return _openai_gateway_provider(upstream_provider, api_key=api_key, base_url=base_url, http_client=http_client)
 
     if canonical == 'google-cloud':
         # `gateway/google` is a convenience alias for `gateway/google-cloud` — the Gateway
@@ -247,6 +240,25 @@ def gateway_provider(
         )
     else:
         raise UserError(f'Unknown upstream provider: {upstream_provider}')
+
+
+def _openai_gateway_provider(
+    upstream_provider: str, *, api_key: str, base_url: str, http_client: AsyncHTTPClient | None
+) -> OpenAIProvider:
+    from .openai import OpenAIProvider
+
+    provider = _build_gateway_provider(
+        lambda client: OpenAIProvider(api_key=api_key, base_url=base_url, http_client=client),
+        api_key=api_key,
+        base_url=base_url,
+        http_client=http_client,
+        create_http_client=create_async_httpx2_client,
+    )
+    if (route_api := upstream_provider.removeprefix('gateway/')) in _GATEWAY_ROUTE_APIS:
+        # A route that serves another provider's models over the OpenAI API, like `doubleword`, is priced as that
+        # provider, while its responses keep the `openai` provider name that history replay keys on.
+        provider._pricing_provider = route_api  # pyright: ignore[reportPrivateUsage]
+    return provider
 
 
 def _build_gateway_provider(
