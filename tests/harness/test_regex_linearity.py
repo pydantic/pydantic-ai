@@ -500,8 +500,8 @@ def test_the_hidden_use_scan():
         pytest.param(r'(a+)+b', snapshot("'a' * 18: over 1140 steps"), id='nested-repeats'),
         pytest.param(r'(?:a|a){0,20}b', snapshot("'a' * 37: over 13376 steps"), id='bounded-alternation'),
         # A one-character lookbehind only lets an attempt start after a character it admits, so its pump unit carries
-        # one. The default formatter check before #14401 restarts at each `black` of `  black  black`, and
-        # `blackblack` would never find that.
+        # one. `DEFAULT_VERIFICATION_COMMANDS[0]`, before its formatter alternative was split out, restarts at each
+        # `black` of `  black  black`, and `blackblack` would never find that.
         pytest.param(
             r'(?<!\S)(?:(?:uv|poetry|pipenv|hatch|pdm)\s+run(?:\s+-\S+)*\s+)?(?:(?<!\S)(?:\S*/)?python3?\s+-m\s+)?'
             r'(?<!\S)(?:\S*/)?'
@@ -509,6 +509,11 @@ def test_the_hidden_use_scan():
             r'|(?:ruff\s+format|black|isort)(?=[^;&|\n]*\s--(?:check|diff)))\b',
             snapshot("'  black' * 10, 20, 40: [2358, 6973, 23103] steps"),
             id='restart-at-each-character-a-lookbehind-admits',
+        ),
+        pytest.param(
+            r'(?<!\S)(?:ab)*(?:ab)*c',
+            snapshot("'ab' * 11, 22, 44: [382, 1240, 4408] steps"),
+            id='adjacent-repeats-after-a-lookbehind',
         ),
     ],
 )
@@ -581,7 +586,7 @@ def test_the_step_counter_refuses_a_construct_it_does_not_model():
         ),
         pytest.param(
             r'(?<!-)(?=\w)(?>ab|c)(?i:d){1,3}',
-            snapshot(Shape(units=['-', 'a', 'aab', 'ac', 'd'], reach=6, unbounded=False, nodes=12)),
+            snapshot(Shape(units=['-', 'a', 'aab', 'ab', 'ac', 'c', 'd'], reach=6, unbounded=False, nodes=12)),
             id='groups-and-lookarounds',
         ),
     ],

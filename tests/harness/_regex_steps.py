@@ -389,7 +389,7 @@ def _representatives(node: Node, test: Callable[[str], bool]) -> list[str]:
 def _walk(nodes: list[Node], flags: int, prefix: str, walk: _Walk) -> tuple[int, bool]:
     """Add the pump units of `nodes` to `walk`, carrying in the literal text before them; return reach and unboundedness."""
     reach, unbounded = 0, False
-    for node in nodes:
+    for index, node in enumerate(nodes):
         walk.nodes += 1
         test = character_test(node, flags)
         if node.name in _REPEATS:
@@ -428,11 +428,15 @@ def _walk(nodes: list[Node], flags: int, prefix: str, walk: _Walk) -> tuple[int,
             body_reach, body_unbounded = _walk(body_nodes, flags, '', walk)
             reach += body_reach if _int(direction) == 1 else 0
             unbounded |= body_unbounded
-            # A one-character lookbehind lets an attempt start only after a character it admits, so the unit
-            # carries one: `(?<!\S)#` restarts at each `#` of ` # # #`, not of `###`.
+            # A one-character lookbehind lets an attempt start only after a character it admits, or at the start of
+            # the text, so the rest of the sequence is also walked with one carried in: `(?<!\S)#` restarts at each
+            # `#` of ` # # #`, not of `###`, while `(?<!\S)(?:ab)*(?:ab)*c` backtracks through `abab` from the start.
             behind = character_test(body_nodes[0], flags) if _int(direction) == -1 and len(body_nodes) == 1 else None
             if behind is not None:
-                prefix += ''.join([c for c in _SAMPLE if behind(c) == (node.name == 'ASSERT')][:1])
+                admitted = _Walk()
+                for character in [c for c in _SAMPLE if behind(c) == (node.name == 'ASSERT')][:1]:
+                    _walk(nodes[index + 1 :], flags, prefix + character, admitted)
+                walk.units |= admitted.units
     walk.units.add(prefix)
     walk.units.discard('')
     return reach, unbounded
