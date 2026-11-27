@@ -916,9 +916,7 @@ jobs:
           python3 "$RUNNER_TEMP/publish_douwebot_review.py"
 
       - name: Remove douwebot label
-        # A push cancels this run (`cancel-in-progress` for `synchronize`). Keep the label then, so the
-        # run for the new head still reviews: consuming it here loses the review with no verdict.
-        if: always() && github.event.action == 'labeled' && github.event.label.name == 'douwebot' && needs.review.result != 'cancelled'
+        if: always() && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         run: gh api "repos/${{ github.repository }}/issues/${{ github.event.pull_request.number }}/labels/douwebot" --method DELETE 2>/dev/null || true
         env:
           GH_TOKEN: ${{ github.token }}
@@ -935,6 +933,19 @@ jobs:
       # Without this, a review that crashed and a review that found nothing look
       # identical from the PR: the label is gone either way and no comment lands.
       # A silent breakage went unnoticed for three weeks that way.
+      - name: Report review cancelled by a push
+        # `cancel-in-progress` is set for `synchronize`, so a push during a review cancels it. The label
+        # is still consumed above, which is correct: a lingering label means a review is in flight. Without
+        # this comment the PR shows no label, no review and no failed job, which reads as nobody having
+        # asked for one.
+        if: always() && needs.review.result == 'cancelled'
+        run: |
+          gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
+            "A push cancelled the \`douwebot\` review before it finished, so there is no verdict on this PR. "\
+            "Re-apply the \`douwebot\` label to review the new head."
+        env:
+          GH_TOKEN: ${{ github.token }}
+
       - name: Report review failure
         if: always() && (needs.review.result == 'failure' || needs.douwebot-opencode.result == 'failure' || steps.publish.outcome == 'failure') && github.event.action == 'labeled' && github.event.label.name == 'douwebot'
         run: |
