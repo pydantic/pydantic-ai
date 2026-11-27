@@ -278,12 +278,8 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Refuse the request if any budget with a ceiling is already spent."""
-        now = await self._now()
-        # Each scope is resolved once, so a refusal span names the counter that was checked.
-        scoped = [(budget, scope_key(budget, ctx, None)) for budget in self.budgets]
         resolved = [
-            (budget, scope, self._key(budget, ctx, now, scope), resolve_ceilings(budget, ctx))
-            for budget, scope in scoped
+            (budget, scope, key, resolve_ceilings(budget, ctx)) for budget, scope, key in await self._keyed(ctx)
         ]
         enforcing = [entry for entry in resolved if entry[3].enforces]
         read = await self._read(list(dict.fromkeys(key for _, _, key, _ in enforcing)))
@@ -427,7 +423,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         keyed = await self._keyed(ctx)
         accrued = await self._accrue_boundaries(keyed, response, token, boundaries, usd=usd, priced=priced)
         # Resolved only once the response is accrued, so a failing ceiling callable cannot drop the spend.
-        statuses = [_status(budget, key, accrued[key], resolve_ceilings(budget, ctx)) for budget, key in keyed]
+        statuses = [_status(budget, key, accrued[key], resolve_ceilings(budget, ctx)) for budget, _, key in keyed]
 
         error: Exception | None = None
         snapshot = SpendSnapshot(
@@ -487,7 +483,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
 
     async def _accrue_boundaries(
         self,
-        keyed: Sequence[tuple[Budget[AgentDepsT], str]],
+        keyed: Sequence[tuple[Budget[AgentDepsT], str, str]],
         response: ModelResponse,
         token: Callable[[], str],
         boundaries: Sequence[tuple[ModelResponse, Callable[[], str]]],
@@ -511,7 +507,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
                 continue
             first = accrued is None
             entries: dict[str, SpendEntry] = {}
-            for budget, key in keyed:
+            for budget, _, key in keyed:
                 # Budgets sharing a name, window, and scope share a counter, which is
                 # how one window carries both a USD and a token ceiling. Adding the
                 # response once per budget would double-count it and halve them both.
@@ -528,7 +524,7 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
             # Every window in one call, so a failure cannot leave the response counted
             # against the day and not the month. Nothing to apply is not a call: see `_read`.
             accrued = await self._accrue(list(entries.values()))
-            missing = sorted({key for _, key in keyed} - accrued.keys())
+            missing = sorted({key for _, _, key in keyed} - accrued.keys())
             if missing:
                 raise UserError(
                     f'The spend accrual returned no total for key(s) {missing}. Under durable execution this can '
@@ -825,10 +821,14 @@ class SpendLimits(AbstractCapability[AgentDepsT]):
         """Apply one response, or a continuation boundary's growth, and journal the store's totals."""
         return await self._store.add_many(entries) if entries else {}
 
-    async def _keyed(self, ctx: RunContext[AgentDepsT]) -> list[tuple[Budget[AgentDepsT], str]]:
-        """Each budget paired with the store key it accumulates under right now."""
+    async def _keyed(self, ctx: RunContext[AgentDepsT]) -> list[tuple[Budget[AgentDepsT], str, str]]:
+        """Each budget with its resolved scope and the store key it accumulates under right now.
+
+        The scope is resolved once and returned, so a refusal span names the counter that was checked.
+        """
         now = await self._now()
-        return [(budget, self._key(budget, ctx, now, scope_key(budget, ctx, None))) for budget in self.budgets]
+        scoped = [(budget, scope_key(budget, ctx, None)) for budget in self.budgets]
+        return [(budget, scope, self._key(budget, ctx, now, scope)) for budget, scope in scoped]
 
     def _price_of(self, response: ModelResponse, *, failed_attempt: bool = False) -> tuple[Decimal, bool, str | None]:
         """What cost to record, whether it prices the whole response, and why it was rejected.
