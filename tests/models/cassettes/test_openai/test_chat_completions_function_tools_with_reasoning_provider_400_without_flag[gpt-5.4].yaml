@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "352"
+      - "374"
       content-type:
       - application/json
       host:
@@ -19,11 +19,12 @@ interactions:
     body:
       type: json
       content:
-        model: gpt-6-luna
+        model: gpt-5.4
         stream: false
         messages:
         - role: user
           content: What is the temperature in Tokyo?
+        reasoning_effort: low
         tool_choice: auto
         tools:
         - type: function
@@ -51,24 +52,26 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "272"
+      - "269"
       content-type:
       - application/json
       openai-processing-ms:
-      - "18"
+      - "19"
       openai-version:
       - 2020-10-01
       strict-transport-security:
       - max-age=31536000; includeSubDomains; preload
+      vary:
+      - Origin
     body:
       type: json
       content:
         error:
           message: >-
-            Function tools with reasoning_effort are not supported for gpt-6-luna in
-            /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort
-            to 'none'.
+            Function tools with reasoning_effort are not supported for gpt-5.4 in
+            /v1/chat/completions. To use function tools, use /v1/responses or set reasoning_effort to
+            'none'.
           type: invalid_request_error
           param: reasoning_effort
           code: null
-  recorded_at: 2026-11-14T23:10:24.809450+00:00
+  recorded_at: 2026-11-24T19:35:30.117009+00:00

@@ -45,6 +45,7 @@ from .usage import RunUsage, UsageLimits
 from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
+    from ._agent_graph import GraphAgentState
     from ._appended_messages import AppendedMessages
     from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
@@ -644,12 +645,15 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     _run_result: AgentRunResult[OutputDataT] | None = None
 
-    _full_history_from: tuple[AppendedMessages, int] | None = None
-    """The run's record of its messages, and where the messages this result adds to its copy of the history start.
+    _settled_from: tuple[GraphAgentState, int] | None = None
+    """The run's state, and where the messages this result adds to its copy of the history start.
 
-    Set when the stream's own response ends the run, so the settled result's conversation can keep the full history
-    when a capability dropped or rewrote messages, as the run's would.
+    Set when the stream's own response ends the run, so the settled result keeps what the run's would: what saving the
+    conversation it was given needs, and the full history when a capability dropped or rewrote messages.
     """
+
+    _settled: AgentRunResult[OutputDataT] | None = field(default=None, init=False)
+    """The settled result `result` built, so saving it to a store updates the one every later `result` returns."""
 
     is_complete: bool = field(default=False, init=False)
     """Whether the stream has all been received.
@@ -723,7 +727,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
         from ._agent_graph import GraphAgentState
         from .run import AgentRunResult
 
-        if (run_result := self._run_result) is not None:
+        if (run_result := self._run_result or self._settled) is not None:
             return run_result
         elif self._stream_response is not None:
             if not self.is_complete:
@@ -737,31 +741,33 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     'until it stopped are still available from `all_messages()`.'
                 )
             output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
+            state, start = self._settled_from or (GraphAgentState(), 0)
             result = AgentRunResult(
                 output=output,
                 _output_tool_name=output_tool_name,
-                _state=GraphAgentState(
+                _state=replace(
+                    state,
                     message_history=self._all_messages,
                     usage=self.usage,
                     run_id=self.run_id,
                     conversation_id=self.conversation_id,
                     metadata=self.metadata,
-                    appended_messages=self._settled_full_history(),
+                    appended_messages=self._settled_full_history(state.appended_messages, start),
                 ),
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,
             )
             # As in AgentRun.result, this isn't a dataclass field because a live workspace can't be serialized.
             result.__dict__['_workspace'] = self.workspace
+            self._settled = result
             return result
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
 
-    def _settled_full_history(self) -> AppendedMessages:
+    def _settled_full_history(self, record: AppendedMessages, start: int) -> AppendedMessages:
         """The full history for the settled result of a run whose history a capability rewrote, or an empty record."""
         from ._appended_messages import AppendedMessages
 
-        record, start = self._full_history_from or (AppendedMessages(), 0)
         if not record.full or record.messages is None:
             return AppendedMessages()
         # The run kept its full history when it ended, with the streamed response, which the run commits itself, but
