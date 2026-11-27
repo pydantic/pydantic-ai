@@ -953,6 +953,7 @@ def test_google_gemini_3_pro():
             'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
+            'thinking_enabled_by_default': True,
             'google_supports_tool_combination': True,
             'google_supports_server_side_tool_invocations': True,
             'google_supported_mime_types_in_tool_returns': (
@@ -993,6 +994,7 @@ def test_google_gemini_2_5_flash():
             'json_schema_transformer': GoogleJsonSchemaTransformer,
             'supports_video_input': True,
             'supports_thinking': True,
+            'thinking_enabled_by_default': True,
             'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': True,
@@ -1083,6 +1085,7 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'google_supports_strict_tool_definition': True,
             'supports_video_input': True,
             'google_supports_tool_combination': True,
+            'thinking_enabled_by_default': True,
             'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
             'json_schema_transformer': GoogleJsonSchemaTransformer,
             'supports_json_object_output': True,
@@ -2077,6 +2080,7 @@ def test_openrouter_google_gemini_3_pro():
             'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
+            'thinking_enabled_by_default': True,
             'google_supports_tool_combination': True,
             'google_supports_server_side_tool_invocations': True,
             'google_supported_mime_types_in_tool_returns': (
@@ -2143,6 +2147,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'google_supports_strict_tool_definition': True,
             'supports_video_input': True,
             'google_supports_tool_combination': True,
+            'thinking_enabled_by_default': True,
             'thinking_always_enabled': True,
             'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
             'json_schema_transformer': _OpenRouterGoogleJsonSchemaTransformer,
@@ -2396,6 +2401,7 @@ def test_github_copilot_google_gemini_3_pro():
             'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
+            'thinking_enabled_by_default': True,
             'google_supports_tool_combination': True,
             'google_supports_server_side_tool_invocations': True,
             'google_supported_mime_types_in_tool_returns': (
@@ -3068,6 +3074,7 @@ def test_vllm_gpt_oss_hf_namespace():
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_multiple_system_messages': False,
             'native_output_requires_schema_in_instructions': True,
+            'openai_chat_thinking_summary_false_body': {'include_reasoning': False},
             'may_tokenize_special_tokens_in_content': True,
         }
     )
@@ -3086,6 +3093,7 @@ def test_vllm_qwen_hf_namespace():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'native_output_requires_schema_in_instructions': True,
+            'openai_chat_thinking_summary_false_body': {'include_reasoning': False},
             'may_tokenize_special_tokens_in_content': True,
         }
     )
@@ -3138,6 +3146,7 @@ def test_vllm_unknown_falls_back_to_overlay_only():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'native_output_requires_schema_in_instructions': True,
+            'openai_chat_thinking_summary_false_body': {'include_reasoning': False},
             'may_tokenize_special_tokens_in_content': True,
         }
     )
@@ -4039,6 +4048,7 @@ def test_openai_compatible_qwen3_next():
                 'supports_json_schema_output': True,
                 'supports_json_object_output': True,
                 'native_output_requires_schema_in_instructions': True,
+                'openai_chat_thinking_summary_false_body': {'include_reasoning': False},
                 'may_tokenize_special_tokens_in_content': True,
             },
             'sambanova': {
@@ -4392,6 +4402,7 @@ def test_vercel_vertex_gemini():
             'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
+            'thinking_enabled_by_default': True,
             'google_supports_tool_combination': True,
             'google_supports_server_side_tool_invocations': True,
             'google_supported_mime_types_in_tool_returns': (
@@ -4635,6 +4646,7 @@ def test_otari_gemini():
             'supports_tool_return_schema': True,
             'supports_video_input': True,
             'supports_thinking': True,
+            'thinking_enabled_by_default': True,
             'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': True,

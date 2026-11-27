@@ -76,7 +76,9 @@ from ...profiles.anthropic import (
     AnthropicCodeExecutionToolVersion,
     AnthropicEffort,
     AnthropicModelProfile,
+    AnthropicThinkingDisplay,
     resolve_anthropic_effort,
+    resolve_anthropic_thinking_display,
 )
 from ...providers import Provider, infer_provider
 from ...providers._bedrock_model_names import (
@@ -598,6 +600,19 @@ class AnthropicModelSettings(ModelSettings, total=False):
     See [the Anthropic docs](https://docs.anthropic.com/en/docs/build-with-claude/extended-thinking) for more information.
     """
 
+    anthropic_thinking_display: AnthropicThinkingDisplay
+    """Whether to receive a summary of the model's thinking or only thinking signatures.
+
+    Takes precedence over the unified [`thinking_summary`][pydantic_ai.settings.ModelSettings.thinking_summary]
+    setting, which covers the same choice portably and is what most code should set. Applied to the thinking
+    block built from the unified `thinking` setting (or, on models that think without one, to an explicit
+    adaptive block); ignored when `anthropic_thinking` is set explicitly (the raw dict wins).
+
+    The model still thinks (and is billed for) the same number of tokens either way.
+
+    See [the Anthropic docs](https://platform.claude.com/docs/en/build-with-claude/extended-thinking#summarized-thinking) for more information.
+    """
+
     anthropic_cache_tool_definitions: bool | Literal['5m', '1h']
     """Whether to add `cache_control` to the last tool definition.
 
@@ -848,6 +863,28 @@ class AnthropicModelSettings(ModelSettings, total=False):
 
 
 _ResponseT = TypeVar('_ResponseT')
+
+
+def _thinking_off_config(
+    profile: AnthropicModelProfile, display: AnthropicThinkingDisplay | None, *, thinks_by_default: bool
+) -> BetaThinkingConfigParam | Omit:
+    """The `thinking` parameter for unified `thinking=False`."""
+    if profile.get('thinking_always_enabled', False):
+        # A model that can't turn thinking off thinks as little as it can: adaptively at the lowest effort,
+        # which `_build_output_config` adds. A model without an effort setting is left at its default.
+        # Summaries are only asked for here when requested, since `thinking=False` asked for no thinking.
+        if display is not None:
+            return {'type': 'adaptive', 'display': display}
+        if profile.get('anthropic_supports_effort', False):
+            return {'type': 'adaptive'}
+        return OMIT
+    # `display` is rejected on the `between_tools` and `disabled` blocks.
+    if profile.get('anthropic_disables_thinking_with_between_tools', False):
+        return {'type': 'between_tools'}
+    if thinks_by_default:
+        # Omitting `thinking` leaves it on for these models.
+        return {'type': 'disabled'}
+    return OMIT
 
 
 @dataclass(init=False)
@@ -1416,6 +1453,12 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             overriding.append('anthropic_effort')
         return tuple(overriding)
 
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_translate_thinking` sends an explicit thinking config as is, and an explicit `display` wins over the
+        # unified one.
+        overriding = [key for key in ('anthropic_thinking', 'anthropic_thinking_display') if model_settings.get(key)]
+        return tuple(overriding)
+
     def _default_structured_output_mode(
         self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
     ) -> StructuredOutputMode:
@@ -1563,24 +1606,27 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
         if anthropic_thinking := model_settings.get('anthropic_thinking'):
             return anthropic_thinking
         thinking = model_request_parameters.thinking
+        thinks_by_default = self.profile.get('thinking_enabled_by_default', False)
+        display = resolve_anthropic_thinking_display(
+            model_settings.get('anthropic_thinking_display'), model_settings.get('thinking_summary')
+        )
         if thinking is False:
-            if self.profile.get('thinking_always_enabled', False):
-                # A model that can't turn thinking off thinks as little as it can: adaptively at the lowest effort,
-                # which `_build_output_config` adds. A model without an effort setting is left at its default.
-                if self.profile.get('anthropic_supports_effort', False):
-                    return {'type': 'adaptive'}
-                return OMIT
-            if self.profile.get('anthropic_disables_thinking_with_between_tools', False):
-                return {'type': 'between_tools'}
-            if self.profile.get('thinking_enabled_by_default', False):
-                # Omitting `thinking` leaves it on for these models.
-                return {'type': 'disabled'}
-            return OMIT
+            return _thinking_off_config(self.profile, display, thinks_by_default=thinks_by_default)
         if thinking is None:
+            if display is not None and thinks_by_default:
+                # These models think without a `thinking` parameter, so choosing what they return takes the
+                # adaptive block they'd use anyway.
+                return {'type': 'adaptive', 'display': display}
             return OMIT
+        result: BetaThinkingConfigParam
         if self.profile.get('anthropic_supports_adaptive_thinking', False):
-            return {'type': 'adaptive'}
-        return {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+            result = {'type': 'adaptive'}
+        else:
+            result = {'type': 'enabled', 'budget_tokens': ANTHROPIC_THINKING_BUDGET_MAP[thinking]}
+        # Unified `thinking` asks for summaries unless told otherwise: newer models default to `'omitted'`, which
+        # returns the thinking blocks empty.
+        result['display'] = display or 'summarized'
+        return result
 
     @overload
     async def _messages_create(
