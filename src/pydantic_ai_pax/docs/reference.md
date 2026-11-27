@@ -3840,6 +3840,8 @@ pax -a my_agents:extractor --output-format json "List the cities in README.md"
 `pax PROMPT` and `-p TEXT` / `--prompt TEXT` run one turn through tools to completion.
 A first word that is not `config`, `plugins`, `sessions`, or `update` starts the prompt,
 and the words after it are joined with spaces; options may come before or between them.
+A lowercase near-miss of a subcommand, such as `pax plugin list`, fails with a suggestion
+instead; send it with `-p` or after `--` to run it as a prompt.
 A word that starts with `-` is read as an option even when quoted, so `pax "-m means model"`
 does not run that prompt: put the prompt after `--`, as in `pax [OPTIONS] -- PROMPT...`,
 and every word after `--` is prompt text. `-w`, `--resume`, `--resume-claude`, and

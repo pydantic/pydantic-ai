@@ -356,6 +356,31 @@ def test_cli_subcommand_is_not_a_prompt(
     assert capsys.readouterr().out == f'"{Settings().model}"\n'
 
 
+@pytest.mark.parametrize('first', ['plugin', 'session', 'confg', 'updates'])
+def test_cli_near_miss_of_a_subcommand_is_refused(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], first: str
+) -> None:
+    code, out, err = run_cli(tmp_path, monkeypatch, capsys, '-a', 'echo', first, 'list')
+    assert (code, out) == (2, '')
+    assert 'did you mean' in err and 'use -p or put it after --' in err
+
+
+@pytest.mark.parametrize(
+    ('args', 'answer'),
+    [
+        (['Update', 'the', 'docs'], 'Update the docs'),
+        (['configure', 'ruff'], 'configure ruff'),
+        (['-p', 'plugin list'], 'plugin list'),
+        (['--', 'plugin', 'list'], 'plugin list'),
+    ],
+)
+def test_cli_prompt_that_is_not_a_near_miss_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: list[str], answer: str
+) -> None:
+    monkeypatch.setattr('sys.stdin', _Terminal())
+    assert run_cli(tmp_path, monkeypatch, capsys, '-a', 'echo', *args)[:2] == (0, f'echo: {answer}\n')
+
+
 @pytest.mark.parametrize('args', [['-'], ['-p'], ['-p', '-']])
 def test_cli_prompt_from_stdin(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: list[str]

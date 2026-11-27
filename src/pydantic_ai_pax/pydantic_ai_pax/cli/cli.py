@@ -2,6 +2,7 @@
 
 import argparse
 import asyncio
+import difflib
 import gc
 import os
 import re
@@ -399,6 +400,9 @@ def _positional_prompt(args: argparse.Namespace, parser: argparse.ArgumentParser
         parser.parse_args(args.arguments, namespace=args)
     if args.prompt is not None:
         parser.error('Give the prompt once: either with -p or after the options')
+    # A lowercase near-miss of a subcommand, like `pax plugin list`, is a typo more likely than a prompt.
+    if words and words[0].islower() and (near := difflib.get_close_matches(words[0], _SUBCOMMANDS, n=1, cutoff=0.85)):
+        parser.error(f'did you mean `{parser.prog} {near[0]}`? To send it as a prompt, use -p or put it after --')
     args.prompt = ' '.join([*words, *literal])
     args.literal_prompt = not words
 
