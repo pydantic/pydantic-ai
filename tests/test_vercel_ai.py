@@ -23,7 +23,7 @@ from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool, ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool, ProcessHistory, WrapModelRequestHandler
 from pydantic_ai.conversation import Conversation
 from pydantic_ai.conversation_store import ConversationEntry, ConversationRecord, InMemoryConversationStore
 from pydantic_ai.exceptions import ModelRetry, UserError
@@ -15261,15 +15261,15 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
 
 
 @dataclass
-class _ReplaceStreamedResponse(AbstractCapability[Any]):
+class _ReplaceStreamedResponse(AbstractCapability[None]):
     """Stops the model's stream once its first chunk arrived, and answers with a response of its own instead."""
 
     first_chunk_sent: asyncio.Event
 
     async def wrap_model_request(
-        self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+        self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
     ) -> ModelResponse:
-        handler_task = asyncio.create_task(handler(request_context))
+        handler_task = asyncio.ensure_future(handler(request_context))
         await self.first_chunk_sent.wait()
         handler_task.cancel()
         await asyncio.gather(handler_task, return_exceptions=True)
@@ -15290,7 +15290,9 @@ async def test_replaced_response_answers_its_tool_calls_and_streams_its_replacem
         yield 'never'  # pragma: no cover
 
     agent = Agent(
-        FunctionModel(stream_function=stream_function), capabilities=[_ReplaceStreamedResponse(first_chunk_sent)]
+        FunctionModel(stream_function=stream_function),
+        deps_type=type(None),
+        capabilities=[_ReplaceStreamedResponse(first_chunk_sent)],
     )
     event_stream = VercelAIEventStream()
     async with agent.run_stream_events('Show me Paris') as events:
