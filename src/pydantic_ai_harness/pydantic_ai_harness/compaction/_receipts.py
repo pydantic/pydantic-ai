@@ -18,6 +18,7 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import (
     InstructionCapabilityPart,
     ModelMessage,
@@ -54,10 +55,7 @@ class TranscriptHandleProvider(Protocol):
 
 def discover_transcript_handle(ctx: RunContext[AgentDepsT]) -> str | None:
     """Return a transcript handle from the first provider, else `None`."""
-    capabilities = getattr(ctx, 'capabilities', None)
-    if not capabilities:
-        return None
-    for capability in capabilities.values():
+    for capability in ctx.capabilities.values():
         if isinstance(capability, TranscriptHandleProvider):
             handle = capability.compaction_transcript_handle()
             if handle:
@@ -125,10 +123,9 @@ def make_receipt_part(text: str, *, capability_id: str | None) -> CompactionRece
     )
 
 
-def registered_id(ctx: RunContext[AgentDepsT], capability: object) -> str | None:
+def registered_id(ctx: RunContext[AgentDepsT], capability: AbstractCapability[AgentDepsT]) -> str | None:
     """The run id *capability* is registered under, or `None` when it isn't, such as a tier of `TieredCompaction`."""
-    capabilities: dict[str, object] = getattr(ctx, 'capabilities', None) or {}
-    return next((run_id for run_id, registered in capabilities.items() if registered is capability), None)
+    return next((run_id for run_id, registered in ctx.capabilities.items() if registered is capability), None)
 
 
 def is_receipt_part(part: object) -> bool:
