@@ -22,7 +22,9 @@ from pydantic_ai._utils import disable_threads
 from pydantic_ai.agent import Agent, EventStreamHandler
 from pydantic_ai.agent.abstract import AbstractAgent
 from pydantic_ai.capabilities import Instrumentation
-from pydantic_ai.capabilities.abstract import leaf_capabilities
+from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
+from pydantic_ai.capabilities.retry_on_model_errors import RetryOnModelErrors
+from pydantic_ai.capabilities.wrapper import WrapperCapability
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import ModelMessage, ModelResponse, ModelResponseStreamEvent
 from pydantic_ai.models import CompletedStreamedResponse, Model, ModelRequestContext, ModelRequestParameters
@@ -365,3 +367,21 @@ async def consume_event_stream(
 
     async for _ in events:
         pass
+
+
+def has_retry_on_model_errors(capability: AbstractCapability[Any]) -> bool:
+    """Whether the agent's capabilities include `RetryOnModelErrors`, including one a wrapper capability wraps.
+
+    `apply` doesn't visit what a wrapper wraps, like the capability a `DynamicCapability` returned for the run, whose
+    hooks still run, so wrappers are unwrapped here.
+    """
+    found = False
+
+    def visit(cap: AbstractCapability[Any]) -> None:
+        nonlocal found
+        if isinstance(cap, WrapperCapability):
+            found = found or has_retry_on_model_errors(cap.wrapped)
+        found = found or isinstance(cap, RetryOnModelErrors)
+
+    capability.apply(visit)
+    return found

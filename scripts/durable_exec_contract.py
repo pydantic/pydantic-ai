@@ -109,6 +109,7 @@ ENGINES: dict[str, str] = {
     'temporal': 'pydantic_ai_slim/pydantic_ai/durable_exec/temporal/**/*.py',
     'dbos': 'pydantic_ai_slim/pydantic_ai/durable_exec/dbos/**/*.py',
     'prefect': 'pydantic_ai_slim/pydantic_ai/durable_exec/prefect/**/*.py',
+    'hatchet': 'pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/*.py',
     'render': 'src/pydantic_ai_harness/pydantic_ai_harness/render/**/*.py',
     'absurd': 'src/pydantic_ai_harness/pydantic_ai_harness/absurd/**/*.py',
     'pgtask': 'src/pydantic_ai_harness/pydantic_ai_harness/pgtask/**/*.py',

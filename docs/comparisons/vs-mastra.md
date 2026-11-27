@@ -17,7 +17,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Harnesses | Mastra Code, or your own | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own, and run any of them in [Pax](../harness/pax.md) |
 | Observability | OpenTelemetry | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | With [Mastra Platform Enterprise](https://mastra.ai/pricing#enterprise-support) | [For the framework itself](../enterprise-support.md), no platform required |
-| Durable execution | Yes | [Nine integrations](../durable_execution/overview.md) |
+| Durable execution | Yes | [Ten integrations](../durable_execution/overview.md) |
 | Interfaces | Playground, Studio, GitHub PR signals | [Pax](../harness/pax.md) coding terminal (`pax --agent` runs yours), [legacy CLI](../cli.md) (`clai`), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | Yes | [Realtime](../realtime/overview.md) |
 | Evals | Yes | [Pydantic Evals](../evals.md) |

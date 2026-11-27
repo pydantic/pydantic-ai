@@ -21,7 +21,6 @@ from datetime import timedelta
 from typing import Any, cast
 
 from pydantic import TypeAdapter
-from pydantic_core import to_jsonable_python
 from temporalio import activity
 from temporalio.common import RetryPolicy
 from temporalio.exceptions import ActivityError, ApplicationError
@@ -38,9 +37,9 @@ from ...exceptions import (
     RetryModelRequest,
     UnexpectedModelBehavior,
     UserError,
-    _CategorizedHTTPError,  # pyright: ignore[reportPrivateUsage]
 )
 from ...messages import ModelResponse
+from .._model_error_codec import decode_model_error as _decode, encode_model_error as _encode
 from .._retry_after import model_error_retry_after
 from .._utils import mark_streamed_before_failing, streamed_before_failing
 
@@ -54,80 +53,6 @@ _response_adapter: TypeAdapter[ModelResponse] = TypeAdapter(ModelResponse)
 
 _RETRY_MODEL_REQUEST_KEY = 'pydantic_ai_retry_model_request'
 """Marks the `ApplicationError` detail that holds a `RetryModelRequest`'s model name."""
-
-
-def _encode(error: ModelAPIError) -> dict[str, Any] | None:
-    """The JSON-compatible form of `error`, or `None` if it can't be rebuilt in the workflow."""
-    error_type = type(error)
-    if not error_type.__module__.startswith('pydantic_ai.'):
-        # Only Pydantic AI's own error classes are rebuilt. `pydantic_ai` is passed through the workflow
-        # sandbox, so each of its classes is one class on both sides; an application module is re-imported
-        # per sandbox, so its classes can't be relied on to resolve to the one the activity raised.
-        return None
-    # An HTTP error with a category is named after its category, so it's marked to be rebuilt as the HTTP class with
-    # that name rather than the category itself, from the arguments it takes as a `ModelHTTPError`.
-    categorized_http = isinstance(error, _CategorizedHTTPError)
-    reduced = ModelHTTPError.__reduce__(error) if categorized_http else error.__reduce__()
-    if not isinstance(reduced, tuple) or len(reduced) < 2 or reduced[0] is not error_type:
-        return None
-    args = reduced[1]
-    state = reduced[2] if len(reduced) > 2 else None
-    if isinstance(state, dict):
-        # What Pydantic AI attached to the error isn't JSON: what has to cross is carried separately below.
-        state = {
-            key: value for key, value in cast(dict[str, Any], state).items() if not key.startswith('_pydantic_ai_')
-        }
-    encoded: dict[str, Any] = {
-        'module': error_type.__module__,
-        'qualname': error_type.__qualname__,
-        # A response body can hold anything the provider sent; whatever isn't JSON crosses as a string.
-        'args': to_jsonable_python(list(args), fallback=str),
-        'state': to_jsonable_python(state, fallback=str) if state is not None else None,
-    }
-    if categorized_http:
-        encoded['categorized_http'] = True
-    return encoded
-
-
-def _model_error_class(module_name: object, qualname: object, *, categorized_http: bool) -> type[ModelAPIError] | None:
-    """The loaded Pydantic AI model error class with this name, if any.
-
-    Looked up among the subclasses already loaded rather than imported by name, so details that came
-    off the wire never decide what gets imported. An HTTP error with a category has its category's name,
-    so `categorized_http` says which of the two to find.
-    """
-    pending: list[type[ModelAPIError]] = [ModelAPIError]
-    while pending:
-        error_type = pending.pop()
-        if (
-            error_type.__module__ == module_name
-            and error_type.__qualname__ == qualname
-            and issubclass(error_type, _CategorizedHTTPError) == categorized_http
-        ):
-            return error_type
-        pending.extend(error_type.__subclasses__())
-    return None
-
-
-def _decode(encoded: dict[str, Any]) -> ModelAPIError | None:
-    """Rebuild the model error `_encode` encoded, or `None` if its class can't be found."""
-    module_name = encoded.get('module')
-    if not isinstance(module_name, str) or not module_name.startswith('pydantic_ai.'):
-        return None
-    categorized_http = encoded.get('categorized_http') is True
-    if (
-        error_type := _model_error_class(module_name, encoded.get('qualname'), categorized_http=categorized_http)
-    ) is None:
-        return None
-    args: list[Any] = encoded.get('args') or []
-    try:
-        error = error_type(*args)
-        if (state := encoded.get('state')) is not None:
-            error.__setstate__(state)
-    except Exception:
-        # A subclass whose constructor doesn't take what its `__reduce__` returns can't be rebuilt.
-        return None
-    return error
 
 
 @contextmanager

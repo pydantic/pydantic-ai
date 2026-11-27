@@ -186,6 +186,10 @@ dbos = ["dbos>=3.4.0"]
 # keyword FastAPI 0.155 rejects (PrefectHQ/prefect#23476); earlier ones fail to import their server on
 # a current FastAPI.
 prefect = ["prefect>=3.9.0"]
+# Hatchet
+# 2.0.0a3 is the first release with the 2.0 API that allows protobuf 7, which other extras need.
+# TODO(mrkaye97): Raise to `>=2.0.0` once it is released; the pre-release floor is for development only.
+hatchet = ["hatchet-sdk>=2.0.0a3"]
 # Spec (YAML agent specs)
 spec = ["pyyaml>=6.0.2", "pydantic-handlebars>=0.1.0"]
 

@@ -17,7 +17,7 @@ Pydantic AI is one part of a stack: the [Harness SDK](https://pydantic.dev/docs/
 | Harnesses | Claude Code's; hooks extend it, you cannot recompose it | Built-in [`Coder`](https://pydantic.dev/docs/ai/harness/coder/) and [`Researcher`](https://pydantic.dev/docs/ai/harness/researcher/), or compose your own, and run any of them in [Pax](../harness/pax.md) |
 | Observability | OpenTelemetry from the CLI | [OpenTelemetry](../logfire.md#using-opentelemetry), including [Pydantic Logfire](https://pydantic.dev/logfire) |
 | Enterprise support | None documented | [For the framework itself](../enterprise-support.md), no platform required |
-| Durable execution | No | [Nine integrations](../durable_execution/overview.md) |
+| Durable execution | No | [Ten integrations](../durable_execution/overview.md) |
 | Interfaces | CLI, GitHub Action | [Pax](../harness/pax.md) coding terminal (`pax --agent` runs yours), [legacy CLI](../cli.md) (`clai`), [web chat](../web.md), [AG-UI](../ui/ag-ui.md), [Vercel AI](../ui/vercel-ai.md), [ACP](https://pydantic.dev/docs/ai/harness/acp/) (experimental), [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) |
 | Realtime voice | No | [Realtime](../realtime/overview.md) |
 | Evals | No | [Pydantic Evals](../evals.md) |

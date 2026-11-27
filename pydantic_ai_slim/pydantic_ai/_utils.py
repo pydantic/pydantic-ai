@@ -708,8 +708,28 @@ def sync_anext(iterator: Iterator[T]) -> T:
         raise StopAsyncIteration() from e
 
 
+_now_utc_clock: ContextVar[Callable[[], datetime] | None] = ContextVar('pydantic_ai.now_utc_clock', default=None)
+"""A replay-safe clock a durable execution engine installs for `now_utc`, or `None` for the system clock."""
+
+
 def now_utc() -> datetime:
+    if (clock := _now_utc_clock.get()) is not None:
+        return clock()
     return datetime.now(tz=UTC)
+
+
+@contextmanager
+def override_now_utc(clock: Callable[[], datetime]) -> Generator[None]:
+    """Make `now_utc` read `clock` in this context, so a durable engine's replays stamp the same times.
+
+    Durable execution engines whose replay checks what a durable unit is called with install their
+    deterministic clock with this, the way Temporal's workflow sandbox makes `datetime.now` replay-safe.
+    """
+    token = _now_utc_clock.set(clock)
+    try:
+        yield
+    finally:
+        _now_utc_clock.reset(token)
 
 
 def fill_run_metadata(message: _messages.ModelMessage, *, run_id: str | None, conversation_id: str | None) -> None:
