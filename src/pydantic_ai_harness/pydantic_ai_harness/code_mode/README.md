@@ -993,6 +993,64 @@ the clock; `{'timezone': 'Europe/Paris'}` alone keeps the clock on `os_access` b
 local time in that zone rather than as UTC. In a Temporal workflow a `'system'` clock or
 `random_start` is read again on replay, so keep the defaults (or fixed values) there.
 
+## Host modules
+
+Monty runs a subset of Python and can't import third-party libraries. `external_modules` lets
+sandboxed code import modules you build on the host from `pydantic_monty.ExternalModule`. The
+sandbox sees a normal module, and each call into one of its functions runs your Python function on
+the host, outside the sandbox. Use it for a library the sandbox can't run, such as a database client
+or a dataframe engine, wrapped in the functions you want the model to have.
+
+```python
+import sqlite3
+
+from pydantic_ai import Agent
+from pydantic_monty import ExternalModule
+from pydantic_ai_harness import CodeMode
+
+db = sqlite3.connect('sales.db', check_same_thread=False)
+
+
+def query(sql: str) -> list[dict[str, object]]:
+    cursor = db.execute(sql)
+    columns = [column[0] for column in cursor.description]
+    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+warehouse = ExternalModule(
+    {'query': query},
+    stubs=(
+        'def query(sql: str) -> list[dict[str, object]]:\n'
+        '    """Run a read-only SQLite query against the sales warehouse; rows come back as dicts."""\n'
+    ),
+)
+# Sandboxed code can now run `import warehouse` and `warehouse.query('select ...')`:
+agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode(external_modules={'warehouse': warehouse})])
+```
+
+The `stubs` are required. They are the module's `.pyi` text: the `run_code` description shows them
+to the model, and the type checker checks calls against them. A submodule is an `ExternalModule`
+attribute with its own stubs, imported as `warehouse.util`. Attributes starting with `_` stay hidden
+from the sandbox.
+
+Calls into a module behave like this:
+
+- **Sync functions** run in a worker thread, so a blocking driver doesn't stall the event loop.
+- **Async functions** run on the event loop like async tools, and `asyncio.gather` runs them
+  alongside tool calls.
+- **Exceptions** a function raises are raised at the call site in the sandbox, where the code can
+  catch them.
+- **Values** cross as Monty converts them, so tuples, sets, `bytes` and dates arrive unchanged. A
+  value it can't convert fails the snippet with a `TypeError`. Return plain data, or wrap a class
+  instance in `pydantic_monty.ClassInstance`.
+- **Not tool calls**: module calls don't count toward `max_tool_calls`, and they don't appear in the
+  message history or in the `run_code` metadata. They emit no spans of their own; instrument your
+  functions if you want them traced.
+
+In a [Temporal workflow](#temporal-durability), module functions run in the workflow, as `os_access`
+does, so they run again on replay. Keep them to reads that return the same result on replay, and use
+a tool for anything with side effects, since a tool call runs once as an activity.
+
 ## Sandbox restrictions
 
 Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python subset:
@@ -1001,7 +1059,8 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
   `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`,
   `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`,
   `hashlib`, `os.path`, `tomllib`, `annotationlib`, `colorsys`, `keyword`, `stat`,
-  `statistics`); each must be imported before use
+  `statistics`); each must be imported before use. [Host modules](#host-modules) adds modules of
+  your own
 - `asyncio.gather(...)` takes positional awaitables but no keyword arguments; other task creation
   and wait APIs are unavailable
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`,

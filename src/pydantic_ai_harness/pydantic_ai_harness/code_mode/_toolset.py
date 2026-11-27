@@ -40,6 +40,7 @@ try:
     from pydantic_monty import (
         AbstractOS,
         AsyncMontyRemote,
+        ExternalModule,
         MontyComplete,
         MountDir,
         OsFunction,
@@ -73,6 +74,7 @@ from pydantic_ai_harness._monty_exec import (
     TurnComplete,
     TurnFeed,
     in_temporal_workflow,
+    module_functions,
 )
 from pydantic_ai_harness._monty_turns import MontyFailure, MontyTurn, TurnRequest, model_safe_result
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, renamed_duration_limit, warn_argument_renamed
@@ -590,7 +592,48 @@ def _policy_has_clock(os_policy: CodeModeOSPolicy | None) -> bool:
     return os_policy is not None and os_policy.get('datetime', 'call_host') != 'call_host'
 
 
-def _base_description(*, has_os: bool, has_mount: bool, has_clock: bool) -> str:
+def _module_stubs(modules: Mapping[str, ExternalModule]) -> dict[str, str | None]:
+    """Each module in `modules` and each of its submodules, by dotted name, with its `.pyi` stubs."""
+    stubs: dict[str, str | None] = {}
+    for name, module in modules.items():
+        stubs[name] = module.stubs
+        stubs |= _module_stubs(
+            {
+                f'{name}.{attr}': value
+                for attr, value in module.attrs.items()
+                if isinstance(value, ExternalModule) and not attr.startswith('_')
+            }
+        )
+    return stubs
+
+
+def check_external_modules(modules: Mapping[str, ExternalModule]) -> None:
+    """Reject module names the sandbox can't import, and modules without the stubs the model and type checker read."""
+    for name in modules:
+        if not name.isidentifier():
+            raise UserError(
+                f'`external_modules` key {name!r} is not a module name. '
+                'Use a top-level name and nest submodules as `ExternalModule` attributes.'
+            )
+    if missing := [name for name, stubs in _module_stubs(modules).items() if not stubs]:
+        raise UserError(
+            '`external_modules` entries need `.pyi` stubs, which the model and the type checker read. '
+            f'Missing for: {", ".join(map(repr, missing))}. Pass them as `ExternalModule(..., stubs=...)`.'
+        )
+
+
+def _host_modules_note(modules: Mapping[str, ExternalModule]) -> str:
+    """The `run_code` description line that tells the model which host modules it can import, with their stubs."""
+    if not modules:
+        return ''
+    blocks = '\n\n'.join(f'# {name}\n{stubs}' for name, stubs in _module_stubs(modules).items())
+    return (
+        '- **Host modules**: these modules can also be imported, and their functions run on the host, '
+        f'outside the sandbox:\n\n```python\n{blocks}\n```'
+    )
+
+
+def _base_description(*, has_os: bool, has_mount: bool, has_clock: bool, host_modules: str) -> str:
     """Assemble the `run_code` base description with the right OS-access restriction line.
 
     `os` routes environment, clock, and filesystem calls; a `mount` alone only
@@ -598,6 +641,7 @@ def _base_description(*, has_os: bool, has_mount: bool, has_clock: bool) -> str:
     clock access (the model would generate calls that fail and burn retries).
     `has_clock` says `os_policy` gives the sandbox a clock of its own, which the
     note then advertises instead of calling it unavailable or routed to `os`.
+    `host_modules` is the `external_modules` line, empty without any.
     """
     if has_os:
         restriction = _OS_ENABLED_WITH_CLOCK_NOTE if has_clock else _OS_ENABLED_NOTE
@@ -607,6 +651,8 @@ def _base_description(*, has_os: bool, has_mount: bool, has_clock: bool) -> str:
         restriction = _NO_OS_WITH_CLOCK_NOTE if has_clock else _NO_OS_RESTRICTION
     if has_mount:
         restriction = f'{restriction}\n{_MOUNT_LIFETIME_NOTE}'
+    if host_modules:
+        restriction = f'{restriction}\n{host_modules}'
     return f'{_RUN_CODE_DESCRIPTION_HEAD}\n{restriction}\n{_RUN_CODE_DESCRIPTION_TAIL}'
 
 
@@ -961,6 +1007,12 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     See [`CodeMode.os_policy`][pydantic_ai_harness.CodeMode.os_policy].
     """
 
+    external_modules: Mapping[str, ExternalModule] | None = field(default=None, kw_only=True)
+    """Host modules sandboxed code can import, keyed by module name.
+
+    See [`CodeMode.external_modules`][pydantic_ai_harness.CodeMode.external_modules].
+    """
+
     monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
         default=None, kw_only=True, repr=False
     )
@@ -1027,12 +1079,20 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
     # step. Reset on `for_run` because each run gets a fresh instance.
     _warned_missing_return_schema: set[str] = field(default_factory=set[str], init=False, repr=False)
 
+    # Derived from `external_modules` in `__post_init__`.
+    _module_functions: dict[str, Callable[..., object]] = field(init=False, repr=False, compare=False)
+    _host_modules_note: str = field(init=False, repr=False, compare=False)
+
     def __post_init__(self) -> None:
         # Converted once here, so the copies `for_run` and `for_run_step` make do not warn again.
         self.os_access = as_os_handler(self.os_access)
         self.monty_sandbox = monty_sandbox_from_url(self.monty_sandbox, self.monty_sandbox_url, 'CodeModeToolset')
         self.monty_sandbox_url = None
         self.resource_limits = renamed_duration_limit(self.resource_limits, 'CodeModeToolset')
+        modules = self.external_modules or {}
+        check_external_modules(modules)
+        self._module_functions = module_functions(modules)
+        self._host_modules_note = _host_modules_note(modules)
 
     @property
     def id(self) -> str | None:
@@ -1066,9 +1126,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         sandbox = self.monty_sandbox
         if isinstance(sandbox, str):
             _check_monty_sandbox_url(sandbox)
-            run_state = MontyRunState(monty_sandbox_url=sandbox, os_policy=self.os_policy)
+            run_state = MontyRunState(
+                monty_sandbox_url=sandbox, os_policy=self.os_policy, external_modules=self.external_modules
+            )
         elif sandbox is None or callable(sandbox):
-            run_state = MontyRunState(pool_factory=sandbox, os_policy=self.os_policy)
+            run_state = MontyRunState(
+                pool_factory=sandbox, os_policy=self.os_policy, external_modules=self.external_modules
+            )
         else:
             raise UserError('`monty_sandbox` takes a URL or a function that returns the pool, not the pool itself.')
         await self.wrapped.__aenter__()
@@ -1198,11 +1262,17 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
         has_mount = self.mount is not None
         has_clock = _policy_has_clock(self.os_policy)
         if self.dynamic_catalog:
-            description = _base_description(has_os=has_os, has_mount=has_mount, has_clock=has_clock)
+            description = _base_description(
+                has_os=has_os, has_mount=has_mount, has_clock=has_clock, host_modules=self._host_modules_note
+            )
             self._last_catalog = self._render_catalog(callable_defs)
         else:
             description = self._build_description(
-                callable_defs, has_os=has_os, has_mount=has_mount, has_clock=has_clock
+                callable_defs,
+                has_os=has_os,
+                has_mount=has_mount,
+                has_clock=has_clock,
+                host_modules=self._host_modules_note,
             )
             self._last_catalog = ''
 
@@ -1544,6 +1614,7 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
             max_sleep_seconds=configured.get('max_feed_duration_secs'),
             # Already converted in `__post_init__`; this narrows the field's type.
             os_handler=as_os_handler(self.os_access),
+            module_functions=self._module_functions,
         )
 
         async def run_feed() -> MontyComplete | TurnComplete:
@@ -1802,10 +1873,10 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
 
     @staticmethod
     def _build_description(
-        callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool, has_clock: bool
+        callable_defs: dict[str, ToolDefinition], *, has_os: bool, has_mount: bool, has_clock: bool, host_modules: str
     ) -> str:
         """Render the `run_code` description: base prose + TypedDicts + function signatures."""
-        base = _base_description(has_os=has_os, has_mount=has_mount, has_clock=has_clock)
+        base = _base_description(has_os=has_os, has_mount=has_mount, has_clock=has_clock, host_modules=host_modules)
         catalog = CodeModeToolset._render_catalog(callable_defs)
         if not catalog:
             return base

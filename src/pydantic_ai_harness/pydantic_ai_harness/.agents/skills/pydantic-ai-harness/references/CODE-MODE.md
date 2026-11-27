@@ -163,7 +163,7 @@ Code runs inside Monty, an implementation of Python which intentionally supports
 
 Key restrictions:
 
-- No third-party imports
+- No third-party imports; `external_modules` adds host modules of your own
 - No `import *`
 - Only a small stdlib subset is allowed, and each must be imported before use: `sys`, `typing`, `asyncio`, `math`, `json`, `re`, `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`, `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`, `hashlib`, `os.path`, `tomllib`, `annotationlib`, `colorsys`, `keyword`, `stat`, `statistics`
 - `asyncio.gather(...)` accepts positional awaitables but no keyword arguments; other task creation and wait APIs are unavailable
@@ -211,6 +211,7 @@ CodeMode(
     os_access: CodeModeOS | None = None,
     mount: CodeModeMount | None = None,
     os_policy: CodeModeOSPolicy | None = None,  # Monty clock/timezone policies over the defaults
+    external_modules: Mapping[str, ExternalModule] | None = None,  # modules whose functions run on the host
     resource_limits: CodeModeResourceLimits | Literal['unlimited'] | None = None,
     eager: bool = False,                   # run complete streamed statements before the call finishes
     speculate: Sequence[str] | Literal['declared'] | None = None,  # start read-only calls while streaming
@@ -227,6 +228,7 @@ CodeMode(
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
 - `os_policy`: Monty's `OSPolicy`, merged key by key over the defaults (clock, sleeps, and random seeding routed to `os_access`). `{'datetime': 'system', 'timezone': 'Europe/Paris'}` gives the sandbox the worker's clock in that zone with no handler; `{'timezone': ...}` alone keeps the clock on `os_access` but makes `astimezone()` and `%Z` report the zone. Keep the defaults under Temporal: a `'system'` clock or `random_start` is re-read on replay. Fixed values stay fixed.
+- `external_modules`: maps a top-level module name to a `pydantic_monty.ExternalModule(attrs, stubs=...)`, which sandboxed code imports (`import warehouse`, `from warehouse import query`); a submodule is an `ExternalModule` attribute. `stubs` (the `.pyi` text) is required for the module and every submodule: the `run_code` description shows it and the type checker checks calls against it, and `CodeMode` raises `UserError` without it or for a dotted key. Attributes starting with `_` are hidden. Sync functions run in a worker thread, async ones on the event loop alongside tools in `asyncio.gather`; an exception is raised at the sandbox call site. Module calls are not tool calls: no `max_tool_calls` count, no message history or `run_code` metadata entry, no spans. Under Temporal they run in the workflow, as `os_access` does, and run again on replay, so keep side effects in tools.
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
 - `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_seconds` also applies, except in Temporal workflow code. The factory runs once per run, or once per turn when turns run as activities. Only execution moves; tools, `os_access`, and prints stay host-side, and so do mounts unless turns run as activities, where the activity worker reads them. Run the worker on `pydantic-monty>=1.7.0`. `monty_sandbox_url` is the deprecated form.
 - Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's instructions or tool arguments.
