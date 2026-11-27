@@ -147,7 +147,7 @@ class TestToolOutputLimitsTelemetry:
                 ),
                 id='failed-spill-falls-back',
             ),
-            # The spill fails, then its summary: the band's own action and its error are what's kept.
+            # The spill fails, then its summary: `fallback_from` keeps the band's own action.
             pytest.param(
                 limits(Spill(then=Summarize(summarize=failing_summarize, then=Truncate(max_chars=50)))),
                 TEXT,
