@@ -3827,6 +3827,19 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_protocol.py::control_flow_error"
       ]
     },
+    "SuspendedResponseExpired": {
+      "engines": [
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_toolset.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_toolset.py::<module>"
+      ]
+    },
     "ToolFailed": {
       "engines": [
         "durable_exec",
