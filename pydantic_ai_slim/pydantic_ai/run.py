@@ -24,7 +24,14 @@ from . import (
     messages as _messages,
     usage as _usage,
 )
-from ._enqueue import EnqueueContent, PendingMessage, PendingMessagePriority, PendingMessageQueue
+from ._compaction_requests import RequestedCompaction
+from ._enqueue import (
+    EnqueueContent,
+    PendingMessage,
+    PendingMessagePlacement,
+    PendingMessagePriority,
+    PendingMessageQueue,
+)
 from ._instrumentation import current_otel_traceparent
 from ._run_context import (
     CustomEventT,
@@ -67,6 +74,7 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     conversation_run_start: NotRequired[int]
     metadata: NotRequired[dict[str, Any] | None]
     traceparent: NotRequired[str | None]
+    compactions: NotRequired[list[_messages.CompactionRecord]]
 
 
 @with_config(ConfigDict(title='AgentRunResult'))
@@ -93,6 +101,7 @@ class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
     conversation_run_start: int
     metadata: dict[str, Any] | None
     traceparent: str | None
+    compactions: list[_messages.CompactionRecord]
 
 
 @cache
@@ -134,6 +143,7 @@ _STATE_KEYS = (
     'conversation_saved',
     'conversation_merged_tail',
     'metadata',
+    'compactions',
 )
 """Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
 
@@ -791,6 +801,18 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         return self._graph_run.state.run_id
 
     @property
+    def compactions(self) -> list[_messages.CompactionRecord]:
+        """The compactions this run kept so far, in the order it kept them.
+
+        The message history only shows the compacted history:
+        [`new_messages()`][pydantic_ai.agent.AgentRun.new_messages] are this run's messages still in it. Each
+        [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] says what it replaced, so you can tell which
+        messages were summarized, for example to store the conversation's full log. A compaction made for an attempt
+        that then failed isn't included.
+        """
+        return self._graph_run.state.compactions
+
+    @property
     def conversation_id(self) -> str:
         """The unique identifier for the conversation this run belongs to."""
         return self._graph_run.state.conversation_id
@@ -846,6 +868,7 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
         self,
         *content: EnqueueContent,
         priority: PendingMessagePriority = 'asap',
+        placement: PendingMessagePlacement = 'append',
     ) -> str | None:
         """Enqueue content to be injected into the conversation.
 
@@ -869,6 +892,10 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
                     content to the history instead, or leaves it queued; see
                     [Injecting messages mid-run](../message-history.md#injecting-messages-mid-run)).
                 `'when_idle'` — only when the agent would otherwise end, after `'asap'` messages.
+            placement: Where the content lands when it's delivered into a model request, as in
+                [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue]: `'append'` (default) after what
+                the history already holds, or `'before_prompt'` right before the user prompt in the request
+                being sent, when it holds one, for data capability parts only.
 
         Returns:
             The `enqueue_id` of the queued message, echoed on the
@@ -876,13 +903,36 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
             delivered, or `None` when there was nothing to enqueue (an empty call).
 
         Raises:
-            UserError: If the run has ended, since there'd be nowhere to deliver the message.
+            UserError: If the run has ended, since there'd be nowhere to deliver the message, or if content
+                placed `'before_prompt'` is anything but data capability parts.
         """
-        pending = PendingMessage.from_content(*content, priority=priority)
+        pending = PendingMessage.from_content(*content, priority=priority, placement=placement)
         if pending is None:
             return None
         self._graph_run.state.pending_messages.append(pending)
         return pending.enqueue_id
+
+    def request_compaction(self, *, reason: _messages.CompactionReason = 'manual', focus: str | None = None) -> None:
+        """Ask for the message history to be compacted before the run's next model request attempt.
+
+        Like [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction], from outside the run:
+        between steps of an [`iter()`][pydantic_ai.agent.AbstractAgent.iter] loop, or from a key handler. The
+        capabilities' [`compact_history`](../capabilities/compaction.md#the-compaction-hook) hooks compact for the
+        model that serves the next attempt, and the run records it on
+        [`compactions`][pydantic_ai.agent.AgentRunResult.compactions]. A call while a request is pending merges into
+        it, keeping the more important reason and every focus, as `RunContext.request_compaction` describes. To
+        compact before the run's first request, pass `compact=` to the run method instead.
+
+        Args:
+            reason: Why compaction is needed, passed on to the hooks and the compaction events.
+            focus: What the compaction should keep, like the argument to a `/compact` command.
+
+        Raises:
+            UserError: If the run has ended, since there's no next request to compact for.
+        """
+        if self._result_override is not None or self._graph_run.output is not None:
+            raise exceptions.UserError('The run has ended, so there is no next request to compact for.')
+        self._graph_run.state.compaction_requests.request(RequestedCompaction(reason=reason, focus=focus))
 
     def dequeue(self, enqueue_id: str) -> bool:
         """Remove a message queued with [`enqueue`][pydantic_ai.run.AgentRun.enqueue] before it's delivered.
@@ -1039,6 +1089,11 @@ class AgentRunResult(Generic[OutputDataT]):
         # means nothing in another process; its ref stays in the messages' `workspace_ref`.
         state = self.__dict__.copy()
         state.pop('_workspace', None)
+        if compactions := self._state.compactions:
+            # A compaction record's replaced history is held in memory only, as when the result is serialized.
+            state['_state'] = dataclasses.replace(
+                self._state, compactions=[dataclasses.replace(record, replaced=None) for record in compactions]
+            )
         return state
 
     @classmethod
@@ -1117,6 +1172,9 @@ class AgentRunResult(Generic[OutputDataT]):
             data['conversation_unchecked'] = True
         if self._state.conversation_saved:
             data['conversation_saved'] = True
+        if compactions := self._state.compactions:
+            # Only when there are any, so a run that didn't compact serializes as it always has.
+            data['compactions'] = compactions
         if self._state.conversation_merged_tail is not None:
             data['conversation_merged_tail'] = self._state.conversation_merged_tail
         if (full := full_history(self._state)) is not None:
@@ -1246,6 +1304,18 @@ class AgentRunResult(Generic[OutputDataT]):
     def usage(self) -> _usage.RunUsage:
         """Return the usage of the whole run."""
         return self._state.usage
+
+    @property
+    def compactions(self) -> list[_messages.CompactionRecord]:
+        """The compactions this run kept, in the order it kept them.
+
+        The message history only shows the compacted history:
+        [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] are this run's messages still in it. Each
+        [`CompactionRecord`][pydantic_ai.messages.CompactionRecord] says what it replaced, so you can tell which
+        messages were summarized, for example to store the conversation's full log. A compaction made for an attempt
+        that then failed isn't included.
+        """
+        return self._state.compactions
 
     @property
     def conversation(self) -> Conversation:

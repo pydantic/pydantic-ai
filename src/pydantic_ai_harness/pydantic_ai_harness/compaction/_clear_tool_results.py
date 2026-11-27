@@ -12,6 +12,7 @@ from pydantic_ai.messages import ModelMessage, ModelRequest, ToolReturnPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
+    PartPosition,
     ToolPair,
     compact_with_span,
     context_for_request,
@@ -181,25 +182,25 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
         if self.keep_turns is None:
             clearable = self._outside_kept_pairs(messages)
         else:
-            # Only the messages before the kept turns are rebuilt, so a tool call id a provider reuses
-            # in a kept turn can't reach back into it.
+            # Only pairs whose call and return both come before the kept turns are cleared, and only
+            # those messages are rebuilt, so the kept turns go out unchanged.
             boundary = self._kept_turns_start(messages, self.keep_turns)
             older, kept = messages[:boundary], messages[boundary:]
             clearable = iter_tool_pairs(older)
 
-        clear_return_ids: set[str] = set()
-        clear_input_ids: set[str] = set()
+        clear_return_positions: set[PartPosition] = set()
+        clear_input_positions: set[PartPosition] = set()
         for pair in clearable:
             if pair.tool_name in self.exclude_tools or (self.tools is not None and pair.tool_name not in self.tools):
                 continue
-            clear_return_ids.add(pair.tool_call_id)
+            clear_return_positions.add(pair.return_position)
             if self.clear_tool_inputs:
-                clear_input_ids.add(pair.tool_call_id)
+                clear_input_positions.add(pair.call_position)
 
-        if not clear_return_ids:
+        if not clear_return_positions:
             return messages
 
-        cleared = [*rebuild_with_cleared(older, clear_return_ids, clear_input_ids, self.placeholder), *kept]
+        cleared = [*rebuild_with_cleared(older, clear_return_positions, clear_input_positions, self.placeholder), *kept]
         if self.min_clear_tokens is not None:
             reclaimed = estimate_token_count(messages, self.tokenizer) - estimate_token_count(cleared, self.tokenizer)
             if reclaimed < self.min_clear_tokens:
@@ -245,7 +246,7 @@ class ClearToolResults(AbstractCapability[AgentDepsT]):
         return replace(request_context, messages=compacted)
 
     def _outside_kept_pairs(self, messages: list[ModelMessage]) -> list[ToolPair]:
-        """The pairs older than the newest `keep_pairs`, matched by tool call id across the whole history.
+        """The pairs older than the newest `keep_pairs`, matched in history order, each call before its return.
 
         With `tools`, the window holds only the listed tools' pairs, so other tools' calls can't push a
         listed result out of it.

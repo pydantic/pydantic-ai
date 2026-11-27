@@ -268,6 +268,9 @@ class TemporalOperationBackend(RegisteredOperationBackend[TemporalOperationConfi
         self.child_workflow_toolsets: dict[type, tuple[str, str]] = {}
         """Each child workflow definition's toolset id and workflow name."""
 
+    def execution_attempt(self) -> int:
+        return activity.info().attempt if activity.in_activity() else 1
+
     def move_registration_to_end(self, registration: Callable[..., object]) -> None:
         self._registrations.remove(registration)
         self._registrations.append(registration)

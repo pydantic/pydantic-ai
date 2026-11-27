@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callab
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, TypeVar, Union
 
 import anyio
@@ -2791,6 +2792,28 @@ def test_output_type_union_text_fallback():
     assert result.output == snapshot(Apple(color='red'))
 
 
+@pytest.mark.parametrize(
+    'output_type',
+    [
+        pytest.param(NativeOutput([Literal['red', 'green'], Banana]), id='native'),
+        pytest.param(PromptedOutput([Literal['red', 'green'], Banana]), id='prompted'),
+        pytest.param([Literal['red', 'green'], Banana], id='tool-text-fallback'),
+    ],
+)
+def test_output_type_union_literal_member(output_type: OutputSpec[Literal['red', 'green'] | Banana]):
+    """A union output picking its `Literal` member returns the value instead of raising `TypeError`
+    from `isinstance`, which can't check a `Literal`.
+    """
+
+    def return_literal(_: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        text = '{"result": {"kind": "Literal", "data": {"response": "green"}}}'
+        return ModelResponse(parts=[TextPart(content=text)])
+
+    agent = Agent(FunctionModel(return_literal), output_type=output_type)
+    result = agent.run_sync('What color is it?')
+    assert result.output == 'green'
+
+
 def test_output_type_union_text_fallback_invalid_data_retries():
     """When the union envelope text has the right `kind` but `data` that doesn't match that
     member's schema, validation fails and the model is re-prompted with the validation error.
@@ -2993,6 +3016,447 @@ def test_output_type_union_text_fallback_invalid_kind_exhausts_retries():
     # means the bad `kind` was routed through retry exhaustion, not the old crash path.
     with pytest.raises(UnexpectedModelBehavior, match=r'Exceeded maximum output retries \(1\)'):
         agent.run_sync('What fruit is it?')
+
+
+def test_output_type_structured_dict_validates_against_schema():
+    """Output that doesn't match the `StructuredDict` schema is sent back to the model, which can then fix it.
+
+    No provider can be made to send output that breaks the schema on demand, so this is a unit test, not a VCR test.
+    """
+    Verdict = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'verdict': {'enum': ['pass', 'fail']},
+                'findings': {'type': 'array', 'items': {'type': 'object', 'properties': {'line': {'type': 'integer'}}}},
+            },
+            'required': ['verdict'],
+            'additionalProperties': False,
+        },
+        validate=True,
+    )
+    retry_messages: list[str] = []
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            args = {'totally': 'wrong', 'findings': [{'line': '7'}]}
+        else:
+            retry = messages[-1].parts[-1]
+            assert isinstance(retry, ToolReturnPart)
+            retry_messages.append(retry.model_response_str())
+            args = {'verdict': 'pass', 'findings': [{'line': 7}]}
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+    agent = Agent(FunctionModel(call_tool), output_type=Verdict)
+    result = agent.run_sync('Review this')
+
+    assert result.output == snapshot({'verdict': 'pass', 'findings': [{'line': 7}]})
+    assert retry_messages == snapshot(
+        [
+            '{"error":[{"type":"json_schema_mismatch","loc":[],"msg":"Output does not match the JSON schema: \'verdict\' is a required property; Additional properties are not allowed (\'totally\' was unexpected); at `findings.0.line`: \'7\' is not of type \'integer\'","input":{"totally":"wrong","findings":[{"line":"7"}]}}]}'
+        ]
+    )
+
+
+def test_output_type_structured_dict_does_not_convert_values():
+    """`StructuredDict` returns the JSON the model sent, so a string where the schema wants an integer is an error.
+
+    No provider can be made to send output that breaks the schema on demand, so this is a unit test, not a VCR test.
+    """
+    Count = StructuredDict(
+        {'type': 'object', 'properties': {'count': {'type': 'integer'}}, 'required': ['count']}, validate=True
+    )
+    agent = Agent(TestModel(custom_output_args={'count': '42'}), output_type=Count, retries=0)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        agent.run_sync('Count')
+
+
+def test_output_type_structured_dict_is_not_validated_by_default():
+    """Without `validate=True`, `StructuredDict` accepts any object, as it always has.
+
+    No provider can be made to send output that breaks the schema on demand, so this is a unit test, not a VCR test.
+    """
+    Count = StructuredDict({'type': 'object', 'properties': {'count': {'type': 'integer'}}, 'required': ['count']})
+    agent = Agent(TestModel(custom_output_args={'total': 'many'}), output_type=Count)
+
+    assert agent.run_sync('Count').output == snapshot({'total': 'many'})
+
+
+def test_structured_dict_validate_requires_jsonschema(monkeypatch: pytest.MonkeyPatch):
+    """`validate=True` without the `jsonschema` extra names the extra to install.
+
+    It simulates a missing optional dependency, which a recorded request can't, so this is a unit test.
+    """
+    monkeypatch.setitem(sys.modules, 'jsonschema.validators', None)
+
+    with pytest.raises(UserError, match=r'requires the `jsonschema` package'):
+        StructuredDict({'type': 'object'}, validate=True)
+
+
+def test_output_type_structured_dict_validates_ref_siblings():
+    """A `$ref`'s sibling keywords still apply when validating, though the schema sent to the model inlines `$defs`.
+
+    No provider can be made to send output that breaks the schema on demand, so this is a unit test, not a VCR test.
+    """
+    Payment = StructuredDict(
+        {
+            'type': 'object',
+            '$defs': {'Limit': {'type': 'integer', 'maximum': 100}},
+            'properties': {'amount': {'$ref': '#/$defs/Limit', 'maximum': 10}},
+            'required': ['amount'],
+        },
+        validate=True,
+    )
+    agent = Agent(TestModel(custom_output_args={'amount': 50}), output_type=Payment, retries=0)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        agent.run_sync('Pay')
+
+
+def test_output_type_structured_dict_refuses_non_finite_numbers():
+    """NaN passes `minimum` and `maximum` checks, so `validate=True` refuses non-finite numbers itself.
+
+    No provider can be made to send output that breaks the schema on demand, so this is a unit test, not a VCR test.
+    """
+    Score = StructuredDict(
+        {'type': 'object', 'properties': {'score': {'type': 'number', 'minimum': 0, 'maximum': 1}}}, validate=True
+    )
+    retry_messages: list[str] = []
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            args = {'score': float('nan')}
+        else:
+            retry = messages[-1].parts[-1]
+            assert isinstance(retry, ToolReturnPart)
+            retry_messages.append(retry.model_response_str())
+            args = {'score': 0.5}
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+    result = Agent(FunctionModel(call_tool), output_type=Score).run_sync('Score')
+
+    assert result.output == snapshot({'score': 0.5})
+    assert retry_messages == snapshot(
+        [
+            '{"error":[{"type":"json_schema_mismatch","loc":[],"msg":"Output does not match the JSON schema: at `score`: nan is not a finite number","input":{"score":null}}]}'
+        ]
+    )
+
+
+def test_structured_dict_validate_checks_patterns_in_linear_time(monkeypatch: pytest.MonkeyPatch):
+    """Pattern keywords never reach Python's backtracking `re`, so crafted output can't stall the run.
+
+    `jsonschema` calls `re.search` for `pattern`, `patternProperties` and `additionalProperties`; with that replaced by
+    a function that fails the test, the output is still checked, and refused. It feeds deliberately crafted output,
+    which no provider sends on demand, so this is a unit test.
+    """
+
+    def backtracking_search(pattern: str, string: str) -> None:  # pragma: no cover
+        raise AssertionError(f'`jsonschema` matched {pattern!r} with Python `re`')
+
+    for module in ('jsonschema._keywords', 'jsonschema._utils'):
+        monkeypatch.setattr(f'{module}.re', SimpleNamespace(search=backtracking_search))
+
+    Code = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {'code': {'type': 'string', 'pattern': '^(a+)+$'}, 'default': {'pattern': '^(b+)+$'}},
+            'patternProperties': {'^(x+)+$': {'type': 'integer'}},
+            'additionalProperties': False,
+        },
+        validate=True,
+    )
+    retry_messages: list[str] = []
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            args = {'code': 'aaa!', 'default': 'bbb!', 'xxx!': 1}
+        else:
+            retry = messages[-1].parts[-1]
+            assert isinstance(retry, ToolReturnPart)
+            retry_messages.append(retry.model_response_str())
+            args = {'code': 'aaa', 'default': 'bbb', 'xxx': 1}
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+    result = Agent(FunctionModel(call_tool), output_type=Code).run_sync('Code')
+
+    assert result.output == snapshot({'code': 'aaa', 'default': 'bbb', 'xxx': 1})
+    assert retry_messages == snapshot(
+        [
+            '{"error":[{"type":"json_schema_mismatch","loc":[],"msg":"Output does not match the JSON schema: Additional properties are not allowed (\'xxx!\' was unexpected); at `code`: \'aaa!\' does not match \'^(a+)+$\'; at `default`: \'bbb!\' does not match \'^(b+)+$\'","input":{"code":"aaa!","default":"bbb!","xxx!":1}}]}'
+        ]
+    )
+
+
+def test_output_type_structured_dict_accepts_output_matching_patterns():
+    """Pattern keywords pass values they don't apply to, and descend into the subschemas of matching keys.
+
+    It feeds output shaped to reach each keyword's branches, which no provider sends on demand, so this is a unit test.
+    """
+    Record = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'count': {'pattern': '^a'},
+                'labels': {
+                    'patternProperties': {'^a': {'type': 'integer'}},
+                    'additionalProperties': {'type': 'string'},
+                },
+                'items': {'patternProperties': {'^a': True}, 'additionalProperties': False},
+            },
+        },
+        validate=True,
+    )
+    output = {'count': 5, 'labels': {'ab': 1, 'z': 'ok'}, 'items': [1]}
+    agent = Agent(TestModel(custom_output_args=output), output_type=Record)
+
+    assert agent.run_sync('Record').output == output
+
+
+def test_output_type_structured_dict_checks_patterns_with_unevaluated_properties():
+    """A plain `pattern` with `unevaluatedProperties` is allowed and still checked; only `patternProperties` is refused.
+
+    It feeds deliberately invalid output, which no provider sends on demand, so this is a unit test.
+    """
+    Code = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {'code': {'type': 'string', 'pattern': '^[A-Z]+$'}},
+            'unevaluatedProperties': False,
+        },
+        validate=True,
+    )
+    agent = Agent(TestModel(custom_output_args={'code': 'abc'}), output_type=Code, retries=0)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        agent.run_sync('Code')
+
+
+@pytest.mark.parametrize(
+    ('schema', 'match'),
+    [
+        pytest.param(
+            {'type': 'object', 'properties': {'code': {'type': 'string', 'pattern': '(?=a)a'}}},
+            r"does not support the pattern '\(\?=a\)a'",
+            id='lookaround',
+        ),
+        pytest.param(
+            {'type': 'object', 'patternProperties': {'^x+$': True}, 'unevaluatedProperties': False},
+            'does not support `unevaluatedProperties` together with `patternProperties`',
+            id='unevaluated-properties-with-patterns',
+        ),
+        pytest.param(
+            {'type': 'object', 'properties': {'a': {'type': 'strng'}}},
+            'got an invalid JSON schema',
+            id='invalid-schema',
+        ),
+        pytest.param(
+            {
+                'type': 'object',
+                'properties': {
+                    'tags': {
+                        '$schema': 'https://json-schema.org/draft/2019-09/schema',
+                        'patternProperties': {'^(a+)+$': True},
+                    }
+                },
+            },
+            'supports `\\$schema` only at the top level',
+            id='nested-dialect',
+        ),
+    ],
+)
+def test_structured_dict_validate_refuses_schemas_it_cannot_check_safely(schema: dict[str, Any], match: str):
+    """Schemas that `validate=True` can't check correctly, or in linear time, are refused when it's created.
+
+    A lookaround can't be compiled by the linear-time engine; `jsonschema` matches `patternProperties` with Python's
+    `re` for `unevaluatedProperties`, and switches to its stock validator for a nested `$schema`. Each is a
+    configuration error raised before any request, so this is a unit test.
+    """
+    with pytest.raises(UserError, match=match):
+        StructuredDict(schema, validate=True)
+
+
+@pytest.mark.parametrize(
+    'schema',
+    [
+        pytest.param(
+            {
+                '$schema': 'http://json-schema.org/draft-07/schema#',
+                'type': 'object',
+                'dependencies': {'$schema': {'required': ['version']}},
+            },
+            id='draft-7-dependencies',
+        ),
+        pytest.param({'type': 'object', 'dependentRequired': {'$schema': ['other']}}, id='dependent-required'),
+    ],
+)
+def test_structured_dict_validate_allows_property_names_that_look_like_keywords(schema: dict[str, Any]):
+    """Property-name maps like `dependencies` and `dependentRequired` aren't mistaken for nested dialects.
+
+    It checks configurations that must not raise, before any request, so this is a unit test.
+    """
+    StructuredDict(schema, validate=True)
+
+
+def test_output_type_structured_dict_explains_any_of_mismatches():
+    """For an `anyOf` mismatch, the retry message names the closest branch's error, so the model can fix it.
+
+    It feeds deliberately invalid output, which no provider sends on demand, so this is a unit test.
+    """
+    Contact = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'contact': {
+                    'anyOf': [
+                        {'type': 'object', 'properties': {'email': {'type': 'string'}}, 'required': ['email']},
+                        {'type': 'string', 'pattern': '^[0-9]+$'},
+                    ]
+                }
+            },
+        },
+        validate=True,
+    )
+    retry_messages: list[str] = []
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            args: dict[str, Any] = {'contact': {'mail': 'a@b.c'}}
+        else:
+            retry = messages[-1].parts[-1]
+            assert isinstance(retry, ToolReturnPart)
+            retry_messages.append(retry.model_response_str())
+            args = {'contact': {'email': 'a@b.c'}}
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+    Agent(FunctionModel(call_tool), output_type=Contact).run_sync('Contact')
+
+    assert len(retry_messages) == 1
+    assert 'is not valid under any of the given schemas (closest: at `contact`:' in retry_messages[0]
+
+
+def test_output_type_structured_dict_refuses_nan_under_multiple_of():
+    """NaN is refused before keywords like `multipleOf`, which would raise on it, are evaluated.
+
+    It feeds deliberately invalid output, which no provider sends on demand, so this is a unit test.
+    """
+    Step = StructuredDict({'type': 'object', 'properties': {'step': {'multipleOf': 0.5}}}, validate=True)
+    retry_messages: list[str] = []
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            step = float('nan')
+        else:
+            retry = messages[-1].parts[-1]
+            assert isinstance(retry, ToolReturnPart)
+            retry_messages.append(retry.model_response_str())
+            step = 1.5
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'step': step})])
+
+    result = Agent(FunctionModel(call_tool), output_type=Step).run_sync('Step')
+
+    assert result.output == snapshot({'step': 1.5})
+    assert len(retry_messages) == 1
+    assert 'nan is not a finite number' in retry_messages[0]
+
+
+def test_output_type_structured_dict_refuses_numbers_too_large_to_check():
+    """An integer beyond the float range under `multipleOf` is reported back to the model instead of crashing the run.
+
+    It feeds deliberately invalid output, which no provider sends on demand, so this is a unit test.
+    """
+    Step = StructuredDict({'type': 'object', 'properties': {'step': {'multipleOf': 0.5}}}, validate=True)
+    retry_messages: list[str] = []
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            step = 10**400
+        else:
+            retry = messages[-1].parts[-1]
+            assert isinstance(retry, ToolReturnPart)
+            retry_messages.append(retry.model_response_str())
+            step = 2
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'step': step})])
+
+    result = Agent(FunctionModel(call_tool), output_type=Step).run_sync('Step')
+
+    assert result.output == snapshot({'step': 2})
+    assert len(retry_messages) == 1
+    assert 'a number is too large to check against the schema' in retry_messages[0]
+
+
+async def test_structured_dict_validate_streams_partial_output():
+    """Partial outputs aren't schema-checked, so `stream_output()` yields them; the final output still is.
+
+    It streams deliberately incomplete output, which no provider sends on demand, so this is a unit test.
+    """
+    Person = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+            'required': ['name', 'age'],
+        },
+        validate=True,
+    )
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"name": "Ada"')}
+        yield {0: DeltaToolCall(json_args=', "age": 36}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_function), output_type=Person)
+    async with agent.run_stream('Who?') as result:
+        outputs = [output async for output in result.stream_output(debounce_by=None)]
+
+    assert outputs[0] == snapshot({'name': 'Ada'})
+    assert outputs[-1] == snapshot({'name': 'Ada', 'age': 36})
+
+
+async def test_structured_dict_validate_still_checks_the_final_streamed_output():
+    """After partials skip the schema check, the complete streamed output is still checked.
+
+    It streams deliberately invalid output, which no provider sends on demand, so this is a unit test.
+    """
+    Person = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {'name': {'type': 'string'}, 'age': {'type': 'integer'}},
+            'required': ['name', 'age'],
+        },
+        validate=True,
+    )
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls]:
+        assert info.output_tools is not None
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"name": "Ada"')}
+        yield {0: DeltaToolCall(json_args=', "age": "36"}')}
+
+    agent = Agent(FunctionModel(stream_function=stream_function), output_type=Person)
+    with pytest.raises(UnexpectedModelBehavior, match='Output validation failed during streaming'):
+        async with agent.run_stream('Who?') as result:
+            async for _ in result.stream_output(debounce_by=None):
+                pass
+
+
+def test_structured_dict_validate_does_not_fetch_remote_refs():
+    """A reference to a remote schema is never fetched; validating against one is a configuration error.
+
+    It checks that no request is made, which a recorded request can't show, so this is a unit test.
+    """
+    Remote = StructuredDict(
+        {'type': 'object', 'properties': {'item': {'$ref': 'http://127.0.0.1:9/private.json'}}}, validate=True
+    )
+    agent = Agent(TestModel(custom_output_args={'item': {}}), output_type=Remote)
+
+    with pytest.raises(UserError, match='can only resolve references inside the schema'):
+        agent.run_sync('Fetch')
 
 
 def test_output_type_structured_dict_nested():
