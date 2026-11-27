@@ -2035,7 +2035,11 @@ def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_Tool
     response = history[index]
     assert isinstance(response, _messages.ModelResponse)
     requests = [message for message in history[index + 1 :] if isinstance(message, _messages.ModelRequest)]
-    if response.state != 'complete' or not all(_is_deferred_pause_record(request) for request in requests):
+    # A response whose stream ended before the provider's terminal event is `'incomplete'`, yet the run still ran its
+    # calls and paused on it.
+    if response.state not in ('complete', 'incomplete') or not all(
+        _is_deferred_pause_record(request) for request in requests
+    ):
         return None
     call_ids = {call.tool_call_id for call in response.tool_calls}
     answered = [
@@ -4750,6 +4754,12 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # A continuation completes a turn the provider already has, so it can't be sent a different history. That
         # also covers a batch request waiting for its batch's result: it's a suspended response the step resumes.
         if requested is None or resumed_response(prepared.messages) is not None:
+            return
+        if not ctx.deps.root_capability._handles_compact_history(run_context):  # pyright: ignore[reportPrivateUsage]
+            # Nothing could serve it, so no compaction starts: a start event would never be followed by an end.
+            # An overflow only gets here when a hook can run (see `_overflow_retry`), so this is a pending request.
+            assert pending is not None
+            requests.drop_unserved(pending)
             return
         # Made from the persistent history as this request shows it, without what only this request adds, so nothing
         # request-only reaches the history through the compaction. See `CompactionView`.

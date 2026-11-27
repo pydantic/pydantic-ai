@@ -561,13 +561,6 @@ class ModelProfile(TypedDict, total=False):
       so the request no longer starts with the prefix the provider cached for the conversation. OpenAI works this way.
     """
 
-    compaction_result_readable: bool
-    """Whether the [`CompactionPart`][pydantic_ai.messages.CompactionPart] the model's compaction returns holds a readable summary. Default: `False`.
-
-    Anthropic's does, with a signature that only compaction-capable Claude models accept. OpenAI's is encrypted, so
-    only OpenAI models can use it.
-    """
-
     deprecation: ModelDeprecation | None
     """The provider's deprecation of this model on the API the model class sends requests to. Default: `None`.
 
@@ -760,7 +753,6 @@ DEFAULT_PROFILE: ModelProfile = {
     'context_window': None,
     'supports_compaction_on_demand': False,
     'compaction_instructions': None,
-    'compaction_result_readable': False,
     'tool_call_id_length': None,
     'tool_call_ids_are_response_scoped': False,
     'tool_deferral_mode': None,

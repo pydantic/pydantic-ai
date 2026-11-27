@@ -161,7 +161,6 @@ class AzureProvider(_OpenAISDKProvider):
                 ModelProfile(
                     supports_compaction_on_demand=True,
                     compaction_instructions='system_prompt',
-                    compaction_result_readable=False,
                 ),
             )
 

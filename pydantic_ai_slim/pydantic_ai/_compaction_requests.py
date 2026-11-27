@@ -3,6 +3,7 @@
 from __future__ import annotations as _annotations
 
 import dataclasses
+import warnings
 from collections.abc import Generator
 from contextlib import contextmanager
 from contextvars import ContextVar
@@ -43,6 +44,8 @@ class CompactionRequests:
     """A run's pending compaction request, shared by reference by every `RunContext` of the run."""
 
     requested: RequestedCompaction | None = None
+    warned_unserved: bool = False
+    """Whether the run already warned that a request was dropped because no capability compacts."""
 
     def request(self, requested: RequestedCompaction) -> None:
         """Make `requested` pending, merged into the request already pending, if any.
@@ -63,6 +66,20 @@ class CompactionRequests:
         """Drop `requested` once it's been acted on, unless a later request was merged into it in the meantime."""
         if self.requested is requested:
             self.requested = None
+
+    def drop_unserved(self, requested: RequestedCompaction) -> None:
+        """Drop `requested`, which no capability of the run can serve, warning the first time in the run."""
+        self.settle(requested)
+        if self.warned_unserved:
+            return
+        self.warned_unserved = True
+        warnings.warn(
+            f'Compaction was requested (reason {requested.reason!r}), but no capability of this agent has a '
+            '`compact_history` hook, so the request was dropped and the history is unchanged. Add `NativeCompaction` '
+            'or a summarizing compaction capability to compact.',
+            UserWarning,
+            stacklevel=2,
+        )
 
 
 @dataclasses.dataclass

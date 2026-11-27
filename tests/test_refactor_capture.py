@@ -1043,7 +1043,9 @@ def test_spans_of_a_tracer():
     sampled = trace.TraceFlags(trace.TraceFlags.SAMPLED)
     remote = trace.NonRecordingSpan(trace.SpanContext(trace_id=1, span_id=2, is_remote=True, trace_flags=sampled))
     with tracer.start_as_current_span('outer', context=trace.set_span_in_context(remote)) as outer:
-        with tracer.start_as_current_span('inner', attributes={{'answer': 42}}):
+        with tracer.start_as_current_span(
+            'inner', attributes={{'answer': 42, 'logfire.exception.fingerprint': 'f' * 64}}
+        ):
             pass
     outer.end()
 
@@ -2618,7 +2620,7 @@ def test_capture_records_run_event_streams_agent_stream_calls_and_spans(run: Run
     is recorded too. A call's record has its arguments, defaults filled in, and what it yields, returns or raises:
     `stream_output` validates each partial output, and swallows the error of one that's invalid. The spans are in the
     order they started, each parent named by its number, or as `external` when no span started for it; an exception
-    event leaves out its stack trace, and a span ended twice is recorded once.
+    event leaves out its stack trace, a span its Logfire exception fingerprint, and a span ended twice is recorded once.
     """
     run(tmp_path, agent_runs=True).assert_outcomes(passed=10)
 
@@ -2834,6 +2836,7 @@ value
             'logfire.json_schema': '{"type":"object","properties":{"gen_ai.tool.call.arguments":{"type":"object"},"gen_ai.tool.call.result":{"type":"object"},"gen_ai.tool.name":{},"gen_ai.tool.call.id":{}}}',
         }
     )
+    assert next(record['attributes'] for record in spans if record['name'] == 'inner') == snapshot({'answer': 42})
 
 
 def test_capture_records_an_unreadable_error_message_as_unrecorded(run: RunCapture, tmp_path: Path):
@@ -4161,6 +4164,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'repr': object(),
             'mock_repr': Mock(name='mock.service_tier'),
             'cancel_scope': 'Cancelled via cancel scope 11dc504b0; reason: deadline exceeded',
+            'cancelling_task': "Cancelled via cancel scope 11dc504b0 by <Task cancelling name='Task-41' coro=<run()>>",
             'history_digest': '0' * 64,
             'duration': timedelta(seconds=1.5),
             'url': 'http://127.0.0.1:8123/v1',
@@ -4169,6 +4173,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'tmp_path': '/tmp/pytest-of-ci/pytest-12/test_x0/notes.txt',
             'xdist_tmp_path': '/tmp/pytest-of-ci/pytest-12/popen-gw3/test_x0',
             'uuid4_hex': '12345678123441238123123456789abc',
+            'sub_agent_task': 'Task 37cbccf9e4e15bc1a54bede21fb61274 is running in the background.',
             'other_hex': '0123456789abcdef0123456789abcdef',
             'capability_key': '<thinking:0a1b2c>',
             'latency_ms': 12.5,
@@ -4255,6 +4260,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'repr': '<object object at 0x?>',
             'mock_repr': "<Mock name='mock.service_tier' id='ID'>",
             'cancel_scope': 'Cancelled via cancel scope ADDRESS; reason: deadline exceeded',
+            'cancelling_task': "Cancelled via cancel scope ADDRESS by <Task cancelling name='Task-N' coro=<run()>>",
             'history_digest': 'DIGEST',
             'duration': 'DURATION',
             'url': 'http://127.0.0.1:PORT/v1',
@@ -4263,6 +4269,7 @@ def test_normalized_replaces_values_that_change_between_runs():
             'tmp_path': '/tmp/pytest-of-ci/pytest-N/test_x0/notes.txt',
             'xdist_tmp_path': '/tmp/pytest-of-ci/pytest-N/test_x0',
             'uuid4_hex': 'UUID',
+            'sub_agent_task': 'Task UUID is running in the background.',
             'other_hex': '0123456789abcdef0123456789abcdef',
             'capability_key': '<thinking:ID>',
             'latency_ms': 'LATENCY',
