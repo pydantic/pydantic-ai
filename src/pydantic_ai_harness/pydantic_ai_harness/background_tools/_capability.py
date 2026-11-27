@@ -16,6 +16,7 @@ import pydantic_core
 from anyio.streams.memory import MemoryObjectReceiveStream, MemoryObjectSendStream
 from pydantic import ValidationError
 
+from pydantic_ai._instrumentation import exception_type_name, record_exception, set_error_status
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentNode,
@@ -195,6 +196,11 @@ async def _execute_traced(
         except BaseException as error:
             outcome = _outcome_of_error(error)
             span.set_attribute('background_tools.outcome', outcome)
+            if isinstance(error, (ApprovalRequired, CallDeferred)):
+                # `open_span` leaves a deferral unmarked, but here it fails the call. Its message quotes nothing.
+                span.set_attribute('error.type', exception_type_name(error))
+                record_exception(span, error, include_content=False, escaped=False)
+                set_error_status(span, error, include_content=False)
             raise
         span.set_attribute('background_tools.outcome', 'success')
         return result
