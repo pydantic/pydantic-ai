@@ -291,9 +291,9 @@ class ConversationStore(ABC):
         conversation was serialized, or with all of them when it's `None`. Those that extend it are
         appended, and if it was rewritten, the messages from the first difference on branch off the
         last message both share, keeping the old branch stored. A run cleans the history it's sent
-        before it sets that index, merging a stored output tool result with its new prompt, say, and a
-        run's conversation serialized by an earlier release holds the history as cleaned, so the messages
-        before the index can also match the stored ones they were cleaned from, not only as many stored ones. Messages are matched with `==`, so a change only to a field message
+        before it sets that index, merging a stored output tool result with its new prompt, say, so
+        the messages before the index can also match the stored ones they were cleaned from, not only
+        as many stored ones. Messages are matched with `==`, so a change only to a field message
         equality ignores, like a file's `media_type` or `identifier`, isn't stored.
 
         The save is checked against the conversation's
@@ -405,9 +405,6 @@ class ConversationStore(ABC):
         self, record: ConversationRecord, history: list[ConversationEntry], sent: list[_messages.ModelMessage]
     ) -> bool:
         """Whether `sent` is the last stored messages as a run cleans the history it's sent, say merging adjacent requests.
-
-        A run's conversation keeps the history it was given as it was, so only one serialized by an earlier release,
-        which held that history as the run cleaned it, gets here and matches.
 
         `history` is the last `len(sent)` stored entries, as the save already read them. A history
         that starts earlier never cleans to fewer messages or parts, so the entries before them are

@@ -36,7 +36,7 @@ from ._run_context import (
     CustomEventT,
     no_workspace,
 )
-from ._run_conversation import conversation_from_state, full_history, given_history, keep_full_history
+from ._run_conversation import conversation_from_state, full_history, keep_full_history
 from .capabilities._pending_messages import drain_pending_messages_at_end
 from .conversation import Conversation
 from .output import OutputDataT
@@ -66,9 +66,7 @@ class _AgentRunResultData(TypedDict, Generic[OutputDataT]):
     conversation_unsaved: NotRequired[list[_messages.ModelMessage]]
     conversation_unchecked: NotRequired[bool]
     conversation_saved: NotRequired[bool]
-    # Only when cleaning the history to send changed it: the history the run was given, where an int stands for the
-    # message at that index of `messages`.
-    conversation_given: NotRequired[list[_messages.ModelMessage | int]]
+    conversation_merged_tail: NotRequired[_messages.ModelRequest]
     # Only when a capability dropped or rewrote messages the run was given or added: the conversation's full
     # history, where an int stands for the message at that index of `messages`, and where the run's own start.
     conversation_messages: NotRequired[list[_messages.ModelMessage | int]]
@@ -96,7 +94,7 @@ class _AgentRunResultInput(TypedDict, Generic[OutputDataT], total=False):
     conversation_unsaved: list[_messages.ModelMessage]
     conversation_unchecked: bool
     conversation_saved: bool
-    conversation_given: list[_messages.ModelMessage | int]
+    conversation_merged_tail: _messages.ModelRequest
     conversation_messages: list[_messages.ModelMessage | int]
     conversation_run_start: int
     metadata: dict[str, Any] | None
@@ -140,6 +138,7 @@ _STATE_KEYS = (
     'conversation_unsaved',
     'conversation_unchecked',
     'conversation_saved',
+    'conversation_merged_tail',
     'metadata',
 )
 """Serialized keys that live on `GraphAgentState` rather than on `AgentRunResult` itself."""
@@ -978,37 +977,29 @@ class AgentRun(Generic[AgentDepsT, OutputDataT]):
 
 
 def _appended_messages_data(data: dict[str, Any]) -> dict[str, Any]:
-    """The `GraphAgentState.appended_messages` a serialized result's `conversation_messages` and `conversation_run_start`, or its `conversation_given`, describe.
+    """The `GraphAgentState.appended_messages` a serialized result's `conversation_messages` and `conversation_run_start` describe.
 
-    An int in either list stands for the message at that index of `messages`; one out of range fails validation, as
-    does a `conversation_run_start` outside the conversation. A payload from before `conversation_given` existed may
-    carry `conversation_merged_tail` instead, which is ignored: its conversation is compared with the stored one.
+    An int in `conversation_messages` stands for the message at that index of `messages`; one out of range fails
+    validation, as does a `conversation_run_start` outside the conversation.
     """
     messages = data.get('messages')
     history = cast('list[Any]', messages) if isinstance(messages, list) else []
-    if 'conversation_messages' not in data:
-        given = _resolved(data, 'conversation_given', history)
-        return {'given': given, 'cleaned': history[: data.get('new_message_index', 0)]}
-    messages_data = _resolved(data, 'conversation_messages', history)
+    full = data['conversation_messages']
+    if not isinstance(full, list):
+        raise ValueError('`conversation_messages` must be a list.')
+    messages_data: list[Any] = []
+    for item in cast('list[Any]', full):
+        if type(item) is int and not 0 <= item < len(history):
+            raise ValueError(
+                f'`conversation_messages` refers to message {item}, but `messages` holds {len(history)} messages.'
+            )
+        messages_data.append(history[item] if type(item) is int else item)
     run_start = data.get('conversation_run_start', 0)
     if type(run_start) is not int or not 0 <= run_start <= len(messages_data):
         raise ValueError(
             f'`conversation_run_start` is {run_start}, but `conversation_messages` holds {len(messages_data)} messages.'
         )
     return {'messages': messages_data, 'new_message_index': run_start, 'full': True}
-
-
-def _resolved(data: dict[str, Any], key: str, history: list[Any]) -> list[Any]:
-    """The messages `data[key]` lists, with each int replaced by the message at that index of `history`."""
-    items = data[key]
-    if not isinstance(items, list):
-        raise ValueError(f'`{key}` must be a list.')
-    resolved: list[Any] = []
-    for item in cast('list[Any]', items):
-        if type(item) is int and not 0 <= item < len(history):
-            raise ValueError(f'`{key}` refers to message {item}, but `messages` holds {len(history)} messages.')
-        resolved.append(history[item] if type(item) is int else item)
-    return resolved
 
 
 def _from_legacy_shape(data: dict[str, Any], state: dict[str, Any]) -> dict[str, Any]:
@@ -1097,7 +1088,7 @@ class AgentRunResult(Generic[OutputDataT]):
         for key in _STATE_KEYS:
             if key in data:
                 state_data[key] = data[key]
-        if 'conversation_messages' in data or 'conversation_given' in data:
+        if 'conversation_messages' in data:
             state_data['appended_messages'] = _appended_messages_data(data)
 
         validated: dict[str, Any] = {
@@ -1138,13 +1129,13 @@ class AgentRunResult(Generic[OutputDataT]):
             data['conversation_unchecked'] = True
         if self._state.conversation_saved:
             data['conversation_saved'] = True
-        # The messages the history still holds are referred to by their index in it rather than repeated.
-        positions = {id(message): index for index, message in enumerate(self._state.message_history)}
+        if self._state.conversation_merged_tail is not None:
+            data['conversation_merged_tail'] = self._state.conversation_merged_tail
         if (full := full_history(self._state)) is not None:
+            # The messages the history still holds are referred to by their index in it rather than repeated.
+            positions = {id(message): index for index, message in enumerate(self._state.message_history)}
             data['conversation_messages'] = [positions.get(id(message), message) for message in full[0]]
             data['conversation_run_start'] = full[1]
-        elif (given := given_history(self._state, self._state.message_history, self._new_message_index)) is not None:
-            data['conversation_given'] = [positions.get(id(message), message) for message in given]
         if 'output' in serialized:
             # Absent when the caller filtered it out: an explicit `exclude={'output'}`, or
             # `exclude_none=True` on a `None` output. The handler applies those filters to the
@@ -1152,10 +1143,11 @@ class AgentRunResult(Generic[OutputDataT]):
             data['output'] = serialized['output']
         filtered = _filter_serialized(data, info)
         if filtered.get('messages') is not self._state.message_history:
-            # The caller left out messages, which the full or given history would hold again and its indices point into.
+            # The caller left out messages, which the full history would hold again and its indices point into,
+            # and the merged tail would hold again.
             filtered.pop('conversation_messages', None)
             filtered.pop('conversation_run_start', None)
-            filtered.pop('conversation_given', None)
+            filtered.pop('conversation_merged_tail', None)
         return cast('_AgentRunResultData[Any]', filtered)
 
     @overload

@@ -563,22 +563,7 @@ def test_validation_schema_publishes_the_shape_the_validator_accepts() -> None:
                 },
                 'conversation_unchecked': {'title': 'Conversation Unchecked', 'type': 'boolean'},
                 'conversation_saved': {'title': 'Conversation Saved', 'type': 'boolean'},
-                'conversation_given': {
-                    'items': {
-                        'anyOf': [
-                            {
-                                'discriminator': {
-                                    'mapping': {'request': '#/$defs/ModelRequest', 'response': '#/$defs/ModelResponse'},
-                                    'propertyName': 'kind',
-                                },
-                                'oneOf': [{'$ref': '#/$defs/ModelRequest'}, {'$ref': '#/$defs/ModelResponse'}],
-                            },
-                            {'type': 'integer'},
-                        ]
-                    },
-                    'title': 'Conversation Given',
-                    'type': 'array',
-                },
+                'conversation_merged_tail': {'$ref': '#/$defs/ModelRequest'},
                 'conversation_messages': {
                     'items': {
                         'anyOf': [
@@ -712,39 +697,30 @@ async def test_a_run_result_whose_prompt_merged_into_a_stored_request_dumped_wit
     loaded.messages.append(ModelRequest(parts=[UserPromptPart('two')]))
     result = await agent.run(conversation=loaded)
     adapter: TypeAdapter[AgentRunResult[_Answer]] = TypeAdapter(AgentRunResult[_Answer])
-    assert 'conversation_given' in adapter.dump_python(result)
+    assert 'conversation_merged_tail' in adapter.dump_python(result)
 
     for exclude in ({'messages'}, {'messages': {0}}):
-        assert 'conversation_given' not in adapter.dump_python(result, exclude=exclude)
+        assert 'conversation_merged_tail' not in adapter.dump_python(result, exclude=exclude)
         revived = adapter.validate_json(adapter.dump_json(result, exclude=exclude))
         assert revived.conversation.new_message_index is None
 
 
-def test_a_run_result_whose_given_history_refers_past_its_messages_fails_validation() -> None:
-    with pytest.raises(ValidationError, match='`conversation_given` refers to message 1, but `messages` holds 1'):
-        TYPE_ADAPTER.validate_python(
-            {'output': 'done', 'messages': [{'kind': 'request', 'parts': []}], 'conversation_given': [0, 1]}
-        )
+def test_a_run_result_whose_merged_tail_is_past_its_messages_leaves_its_conversation_unsplit() -> None:
+    tail = ModelRequest(parts=[UserPromptPart('stored')])
+    revived = TYPE_ADAPTER.validate_python(
+        {
+            'output': 'done',
+            'messages': [],
+            'new_message_index': 2,
+            'conversation_unsaved': [ModelRequest(parts=[UserPromptPart('appended')])],
+            'conversation_merged_tail': tail,
+        }
+    )
 
+    conversation = revived.conversation
 
-async def test_a_run_result_serialized_with_a_merged_tail_validates_and_keeps_the_messages_as_sent() -> None:
-    """Earlier releases put the stored request a prompt merged into under `conversation_merged_tail`; it's ignored now."""
-    store = InMemoryConversationStore()
-    agent = Agent(TestModel(), output_type=_Answer)
-    await store.save(await agent.run('one', conversation=Conversation(conversation_id='c')))
-    loaded = await store.load('c')
-    assert loaded is not None
-    loaded.messages.append(ModelRequest(parts=[UserPromptPart('two')]))
-    result = await agent.run(conversation=loaded)
-    adapter: TypeAdapter[AgentRunResult[_Answer]] = TypeAdapter(AgentRunResult[_Answer])
-    payload = adapter.dump_python(result, mode='json')
-    del payload['conversation_given']
-    payload['conversation_merged_tail'] = payload['messages'][2]
-
-    revived = adapter.validate_python(payload)
-
-    assert revived.all_messages() == result.all_messages()
-    assert revived.conversation.messages == result.all_messages()
+    assert conversation.messages == []
+    assert conversation.new_message_index is None
 
 
 def test_a_run_result_whose_whole_conversation_refers_past_its_messages_fails_validation() -> None:

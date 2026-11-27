@@ -668,6 +668,31 @@ class KnownFinding:
     reason: str
 
 
+def _requests_in_a_row(turn: Turn) -> bool:
+    """Whether the turn puts two requests in a row after the stored messages: appended ones, or one and the new prompt."""
+    kinds = [
+        kind
+        for appended in turn.appended
+        for kind in (['request'] if appended == 'prompt' else ['request', 'response'])
+    ]
+    kinds += ['request'] if turn.prompt else []
+    return any(a == b == 'request' for a, b in itertools.pairwise(kinds))
+
+
+def _stores_requests_in_a_row(turn: Turn) -> bool:
+    """Whether the turn can store two requests in a row: appended, enqueued or added by a hook, or a summary."""
+    return turn.hook is not None or turn.capability == 'summarize' or _requests_in_a_row(turn)
+
+
+def _without_requests_in_a_row(turn: Turn, **changes: Any) -> Turn:
+    """The turn without what can store two requests in a row."""
+    if _stores_requests_in_a_row(turn):
+        changes |= {'hook': None, 'appended': (), 'prompt': True}
+        if turn.capability == 'summarize':
+            changes['capability'] = None
+    return dataclasses.replace(turn, **changes)
+
+
 KNOWN_FINDINGS = [
     KnownFinding(
         'summary-after-appended-messages',
@@ -687,6 +712,45 @@ KNOWN_FINDINGS = [
         'A summary of stored messages is stored after the messages added before the run, like a prompt the run '
         'goes on from, an exchange a UI sent or a message a `before_run` hook added, though the model was sent it '
         'before them. The persistence docs describe this placement: after the messages the run was given.',
+    ),
+    KnownFinding(
+        'conversation-comes-back-cleaned',
+        frozenset({'S4', 'S7'}),
+        lambda turn, earlier: _without_requests_in_a_row(
+            turn, source='load' if turn.source == 'window' else turn.source
+        ),
+        (
+            (Turn(appended=('prompt',)), Turn()),
+            (Turn(hook='enqueue_before_run'), Turn()),
+            (Turn(mode='tool'), Turn(source='window', window=2)),
+        ),
+        'A run returns the stored messages it was given as it cleaned them to send, not as they were stored: two '
+        'requests in a row, like an appended prompt and the new one, a prompt and an enqueued message, or a summary '
+        'and a tool result, come back merged, and a window that starts with a tool result comes back without it. '
+        'The store keeps them as they were, so `load()` no longer equals the conversation that was saved.',
+    ),
+    KnownFinding(
+        'merging-unsaved-requests-branches-off-adjacent-stored-ones',
+        frozenset({'S1', 'S3'}),
+        lambda turn, earlier: dataclasses.replace(turn, appended=(), prompt=True) if _requests_in_a_row(turn) else turn,
+        ((Turn(appended=('prompt',)), Turn(source='load', appended=('prompt', 'prompt'), prompt=False)),),
+        'When the stored history has two requests in a row and the run also merges unsaved requests, the save '
+        'compares the whole history, finds the stored requests merged, and branches from there: an unedited save '
+        'replaces the stored messages with merged copies and records a branch.',
+    ),
+    KnownFinding(
+        'edit-after-merged-stored-requests-stores-a-prompt-twice',
+        frozenset({'S2', 'S7'}),
+        lambda turn, earlier: (
+            dataclasses.replace(turn, edit=None) if any(map(_stores_requests_in_a_row, [*earlier, turn])) else turn
+        ),
+        (
+            (Turn(appended=('prompt',)), Turn(edit='replace', edit_at=1)),
+            (Turn(appended=('prompt',)), Turn(edit='replace')),
+        ),
+        'After a run merged two stored requests in its conversation, an edit to that conversation is saved against '
+        'the stored requests as they were: editing a later reply keeps the first stored request and adds the merged '
+        'copy after it, so a prompt is on the head twice, and editing the merged request replaces only one of the two.',
     ),
 ]
 
@@ -714,28 +778,11 @@ FIXED_FINDINGS: dict[str, tuple[tuple[Turn, ...], ...]] = {
     'message-appended-before-run-is-lost': ((Turn(), Turn(hook='append_before_run')),),
     # A message a `before_model_request` hook added with `ctx.messages.append(...)` wasn't in `result.conversation`
     # when a capability trimmed it from the history in a later request.
-    # A summary the model was sent wasn't stored when a later request in the same run summarized it away.
-    'superseded-summary-is-lost': ((Turn(), Turn(mode='tool', capability='summarize')),),
     'message-appended-in-a-trimmed-run-is-lost': (
         (Turn(mode='tool', capability='trim', keep=1, hook='append_before_model_request'),),
     ),
-    # Two requests in a row, like an appended prompt and the new one, a prompt and an enqueued message, came back
-    # merged, and a window that starts with a tool result came back without it, so `load()` didn't equal the
-    # conversation that was saved.
-    'conversation-comes-back-cleaned': (
-        (Turn(appended=('prompt',)), Turn()),
-        (Turn(hook='enqueue_before_run'), Turn()),
-        (Turn(mode='tool'), Turn(source='window', window=2)),
-    ),
-    # With two stored requests in a row and unsaved ones the run merged, an unedited save branched.
-    'merging-unsaved-requests-branches-off-adjacent-stored-ones': (
-        (Turn(appended=('prompt',)), Turn(source='load', appended=('prompt', 'prompt'), prompt=False)),
-    ),
-    # An edit after a run merged two stored requests stored a prompt twice, or replaced only one of the two.
-    'edit-after-merged-stored-requests-stores-a-prompt-twice': (
-        (Turn(appended=('prompt',)), Turn(edit='replace', edit_at=1)),
-        (Turn(appended=('prompt',)), Turn(edit='replace')),
-    ),
+    # A summary the model was sent wasn't stored when a later request in the same run summarized it away.
+    'superseded-summary-is-lost': ((Turn(), Turn(mode='tool', capability='summarize')),),
 }
 """Minimal lists of turns that broke a property on main before a fix, kept as regression tests."""
 

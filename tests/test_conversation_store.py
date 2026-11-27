@@ -564,8 +564,8 @@ async def test_messages_added_to_a_loaded_conversation_are_saved_with_the_parts_
     assert record is not None and record.branches == []
 
 
-async def test_unsaved_messages_the_run_merges_are_appended_as_they_were_given() -> None:
-    """The run's conversation keeps the unsaved requests apart, as it was given them, so the save appends them."""
+async def test_unsaved_messages_the_run_merges_fall_back_to_comparing_with_the_stored_history() -> None:
+    """Without knowing which stored messages the changed unsaved ones follow, the save compares the whole history."""
     store = InMemoryConversationStore()
     stored = await _stored_conversation(store, turns=2)
     loaded = await store.load(stored.conversation_id)
@@ -575,7 +575,7 @@ async def test_unsaved_messages_the_run_merges_are_appended_as_they_were_given()
 
     result = await Agent(TestModel()).run(conversation=loaded)
     conversation = result.conversation
-    assert conversation.new_message_index == len(stored.messages)
+    assert conversation.new_message_index is None
     await store.save(conversation)
 
     reloaded = await store.load(stored.conversation_id)
@@ -1794,16 +1794,6 @@ def _round_trip(conversation: Conversation) -> Conversation:
     return ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(conversation))
 
 
-def _as_sent(conversation: Conversation) -> Conversation:
-    """A run's conversation as earlier releases serialized it: with the history the run was given as it cleaned it to send."""
-    index = conversation.new_message_index
-    assert index is not None
-    sent = repair_messages(conversation.messages[:index], repair_last_response=False)
-    return dataclasses.replace(
-        conversation, messages=[*sent, *conversation.messages[index:]], new_message_index=len(sent)
-    )
-
-
 async def test_a_conversation_serialized_between_output_tool_turns_appends_each_turn() -> None:
     """A run merges the stored output tool result with its new prompt, so the save compares the stored messages as the run cleaned them."""
     store = InMemoryConversationStore()
@@ -1848,31 +1838,13 @@ async def _stored_output_tool_turns(store: InMemoryConversationStore) -> Convers
     return stored
 
 
-async def test_a_serialized_window_keeps_the_messages_the_run_merged_so_the_save_reads_only_the_window() -> None:
-    store = _HistoryReadsStore()
-    stored = await _stored_output_tool_turns(store)
-    window = await store.load('c', limit=5)
-    assert window is not None
-    result = await Agent(TestModel(), output_type=_Answer).run('turn 3', conversation=_round_trip(window))
-    revived = _round_trip(result.conversation)
-    assert revived.messages[:5] == window.messages
-    store.limits.clear()
-
-    await store.save(revived)
-
-    assert store.limits == [5]
-    reloaded = await store.load('c')
-    assert reloaded is not None
-    assert reloaded.messages == [*stored.messages, *result.new_messages()]
-
-
 async def test_a_serialized_window_of_output_tool_turns_appends_to_the_whole_conversation() -> None:
     store = _HistoryReadsStore()
     stored = await _stored_output_tool_turns(store)
     window = await store.load('c', limit=5)
     assert window is not None
     result = await Agent(TestModel(), output_type=_Answer).run('turn 3', conversation=_round_trip(window))
-    revived = _round_trip(_as_sent(result.conversation))
+    revived = _round_trip(result.conversation)
     # The run merged two of the 5 messages it was given.
     assert revived.new_message_index == 4
     store.limits.clear()
@@ -2003,7 +1975,7 @@ async def test_a_serialized_result_keeps_the_stored_tool_result_apart_from_the_a
 
     revived = adapter.validate_json(adapter.dump_json(result)).conversation
 
-    assert 'conversation_given' in adapter.dump_python(result)
+    assert 'conversation_merged_tail' in adapter.dump_python(result)
     assert revived.messages == result.conversation.messages
     assert revived.new_message_index == result.conversation.new_message_index == len(loaded.messages) - 1
 
@@ -2260,7 +2232,7 @@ async def test_a_serialized_window_starting_inside_a_tool_call_turn_appends_to_t
     window = await store.load('c', limit=9)
     assert window is not None
     result = await agent.run('turn 4', conversation=_round_trip(window))
-    revived = _round_trip(_as_sent(result.conversation))
+    revived = _round_trip(result.conversation)
     assert revived.new_message_index == 8
     store.limits.clear()
 
@@ -2350,7 +2322,7 @@ async def test_a_store_that_reads_no_earlier_history_branches_as_without_reading
     assert record is not None
     store.head_id = record.head_id
 
-    await store.save(_round_trip(_as_sent(result.conversation)))
+    await store.save(_round_trip(result.conversation))
 
     store.head_id = None
     reloaded = await store.load('c')
@@ -2375,7 +2347,7 @@ async def test_a_serialized_window_whose_run_closed_out_a_tool_call_appends_to_t
     window = await store.load('c', limit=3)
     assert window is not None
     result = await Agent(TestModel()).run('turn 2', conversation=_round_trip(window))
-    revived = _round_trip(_as_sent(result.conversation))
+    revived = _round_trip(result.conversation)
     assert revived.new_message_index == 4
 
     await store.save(revived)
@@ -2444,7 +2416,7 @@ async def test_a_serialized_window_whose_conversation_is_deleted_while_more_of_i
     # which reads further back.
     store.race = delete_on_the_next_read
     with pytest.raises(ConversationConflict):
-        await store.save(_round_trip(_as_sent(result.conversation)))
+        await store.save(_round_trip(result.conversation))
 
 
 async def test_a_conversation_copied_after_loading_is_compared_instead() -> None:
