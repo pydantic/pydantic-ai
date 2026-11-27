@@ -346,7 +346,7 @@ By default, a request every model in the chain failed raises a [`FallbackExcepti
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import ModelFallback
 
-# Try both models, and if both fail, try both again after a second, then after two.
+# Try both models, and if both fail with a transient error, try both again after up to a second, then up to two.
 agent = Agent('{{ openai:medium }}', capabilities=[ModelFallback('{{ anthropic:medium }}', passes=3)])
 ```
 
