@@ -196,7 +196,10 @@ Two built-in mechanisms cover a model that does not generate images natively:
   Reach for it when the geometry or the choice of image model is yours to make.
 - **Subagent**: `fallback_subagent_model=` with a conversational model that generates images natively. The tool call runs an
   additional agent whose native [`ImageGenerationTool`][pydantic_ai.native_tools.ImageGenerationTool] produces the
-  image. Reach for it when you want that model's native tool semantics and the settings the native tool carries.
+  image. Reach for it when you want that model's native tool semantics and the settings the native tool carries. The
+  subagent's requests and tokens count toward the agent run's usage and its [usage limits](../agent.md#usage-limits),
+  with the token limits checked against each of its responses, even with
+  [`count_tokens_before_request`][pydantic_ai.usage.UsageLimits.count_tokens_before_request] on.
 
 A `local=` callable, `Tool`, or toolset of your own replaces both with an implementation you write. The capability
 passes it none of its image settings, so with `native=False`, where it is the only implementation, setting any of them
@@ -213,10 +216,11 @@ alternatives: stating more than one raises [`UserError`][pydantic_ai.exceptions.
     stays available, and calling it raises [`UserError`][pydantic_ai.exceptions.UserError] instead of silently using
     default image settings.
 
-!!! note "Dynamic configuration under Temporal"
+!!! note "The subagent under Temporal"
     The subagent tool call runs inside a Temporal activity, so its `native=` factory receives the limited
     [`TemporalRunContext`][pydantic_ai.durable_exec.temporal.TemporalRunContext]. `ctx.deps` crosses that boundary;
-    fields such as `ctx.messages` do not. See
+    fields such as `ctx.messages` do not. The activity's `ctx.usage` is a copy, so the subagent's usage stays in the
+    activity: it is missing from the run's usage, and the run's later limit checks do not count it. See
     [Agent Run Context and Dependencies](../durable_execution/temporal.md#agent-run-context-and-dependencies).
 
 The subagent speaks the native tool's geometry vocabulary. Direct-only values such as `dimensions`, arbitrary GPT

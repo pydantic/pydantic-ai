@@ -564,7 +564,10 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
         if not enqueued:
             return
         messages = AGUIAdapter.dump_messages(
-            enqueued, ag_ui_version=self.ag_ui_version, preserve_file_data=self.preserve_file_data
+            enqueued,
+            ag_ui_version=self.ag_ui_version,
+            preserve_file_data=self.preserve_file_data,
+            default_ui_visibility=self.default_ui_visibility,
         )
         yield ActivitySnapshotEvent(
             message_id=event.enqueue_id,

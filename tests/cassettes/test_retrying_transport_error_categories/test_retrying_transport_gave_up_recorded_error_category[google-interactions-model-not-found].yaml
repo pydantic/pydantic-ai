@@ -1,0 +1,50 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "116"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flsh
+        store: false
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: hello
+  response:
+    status: 404
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-length:
+      - "216"
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=106
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        error:
+          message: "Model 'gemini-3.8-flsh' not found. Did you mean 'gemini-3.8-flash'? Please verify the model name against the supported list: https://ai.google.dev/gemini-api/docs/models"
+          code: not_found
+  recorded_at: 2026-11-18T22:19:57.888283+00:00
