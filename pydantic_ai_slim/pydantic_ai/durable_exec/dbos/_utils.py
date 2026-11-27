@@ -1,4 +1,4 @@
-from collections.abc import Generator
+from collections.abc import Awaitable, Callable, Generator
 from contextlib import contextmanager
 
 import anyio
@@ -18,6 +18,9 @@ class StepConfig(TypedDict, total=False):
     interval_seconds: float
     max_attempts: int
     backoff_rate: float
+    should_retry: Callable[[BaseException], bool | Awaitable[bool]] | None
+    preemptible: bool
+    timeout_seconds: float | None
 
 
 @with_config(ConfigDict(extra='forbid'))

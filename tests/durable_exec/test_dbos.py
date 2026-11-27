@@ -143,7 +143,12 @@ pytest.importorskip('dbos')
 
 from dbos import DBOS, DBOSConfig, SetWorkflowID, StepInfo
 from dbos._core import DEFAULT_STEP_OPTIONS
-from dbos._error import DBOSAwaitedWorkflowCancelledError, DBOSMaxStepRetriesExceeded, DBOSPatchNondeterminismError
+from dbos._error import (
+    DBOSAwaitedWorkflowCancelledError,
+    DBOSMaxStepRetriesExceeded,
+    DBOSPatchNondeterminismError,
+    DBOSStepTimeoutError,
+)
 
 from pydantic_ai.durable_exec._toolset import unwrap_recorded_tool_call_result, wrap_tool_call_result
 from pydantic_ai.durable_exec.dbos import (
@@ -2976,6 +2981,63 @@ def _rate_limited(retry_after: float | None) -> ModelHTTPError:
     )
 
 
+async def test_model_step_config_should_retry_fail_fast(dbos: DBOS) -> None:
+    model, attempts = _retry_after_model(_rate_limited(None))
+    agent = Agent(
+        model,
+        name='model_step_config_should_retry_fail_fast',
+        capabilities=[
+            DBOSDurability(
+                model_step_config=StepConfig(
+                    retries_allowed=True,
+                    max_attempts=3,
+                    should_retry=lambda _: False,
+                )
+            )
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hello')).output
+
+    with pytest.raises(ModelHTTPError):
+        await run_agent()
+    assert len(attempts) == 1
+
+
+async def test_model_step_config_timeout_seconds(dbos: DBOS) -> None:
+    attempts: list[int] = []
+
+    async def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        attempts.append(1)
+        await asyncio.sleep(1)
+        return ModelResponse(parts=[TextPart('answered')])
+
+    agent = Agent(
+        FunctionModel(respond),
+        name='model_step_config_timeout_seconds',
+        capabilities=[
+            DBOSDurability(
+                model_step_config=StepConfig(
+                    retries_allowed=True,
+                    max_attempts=3,
+                    timeout_seconds=0.1,
+                    should_retry=lambda _: False,
+                )
+            )
+        ],
+    )
+
+    @DBOS.workflow()
+    async def run_agent() -> str:
+        return (await agent.run('hello')).output
+
+    with pytest.raises(DBOSStepTimeoutError):
+        await run_agent()
+    assert len(attempts) == 1
+
+
 async def test_dbos_durability_model_error_retry_after_waits_durably(dbos: DBOS) -> None:
     """A model step that fails with a `retry_after` is attempted again after a durable `DBOS.sleep` that long,
     instead of DBOS's in-process backoff, and the wait and the failed attempt are recorded as steps."""
@@ -5244,7 +5306,7 @@ async def test_dbos_durability_buffers_caller_streams(dbos: DBOS) -> None:
     )
 
 
-def test_dbos_durability_event_stream_handler_step_config(monkeypatch: pytest.MonkeyPatch) -> None:
+def test_mcp_and_event_stream_step_configs_apply_declared_keys(monkeypatch: pytest.MonkeyPatch) -> None:
     registered_steps: list[tuple[str, dict[str, object]]] = []
 
     def step(*, name: str, **config: object):
@@ -5256,7 +5318,11 @@ def test_dbos_durability_event_stream_handler_step_config(monkeypatch: pytest.Mo
         return decorator
 
     monkeypatch.setattr(DBOS, 'step', step)
-    config = StepConfig(retries_allowed=True, max_attempts=3)
+    config = StepConfig(should_retry=lambda _: False, preemptible=True, timeout_seconds=5.0)
+    expected_options = dict(config)
+
+    mcp_toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+    dbosify_mcp_toolset(mcp_toolset, step_name_prefix='mcp_step_config', step_config=config)
 
     async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
         async for _ in stream:
@@ -5267,7 +5333,10 @@ def test_dbos_durability_event_stream_handler_step_config(monkeypatch: pytest.Mo
         name='event_handler_config',
         capabilities=[DBOSDurability(event_stream_handler=handler, event_stream_handler_step_config=config)],
     )
-    assert ('event_handler_config__event_stream_handler', config) in registered_steps
+    mcp_steps = [options for name, options in registered_steps if name.startswith('mcp_step_config__mcp_server')]
+    assert len(mcp_steps) == 3
+    assert all(options == expected_options for options in mcp_steps)
+    assert ('event_handler_config__event_stream_handler', expected_options) in registered_steps
 
 
 async def test_dbos_durability_event_stream_handler(dbos: DBOS) -> None:

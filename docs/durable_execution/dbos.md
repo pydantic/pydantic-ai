@@ -527,9 +527,11 @@ Toolsets swapped in with [`agent.override(toolsets=...)`][pydantic_ai.agent.Abst
 
 You can customize DBOS step behavior, such as retries, by passing [`StepConfig`][pydantic_ai.durable_exec.dbos.StepConfig] objects to the [`DBOSDurability`][pydantic_ai.durable_exec.dbos.DBOSDurability] constructor:
 
-- `mcp_step_config`: The DBOS step config to use for MCP server communication. No retries if omitted.
-- `model_step_config`: The DBOS step config to use for model request steps. No retries if omitted. The model request step carries the [durable-execution retry layer](../retries.md#the-layers) — see [Retry multiplication](../retries.md#retry-multiplication) for how `StepConfig` retries stack with the SDK client's and transport's retries.
-- `event_stream_handler_step_config`: The DBOS step config to use for event stream handler steps (`DBOSDurability` only). No retries if omitted.
+- `mcp_step_config`: The DBOS config for the async step wrapping MCP server communication, including `should_retry`, `preemptible`, and `timeout_seconds`. No retries if omitted.
+- `model_step_config`: The DBOS config for the async step wrapping model requests, including `should_retry`, `preemptible`, and `timeout_seconds`. No retries if omitted. The model request step carries the [durable-execution retry layer](../retries.md#the-layers) — see [Retry multiplication](../retries.md#retry-multiplication) for how `StepConfig` retries stack with the SDK client's and transport's retries.
+- `event_stream_handler_step_config`: The DBOS config for the async step wrapping an event stream handler (`DBOSDurability` only), including `should_retry`, `preemptible`, and `timeout_seconds`. No retries if omitted.
+
+These DBOS `StepConfig` options require DBOS 3.4.0 or later. Pydantic AI invokes the wrapped steps asynchronously, so `should_retry` can be a synchronous or asynchronous predicate; DBOS resolves an async predicate for an async step. `preemptible` cancellation is poll-bounded, not immediate. `timeout_seconds` applies per attempt, and `should_retry` determines whether timeout errors are retried.
 
 Unlike the [Temporal](temporal.md#per-tool-activity-config) and [Prefect](prefect.md#tool-wrapping) integrations, DBOS takes no per-tool step config: tool metadata other than [`child_workflow`](#child-workflows) is ignored, and there's no way to opt an individual tool out of step wrapping.
 
@@ -546,7 +548,7 @@ You can customize DBOS's retry policy using [step configuration](#step-configura
 
 DBOS retries a step inside the step, after sleeping its backoff in the process that runs it. A model step (a model request, and also the steps that compact messages or cancel a suspended response) is different when the model error says how long to wait before trying again, in its [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after] (read from a `Retry-After` or `retry-after-ms` header, for example), and `model_step_config` allows another attempt: the step records the failed attempt, the workflow waits that long with a durable [`DBOS.sleep`](https://docs.dbos.dev/python/reference/contexts#sleep), which a recovered workflow doesn't sleep again, and the request runs again in a new step with the attempts the step had left. The step's journal then shows the model step, a `DBOS.sleep` step, and the model step again. The wait is capped at DBOS's own backoff for that attempt or a minute, whichever is longer, so a provider asking for hours doesn't park the workflow for hours. A model error without a `retry_after` gets DBOS's own backoff, as before, and the deprecated `DBOSAgent` doesn't wait `retry_after`.
 
-DBOS has no selective non-retryable-exception support, so if you enable step retries (`retries_allowed`), framework misconfiguration errors like `UserError` are retried along with everything else. The Temporal and Prefect integrations mark those non-retryable; on DBOS, expect a misconfigured agent to burn its full retry budget before failing.
+With DBOS step retries enabled (`retries_allowed`), DBOS retries failures by default. Use `should_retry` to choose which failures to retry and return `False` to fail fast. DBOS does not exclude Pydantic AI framework errors such as `UserError` by default, unlike the Temporal and Prefect integrations, which mark those errors non-retryable.
 
 When the provider rejects the Native Output schema the model inferred as [too complex](../models/anthropic.md#schema-complexity-limits), workflow code attempts the request again in Tool Output, in a new step. The switch lasts for the agent run: a new run in the same or another workflow infers Native Output again and waits for the rejection once more. To skip that wait, wrap the output type in [`ToolOutput`][pydantic_ai.output.ToolOutput].
 

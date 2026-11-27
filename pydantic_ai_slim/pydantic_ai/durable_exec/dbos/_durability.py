@@ -164,9 +164,12 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
                 the handler still runs at stream position, without blocking the emitter.
             name: Unique agent name used in the DBOS step names. Defaults to the agent's
                 `name` when the capability is bound.
-            model_step_config: DBOS step config for model request steps.
-            event_stream_handler_step_config: DBOS step config for event stream handler steps.
-            mcp_step_config: DBOS step config for MCP server steps.
+            model_step_config: DBOS step config for the wrapped async model request steps; accepts
+                `should_retry`, `preemptible`, and `timeout_seconds`.
+            event_stream_handler_step_config: DBOS step config for the wrapped async event stream
+                handler steps; accepts `should_retry`, `preemptible`, and `timeout_seconds`.
+            mcp_step_config: DBOS step config for the wrapped async MCP server steps; accepts
+                `should_retry`, `preemptible`, and `timeout_seconds`.
             parallel_execution_mode: Tool-call execution mode applied for the duration
                 of every run. Defaults to `'parallel_ordered_events'` so events
                 replay deterministically. Set to `'sequential'` for strict ordering.
