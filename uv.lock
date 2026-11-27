@@ -7116,6 +7116,9 @@ groq = [
 huggingface = [
     { name = "pydantic-ai-slim", extra = ["huggingface"] },
 ]
+jsonschema = [
+    { name = "pydantic-ai-slim", extra = ["jsonschema"] },
+]
 mcp-tasks = [
     { name = "pydantic-ai-slim", extra = ["mcp-tasks"] },
 ]
@@ -7241,6 +7244,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["google-realtime"], marker = "extra == 'google-realtime'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["groq"], marker = "extra == 'groq'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["huggingface"], marker = "extra == 'huggingface'", editable = "pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["jsonschema"], marker = "extra == 'jsonschema'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["mcp-tasks"], marker = "extra == 'mcp-tasks'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["mistral"], marker = "extra == 'mistral'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["openai-realtime"], marker = "extra == 'openai-realtime'", editable = "pydantic_ai_slim" },
@@ -7259,7 +7263,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["xai"], marker = "extra == 'xai'", editable = "pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["xai-realtime"], marker = "extra == 'xai-realtime'", editable = "pydantic_ai_slim" },
 ]
-provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "exa", "examples", "google-realtime", "groq", "huggingface", "mcp-tasks", "mistral", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
+provides-extras = ["ag-ui", "bedrock", "bedrock-mantle", "cohere", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "exa", "examples", "google-realtime", "groq", "huggingface", "jsonschema", "mcp-tasks", "mistral", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web-fetch", "xai", "xai-realtime"]
 
 [package.metadata.requires-dev]
 clai2-browser = [{ name = "playwright", specifier = ">=1.45" }]
@@ -7844,6 +7848,9 @@ huggingface = [
     { name = "huggingface-hub", version = "1.3.4", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version >= '3.14'" },
     { name = "huggingface-hub", version = "1.16.1", source = { registry = "https://pypi.org/simple" }, marker = "python_full_version < '3.14'" },
 ]
+jsonschema = [
+    { name = "jsonschema" },
+]
 logfire = [
     { name = "logfire", extra = ["httpx"] },
     { name = "opentelemetry-instrumentation-httpx" },
@@ -7949,6 +7956,7 @@ requires-dist = [
     { name = "httpx", marker = "extra == 'retries'", specifier = ">=0.27" },
     { name = "httpx2", specifier = ">=2.7" },
     { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=1.3.4,<2.0.0" },
+    { name = "jsonschema", marker = "extra == 'jsonschema'", specifier = ">=4.18" },
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=3.1.0,<4" },
@@ -7999,7 +8007,7 @@ requires-dist = [
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.21.0,<2" },
     { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.21.0,<2" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "jsonschema", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
 
 [[package]]
 name = "pydantic-clai2"

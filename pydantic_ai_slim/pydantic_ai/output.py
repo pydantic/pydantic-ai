@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import copy
 import inspect
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass
@@ -12,6 +13,7 @@ from typing_extensions import TypeAliasType, TypeForm, TypeVar
 
 from . import _utils, exceptions
 from ._json_schema import InlineDefsJsonSchemaTransformer
+from ._json_schema_validation import json_schema_validator
 from ._removed_names import removed_names_getattr
 from ._run_context import RunContext
 from .messages import ModelResponse, ToolCallPart
@@ -399,14 +401,27 @@ class TextOutput(Generic[OutputDataT]):
 
 
 def StructuredDict(
-    json_schema: JsonSchemaValue, name: str | None = None, description: str | None = None
+    json_schema: JsonSchemaValue,
+    name: str | None = None,
+    description: str | None = None,
+    *,
+    validate: bool = False,
 ) -> type[JsonSchemaValue]:
     """Returns a `dict[str, Any]` subclass with a JSON schema attached that will be used for structured output.
+
+    By default the model's output isn't validated against the JSON schema. With `validate=True`, a missing required
+    field, a value outside an `enum` or a property that `additionalProperties: false` forbids is sent back to the model
+    to fix, like any other output validation error.
 
     Args:
         json_schema: A JSON schema of type `object` defining the structure of the dictionary content.
         name: Optional name of the structured output. If not provided, the `title` field of the JSON schema will be used if it's present.
         description: Optional description of the structured output. If not provided, the `description` field of the JSON schema will be used if it's present.
+        validate: Whether to validate the output against the JSON schema. Values are not converted: `"42"` where the
+            schema asks for an integer is an error, not `42`. Partial outputs streamed before the run ends aren't
+            checked, so they can be incomplete; the final output is. `pattern` and `patternProperties` are checked with a
+            linear-time regex engine, so a pattern that uses lookarounds or backreferences raises a `UserError` here.
+            Requires the `jsonschema` package, installed with `pip install "pydantic-ai-slim[jsonschema]"`.
 
     Example:
     ```python {title="structured_dict.py"}
@@ -428,6 +443,9 @@ def StructuredDict(
     ```
     """
     json_schema = _utils.check_object_json_schema(json_schema)
+    # Validation uses the schema as given: inlining `$defs` below overwrites a `$ref`'s sibling keywords, which
+    # Draft 2020-12 applies alongside the referenced schema.
+    validate_json_schema = json_schema_validator(copy.deepcopy(json_schema)) if validate else None
 
     # Pydantic `TypeAdapter` fails when `object.__get_pydantic_json_schema__` has `$defs`, so we inline them
     # See https://github.com/pydantic/pydantic/issues/12145
@@ -451,10 +469,13 @@ def StructuredDict(
         def __get_pydantic_core_schema__(
             cls, source_type: Any, handler: GetCoreSchemaHandler
         ) -> core_schema.CoreSchema:
-            return core_schema.dict_schema(
+            dict_schema = core_schema.dict_schema(
                 keys_schema=core_schema.str_schema(),
                 values_schema=core_schema.any_schema(),
             )
+            if validate_json_schema is None:
+                return dict_schema
+            return core_schema.no_info_after_validator_function(validate_json_schema, dict_schema)
 
         @classmethod
         def __get_pydantic_json_schema__(

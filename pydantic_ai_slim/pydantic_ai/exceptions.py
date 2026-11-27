@@ -72,6 +72,8 @@ __all__ = (
     'MessageHistoryMutatedWarning',
     'UnsupportedSettingWarning',
     'DeprecatedModelWarning',
+    'PartialRubricWarning',
+    'EnumDocstringsUnavailableWarning',
     'CostCalculationFailedWarning',
     'CostNotFoundWarning',
     'UsageExtractionFailedWarning',
@@ -895,7 +897,10 @@ class ModelContextWindowExceededError(ModelRequestRejectedError):
     """Raised when the provider rejected the request because the input exceeds the model's context window.
 
     Catch it to compact or truncate the message history and try again; see
-    [Compaction](../capabilities/compaction.md). An overflow reported as an HTTP 400 is also a
+    [Compaction](../capabilities/compaction.md). When a capability has a
+    [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history] hook, an agent run first
+    compacts a request the model rejected this way before any output, and sends it to the same model once more.
+    An overflow reported as an HTTP 400 is also a
     [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with status 400, as before. A subclass of
     [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError].
 
@@ -1521,6 +1526,9 @@ class UnsupportedSettingWarning(UserWarning):
 
     It's emitted wherever the setting comes from: the run, the agent, a capability or the model's own `settings`. The
     `stop_sequences` of an MCP server's sampling request don't warn, since the server chose them, not you.
+    Named in the `fallback_on` of [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] or
+    [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], it's raised instead, as the attempt's error, so the
+    request moves on to the next model rather than being sent without the setting.
     To turn it into an error, use a warnings filter:
 
     ```python {test="skip"}
@@ -1555,5 +1563,46 @@ class DeprecatedModelWarning(UserWarning):
     from pydantic_ai import DeprecatedModelWarning
 
     warnings.filterwarnings('error', category=DeprecatedModelWarning)
+    ```
+    """
+
+
+class PartialRubricWarning(UserWarning):
+    """Warning emitted when a [decision model](../models/decision.md) asks a field that was likely meant as a rubric as a pick-one.
+
+    A field whose options are the whole numbers from 0 upwards is scored as a rubric only when every level is
+    described. When some levels are described and others are not, such as an `IntEnum` mixing in
+    [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] with a docstring missing under one member, the
+    field is asked as a pick-one instead, and this warning names it. Describe every level to have it scored.
+
+    If the pick-one is what you want, silence it with a warnings filter:
+
+    ```python {test="skip"}
+    import warnings
+
+    from pydantic_ai import PartialRubricWarning
+
+    warnings.filterwarnings('ignore', category=PartialRubricWarning)
+    ```
+    """
+
+
+class EnumDocstringsUnavailableWarning(UserWarning):
+    """Warning emitted when an enum mixing in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] has no source to read its member docstrings from.
+
+    The docstrings are read from the enum's source, or from the notebook cell it was defined in. An enum with
+    neither, such as one built by calling an opted-in enum class (`Priority('Urgency', {...})`) or defined in a
+    plain `python` REPL, is described to the model by its values alone, and this warning names it. Define it with a
+    `class` statement in a module or notebook cell, or describe the options with
+    [`Choices()`][pydantic_ai.output.Choices].
+
+    If the plain values are what you want, silence it with a warnings filter:
+
+    ```python {test="skip"}
+    import warnings
+
+    from pydantic_ai import EnumDocstringsUnavailableWarning
+
+    warnings.filterwarnings('ignore', category=EnumDocstringsUnavailableWarning)
     ```
     """

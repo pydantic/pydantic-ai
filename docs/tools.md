@@ -497,6 +497,12 @@ Members without a docstring keep a bare `const`, and a docstring under an alias 
 `high = 'high'`) describes the option it was written for. A `Literal` has nowhere to write a docstring, so it is
 unaffected.
 
+The docstrings are read from the enum's source, including the cell of a Jupyter or IPython notebook it was
+defined in. An opted-in enum with no source to read, such as one built by calling an opted-in enum class
+(`Priority('Urgency', {...})`), is sent as its plain list of values, with an
+[`EnumDocstringsUnavailableWarning`][pydantic_ai.exceptions.EnumDocstringsUnavailableWarning]; describe such
+options with [`Choices()`][pydantic_ai.output.Choices] instead.
+
 Wherever Pydantic AI describes an opted-in enum to a model — a tool parameter, an [output type](output.md), or a
 field of a model of your own — the descriptions come along.
 
