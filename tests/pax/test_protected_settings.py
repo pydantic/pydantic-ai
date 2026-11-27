@@ -125,7 +125,8 @@ async def test_auto_asks_before_a_write_to_paxs_settings(tmp_path: Path, config_
 
 
 async def test_a_reviewer_that_says_safe_still_asks(tmp_path: Path, config_home: Path) -> None:
-    def safe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # Would approve, but the protected write is held for a person before the reviewer sees it.
+    def safe(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:  # pragma: no cover
         return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': 'no'})])
 
     (tmp_path / '.pax').mkdir()
