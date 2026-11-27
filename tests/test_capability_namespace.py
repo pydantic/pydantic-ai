@@ -1,4 +1,8 @@
-"""Tests for `CapabilityNamespace`: where an agent spec's capability names resolve to classes."""
+"""Tests for `CapabilityNamespace`: where an agent spec's capability names resolve to classes.
+
+These are not VCR tests: a namespace is resolved while the spec is loaded, before any model request,
+so there is nothing for a cassette to record.
+"""
 
 from __future__ import annotations
 
@@ -38,7 +42,7 @@ ModuleWriter = Callable[[str, str], str]
 @pytest.fixture
 def write_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> ModuleWriter:
     """Write a module importable by name, and forget it again after the test."""
-    monkeypatch.syspath_prepend(str(tmp_path))
+    monkeypatch.syspath_prepend(str(tmp_path))  # pyright: ignore[reportUnknownMemberType]
 
     def write(module_name: str, source: str) -> str:
         (tmp_path / f'{module_name}.py').write_text(textwrap.dedent(source))
@@ -72,7 +76,7 @@ def test_names_imports_only_the_capabilities_a_spec_uses(write_module: ModuleWri
 
     [capability] = _loaded(agent)
     assert type(capability).__module__ == used
-    assert capability.greeting == 'hi'  # pyright: ignore[reportAttributeAccessIssue]
+    assert capability.greeting == 'hi'  # pyright: ignore[reportAttributeAccessIssue, reportUnknownMemberType]
     assert used in sys.modules
     assert unused not in sys.modules
 
@@ -283,3 +287,25 @@ def test_a_target_that_is_not_a_dataclass_raises_on_use(write_module: ModuleWrit
 
     with pytest.raises(ValueError, match='must be decorated with `@dataclass`'):
         registry['Greeting']
+
+
+def test_modules_with_an_empty_all_offer_nothing(write_module: ModuleWriter):
+    module = write_module(
+        'ns_modules_empty_all',
+        """
+        from dataclasses import dataclass
+
+        from pydantic_ai.capabilities import AbstractCapability
+
+        __all__ = []
+
+
+        @dataclass
+        class Thinking(AbstractCapability):
+            pass
+        """,
+    )
+
+    registry = get_capability_registry(namespace=CapabilityNamespace(modules=[module]))
+
+    assert registry['Thinking'] is Thinking

@@ -362,8 +362,10 @@ def _module_capability_types(module_name: str) -> list[type[AbstractCapability[A
     from pydantic_ai.capabilities.abstract import AbstractCapability
 
     module = importlib.import_module(module_name)
+    exported: Sequence[str] | None = getattr(module, '__all__', None)
+    # An empty `__all__` exports nothing; only a missing one falls back to the public attributes.
     attribute_names: list[str] = list(
-        getattr(module, '__all__', None) or (n for n in vars(module) if not n.startswith('_'))
+        exported if exported is not None else (n for n in vars(module) if not n.startswith('_'))
     )
     found: dict[type[AbstractCapability[Any]], None] = {}
     for attribute_name in attribute_names:
@@ -396,11 +398,10 @@ def get_capability_registry(
 
     namespace = namespace or CapabilityNamespace()
     types = build_registry(
-        custom_types=(*custom_types, *namespace.types),
+        custom_types=[_validate_capability_type(cls) for cls in (*custom_types, *namespace.types)],
         defaults=(),
         get_name=lambda cls: cls.get_serialization_name(),
         label='capability',
-        validate=_validate_capability_type,
     )
     built_ins = {name: cls for cls in CAPABILITY_TYPES.values() if (name := cls.get_serialization_name()) is not None}
 
