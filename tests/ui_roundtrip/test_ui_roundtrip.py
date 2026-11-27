@@ -912,7 +912,7 @@ SCENARIOS = [
         setup=_get_weather,
         agent_kwargs={'output_type': ToolOutput(str), 'end_strategy': 'early'},
         # The stored history ends with the output tool's returns, which the client sends back too, and the
-        # server-held turn warns that it dropped them, though the provider requests match; no issue yet.
+        # server-held turn warns that it dropped them, though the provider requests match: #14738.
         server_held_warnings=('ignore:3 client-submitted tool result:UserWarning',),
     ),
     Scenario(

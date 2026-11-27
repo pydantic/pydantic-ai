@@ -217,7 +217,10 @@ class ToolOutputAvailablePart(BaseUIPart):
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     result_provider_metadata: ProviderMetadata | None = None
-    """Where the AI SDK keeps the `providerMetadata` of the chunk that gave the part its output or error."""
+    """The AI SDK's `resultProviderMetadata` (added in `ai` 6.0.120).
+
+    The `providerMetadata` of the chunk that gave the part its output or error, such as a `tool-input-error` closeout.
+    """
     preliminary: bool | None = None
     approval: ToolApproval | None = None
 
@@ -235,7 +238,10 @@ class ToolOutputErrorPart(BaseUIPart):
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     result_provider_metadata: ProviderMetadata | None = None
-    """Where the AI SDK keeps the `providerMetadata` of the chunk that gave the part its output or error."""
+    """The AI SDK's `resultProviderMetadata` (added in `ai` 6.0.120).
+
+    The `providerMetadata` of the chunk that gave the part its output or error, such as a `tool-input-error` closeout.
+    """
     approval: ToolApproval | None = None
 
 
@@ -332,7 +338,10 @@ class DynamicToolOutputAvailablePart(BaseUIPart):
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     result_provider_metadata: ProviderMetadata | None = None
-    """Where the AI SDK keeps the `providerMetadata` of the chunk that gave the part its output or error."""
+    """The AI SDK's `resultProviderMetadata` (added in `ai` 6.0.120).
+
+    The `providerMetadata` of the chunk that gave the part its output or error, such as a `tool-input-error` closeout.
+    """
     preliminary: bool | None = None
     approval: ToolApproval | None = None
 
@@ -350,7 +359,10 @@ class DynamicToolOutputErrorPart(BaseUIPart):
     provider_executed: bool | None = None
     call_provider_metadata: ProviderMetadata | None = None
     result_provider_metadata: ProviderMetadata | None = None
-    """Where the AI SDK keeps the `providerMetadata` of the chunk that gave the part its output or error."""
+    """The AI SDK's `resultProviderMetadata` (added in `ai` 6.0.120).
+
+    The `providerMetadata` of the chunk that gave the part its output or error, such as a `tool-input-error` closeout.
+    """
     approval: ToolApproval | None = None
 
 
