@@ -80,6 +80,7 @@ web-fetch = ["pydantic-ai-slim[web-fetch]=={{ version }}"]
 retries = ["pydantic-ai-slim[retries]=={{ version }}"]
 temporal = ["pydantic-ai-slim[temporal]=={{ version }}"]
 spec = ["pydantic-ai-slim[spec]=={{ version }}"]
+jsonschema = ["pydantic-ai-slim[jsonschema]=={{ version }}"]
 mcp-tasks = ["pydantic-ai-slim[mcp-tasks]=={{ version }}"]
 realtime = ["pydantic-ai-slim[realtime]=={{ version }}"]
 openai-realtime = ["pydantic-ai-slim[openai-realtime]=={{ version }}"]
@@ -342,6 +343,7 @@ include = [
     "scripts/check_test_waits.py",
     "scripts/test_check_test_waits.py",
     "scripts/durable_exec_contract.py",
+    "scripts/update_openrouter_input_modalities.py",
     ".github/scripts/ci_duration.py",
     ".github/scripts/check_api_compatibility.py",
     ".github/scripts/test_ci_duration.py",
@@ -548,6 +550,7 @@ include = [
     "scripts/check_test_waits.py",
     "scripts/test_check_test_waits.py",
     "scripts/durable_exec_contract.py",
+    "scripts/update_openrouter_input_modalities.py",
 ]
 # Pyright always skips paths under a dot directory, even ones named here or on its command line, so
 # `.github/scripts` is its own project: `.github/scripts/pyrightconfig.json` extends this one, and
@@ -561,6 +564,8 @@ executionEnvironments = [
     # root contains a file, so they precede `tests`.
     { root = "tests/durable_exec/test_durable_exec_contract_manifest.py", extraPaths = ["scripts", "examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = "tests/durable_exec/test_durable_exec_contract_touched.py", extraPaths = ["scripts", "examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
+    # Imports `scripts/update_openrouter_input_modalities.py` by name.
+    { root = "tests/models/openrouter/test_update_input_modalities.py", extraPaths = ["scripts"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     { root = "tests", extraPaths = ["examples"], reportUnusedFunction = false, reportPrivateImportUsage = false },
     # `scripts/typecheck_changed.py` reads `tomllib`, which is 3.11+. These two are
     # developer tooling rather than shipped code, and the script falls back to the full

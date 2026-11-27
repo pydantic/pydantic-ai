@@ -571,7 +571,7 @@ count times history length. `SqliteStepStore` stores each message once:
 `snapshot_message_refs` lists each snapshot's messages in order, one short row
 each. Reads rebuild the full history, so `latest_snapshot` and `list_snapshots`
 return the same messages. Deleting a snapshot, by pruning or
-`SqliteConversationStore.delete`, also deletes messages no remaining snapshot
+`SqliteSessionStore.delete`, also deletes messages no remaining snapshot
 references.
 
 Databases from earlier releases keep working: their rows hold history inline and
@@ -789,7 +789,7 @@ run as
 shows. Where a session's history lives decides what to copy:
 
 - If you saved [conversation heads](#conversation-heads-and-background-names)
-  with `SqliteConversationStore`, each head is the conversation, including
+  with `SqliteSessionStore`, each head is the conversation, including
   edits between runs such as compaction. `move_heads` copies every head.
 - Otherwise, a run's latest `complete` snapshot holds the history it continued
   plus what the run added, so the newest run of a conversation that has one
@@ -805,7 +805,7 @@ activity, so a head saved during the move can shift the pages and be skipped.
 from pydantic_ai import Conversation
 from pydantic_ai.conversation_store import ConversationConflict, ConversationStore
 from pydantic_ai_harness.step_persistence import StepStore
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 
 
 async def save_once(conversations: ConversationStore, conversation: Conversation, scope: str | None) -> None:
@@ -831,7 +831,7 @@ async def move_conversation(
 
 
 async def move_heads(
-    heads: SqliteConversationStore, conversations: ConversationStore, *, scope: str | None = None
+    heads: SqliteSessionStore, conversations: ConversationStore, *, scope: str | None = None
 ) -> None:
     offset = 0
     while page := await heads.listing(offset=offset):
@@ -863,10 +863,12 @@ async def move_heads(
 ## Conversation heads and background names
 
 `pydantic_ai_harness.step_persistence.conversations` provides
-`SqliteConversationStore`, `ConversationSummary`, and `SavedConversation`, the
+`SqliteSessionStore`, `ConversationSummary`, and `SavedConversation`, the
 local session store behind Pax's resume browser: alongside the messages it
-keeps Pax's workspace, title, naming, and busy-process metadata. For
-conversations in an application, use core's `ConversationStore`; to copy heads
+keeps Pax's workspace, title, naming, and busy-process metadata. It was
+called `SqliteConversationStore` before the [conversation
+stores](../conversation_store/) took that name; the old name still imports from
+this module, with a `HarnessDeprecationWarning`. For conversations in an application, use core's `ConversationStore`; to copy heads
 already saved here, see [Moving sessions to a
 `ConversationStore`](#moving-sessions-to-a-conversationstore). A conversation
 head is separate from run checkpoints: it includes accepted prompts and
@@ -875,7 +877,7 @@ overlapping run snapshots.
 
 `save(summary=..., messages=...)` checks the content revision and returns the
 committed summary; a stale writer or deleted session raises
-`ConversationConflict`. `get(conversation_id=...)` restores messages through the
+`SessionConflict`. `get(conversation_id=...)` restores messages through the
 step-snapshot media format. `listing(query=..., limit=..., offset=...)` returns
 summaries without loading messages. Search case-folds (Unicode) over saved user
 and assistant text, including text in multimodal prompts, and metadata, but not

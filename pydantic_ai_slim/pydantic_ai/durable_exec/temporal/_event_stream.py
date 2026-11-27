@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Generic, cast
@@ -10,6 +10,7 @@ from weakref import WeakValueDictionary
 import pydantic
 from temporalio import activity, workflow
 from temporalio.client import Client, WorkflowHandle
+from temporalio.common import RawValue
 from temporalio.contrib.workflow_streams import (
     TopicHandle,
     WorkflowStream,
@@ -17,6 +18,7 @@ from temporalio.contrib.workflow_streams import (
     WorkflowStreamItem,
     WorkflowStreamState,
 )
+from temporalio.converter import PayloadConverter
 from temporalio.service import RPCError
 
 from pydantic_ai.agent import EventStreamHandler
@@ -466,15 +468,69 @@ def stream_agent_events(
     result_type = Annotated[
         AgentStreamEvent | _DurableAgentRunResultEvent[output_type], pydantic.Discriminator('event_kind')
     ]
-    subscription = WorkflowStreamClient(pinned, client=client).subscribe(
+    # Subscribe to raw payloads and decode them here, so an event kind this version doesn't know can
+    # be skipped: the subscription decodes inside its own generator, which a failure would end.
+    raw_subscription = WorkflowStreamClient(pinned, client=client).subscribe(
         [topic.name],
         from_offset=from_offset,
-        result_type=cast('type[Any]', result_type),
+        result_type=RawValue,
         poll_cooldown=poll_cooldown,
+    )
+    subscription = _decode_agent_events(
+        raw_subscription, client.data_converter.payload_converter, cast('type[Any]', result_type), topic.name
     )
     # Polling follows continue-as-new by retargeting to the latest execution. Acknowledgments need
     # to do the same; their execution-scoped token makes signaling a later reused workflow ID safe.
     acknowledgment_handle = client.get_workflow_handle(handle.id)
-    return DurableAgentRunEvents(
-        cast('AsyncIterator[WorkflowStreamItem[NativeEvent]]', subscription), acknowledgment_handle
-    )
+    return DurableAgentRunEvents(subscription, acknowledgment_handle)
+
+
+async def _decode_agent_events(
+    subscription: AsyncIterator[WorkflowStreamItem[RawValue]],
+    converter: PayloadConverter,
+    result_type: type[Any],
+    topic: str,
+) -> AsyncGenerator[WorkflowStreamItem[NativeEvent], None]:
+    """Decode raw topic items into events, skipping event kinds this version of Pydantic AI doesn't know.
+
+    Subscribers can run an older Pydantic AI than the workers publishing to the topic, and a worker
+    on a newer version may publish event kinds that didn't exist yet. Those are skipped with a
+    warning, once per kind, rather than failing the stream. A known kind that fails to validate still
+    raises.
+    """
+    warned_kinds: set[str] = set()
+    try:
+        async for item in subscription:
+            try:
+                event = converter.from_payload(item.data.payload, result_type)
+            except pydantic.ValidationError as exc:
+                kind = _unknown_event_kind(exc)
+                if kind is None:
+                    raise
+                if kind not in warned_kinds:
+                    warned_kinds.add(kind)
+                    warnings.warn(
+                        f'Skipping agent events of unknown kind {kind!r} on Workflow Stream topic {topic!r}: '
+                        'they were likely published by a worker running a newer version of Pydantic AI. '
+                        'Upgrade `pydantic-ai` in this consumer to receive them.',
+                        UserWarning,
+                        # Past `DurableAgentRunEvents.__anext__`, which resumes this generator, to the consumer.
+                        stacklevel=3,
+                    )
+                continue
+            yield WorkflowStreamItem(topic=item.topic, data=event, offset=item.offset)
+    finally:
+        await cast('AsyncGeneratorLike', subscription).aclose()
+
+
+def _unknown_event_kind(error: pydantic.ValidationError) -> str | None:
+    """The `event_kind` that failed validation for not being a known kind, if that's why it failed.
+
+    Pydantic reports an unknown tag on the top-level discriminated union at the root location; an
+    unknown tag nested inside a known event (e.g. a part kind) is reported at its own location, so it
+    still raises, as does any other error on a known kind.
+    """
+    for detail in error.errors():
+        if detail['type'] == 'union_tag_invalid' and detail['loc'] == ():
+            return str(detail.get('ctx', {}).get('tag'))
+    return None

@@ -56,6 +56,7 @@ flowchart TB
 Compaction keeps the live history inside the context window, so an exact detail (a file path, a value, a decision) can end up only in a summary's paraphrase, and nothing from earlier runs is in context at all. `ConversationSearch` writes nothing itself. It reads what `StepPersistence` stored, through a `HistorySource`, and lets the model pull exact excerpts back on demand. Give both capabilities the same store instance; they can be listed in any order.
 
 - Ranking is BM25, implemented in pure Python with no extra dependencies. Rare terms score higher, and each word of a multi-word query is scored independently.
+- Ranking runs on the event loop, so one search is bounded. A query over 1,000 characters or 32 unique terms goes back to the model to retry, and only the newest `max_scanned_messages` in-scope messages (2,000 by default) are scored. When older messages fall outside that window the result says so (`in the newest 2000 of 5000 persisted messages; older messages were not searched`). A `run_id` search scores the newest messages of that one run, so it still reaches an older run. The result repeats at most 200 characters of the query.
 - Each result names its run (`run: ... | conversation: ...`). The tool's optional `run_id` argument searches one run's full record, so a run a compaction receipt references is directly resolvable.
 - The tool reads the store when called, so it sees everything persisted so far, including earlier steps of the current run.
 - History a run inherits through `message_history` is indexed under the run that first persisted it, so threaded runs do not return the same message once per run (with the instruction-change exception under [Limitations](#limitations)).
@@ -111,6 +112,7 @@ warnings.filterwarnings('ignore', category=HarnessDeprecationWarning)
 | `bm25_k1` | `1.5` | BM25 term-frequency saturation. Lucene's `BM25Similarity` uses `1.2`. |
 | `bm25_b` | `0.75` | BM25 length normalization (Lucene default). |
 | `add_instructions` | `True` | Emit a short note telling the model the recall tool exists. |
+| `max_scanned_messages` | `2000` | How many of the newest in-scope messages one search scores. Raise it to search further back; each search then holds the event loop longer. |
 | `tool_id` | `conversation-search` | Toolset id for the search tool. |
 
 ## Telemetry
@@ -135,7 +137,7 @@ started. Two identical ones now become one, and two that differ fail when the ag
 - If a snapshot that dropped a prefix also repeats the exchange that ends the accumulated history, the repeat is absorbed into the overlap and indexed once.
 - An inherited request that gets an instruction change in a later run is indexed again with that change, so its other parts can match twice. A run that branches from before such a change, followed by one that continues past it, indexes from the changed request onward once more.
 - The tokenizer splits on word characters, so scripts written without spaces (Chinese, Japanese, Thai) match only a whole unbroken run, not a word inside it.
-- The corpus is rebuilt on each call from every in-scope run's snapshots, and every run record in the store is listed to apply the scope. A large store or history makes each search proportionally slower ([#9361](https://github.com/pydantic/pydantic-ai/issues/9361)).
+- The corpus is rebuilt on each call from every in-scope run's snapshots, and every run record in the store is listed to apply the scope. A large store or history makes each search proportionally slower, even though only the newest `max_scanned_messages` are scored ([#9361](https://github.com/pydantic/pydantic-ai/issues/9361)).
 - Reading snapshots restores externalized media even though the index only names files; stores with remote media backends pay that fetch per search.
 
 ## Further reading

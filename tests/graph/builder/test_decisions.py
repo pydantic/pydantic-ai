@@ -83,13 +83,26 @@ async def test_decision_with_type_matching():
     assert result == 'Got int: 42'
 
 
-async def test_decision_with_custom_matcher():
-    """Test decision node with custom matching function."""
+@pytest.mark.parametrize(('value', 'expected'), [(7, '7 is odd'), ('routine', 'Got str: routine')])
+async def test_decision_with_custom_matcher(value: int | str, expected: str):
+    """Test decision node with custom matching function.
+
+    A branch with `matches` is skipped when its predicate rejects the input, even when the input is of the branch's
+    source type.
+    """
     g = GraphBuilder(state_type=DecisionState, output_type=str)
 
     @g.step
-    async def return_number(ctx: StepContext[DecisionState, None, None]) -> int:
-        return 7
+    async def return_value(ctx: StepContext[DecisionState, None, None]) -> int | str:
+        return value
+
+    @g.step
+    async def urgent_path(ctx: StepContext[DecisionState, None, str]) -> str:
+        return f'{ctx.inputs} is urgent'  # pragma: no cover
+
+    @g.step
+    async def handle_str(ctx: StepContext[DecisionState, None, str]) -> str:
+        return f'Got str: {ctx.inputs}'
 
     @g.step
     async def even_path(ctx: StepContext[DecisionState, None, int]) -> str:
@@ -100,18 +113,20 @@ async def test_decision_with_custom_matcher():
         return f'{ctx.inputs} is odd'
 
     g.add(
-        g.edge_from(g.start_node).to(return_number),
-        g.edge_from(return_number).to(
+        g.edge_from(g.start_node).to(return_value),
+        g.edge_from(return_value).to(
             g.decision()
+            .branch(g.match(TypeExpression[str], matches=lambda x: x == 'urgent').to(urgent_path))
+            .branch(g.match(TypeExpression[str]).to(handle_str))
             .branch(g.match(TypeExpression[int], matches=lambda x: x % 2 == 0).to(even_path))
             .branch(g.match(TypeExpression[int], matches=lambda x: x % 2 == 1).to(odd_path))
         ),
-        g.edge_from(even_path, odd_path).to(g.end_node),
+        g.edge_from(urgent_path, handle_str, even_path, odd_path).to(g.end_node),
     )
 
     graph = g.build()
     result = await graph.run(state=DecisionState())
-    assert result == '7 is odd'
+    assert result == expected
 
 
 async def test_decision_with_state_modification():

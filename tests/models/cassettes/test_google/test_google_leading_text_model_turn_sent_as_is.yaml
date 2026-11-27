@@ -1,0 +1,73 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "233"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Hi! I can tell you about Paris.
+          role: model
+        - parts:
+          - text: What is its population? Answer in one sentence.
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      server-timing:
+      - gfet4t7; dur=4148
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            parts:
+            - text: >-
+                The city of Paris has a population of approximately 2.1 million residents,
+                expanding to over 12 million in its greater metropolitan area.
+              thoughtSignature: >-
+                ErwJCrkJAWkUfRNyGK78MudiIC0vjjp9ExtH6U1ZbOBi98ILKWwfyU66uHvEJAqCJV5ZmQA93sQJPCpWAe+YDResysY9IgmUb48mDLvlSDoXndccnXDKb2Gw8ekowTvk713ViPQZnANUwSI7PRsN+16KinpNGmOBhnYCz2LHLs0hbtG2eBqAqG+a7fqT4hlawfJJXRWbsD4OEZATYoAV2X5fogOrgHIqhSGSHsZ5qunpFcbMN60ubZ/RH8jeh5PM6QqnfVGQWkJv8bW6F7zdV82rzhavtALTdQ/AbhYKPN1xfR0bDFKjaQPRRfq47wnMXHsAk28ld6XGBURRlDSSmMM0UwA2aZ5Dqgh7k9ybQ70VEA/mxWg+lpaTKel7RlwADwHmY1F4J1dxTQuYrVXmnvk/qVZv6eNCdDu/vS+NCdrN+kxb7O39TlsG5nYG9mpaXf1yG6izJ5TVtFVUt7/Fy/uFbrSiG8vZoIoC7DDMJV3eblXODpEsaysEnFO093V7WQw+g0AO/BfHg+Rc9cvZx/A6BmAy8GpwPfnY7WKuZkLTEd6Hs+mh+HoRAzvTEutMNA7oVz4d8vUKMGL4EsrKrDmXlXoB49DpWgGVERx0ueq4U0gb71l9ooMwL/qWz5ABLGkezZuQ7O8BU5xtlTCBrvBmRBQq+KiPZBt9kMsT+Z58zZoI2pX6MhR58dOdxg7f04X2vpqJh5P8x8lbrTpdV3fuM+3ffPAzYQBXVmjqcFfRHovb5N3fYrt9r5VCdprDkvmyBmRPmRZizyX1bWveLj0cWRAARoar4fdA+w6aBHV6JK3g20vCTrBoTXvLlIkNOqQvaERW89JvOFJXT7bhd+bvLRZIPPf8L4DeTf2DO735NYjvEHvl/SIOGrdzH2LCZzvi1la4pu8BoQmesEst5e8MpV/wFUb7kish1bOE+67WmX9FFLe+VW8DBCqaF+fQx1CgvoE3zd2zzLRJElgfsJmbZ/2LIvlszjEB0dGpjV+B4DWO+xW69lmoEjIJsHhHOQ68pgm9o6PqrZ3AdFi1cvupu+X5OztkAMDCUhwVLjssExHIY7iFgVAC+QmXsnET3aDDInnbeBDWL/WFI1POpYLk6/VmgHicwNyRllgMW0DaAEqbcP/MyUJXow1qFQSRqnwMR25RhsaIQsueRv3Vb7DJMTkKAaV3P65tYMr521GOZsvB+3cx1b3PESFBeWbBNpItUuePIjqWBsz6c69BfoKolX+Tmh25iNAGsOlYmHbWecjx2NXB8yRdY1t/YSyjNNQJTzEyQoOp8QgDLR4XQ3kHlsm7rZOdfDT8YdfUgW6veGFlXHHhL5MOxbrIrgfhcZykALjf+/b9JC7uLWjCDGtyct9CqkEjTbrb2SzjJcaVqxdrqL8izpIE0auPINkPFtokpzFvd45W+LzPrT3jolLSp9w1sNfx3PfndM8idj+6MZhcNGoEyTGuNb7RaYTLnDkvLNrp+hlr1lSkaAWiIq3SnkQOAvio89npIC6hT8cZqAgXuUUKsvW8gDzsWT9ktqG1tmYrFLR0ddgGoEyjPvkaVH8S3jzXedcNhojJbukp4XE/lTGOZQzU4vs9fLQXNj7pIR2ElxXE1DF0Vf7H
+            role: model
+          finishReason: STOP
+          index: 0
+        usageMetadata:
+          promptTokenCount: 21
+          candidatesTokenCount: 29
+          totalTokenCount: 338
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 21
+          thoughtsTokenCount: 288
+          serviceTier: standard
+        modelVersion: gemini-3.8-flash
+        responseId: DrYIa97BM4aLqtsPu57HyAw
+  recorded_at: 2026-11-26T22:43:30.936728+00:00

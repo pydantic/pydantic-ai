@@ -7,7 +7,7 @@ it after installing the browser binary to verify the real integration end to end
     playwright install chromium
     uv run python scripts/playwright_smoke.py
 
-It exercises the public `PlaywrightBrowser` surface and checks fifteen things:
+It exercises the public `PlaywrightBrowser` surface and checks the following:
 
 - lazy launch plus a real navigation to https://example.com (prints the title),
 - the allowlist bounce (a disallowed host returns an error result, not content),
@@ -30,7 +30,8 @@ It exercises the public `PlaywrightBrowser` surface and checks fifteen things:
 - tabs: a `target="_blank"` link opens a second tab that stays open, `tabs` lists
   it, selects it, reads it, and closes it,
 - dialogs: a real `confirm` is dismissed by default and accepted after
-  `handle_next_dialog`, and a `prompt` is answered with the given text,
+  `handle_next_dialog`, a `prompt` is answered with the given text, and a
+  `beforeunload` is accepted so the navigation goes through,
 - keystroke-level typing and a disappearance wait: a type-ahead handler that
   `fill` never triggers fires under `sequential=True`, and `wait_for(gone=True)`
   returns once a spinner is hidden,
@@ -705,6 +706,30 @@ async def _check_dialogs() -> None:
     print('dialogs ok -- confirm dismissed, confirm accepted, prompt answered')
 
 
+_BEFOREUNLOAD_PAGE = (
+    b'<html><body><h1>Before unload</h1><a id="leave" href="/next">leave</a>'
+    b"<script>addEventListener('beforeunload', (event) => {"
+    b"event.preventDefault(); event.returnValue = ''; });</script>"
+    b'</body></html>'
+)
+
+
+async def _check_beforeunload() -> None:
+    """A real `beforeunload` is accepted, so the navigation that raised it goes through."""
+    server, port = await _serve_html(_BEFOREUNLOAD_PAGE)
+    async with server:
+        browser = PlaywrightBrowser[object](block_private_addresses=False)
+        _, clicked = await _run_tools(
+            browser,
+            [
+                ('navigate', {'url': f'http://127.0.0.1:{port}/'}),
+                ('click', {'selector': '#leave'}),
+            ],
+        )
+        assert f'http://127.0.0.1:{port}/next' in clicked, f'beforeunload cancelled the navigation: {clicked}'
+    print('beforeunload ok -- navigation went through')
+
+
 _TYPEAHEAD_PAGE = (
     b'<html><body><input id="q"><div id="hint"></div><div id="spinner">Loading</div>'
     b"<script>document.getElementById('q').addEventListener('keydown', () => "
@@ -826,6 +851,7 @@ async def _main() -> None:
     await _check_websocket_block()
     await _check_tabs()
     await _check_dialogs()
+    await _check_beforeunload()
     await _check_typing_and_waiting()
     await _check_cdp_attach()
     await _check_cdp_default_context()

@@ -121,7 +121,7 @@ orchestrator = Agent(
 | `models` | The `SubAgents` menu keys this delegate may run on. The first key is its default. See [Per-delegation model selection](#per-delegation-model-selection). |
 | `usage_limits` | A request/token budget for one delegation. The child gets its own usage accounting, so the budget counts only that child's requests and tokens. With `forward_usage=True`, the child's usage is added to the parent's after the delegation. Reaching the budget is a soft outcome (see below), not a run-stopping `UsageLimitExceeded`. |
 | `timeout_seconds` | A wall-clock budget for one delegation. A child that exceeds it is cancelled and the parent gets a steering message. The cancelled child's `event_stream_handler` stops receiving events without a terminal event. |
-| `max_calls` | The maximum delegations to this sub-agent per parent run. After that, delegations return a budget-exhausted steering message without running the child. Counts are per `Agent.run` (a `run_id`) and cleared when it ends, so each parent run and each level of a nested tree has its own budget. |
+| `max_calls` | The maximum delegations to this sub-agent per parent run. After that, delegations return a budget-exhausted steering message without running the child. Counts are per `Agent.run` (a `run_id`) and cleared when it ends, so each parent run and each level of a nested tree has its own budget. A delegation refused before it starts, by `max_running_tasks` or a listener's veto, doesn't count. |
 | `on_failure` | A steering message that replaces the built-in default for any soft outcome of this delegate. While `on_model_error` is unset, it also makes child failures soft (see below). |
 | `on_model_error` | What the parent gets when the child fails with a soft model error: `'retry'` raises a parent `ModelRetry`, `'return'` returns the error and the steering message as a normal tool result. Unset means `'return'`, with the `on_failure` message alone, when `on_failure` is set, and `'retry'` otherwise. |
 | `contain_errors` | Whether an unexpected crash in this delegate returns to the parent as a bounded `ModelRetry` instead of aborting the parent run. Unset inherits `SubAgents(contain_errors=...)` (off). |
@@ -195,6 +195,7 @@ delegation = SubAgents(
 ```
 
 - The child's relative file paths and repository instructions use the returned workspace. Read-only restrictions from the parent or `SubAgent(read_only=True)` still apply. Limit the delegate to trusted read-only tools too, since arbitrary Python tools can bypass the workspace API. The resolver must keep any other backend restrictions the application requires.
+- The child's whole workspace gets the lowest `authority` the parent gives anything in or above that directory, `path_authority` entries included, so no file gets more authority in the child than the parent gives it. A directory outside the parent's working directory is at `'none'`, as the parent gives it, unless one of the parent's `path_authority` entries contains it: name it there, such as `{'/srv/checkouts': 'operator'}`, to let the delegate's repository instructions, skills and agent definitions reach it as instructions.
 - The caller owns the returned workspace and keeps its resources alive until background children finish.
 - Managed tasks record the resolved directory in `DelegationTask.working_directory`. A resume without the argument resolves that saved directory again, so the resolver must accept its own resolved spelling; changing it is rejected. Older tasks without this field inherit the parent workspace.
 - Remote and durable delegations reject directory overrides.
@@ -591,6 +592,8 @@ orchestrator = Agent(
 ```
 
 Definitions are read at the start of every run from the run's [workspace](https://pydantic.dev/docs/ai/core-concepts/workspace/), so a sandbox's agent files are found and nothing is read from your home directory. To read them from elsewhere, such as definitions that ship with your application, pass `workspace=LocalWorkspaceBackend('/app')`.
+
+A definition file below `'operator'` [authority](https://pydantic.dev/docs/ai/core-concepts/workspace-custom/#workspace-authority) in the workspace it's read from, such as one in a repository the operator doesn't control, is not loaded, and the run warns naming it: a definition's body becomes a delegate's instructions, and its description is listed in the parent's. It's left out before names are compared, so it can't shadow an operator's definition of the same name. Read the folders from a workspace the operator controls with `workspace=` instead.
 
 `agent_folders` controls which folders are read:
 

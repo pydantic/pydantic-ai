@@ -10,34 +10,42 @@ from typing import Any, cast
 
 import anyio
 import pytest
+from inline_snapshot import snapshot
+from pydantic import ValidationError
 
 from pydantic_ai import (
     Agent,
     AgentStreamEvent,
+    FinalResultEvent,
     FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
     ModelResponse,
+    ModelResponseOrigin,
     PartDeltaEvent,
+    PartEndEvent,
     PartStartEvent,
     RunContext,
     RunUsage,
+    TextPart,
 )
-from pydantic_ai.capabilities import Hooks, ProcessEventStream
-from pydantic_ai.exceptions import UserError
+from pydantic_ai.capabilities import Hooks, ModelFallback, ProcessEventStream
+from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 
 try:
-    from temporalio import workflow
+    from temporalio import activity, workflow
     from temporalio.client import Client, WorkflowFailureError, WorkflowHandle
+    from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
     from temporalio.contrib.workflow_streams import WorkflowStreamItem
     from temporalio.exceptions import ApplicationError
     from temporalio.service import RPCError, RPCStatusCode
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
+    from temporalio.workflow import ActivityConfig
 
     from pydantic_ai.durable_exec.temporal import (
         AgentEventStream,
@@ -240,6 +248,149 @@ async def test_a_late_consumer_still_gets_the_whole_run(client: Client) -> None:
     assert output == 'Streamed response'
     assert len(received) == 10
     assert isinstance(received[-1], AgentRunResultEvent)
+
+
+# --- A model-request activity that Temporal retries after it streamed ------------------------------
+
+
+async def _stream_failing_on_the_first_activity_attempt(
+    messages: list[ModelMessage], info: AgentInfo
+) -> AsyncIterator[str]:
+    if activity.info().attempt == 1:
+        yield 'Hel'
+        raise RuntimeError('connection lost')
+    yield 'Hello'
+
+
+_retried_durability = TemporalDurability(
+    activity_config=BASE_ACTIVITY_CONFIG,
+    model_activity_config=ActivityConfig(
+        start_to_close_timeout=timedelta(seconds=60),
+        retry_policy=RetryPolicy(maximum_attempts=2, initial_interval=timedelta(milliseconds=10)),
+    ),
+    event_stream_topic=TOPIC,
+)
+_retried_agent = Agent(
+    FunctionModel(_tool_calling_model, stream_function=_stream_failing_on_the_first_activity_attempt),
+    name='retried_stream_agent',
+    capabilities=[_retried_durability],
+)
+
+
+@workflow.defn
+class RetriedStreamWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.events = AgentEventStream()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with self.events:
+            result = await _retried_agent.run(prompt)
+        return result.output
+
+
+async def test_a_retried_activity_streams_a_later_execution_of_the_same_response(client: Client) -> None:
+    """A retried model-request activity republishes its response under the same `response_id`, one execution later.
+
+    Both executions' events reach the topic, so the consumer drops those of the execution the later one supersedes.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[RetriedStreamWorkflow],
+        plugins=[AgentPlugin(_retried_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            RetriedStreamWorkflow.run,
+            args=['Hello'],
+            id=f'{RetriedStreamWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        received = await _collect(
+            _retried_durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50))
+        )
+        assert await handle.result() == 'Hello'
+
+    run_id = cast(AgentRunResultEvent[str], received.pop()).result.run_id
+    first = ModelResponseOrigin(run_id=run_id, run_step=1)
+    second = ModelResponseOrigin(run_id=run_id, run_step=1, execution_attempt=2)
+    assert received == [
+        PartStartEvent(index=0, part=TextPart(content='Hel')),
+        FinalResultEvent(tool_name=None, tool_call_id=None),
+        PartStartEvent(index=0, part=TextPart(content='Hello')),
+        FinalResultEvent(tool_name=None, tool_call_id=None),
+        PartEndEvent(index=0, part=TextPart(content='Hello')),
+    ]
+    origins: list[ModelResponseOrigin] = [event.origin for event in received]
+    assert origins == [first, first, second, second, second]
+    assert second.supersedes(first)
+    assert second.response_id == first.response_id
+
+    # Dropping the events of every origin a later one supersedes leaves the response the run ended with.
+    assert [
+        event for event, origin in zip(received, origins) if not any(later.supersedes(origin) for later in origins)
+    ] == received[2:]
+
+
+async def _stream_failing_before_output(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    raise ModelAPIError(model_name='failing', message='boom')
+    yield ''  # pragma: no cover
+
+
+async def _fallback_target_stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+    yield 'Hello'
+
+
+_fallback_stream_durability = TemporalDurability(
+    activity_config=BASE_ACTIVITY_CONFIG,
+    models={'fallback_target': FunctionModel(stream_function=_fallback_target_stream, model_name='fallback_target')},
+    event_stream_topic=TOPIC,
+)
+_fallback_stream_agent = Agent(
+    FunctionModel(_tool_calling_model, stream_function=_stream_failing_before_output, model_name='failing'),
+    name='fallback_stream_agent',
+    capabilities=[ModelFallback('fallback_target'), _fallback_stream_durability],
+)
+
+
+@workflow.defn
+class FallbackStreamWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.events = AgentEventStream()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with self.events:
+            result = await _fallback_stream_agent.run(prompt)
+        return result.output
+
+
+async def test_a_fallback_streams_the_next_attempt_from_its_own_activity(client: Client) -> None:
+    """The attempt the workflow counts reaches the activity that streams it, so its events carry it."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[FallbackStreamWorkflow],
+        plugins=[AgentPlugin(_fallback_stream_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            FallbackStreamWorkflow.run,
+            args=['Hello'],
+            id=f'{FallbackStreamWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        received = await _collect(
+            _fallback_stream_durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50))
+        )
+        assert await handle.result() == 'Hello'
+
+    run_id = cast(AgentRunResultEvent[str], received.pop()).result.run_id
+    assert _kinds(received) == ['PartStartEvent', 'FinalResultEvent', 'PartEndEvent']
+    assert {event.origin for event in received} == {ModelResponseOrigin(run_id=run_id, run_step=1, attempt=2)}
 
 
 _impatient_durability = TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG, event_stream_topic=TOPIC)
@@ -680,6 +831,139 @@ async def test_a_consumer_can_resume_at_the_next_offset(client: Client) -> None:
     assert rest.offset > first.offset
     assert isinstance(received[-1], AgentRunResultEvent)
     assert 'PartStartEvent' not in _kinds(received[:1])  # the first event was consumed above
+
+
+# --- Event kinds from a newer worker --------------------------------------------------------------
+
+
+@workflow.defn
+class NewerWorkerWorkflow:
+    """Publishes event kinds this version doesn't know between known events, as a newer worker would."""
+
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.events = AgentEventStream()
+        topic = self.events.stream.topic(TOPIC)
+        topic.publish(PartStartEvent(index=0, part=TextPart('before')))
+        topic.publish({'event_kind': 'future_event', 'payload': 1})
+        topic.publish({'event_kind': 'future_event', 'payload': 2})
+        topic.publish({'event_kind': 'other_future_event'})
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with self.events:
+            result = await _topic_only_agent.run(prompt)
+        return result.output
+
+
+async def test_unknown_event_kinds_are_skipped(client: Client) -> None:
+    """A consumer on an older version skips event kinds it can't decode, warning once per kind."""
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[NewerWorkerWorkflow],
+        plugins=[AgentPlugin(_topic_only_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            NewerWorkerWorkflow.run,
+            args=['Hello'],
+            id=f'{NewerWorkerWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        with pytest.warns(UserWarning, match='unknown kind') as warned:
+            received = await _collect(
+                _topic_only_durability.stream_agent_events(
+                    client, handle, output_type=str, poll_cooldown=timedelta(milliseconds=50)
+                )
+            )
+        await handle.result()
+
+    assert [str(warning.message) for warning in warned] == snapshot(
+        [
+            "Skipping agent events of unknown kind 'future_event' on Workflow Stream topic 'agent_events': they were likely published by a worker running a newer version of Pydantic AI. Upgrade `pydantic-ai` in this consumer to receive them.",
+            "Skipping agent events of unknown kind 'other_future_event' on Workflow Stream topic 'agent_events': they were likely published by a worker running a newer version of Pydantic AI. Upgrade `pydantic-ai` in this consumer to receive them.",
+        ]
+    )
+    # The warning points at the code iterating the events, so a module-scoped warnings filter matches it.
+    assert {warning.filename for warning in warned} == {__file__}
+    assert received[0] == PartStartEvent(index=0, part=TextPart('before'))
+    assert _kinds(received) == snapshot(
+        [
+            'PartStartEvent',
+            'PartStartEvent',
+            'PartEndEvent',
+            'FunctionToolCallEvent',
+            'FunctionToolResultEvent',
+            'PartStartEvent',
+            'FinalResultEvent',
+            'PartDeltaEvent',
+            'PartDeltaEvent',
+            'PartEndEvent',
+            'AgentRunResultEvent',
+        ]
+    )
+    terminal = cast(AgentRunResultEvent[str], received[-1])
+    assert isinstance(terminal, AgentRunResultEvent)
+    assert terminal.result.output == 'Streamed response'
+
+
+@workflow.defn
+class MalformedEventWorkflow:
+    """Publishes a known event kind with a payload that doesn't validate, then waits to be terminated."""
+
+    @workflow.init
+    def __init__(self, event: dict[str, Any]) -> None:
+        self.events = AgentEventStream()
+        self.events.stream.topic(TOPIC).publish(event)
+
+    @workflow.run
+    async def run(self, event: dict[str, Any]) -> None:
+        await workflow.wait_condition(lambda: False)
+
+
+@pytest.mark.parametrize(
+    'event,errors',
+    [
+        pytest.param(
+            {'event_kind': 'part_start', 'index': 'not-an-index'},
+            [('int_parsing', ('part_start', 'index')), ('missing', ('part_start', 'part'))],
+            id='bad-payload',
+        ),
+        pytest.param(
+            {'event_kind': 'part_start', 'index': 0, 'part': {'part_kind': 'future_part'}},
+            [('union_tag_invalid', ('part_start', 'part'))],
+            id='unknown-nested-tag',
+        ),
+    ],
+)
+async def test_a_malformed_known_event_kind_still_raises(
+    client: Client, event: dict[str, Any], errors: list[tuple[str, tuple[str, ...]]]
+) -> None:
+    """Only unknown top-level kinds are skipped: a known kind that fails to validate is a real error.
+
+    That includes an unknown tag nested inside a known event, such as a part kind.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[MalformedEventWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            MalformedEventWorkflow.run,
+            event,
+            id=f'{MalformedEventWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        try:
+            async with stream_agent_events(client, handle, TOPIC, poll_cooldown=timedelta(milliseconds=50)) as events:
+                with pytest.raises(ValidationError) as exc_info:
+                    await anext(events)
+        finally:
+            await handle.terminate()
+
+    assert [(error['type'], error['loc']) for error in exc_info.value.errors()] == errors
 
 
 # --- Replay safety --------------------------------------------------------------------------------

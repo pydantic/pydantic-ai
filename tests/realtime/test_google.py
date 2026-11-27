@@ -4411,11 +4411,13 @@ async def test_proactive_audio_dials_its_own_v1alpha_client(
     assert sum(key.lower() == 'user-agent' for key in captured['headers']) == 1
     assert client._api_client._http_options.api_version == 'v1beta'  # pyright: ignore[reportPrivateUsage]
     assert client._api_client._http_options.headers == headers  # pyright: ignore[reportPrivateUsage]
-    assert not client._api_client._async_httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    http_client = client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
+    assert http_client is not None and not http_client.is_closed
     if settings:
         [session_client] = built
         assert session_client is not client
-        assert session_client._api_client._async_httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+        session_http_client = session_client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
+        assert session_http_client is not None and session_http_client.is_closed
     else:
         assert built == []
 
@@ -4429,7 +4431,8 @@ async def test_proactive_audio_uses_a_caller_client_already_on_v1alpha(monkeypat
             pass  # pragma: no cover
 
     assert captured['uri'] == _live_uri('v1alpha')
-    assert not client._api_client._async_httpx_client.is_closed  # pyright: ignore[reportPrivateUsage]
+    http_client = client._api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
+    assert http_client is not None and not http_client.is_closed
 
 
 async def test_proactive_audio_on_a_caller_client_says_how_to_fix_it(monkeypatch: pytest.MonkeyPatch) -> None:

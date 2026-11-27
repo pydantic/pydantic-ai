@@ -25,6 +25,7 @@ __all__ = [
     'ModelProfile',
     'ModelProfileSpec',
     'ToolAdditionMode',
+    'CompactionInstructionsMode',
     'ToolDeferralMode',
     'DEFAULT_PROFILE',
     'DEFAULT_PROMPTED_OUTPUT_TEMPLATE',
@@ -38,6 +39,8 @@ __all__ = [
 
 ToolDeferralMode: TypeAlias = Literal['standalone', 'with_tool_search']
 ToolAdditionMode: TypeAlias = Literal['by_reference', 'with_definitions']
+CompactionInstructionsMode: TypeAlias = Literal['replaces_prompt', 'system_prompt']
+"""How a model's on-demand compaction takes instructions; see [`ModelProfile.compaction_instructions`][pydantic_ai.profiles.ModelProfile.compaction_instructions]."""
 
 
 DEFAULT_PROMPTED_OUTPUT_TEMPLATE = dedent(
@@ -222,7 +225,7 @@ class ModelProfile(TypedDict, total=False):
 
     `Provider.model_profile` is resolved from the model name alone, so when support also turns on
     something it can't see — which SDK client the provider was built with, say — the adapter narrows
-    this in its own `Model.profile` override, as Anthropic does for Microsoft Foundry. Narrowing the
+    this in its own `Model.profile` override. Narrowing the
     flag rather than special-casing the adapter's own rendering keeps `Model.prepare_messages` the
     only place that knows the `<system>...</system>` fallback.
     """
@@ -540,6 +543,24 @@ class ModelProfile(TypedDict, total=False):
     Set it explicitly for custom or local models, e.g. `profile={'context_window': 128_000}`.
     """
 
+    supports_compaction_on_demand: bool
+    """Whether the model can compact a conversation when asked, with [`Model.compact_messages`][pydantic_ai.models.Model.compact_messages]. Default: `False`.
+
+    [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction] compacts only for a model with it. It's set for the
+    OpenAI Responses API on OpenAI and Azure OpenAI, and for the Claude models Anthropic's Messages API compacts
+    on demand: see Anthropic's [on-demand compaction docs](https://platform.claude.com/docs/en/build-with-claude/compaction-on-demand)
+    for the models.
+    """
+
+    compaction_instructions: CompactionInstructionsMode | None
+    """How the model's on-demand compaction takes instructions, such as a focus for the summary. Default: `None` (it takes none).
+
+    - `'replaces_prompt'`: the instructions replace the provider's summarization prompt, so a focus is sent inside
+      a full summarization prompt. Anthropic works this way.
+    - `'system_prompt'`: the instructions are the system prompt of the compaction request, in place of the agent's,
+      so the request no longer starts with the prefix the provider cached for the conversation. OpenAI works this way.
+    """
+
     deprecation: ModelDeprecation | None
     """The provider's deprecation of this model on the API the model class sends requests to. Default: `None`.
 
@@ -642,6 +663,7 @@ _LEGACY_PROVIDER_PROFILE_KEYS: dict[str, str] = {
     'openai_supports_forced_tool_choice_with_thinking': 'supports_forced_tool_choice_with_thinking',
     'openrouter_supports_forced_tool_choice_with_thinking': 'supports_forced_tool_choice_with_thinking',
     'openai_reasoning_enabled_by_default': 'thinking_enabled_by_default',
+    'anthropic_supports_on_demand_compaction': 'supports_compaction_on_demand',
     'openai_responses_tool_call_ids_are_response_scoped': 'tool_call_ids_are_response_scoped',
 }
 """Provider-prefixed profile keys that moved to `ModelProfile`, mapped to their current spelling."""
@@ -729,6 +751,8 @@ DEFAULT_PROFILE: ModelProfile = {
     'ignore_streamed_leading_whitespace': False,
     'supported_native_tools': SUPPORTED_NATIVE_TOOLS,
     'context_window': None,
+    'supports_compaction_on_demand': False,
+    'compaction_instructions': None,
     'tool_call_id_length': None,
     'tool_call_ids_are_response_scoped': False,
     'tool_deferral_mode': None,

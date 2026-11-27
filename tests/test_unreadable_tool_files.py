@@ -638,7 +638,7 @@ GEMINI_IMAGES = [
                     'image': True,
                     'document': True,
                     'document_media_types': ALL_DOCUMENTS,
-                    'audio': True,
+                    'audio': False,
                     'video': False,
                     'audio_media_types': ['audio/mpeg', 'audio/wav'],
                     'image_media_types': COMMON_IMAGES,

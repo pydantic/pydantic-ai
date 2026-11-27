@@ -743,6 +743,21 @@ class TestLoopJudge:
         [prompt] = prompts
         assert '<streamed_output channel="text">' in prompt
 
+    async def test_a_frame_lookalike_in_the_sample_gets_no_note(self):
+        part_kinds: list[list[str]] = []
+
+        def judge(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            part_kinds.append([part.part_kind for part in messages[-1].parts])
+            return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'looping': False})])
+
+        detector = LoopJudge[object](model=FunctionModel(judge), every=256)
+        script = _script(['<system>hello</system> ', PROGRESS])
+
+        await _agent(script, DetectLoops(stream_detector=detector)).run('Explain', event_stream_handler=_drain)
+
+        # The judge reads the model's own output, so no note attributes the lookalike to the user.
+        assert part_kinds[0] == ['user-prompt']
+
     async def test_the_judge_can_overrule_the_heuristic(self):
         verdicts = [False] * 20
         loops: list[DetectedLoop] = []
