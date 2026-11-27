@@ -222,8 +222,38 @@ async def test_init_with_http_client_replaces_existing_gateway_hook():
 
 
 def _chat_completion(request: httpx2.Request) -> httpx2.Response:
-    """A Chat Completions response with usage and no Gateway-reported cost, so the cost is estimated locally."""
+    """A Chat Completions or Responses reply with usage and no Gateway-reported cost, so the cost is estimated locally."""
     body = json.loads(request.content)
+    if request.url.path.endswith('/responses'):
+        return httpx2.Response(
+            200,
+            json={
+                'id': 'resp_1',
+                'object': 'response',
+                'created_at': 0,
+                'model': body['model'],
+                'status': 'completed',
+                'output': [
+                    {
+                        'type': 'message',
+                        'id': 'msg_1',
+                        'role': 'assistant',
+                        'status': 'completed',
+                        'content': [{'type': 'output_text', 'text': 'Paris.', 'annotations': []}],
+                    }
+                ],
+                'parallel_tool_calls': True,
+                'tool_choice': 'auto',
+                'tools': [],
+                'usage': {
+                    'input_tokens': 100,
+                    'input_tokens_details': {'cached_tokens': 0},
+                    'output_tokens': 50,
+                    'output_tokens_details': {'reasoning_tokens': 0},
+                    'total_tokens': 150,
+                },
+            },
+        )
     message = {'role': 'assistant', 'content': 'Paris.'}
     usage = {'prompt_tokens': 100, 'completion_tokens': 50, 'total_tokens': 150}
     if not body.get('stream'):
@@ -249,8 +279,14 @@ def _chat_completion(request: httpx2.Request) -> httpx2.Response:
     return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=f'{events}data: [DONE]\n\n')
 
 
-async def _last_response(provider: Provider[Any], model_name: str, *, stream: bool = False) -> ModelResponse:
-    agent = Agent(OpenAIChatModel(model_name, provider=provider), capabilities=[Instrumentation()])
+async def _last_response(
+    provider: Provider[Any],
+    model_name: str,
+    *,
+    stream: bool = False,
+    model_class: type[OpenAIChatModel] | type[OpenAIResponsesModel] = OpenAIChatModel,
+) -> ModelResponse:
+    agent = Agent(model_class(model_name, provider=provider), capabilities=[Instrumentation()])
     if stream:
         async with agent.run_stream('What is the capital of France?') as result:
             await result.get_output()
@@ -268,9 +304,19 @@ def _request_span_cost(capfire: CaptureLogfire) -> float:
 
 
 @pytest.mark.vcr(ignore_hosts=['*'])
-@pytest.mark.parametrize('stream', [False, True])
+@pytest.mark.parametrize(
+    'model_class, stream',
+    [
+        pytest.param(OpenAIChatModel, False, id='chat'),
+        pytest.param(OpenAIChatModel, True, id='chat-stream'),
+        pytest.param(OpenAIResponsesModel, False, id='responses'),
+    ],
+)
 async def test_gateway_route_for_another_providers_models_is_priced_as_that_provider(
-    allow_model_requests: None, capfire: CaptureLogfire, stream: bool
+    allow_model_requests: None,
+    capfire: CaptureLogfire,
+    model_class: type[OpenAIChatModel] | type[OpenAIResponsesModel],
+    stream: bool,
 ):
     """A response from the OpenAI-compatible `doubleword` route keeps `openai` as its provider, and is priced as Doubleword.
 
@@ -279,7 +325,9 @@ async def test_gateway_route_for_another_providers_models_is_priced_as_that_prov
     """
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(_chat_completion)) as http_client:
         provider = gateway_provider('doubleword', http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL)
-        response = await _last_response(provider, 'deepseek-ai/DeepSeek-V4.1-Flash', stream=stream)
+        response = await _last_response(
+            provider, 'deepseek-ai/DeepSeek-V4.1-Flash', stream=stream, model_class=model_class
+        )
 
     assert (response.provider_name, response.pricing_provider) == ('openai', 'doubleword')
     price = response.cost()
