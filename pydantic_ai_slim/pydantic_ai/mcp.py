@@ -38,7 +38,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 # extra admits both. We only use their shared interfaces, so these unions type them without
 # importing a family that the other generation's installs don't ship.
 from ._http import AsyncHTTPClient, HTTPAuth, HTTPTimeout
-from ._run_context import _CURRENT_RUN_CONTEXT
+from ._run_context import set_current_run_context
 from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
@@ -2119,7 +2119,7 @@ class _BorrowedHTTPClient:
 class _SamplingRunContextHolder:
     def __init__(self) -> None:
         self.run_context: RunContext[Any] | None = None
-        self._lock: anyio.abc.Lock | None = None
+        self._lock: anyio.Lock | None = None
 
     @asynccontextmanager
     async def capture(self, run_context: RunContext[Any], *, enabled: bool) -> AsyncGenerator[None]:
@@ -2157,12 +2157,9 @@ def _build_sampling_handler(
             model_settings['stop_sequences'] = stop_sequences
 
         # The server chose these `stop_sequences`, not the user, so a sampling model that ignores them doesn't warn.
-        token = _CURRENT_RUN_CONTEXT.set(run_context_holder.run_context)
-        try:
+        with set_current_run_context(run_context_holder.run_context):
             with suppress_unsupported_setting_warnings(['stop_sequences'] if stop_sequences is not None else []):
                 model_response = await model_request(sampling_model, pai_messages, model_settings=model_settings)
-        finally:
-            _CURRENT_RUN_CONTEXT.reset(token)
         return mcp_types.CreateMessageResult(
             role='assistant',
             content=_mcp.map_from_model_response(model_response),

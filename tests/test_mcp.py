@@ -70,6 +70,7 @@ from pydantic_ai.toolsets._instruction_collection import (
 from pydantic_ai.usage import RunUsage
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
+from ._timeouts import READINESS_WAIT_TIMEOUT
 from .conftest import IsStr, try_import
 from .harness._regex_steps import linearity_failure
 
@@ -131,7 +132,7 @@ with try_import() as imports_successful:
     from pydantic_ai.messages import TextContent
     from pydantic_ai.toolsets.prefixed import PrefixedToolset
 
-    from .mcp_task_server import TASK_SERVER_UNAVAILABLE, TaskConfig, fastmcp_tasks
+    from .mcp_task_server import TaskConfig, fastmcp_tasks
 
 with try_import() as openai_imports_successful:
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -2452,10 +2453,10 @@ class TestSamplingHandler:
 
     async def test_sampling_handler_round_trip(self):
         """Drive the sampling handler built from `sampling_model=` to cover its body."""
-        from pydantic_ai.mcp import _build_sampling_handler  # type: ignore[attr-defined]
+        from pydantic_ai.mcp import _build_sampling_handler, _SamplingRunContextHolder  # type: ignore[attr-defined]
 
         model = TestModel()
-        handler = _build_sampling_handler(model)
+        handler = _build_sampling_handler(model, _SamplingRunContextHolder())
         params = mcp_types.CreateMessageRequestParams.model_validate(
             {
                 'messages': [
@@ -3111,7 +3112,6 @@ def as_modern_mcp_session(monkeypatch: pytest.MonkeyPatch, as_mcp_sdk_v2: None) 
 
 
 @pytest.fixture
-@pytest.mark.skipif(TASK_SERVER_UNAVAILABLE, reason='fastmcp-tasks not installed')
 def as_legacy_mcp_session(monkeypatch: pytest.MonkeyPatch) -> None:
     """Present the connected client as a handshake-era session."""
     init_result = mcp_types.InitializeResult.model_validate(
@@ -3187,7 +3187,7 @@ async def test_shared_limiter_sampling_handler_raises_user_error() -> None:
     toolset = make_sampling_toolset(client, limiter)
     agent = Agent(TestModel(call_tools=['sample']), toolsets=[toolset], max_concurrency=limiter)
 
-    with anyio.fail_after(10):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         result = await agent.run('test')
 
     assert any('limiter' in content.lower() for content in tool_return_contents(result))
@@ -3203,7 +3203,7 @@ async def test_shared_limiter_sampling_handler_agent_lifecycle_raises_user_error
     toolset = make_sampling_toolset(client, limiter)
     agent = Agent(TestModel(call_tools=['sample']), toolsets=[toolset], max_concurrency=limiter)
 
-    with anyio.fail_after(10):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         async with agent:
             result = await agent.run('test')
 
@@ -3221,7 +3221,7 @@ async def test_distinct_limiter_sampling_model_round_trip_completes() -> None:
     toolset = make_sampling_toolset(client, sampling_limiter)
     agent = Agent(TestModel(call_tools=['sample']), toolsets=[toolset], max_concurrency=agent_limiter)
 
-    with anyio.fail_after(10):
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         result = await agent.run('test')
 
     assert any('sampled response' in content for content in tool_return_contents(result))

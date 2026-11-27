@@ -1507,11 +1507,11 @@ def get_current_run_context() -> RunContext[Any] | None:
 
 
 @contextmanager
-def set_current_run_context(run_context: RunContext[Any]) -> Generator[None]:
+def set_current_run_context(run_context: RunContext[Any] | None) -> Generator[None]:
     """Context manager to set the current run context.
 
     Args:
-        run_context: The run context to set as current.
+        run_context: The run context to set as current, or `None` to clear it.
 
     Yields:
         None
