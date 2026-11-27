@@ -320,7 +320,11 @@ _Target = Union['type[AbstractCapability[Any]]', str, _Clash]
 
 
 class _CapabilityRegistry(Mapping[str, 'type[AbstractCapability[Any]]']):
-    """A capability registry whose `module:attribute` entries are imported on first lookup."""
+    """A capability registry whose `module:attribute` entries are imported on first lookup.
+
+    A clashing name is left out of iteration, so the JSON schema and the "Valid choices" of an error
+    skip it, but looking it up raises the clash.
+    """
 
     def __init__(self, entries: dict[str, _Target]) -> None:
         self._entries = entries
@@ -336,13 +340,13 @@ class _CapabilityRegistry(Mapping[str, 'type[AbstractCapability[Any]]']):
 
     def __contains__(self, name: object) -> bool:
         # `Mapping.__contains__` would look the name up, importing its target.
-        return name in self._entries
+        return name in self._entries and not isinstance(self._entries[name], _Clash)
 
     def __iter__(self) -> Iterator[str]:
-        return iter(self._entries)
+        return (name for name, entry in self._entries.items() if not isinstance(entry, _Clash))
 
     def __len__(self) -> int:
-        return len(self._entries)
+        return sum(1 for _ in self)
 
 
 def _validate_capability_type(cls: object) -> type[AbstractCapability[Any]]:
@@ -449,7 +453,8 @@ def get_capability_registry(
             _named_tier(
                 # `module:attr` without any `[extras]` suffix, which `EntryPoint.load()` ignores too.
                 [
-                    (ep.name, f'{ep.module}:{ep.attr}')
+                    # An entry point can name a bare module, which then fails as "not a capability".
+                    (ep.name, ep.module if ep.attr is None else f'{ep.module}:{ep.attr}')
                     for ep in importlib.metadata.entry_points(group=namespace.entry_points)
                 ],
                 f'the `{namespace.entry_points}` entry points',

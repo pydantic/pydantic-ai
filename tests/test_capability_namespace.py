@@ -113,6 +113,23 @@ def test_entry_points_ignore_extras_like_entry_point_load(write_module: ModuleWr
     assert type(capability).__module__ == module
 
 
+def test_an_entry_point_naming_a_bare_module_is_not_a_capability(write_module: ModuleWriter, tmp_path: Path):
+    module = _capability_module(write_module, 'ns_ep_bare')
+    dist_info = tmp_path / 'ns_bare-0.0.0.dist-info'
+    dist_info.mkdir()
+    (dist_info / 'METADATA').write_text('Metadata-Version: 2.1\nName: ns-bare\nVersion: 0.0.0\n')
+    (dist_info / 'entry_points.txt').write_text(f'[pydantic_ai_tests.bare]\nGreeting = {module}\n')
+    importlib.invalidate_caches()
+
+    with pytest.raises(
+        ValueError,
+        match=f"Capability 'Greeting' could not be loaded from `{module}`: .*must be subclasses of AbstractCapability",
+    ):
+        Agent.from_spec(
+            _spec('Greeting'), capability_namespace=CapabilityNamespace(entry_points='pydantic_ai_tests.bare')
+        )
+
+
 def test_entry_points_with_two_targets_for_one_name_raise(write_module: ModuleWriter, tmp_path: Path):
     for dist, module in [('first', 'ns_ep_first'), ('second', 'ns_ep_second')]:
         _capability_module(write_module, module)
@@ -123,8 +140,15 @@ def test_entry_points_with_two_targets_for_one_name_raise(write_module: ModuleWr
     importlib.invalidate_caches()
 
     # Installed packages fill this tier, so the clash breaks only a spec that uses the name.
-    registry = get_capability_registry(namespace=CapabilityNamespace(entry_points='pydantic_ai_tests.clash'))
+    clashing = CapabilityNamespace(entry_points='pydantic_ai_tests.clash')
+    registry = get_capability_registry(namespace=clashing)
     assert registry['Thinking'] is Thinking
+    # No single class describes the name, so it is left out of the listing and the JSON schema.
+    assert 'Greeting' not in registry
+    assert 'Greeting' not in list(registry)
+    schema = AgentSpec.model_json_schema_with_capabilities(capability_namespace=clashing)
+    assert 'Greeting' not in str(schema)
+    assert 'Thinking' in str(schema)
 
     with pytest.raises(
         ValueError, match=r"Two different capabilities are named 'Greeting' in the `pydantic_ai_tests\.clash`"
