@@ -38,7 +38,7 @@ import yaml
 from jsonschema.validators import validator_for
 from pydantic import ConfigDict, JsonValue, TypeAdapter
 from pydantic.errors import PydanticInvalidForJsonSchema, PydanticSchemaGenerationError, PydanticUserError
-from pydantic_core import SchemaError, ValidationError
+from pydantic_core import PydanticOmit, SchemaError, ValidationError
 
 from pydantic_ai._spec import CapabilitySpec, filter_serializable_type
 from pydantic_ai._utils import get_function_type_hints, is_str_dict
@@ -49,7 +49,7 @@ from pydantic_ai.exceptions import UserError
 JsonSchema = dict[str, JsonValue]
 
 _VARIADIC = (inspect.Parameter.VAR_POSITIONAL, inspect.Parameter.VAR_KEYWORD)
-_NO_SCHEMA = (PydanticSchemaGenerationError, PydanticInvalidForJsonSchema, PydanticUserError, SchemaError)
+_NO_SCHEMA = (PydanticSchemaGenerationError, PydanticInvalidForJsonSchema, PydanticUserError, SchemaError, PydanticOmit)
 _ARBITRARY_TYPES = ConfigDict(arbitrary_types_allowed=True)
 _VALUES_OR_ENVIRONMENT = (UserError, ValueError, LookupError, NotImplementedError)
 

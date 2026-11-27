@@ -6,7 +6,7 @@ from datetime import timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
-from pydantic import GetPydanticSchema, RootModel, TypeAdapter
+from pydantic import Field, GetPydanticSchema, RootModel, TypeAdapter
 from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import core_schema
 from typing_extensions import TypedDict, TypeForm
@@ -403,8 +403,9 @@ class StructuredJudge(Evaluator[object, object, object]):
     Python.
     """
 
-    # A Python class has no JSON schema, so only a question and the mapping form are offered to a dataset file.
-    questions: str | Mapping[str, str] | SkipJsonSchema[type[object]]
+    # A Python class has no JSON schema, so only a question and the mapping form are offered to a dataset file. The
+    # schema asks for at least one rubric, as `__post_init__` refuses an empty mapping.
+    questions: str | Annotated[Mapping[str, str], Field(min_length=1)] | SkipJsonSchema[type[object]]
     # A type form has no core schema for a dataset file to validate against, and no JSON schema either.
     output_type: SkipJsonSchema[
         Annotated[TypeForm[object], GetPydanticSchema(lambda _source, _handler: core_schema.any_schema())]
