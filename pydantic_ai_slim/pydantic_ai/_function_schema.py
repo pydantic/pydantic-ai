@@ -425,15 +425,7 @@ def _json_argument_serializers(
     if schema['type'] == 'definitions':
         definitions = schema['definitions']
         arguments_schema = schema['schema']
-    kwargs_schema: core_schema.CoreSchema | None = None
-    parameter_schemas: dict[str, core_schema.CoreSchema]
-    if single_arg_name is not None:
-        assert arguments_schema['type'] == 'function-wrap'
-        parameter_schemas = {single_arg_name: arguments_schema['schema']}
-    else:
-        assert arguments_schema['type'] == 'typed-dict'
-        parameter_schemas = {name: td_field['schema'] for name, td_field in arguments_schema['fields'].items()}
-        kwargs_schema = arguments_schema.get('extras_schema')
+    parameter_schemas, kwargs_schema = _argument_schemas(arguments_schema, single_arg_name)
     definitions_by_ref = {definition['ref']: definition for definition in definitions if 'ref' in definition}
     parameter_serializers = {
         name: _serializer(parameter_schema, definitions, core_config)
@@ -446,6 +438,17 @@ def _json_argument_serializers(
         else None
     )
     return parameter_serializers, kwargs_serializer
+
+
+def _argument_schemas(
+    schema: core_schema.CoreSchema, single_arg_name: str | None
+) -> tuple[dict[str, core_schema.CoreSchema], core_schema.CoreSchema | None]:
+    """The schema of each parameter, and of any `**kwargs`, in the arguments `schema` outside its definitions."""
+    if single_arg_name is not None:
+        assert schema['type'] == 'function-wrap'
+        return {single_arg_name: schema['schema']}, None
+    assert schema['type'] == 'typed-dict'
+    return {name: td_field['schema'] for name, td_field in schema['fields'].items()}, schema.get('extras_schema')
 
 
 def _serializer(
