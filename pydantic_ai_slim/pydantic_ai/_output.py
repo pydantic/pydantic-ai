@@ -118,7 +118,7 @@ def _build_output_handlers(
     return do_validate, do_process
 
 
-def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
+def _isinstance_maybe_generic(value: Any, type_: Any) -> bool:
     """`isinstance(value, type_)` that also works for generics like `list[Bar]`, `Literal[...]` and `Annotated[Bar, ...]`.
 
     `isinstance(x, list[Bar])` raises `TypeError`; we fall back to the generic origin

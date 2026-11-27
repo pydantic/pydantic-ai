@@ -8,13 +8,14 @@ from __future__ import annotations
 import json
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
-from typing import Annotated, Any, NewType, TypedDict
+from typing import Annotated, Any, NewType
 
 import pytest
 from opentelemetry.trace import NoOpTracer
 from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
 from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import ErrorDetails, PydanticCustomError
+from typing_extensions import TypedDict
 
 from pydantic_ai import RetryFeedbackPart
 from pydantic_ai._run_context import RunContext
