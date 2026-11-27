@@ -2261,10 +2261,13 @@ def _priority_sla_decision(
     mentions = [owner for owner in owners if owner.casefold() not in silent_owners]
     if not mentions:
         return 'owner_skipped', ''
+    # A pull request's update counts only while fresh, so `since` can be older than the last one,
+    # and the text claims no update only within the freshness span.
+    days = (now - since).days
     body = (
-        f'{" ".join(f"@{login}" for login in mentions)} this `{label}` issue has had no maintainer or linked-PR '
-        f'activity for {(now - since).days} days; the window for its priority is {window.days}. '
-        'Could you post a next step, or change its priority?\n\n'
+        f'{" ".join(f"@{login}" for login in mentions)} this `{label}` issue has had no maintainer activity for '
+        f'{days} days and no open linked pull request updated in the last {min(days, pull_freshness.days)} days; '
+        f'the window for its priority is {window.days}. Could you post a next step, or change its priority?\n\n'
         f'{_PRIORITY_SLA_MARKER}label={label} since={since.strftime("%Y-%m-%dT%H:%M:%SZ")} -->'
     )
     return 'due', body

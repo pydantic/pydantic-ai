@@ -3139,10 +3139,35 @@ def test_priority_sla_comment_text_mentions_the_owner_and_names_its_window():
 
     assert decide(client) == (
         'due',
-        '@DouweM this `p:2-high` issue has had no maintainer or linked-PR activity for 7 days; the window for '
-        'its priority is 7. Could you post a next step, or change its priority?\n\n'
+        '@DouweM this `p:2-high` issue has had no maintainer activity for 7 days and no open linked pull request '
+        'updated in the last 7 days; the window for its priority is 7. Could you post a next step, or change its '
+        'priority?\n\n'
         '<!-- pydantic-ai-priority-sla:v1 label=p:2-high since=2026-11-18T23:11:20Z -->',
     )
+
+
+@pytest.mark.parametrize(
+    ('label', 'pull_updated', 'claim'),
+    [
+        pytest.param(
+            'p:2-high', 8, 'for 30 days and no open linked pull request updated in the last 7 days', id='stale-pull'
+        ),
+        pytest.param(
+            'p:1-highest', 5, 'for 5 days and no open linked pull request updated in the last 5 days', id='fresh-pull'
+        ),
+    ],
+)
+def test_priority_sla_comment_text_claims_only_what_was_measured(label: str, pull_updated: int, claim: str):
+    client = sla_client(
+        {1: [label_event(label, created_at=days_ago(30)), linked_pull('open', days_ago(pull_updated))]},
+        labels={1: [label]},
+        assignees={1: ['DouweM']},
+    )
+
+    outcome, body = decide(client, label=label)
+
+    assert outcome == 'due'
+    assert f'has had no maintainer activity {claim};' in body
 
 
 @pytest.mark.parametrize(
@@ -3489,7 +3514,7 @@ def test_priority_sla_decision_does_not_depend_on_timeline_order():
     client.timelines[1] = timeline[::-1]
 
     assert decide(client) == forward
-    assert forward[0] == 'due' and 'activity for 9 days;' in forward[1]
+    assert forward[0] == 'due' and 'activity for 9 days and' in forward[1]
 
 
 def test_priority_sla_modes_run_from_the_command_line(tmp_path: Path, monkeypatch: pytest.MonkeyPatch):
