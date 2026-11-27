@@ -179,8 +179,9 @@ class ModelResponsePartsManager:
         """`_stamp_and_type` for a call that `delta` just changed."""
         if delta.tool_name_delta:
             # A name streamed in pieces can first match another tool, whose stamp the grown name mustn't keep:
-            # stamp it again from the tool it names now.
-            part = replace(part, ui_visibility=None)
+            # stamp it again from the tool it names now. The output kind is only ever inferred, so it's redone too.
+            output_kind = part.tool_kind == _OUTPUT_TOOL_PART_KIND
+            part = replace(part, ui_visibility=None, tool_kind=None if output_kind else part.tool_kind)
         return self._stamp_and_type(part)
 
     def get_parts(self) -> list[ModelResponsePart]:

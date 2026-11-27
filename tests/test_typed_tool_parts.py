@@ -18,7 +18,7 @@ import pytest
 from pydantic import BaseModel, TypeAdapter
 from typing_extensions import TypedDict
 
-from pydantic_ai import Agent, ModelRetry, RunContext, Tool, ToolKind, ToolOutput, tools
+from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, RunContext, Tool, ToolKind, ToolOutput, tools
 from pydantic_ai._event_registry import set_replay_isolation_guard
 from pydantic_ai._tool_search import TOOL_SEARCH_KIND
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
@@ -1305,3 +1305,29 @@ def test_is_output_tool_part_matches_a_function_tool_named_like_the_default_outp
 
 def iter_tool_parts(messages: list[ModelMessage]) -> list[ToolCallPart | ToolReturnPart]:
     return [part for message in messages for part in message.parts if isinstance(part, ToolCallPart | ToolReturnPart)]
+
+
+async def test_streamed_function_call_named_after_an_output_tool_prefix_is_not_marked():
+    """A function call whose streamed name first matches an output tool's loses the output kind once the name grows."""
+
+    async def stream_model(messages: list[ModelMessage], info: AgentInfo):
+        if len(messages) == 1:
+            yield {0: DeltaToolCall(name='submit_report', tool_call_id='call_1')}
+            yield {0: DeltaToolCall(name='_draft', json_args='{}')}
+        else:
+            yield {0: DeltaToolCall(name='submit_report', json_args='{"title": "done"}', tool_call_id='call_2')}
+
+    agent = Agent(FunctionModel(stream_function=stream_model), output_type=ToolOutput(Report, name='submit_report'))
+
+    @agent.tool_plain
+    def submit_report_draft() -> str:
+        return 'drafted'
+
+    async with agent.run_stream_events('Write the report.') as events:
+        run_result = [event async for event in events if isinstance(event, AgentRunResultEvent)][0].result
+    assert tool_parts(run_result.all_messages()) == [
+        ('tool-call', 'submit_report_draft', None, ''),
+        ('tool-return', 'submit_report_draft', None, 'success'),
+        ('tool-call', 'submit_report', 'output', ''),
+        ('tool-return', 'submit_report', 'output', 'success'),
+    ]
