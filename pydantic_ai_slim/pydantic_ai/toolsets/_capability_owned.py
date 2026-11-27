@@ -52,7 +52,9 @@ class CapabilityOwnedToolset(WrapperToolset[AgentDepsT]):
     async def get_instructions(
         self, ctx: RunContext[AgentDepsT]
     ) -> str | InstructionPart | Sequence[str | InstructionPart] | None:
-        if self.capability.defer_loading is True:
+        # A deferred capability's instructions are delivered when it's loaded, and those of one below operator authority
+        # are stated in history (see `LoweredInstructions`): neither enters the prefix.
+        if self.capability.defer_loading is True or self.capability._effective_authority != 'operator':  # pyright: ignore[reportPrivateUsage]
             return None
         return await super().get_instructions(ctx._attributed_to(self.capability))  # pyright: ignore[reportPrivateUsage]
 

@@ -80,6 +80,8 @@ gh() {
     payload='{"state":"DISMISSED"}'
   elif [[ "$endpoint" = "repos/$REPO/issues/123/labels"* ]]; then
     payload='{}'
+  elif [ "$endpoint" = "repos/$REPO/contents/scripts/gather-pydantic-ai-review-context.sh" ]; then
+    payload=$CONTEXT_SCRIPT
   else
     echo "unexpected gh request: $*" >&2
     return 91
@@ -310,6 +312,48 @@ def test_compiled_stale_pr_skip_precedes_the_pr_head_checkout():
     assert skip['id'] == 'stale-pr'
     assert 'echo \'skipped=true\' >> "$GITHUB_OUTPUT"' in str(skip['run'])
     assert steps[checkout_index]['if'] == "steps.stale-pr.outputs.skipped != 'true'"
+
+
+@pytest.mark.parametrize('fetched', [True, False], ids=['fetched', 'fetch-failed'])
+def test_compiled_review_context_runs_the_default_branch_script(tmp_path: Path, fetched: bool):
+    """The agent job gathers review context with the default branch's script, never the checked-out head's."""
+    compiled = TypeAdapter(dict[str | bool, object]).validate_python(
+        yaml.safe_load((ROOT / '.github/workflows/pydantic-ai-pr-review.lock.yml').read_text())
+    )
+    jobs = TypeAdapter(dict[str, dict[str, object]]).validate_python(compiled['jobs'])
+    steps = TypeAdapter(list[dict[str, object]]).validate_python(jobs['agent']['steps'])
+    script = next(step for step in steps if step.get('name') == 'Gather PR review context').get('run')
+    assert isinstance(script, str)
+    workspace = tmp_path / 'workspace'
+    head_copy = workspace / 'scripts' / 'gather-pydantic-ai-review-context.sh'
+    head_copy.parent.mkdir(parents=True)
+    head_copy.write_text('#!/usr/bin/env bash\necho head > "$RAN"\n')
+    head_copy.chmod(0o755)
+    (tmp_path / 'runner').mkdir()
+    endpoint = f'repos/{REPO}/contents/scripts/gather-pydantic-ai-review-context.sh'
+
+    result = run_shell(
+        f'cd "$WORKSPACE"\n{script}',
+        tmp_path,
+        WORKSPACE=str(workspace),
+        RUNNER_TEMP=str(tmp_path / 'runner'),
+        RAN=str(tmp_path / 'ran'),
+        PR_NUMBER='123',
+        # Runs itself again as `"$0"`, as `--partition-files` does in the real script.
+        CONTEXT_SCRIPT=(
+            '#!/usr/bin/env bash\nset -euo pipefail\n'
+            'if [ "${1:-}" = again ]; then shift; echo "default $*" > "$RAN"; else "$0" again "$@"; fi'
+        ),
+        FAIL_ENDPOINT=endpoint if not fetched else 'none',
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert (tmp_path / 'calls').read_text() == f'GET {endpoint} paginate=false slurp=false\n'
+    if fetched:
+        assert (tmp_path / 'ran').read_text() == f'default 123 {REPO}\n'
+    else:
+        assert not (tmp_path / 'ran').exists()
+        assert 'could not fetch' in result.stdout
 
 
 @pytest.mark.parametrize(

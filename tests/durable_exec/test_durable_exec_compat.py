@@ -847,6 +847,7 @@ def test_call_tool_result_carries_every_tool_manager_control_flow_exception() ->
                     'metadata': None,
                     'timeout': None,
                     'durable': None,
+                    'ui_visibility': None,
                     'defer_loading': False,
                     'unless_native': None,
                     'with_native': None,
@@ -1047,7 +1048,8 @@ def test_every_stream_event_and_message_part_round_trips_through_the_json_codec(
     request context projection, the returned `ModelResponse`). A new union member with a field the
     codec can't serialize or rebuild breaks every durable run that produces it. The coverage asserts
     fail until a new member has an instance below, so it is round-tripped too. Not a VCR test: the
-    round trip happens between engine and worker, never on a provider request.
+    round trip happens between engine and worker, never on a provider request. Each capability part's source,
+    authority and frame through every engine's serializer is checked in `test_capability_part_serializers.py`.
     """
     request_parts: list[ModelRequestPart] = [
         SystemPromptPart('system'),

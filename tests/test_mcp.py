@@ -100,6 +100,8 @@ with try_import() as imports_successful:
     from pydantic_ai import _mcp, mcp as mcp_module
     from pydantic_ai.models.mcp_sampling import MCPSamplingModel
 
+    from .mcp_server import parameterized_prompt
+
     Annotations = mcp_types.Annotations
     AudioContent = mcp_types.AudioContent
     BlobResourceContents = mcp_types.BlobResourceContents
@@ -601,10 +603,10 @@ def _register_prompts(server: FastMCP[None]) -> None:
         """A simple prompt template."""
         return 'This is a simple prompt'
 
-    @server.prompt()
-    def parameterized_prompt(name: str, topic: str) -> str:
-        """A prompt template with parameters."""
-        return f"Hello {name}, let's talk about {topic}!"
+    # Defined in `tests/mcp_server.py`, which doesn't postpone annotations: before 4.2.6, FastMCP
+    # reads a postponed `str` annotation as the string `'str'` and appends a JSON-schema hint to the
+    # argument's description (https://github.com/PrefectHQ/fastmcp/issues/5318).
+    server.prompt(parameterized_prompt)
 
     @server.prompt()
     def annotated_text_prompt() -> list[Message]:
@@ -1780,20 +1782,8 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
                     name='parameterized_prompt',
                     description='A prompt template with parameters.',
                     arguments=[
-                        PromptArgument(
-                            name='name',
-                            # FastMCP generates this text and has reworded it across releases; pin only
-                            # that the argument's JSON schema is conveyed.
-                            description=IsStr(regex=r'.*\{"type":"string"\}.*'),
-                            required=True,
-                        ),
-                        PromptArgument(
-                            name='topic',
-                            # FastMCP generates this text and has reworded it across releases; pin only
-                            # that the argument's JSON schema is conveyed.
-                            description=IsStr(regex=r'.*\{"type":"string"\}.*'),
-                            required=True,
-                        ),
+                        PromptArgument(name='name', description='Who to greet.', required=True),
+                        PromptArgument(name='topic', description='What to talk about.', required=True),
                     ],
                     metadata={'fastmcp': {'tags': []}},
                 ),

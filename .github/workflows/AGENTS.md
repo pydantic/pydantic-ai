@@ -8,7 +8,7 @@ maintainer-voice standards review, driven by the repo's `AGENTS.md` and
 | Name | Where | Runs when |
 |------|-------|-----------|
 | `CI Review` | `pydantic-ai-pr-review.md` | when a user with write access or higher **approves** the PR's current head, on applying the **`final-review` label**, or on dispatch, once `CI` has passed on that head. Never in the merge queue. Z.AI Coding Plan engine, submits formal `REQUEST_CHANGES` for verified HIGH or CRITICAL findings, `COMMENT` for incomplete coverage without those findings, and `APPROVE` after complete coverage without them. Same-repo PRs only. |
-| `douwebot` | `bots.yml` | only on applying the **`douwebot` label** — the fork-capable path (`pull_request_target`). Claude Opus 5.5 reviews. A rejected Claude subscription window reruns the review with `opencode-go/deepseek-v4.1-flash` and its [Coding Plan fallback](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan). Deletes the label when it finishes. A trusted publisher posts structured findings as one formal `APPROVE`, `REQUEST_CHANGES`, or incomplete `COMMENT` review. |
+| `douwebot` | `bots.yml` | only when a `User` with `write` or `admin` permission applies the **`douwebot` label** to a same-repository PR. Claude Opus 5.5 reviews. A rejected Claude subscription window reruns the review with `opencode-go/deepseek-v4.1-flash` and its [Coding Plan fallback](#opencode-falls-back-from-opencode-go-to-the-glm-coding-plan). Deletes the label when it finishes. A trusted publisher posts structured findings as one formal `APPROVE`, `REQUEST_CHANGES`, or incomplete `COMMENT` review. |
 | `douwebot:review-agent-config` | `bots.yml` | one explicit review request for one PR head; the labeling sender must be a `User` with current `write` or `admin` permission. The label is not standing approval. |
 
 `douwebot` treats every finding as blocking unless its comment starts with `Optional:`. Repository-rule violations in `AGENTS.md` or `agent_docs/*.md` are blocking and cannot be marked `Optional:`. It returns `REQUEST_CHANGES` while any blocking finding remains outstanding, including unaddressed findings from earlier review rounds, without duplicating comments. It returns `APPROVE` after a complete review with no outstanding blocking findings; optional findings may remain. Incomplete coverage returns `INCOMPLETE`, which the publisher records as `COMMENT`. A host-verified closed PR or moved head needs no publication and ends successfully. A new review cannot clear douwebot findings already on a head, so a later request for that head skips the review and comments with a link to the review that left them; an approval's optional findings stop blocking once their threads are resolved; a head with a clean approval, an incomplete review or a failed run is reviewed again, an incomplete one to complete its coverage even when its findings already block the head. The reviewer assesses choices against issue guidance and repository standards; a missing issue link or separate human sign-off alone does not block review. Both review labels use the OpenCode fallback. It has read, grep and glob tools, but no live GitHub or Git commands. It uses the prefetched review context and returns `INCOMPLETE` if missing information prevents a complete review.
@@ -89,8 +89,8 @@ at when you want to know whether fork code can reach this workflow.
 under `workflow_run`, and the reviewer or labeler under an approval or label. It does
 exclude external contributors, who have `read`.
 But a collaborator with write access can open a PR from their own fork, and that PR
-passes `roles:` — so `roles:` alone would leave fork code reaching the checkout. Forks
-are reviewed on demand via the `douwebot` label path, which is built for untrusted code.
+passes `roles:` — so `roles:` alone would leave fork code reaching the checkout. No
+workflow reviews a fork PR.
 
 **gh-aw's own `workflow_run` guard is not a fork filter either.** It is emitted whether
 or not `roles:` is set, and asserts the *triggering run* belongs to this repository —
@@ -100,7 +100,7 @@ nothing more.
 
 All three matter because `workflow_run` puts the workflow in base-repository context
 with full access to repository secrets, and the agent job checks out contributor-authored
-code and runs workspace scripts over it. Weaken any one of them and that checkout starts
+code and runs default-branch scripts over it. Weaken any one of them and that checkout starts
 accepting code the remaining gates do not cover. gh-aw will not backstop you: its
 "Restore agent config folders from base branch" step is gated on gh-aw's *own* PR
 checkout succeeding, which never happens under `workflow_run`. Under an approval or
@@ -125,19 +125,85 @@ carries the prompt-body reference and a comment saying why. After changing it, c
 recompiled lock: `activation.needs` must list the job,
 and the job itself must **not** have `needs: activation`.
 
-# A PR that edits `bots.yml` cannot test its own change
+# Privileged pull request workflows run only on same-repository branches
 
-`bots.yml` triggers on `pull_request_target`, and GitHub runs that trigger's
-workflow file from the **base branch**, never from the PR head — that is what makes
-the trigger safe to give secrets to. So a PR that changes `bots.yml` sees the
-*current `main`* version of every job in it, and its own edit takes effect only
-after merge.
+No workflow here triggers on `pull_request_target`. GitHub blocks that event by default in public
+repositories from 2026-12-02 (#12961). Do not add it back.
 
-The practical consequence is that a `bots.yml` check can stay red on the very PR
-that fixes it, and re-pushing will not help. Reason about the change by reading the
-diff, and expect the first real execution to be on `main`. This is unlike
-`.github/workflows/ci.yml`, which runs on `pull_request` from the PR's own merge
-ref and therefore does test itself.
+A `pull_request` run for a fork PR holds no secrets and a read-only token. A `pull_request` job
+that needs either skips fork PRs with
+`github.event.pull_request.head.repo.full_name == github.repository`. To take a fork PR's change, a
+maintainer recreates it as a same-repository PR.
+A `workflow_run` job, such as `PR Review Gates` or `after-ci.yml`, still wakes on a fork PR's runs
+with secrets or a write token. It runs only default-branch code.
+
+A `pull_request` run uses the PR's own copy of the workflow file. Who can change that copy decides
+what a same-repository run may trust:
+
+- An author who can push `.github/workflows/` may change it: a user with write access, or an app
+  with the `workflows` permission, such as Dependabot. That author can already run any workflow
+  with the repository's secrets through a `push` trigger.
+- `pydanty[bot]` lacks the `workflows` permission, so it cannot change a workflow file.
+- `pydanty[bot]` can push `.github/scripts/`, `.github/actions/` and the root `scripts/`. So every
+  job that runs a script or a local action checks out the default branch, or fetches the script
+  from it.
+
+Give every `actions/checkout` step `ref: ${{ github.event.repository.default_branch }}`, except one
+that checks out the head as data. Without `ref:`, the checkout is the PR's merge commit. Never use
+`github.sha` as the default branch either: under `pull_request` it is the merge commit.
+
+A PR that changes a workflow and a script it runs therefore runs its own workflow with `main`'s
+script. Expect the script change's first real run to be on `main`.
+
+A run on a pull request event restores a cache from the PR's own `refs/pull/<number>/merge` scope
+before `main`'s, and the PR's own `CI` run can write to that scope. So a job that holds secrets or
+a write token restores no cache on such an event. `setup-douwebot-tools` restores its cache only
+when `github.ref` is `refs/heads/main`, and installs its pinned tools otherwise. Give `setup-uv`
+`enable-cache: false` in such a job: its default, `auto`, caches on `pull_request`.
+
+A PR into a maintenance branch runs that branch's copies. `v1` has none of these workflows, so its
+PRs get no labels, reviews or `.github` guard.
+
+GitHub does not start a `pull_request` run while the PR has a merge conflict. The labels,
+`PR Review Checks` and the `.github` guard report nothing until the conflict is resolved.
+
+## `trusted:ci-run` activates an app's pull request
+
+PR Bots' labelling jobs and `PR Review Checks` run on a same-repository PR whose author is a `User`
+with `write` or `admin` permission. Any other author gets them only after a `User` with write
+access applies `trusted:ci-run`. That includes an app such as `pydanty[bot]`, whose branches can
+carry outside text. The label stays valid across pushes; the check reads who applied it last.
+Both workflows run default-branch `publish_pr_review_checks.py` for this: `trusted` in PR Bots,
+`gate` in `PR Review Checks`. Keep them on that one check, so both trust the same users.
+
+A run that Dependabot starts gets Dependabot's secrets, not the Actions secrets these jobs use, so
+the labelling jobs and `PR Review Checks` skip it. After each Dependabot push, a maintainer removes
+and reapplies `trusted:ci-run`. Until then the head has no `PR Review Checks` status.
+
+The review and report labels check their own sender instead. `douwebot`,
+`douwebot:review-agent-config`, `trigger:docs-preview` and `trigger:ci-duration-report` each require
+the sender's `write` or `admin` permission. The triage role, below write, can apply labels.
+
+## A douwebot review of a PR that changes `bots.yml` uses that PR's `bots.yml`
+
+`PR Review Gates` accepts a douwebot receipt from any successful `pull_request` run of `bots.yml`
+on the head. Only an author who can push `.github/workflows/` can open a same-repository PR that
+changes `bots.yml`, so the gate trusts that author's reviewer. A receipt from a
+`pull_request_target` run stays valid: only `main`'s copy could start one, and `main` no longer
+triggers on that event.
+
+## `PR Guard` sweeps on a schedule
+
+`pr-guard.yml` closes non-maintainer PRs, fork PRs among them. That needs a write token, which a
+fork PR's `pull_request` run never gets. So the guard runs every 10 minutes from the default branch
+instead. `pr_guard_sweep.py` finds each open PR with an opened, reopened, ready-for-review or edited
+event since 5 minutes before the last successful sweep started. It runs `pr_guard.sh` once per PR,
+as the user behind the author's latest such event, or else the latest event. Every description edit
+counts, not only the latest. A bot that rewrites the description right after the author opens the PR
+therefore cannot earn the trusted-actor bypass for the opening. A failed sweep leaves the next sweep
+to read the same events again, at most 3 hours back. When no sweep succeeds for longer than that,
+the guard never judges the older events. A close lands up to one interval after its event, later
+when GitHub delays the schedule.
 
 # `Protect .github` keeps external changes out of this directory
 
@@ -147,8 +213,11 @@ outside the org is a supply-chain change rather than an ordinary code review —
 maintainer carries legitimate ones forward in their own PR (#7024 is the case that
 prompted the guard).
 
-**Its job, `.github Directory Guard`, is the merge gate for `.github/`.** It blocks only once the
-`main` ruleset lists it as a required status check; until then it is advisory.
+**`Gate: .github changes by a maintainer` is the merge gate for `.github/`.** `PR Review Gates`
+publishes that commit status from default-branch `review_gates.py`, with the same rule as this
+guard. It blocks only once the `main` ruleset lists it as a required status check; until then it is
+advisory. The guard job, `.github Directory Guard`, reports the same verdict early and posts the
+explanation, but the PR's own copy runs it.
 
 A required check must also report on every merge group, or the queue waits until the check times
 out. The guard therefore runs on `merge_group` and passes there without reading anything: each PR
@@ -180,24 +249,18 @@ security boundary, not `pr-guard.yml`'s courtesy gate.
 own. It is the only bot with a bypass: a blanket `*[bot]` glob would hand one to any bot
 installed later, and `pydanty[bot]` must not have one for the reason above.
 
-**Do not add a `paths:` filter to its trigger.** A `pull_request_target` filtered to
+**Do not add a `paths:` filter to its trigger.** A `pull_request` filtered to
 `.github/**` does not run at all on the PRs that don't touch it, and a required check
 that never runs stays *pending* — blocking every merge. The job runs on every PR and
 exits 0 when nothing protected changed. `edited` is in `types:` because it is the only
 event fired when a PR's **base branch** changes, and the verdict is a diff against that
 base — hence also the `state != open` early exit, since `edited` fires on closed PRs too.
 
-Two consequences of the trigger, both easy to get backwards:
-
-- On github.com `pull_request_target` runs in the context of the **default branch of the
-  base repository** ([docs](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target)),
-  *not* the PR's base branch. So `main`'s copy guards PRs targeting **every** branch,
-  `v1` included — a maintenance branch needs no copy of its own. It also means a PR that
-  changes the guard is judged by `main`'s copy, the same blind spot as `bots.yml` above.
-- Branches whose names look like SHAs [may not trigger `pull_request_target` at all](https://docs.github.com/en/actions/reference/workflows-and-actions/events-that-trigger-workflows#pull_request_target).
-  While the check is merely advisory such a PR shows no guard run and no failing check, so
-  it reads as clean. Marking the check **required** is what closes that: a check that never
-  ran stays pending and blocks the merge.
+The PR's own copy of the guard runs; see
+[Privileged pull request workflows run only on same-repository branches](#privileged-pull-request-workflows-run-only-on-same-repository-branches).
+A fork can edit its copy and make the guard pass; the `Gate:` status still judges it. A fork run's
+token is read-only, so the guard cannot post its explanation there. On a fork PR whose runs GitHub
+holds for approval, `PR Review Gates` does not wake, and the `Gate:` status stays pending.
 
 # PR metadata gates enforce the merge bar
 
@@ -207,10 +270,13 @@ workflow runs default-branch `review_gates.py` with permission to publish commit
 never executes contribution code with a write token. The workflows have distinct job names because
 GitHub matches required checks by job name, even across workflows and event types.
 
-The review status requires a clean douwebot approval for M/L/XL.
+`Gate: .github changes by a maintainer` fails a PR that changes a file under `.github/`, or renames
+one out of it, unless its author is a `User` with `write` or `admin` permission, or `dependabot[bot]`.
+It applies at every size. `Gate: clean douwebot approval` requires a clean douwebot approval for M/L/XL.
 The status fails until exactly one size label matches the shared PR Bots calculation; changing a label cannot
 lower the computed bar. PR Bots recalculates on open, push and PR edits, including base-branch changes.
-Size S remains a manual policy judgment. Merge groups receive success without reevaluating queue
+PR Bots labels only a trusted pull request; see
+[`trusted:ci-run`](#trustedci-run-activates-an-apps-pull-request). On size S the douwebot approval remains a manual policy judgment. Merge groups receive success without reevaluating queue
 members because the review requirements are enforced before admission.
 
 A clean douwebot approval is the latest non-dismissed completed verdict on the current head, with no inline or
@@ -225,11 +291,32 @@ A clean OpenCode fallback approval satisfies the same gate as a Claude approval.
 An `engine=opencode-zai` review from before the Coding Plan moved to `glm-5.4` names `glm-5.3-flash` in its attribution.
 The gate and the `prior-findings` job read both attributions; `EARLIER_REVIEW_ATTRIBUTIONS` in `publish_douwebot_review.py` lists the earlier ones.
 
+`Gate: review findings dispositioned` applies at every size and counts findings on every head. Each inline
+thread a review bot starts needs a reply from a `User`: the pull request's author or a user with write access.
+The reply's first line that starts with one of these forms answers the finding:
+
+- `Fixed in <sha>`: a commit of this pull request.
+- `Tracked in #<n>`: another issue or pull request in this repository. Without write access, the replier must cite
+  one opened at or after the finding.
+- `Declined: <reason>`: counts from a user with write access, and from the author on a douwebot `Optional:` finding.
+
+The `PR Review Gates` run that the status links to lists each unanswered thread, and why each reply in one of these
+forms does not count. Rewriting the pull request's history drops earlier commits from it, so post `Fixed in` again
+with the new commits.
+
+Resolving a thread does not answer it, except that a thread started before 2026-11-27 02:00 UTC needs no reply
+once resolved. `REVIEWER_LOGINS` in `review_gates.py` names the review bots, and receipts tell douwebot,
+`PR Review Checks` and `CI Review` apart on `github-actions[bot]`. On a thread from an unregistered bot, or a
+`github-actions[bot]` thread without one of those receipts, only a reply from a user with write access counts, and the
+`PR Review Gates` run still lists the thread as unregistered. Threads a person starts and
+review-body findings are not checked. `CI Review` findings do not wake the gate yet (#13971), so the status
+reflects them only from the next wake-up.
+
 `pr-review-gates-events.yml` observes PR opens, pushes, reopening, edits, label changes, reviews
 and inline-comment changes with a read-only token, including on forks. GitHub Actions has no
 review-thread trigger, so resolving an optional finding's thread updates the status on the next wake-up. Its completion wakes
-`PR Review Gates`, which also runs on PR Bots completion. The latter covers writes by `GITHUB_TOKEN`,
-which cannot trigger the observer. Do not add a `pull_request_target` trigger to `PR Review Gates`:
+`PR Review Gates`, which also runs on PR Bots and `PR Review Checks` completion, outside merge groups. These
+cover writes by `GITHUB_TOKEN`, which cannot trigger the observer. Do not add a `pull_request_target` trigger to `PR Review Gates`:
 GitHub blocks that event by default in public repositories (#12961). The publisher binds each
 wake-up to the unique open PR GitHub reports for its exact head SHA and repository. A review or
 inline-comment run reports the base repository as its head repository, even for a fork PR, so that
@@ -239,23 +326,23 @@ observers may need contributor approval.
 
 The `Gate: …` commit statuses carry the review verdict. The publisher job succeeds after publishing
 those statuses, including a failing verdict for an unmet requirement. The job fails on publisher errors.
-Publication is serialized per PR and marks the douwebot status pending before setup. API errors or
+Publication is serialized per PR and marks the `Gate:` statuses pending before setup. API errors or
 incomplete data fail closed. After the requirements are met, a new evaluation replaces the previous
 failure through GitHub's latest-per-context commit statuses. Rerun an existing current-head,
 default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add
 branch-selectable dispatch to this privileged workflow. Workflows and scripts remain owned in `.github/CODEOWNERS`.
 
-# `PR Review Checks` reviews every pull request head
+# `PR Review Checks` reviews every same-repository pull request head
 
-`pr-review-checks.yml` runs default-branch code on `pull_request_target` and publishes one
-`PR Review Checks` commit status on the PR head. The status carries the verdict, not a job
-conclusion: under `pull_request_target` the jobs' check runs attach to the default-branch commit.
+`pr-review-checks.yml` runs default-branch code on `pull_request` and publishes one
+`PR Review Checks` commit status on the PR head. A fork PR gets no review and no status. The
+status carries the verdict, not a job conclusion.
 Name no job `PR Review Checks`, because a check run with that name also matches the required context.
 The status blocks merge only while the `main` ruleset lists `PR Review Checks` as a required check.
 
 - `gate` reads the author's repository permission. An app, or an author without `write` or `admin`,
   gets a failing "Awaiting maintainer" status until a `User` with write access applies
-  `pr-review-checks:run`. The label stays valid across pushes; the gate checks who applied it last.
+  `trusted:ci-run`. The label stays valid across pushes; the gate checks who applied it last.
 - `detect` runs `pr_review_checks.py` on the head's `git diff`, read as data, and starts one review
   job per selected check. A check selects the files under its trigger paths, and can also select a
   file whose changed lines match its diff tokens. A check's joint paths select it without making it
@@ -275,7 +362,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   and the gathered PR context, so the model can trace callers. The job validates the model's answer
   against its schema. As in douwebot, the job unwraps a Markdown code fence that ends the answer, then
   validates the JSON object that ends the answer, so prose before the object passes; text after the
-  object or the fence still fails. The check's `max_steps` and
+  object or the fence still fails. A rejected answer reruns the review on the next link of its chain, from scratch;
+  on the last link it fails the review. The check's `max_steps` and
   `max_minutes` end a review as `INCOMPLETE`; the defaults are permissive starting values, to be
   tuned down from recorded runs. Token totals are recorded and never capped. With `LOGFIRE_TOKEN`
   set, OpenCode exports its own spans and logs over OTLP, and the runner exports one span per review
@@ -285,7 +373,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
   tokens, its input, output and cache-read tokens, and its duration. A validated answer adds the
   outcome, the number of findings, and how many findings the review dropped as outside its files or
   changed lines. A review that
-  raised has the outcome `FAILED`, the exception's class name and an error status. When the last
+  raised has the outcome `FAILED`, the exception's class name, such as `AnswerRejected` for a rejected answer, and an
+  error status. When the last
   run's process failed, the span adds the type, status and provider code of its stream's last
   `error` event, and whether the stream holds a `step_finish`. As each OpenCode run of the review
   ends, a run the chain moved past included, it exports a child
@@ -323,8 +412,8 @@ The status blocks merge only while the `main` ruleset lists `PR Review Checks` a
 - Drafts are reviewed like any other pull request. A merge group gets success without a review.
 
 To add a check, add a `SpecialistCheck` entry in `pr_review_checks.py` and its prompt
-fragment in `.github/pr-review-checks/prompts/`. The workflow needs no change. Like `bots.yml`, a
-PR cannot test its own change to this workflow or its scripts.
+fragment in `.github/pr-review-checks/prompts/`. The workflow needs no change. A PR runs its own
+copy of this workflow but the default branch's scripts, so it cannot test its own change to them.
 
 # `Category Classify` falls back to OpenCode on a Claude usage limit
 
@@ -384,9 +473,21 @@ A run moves to the next provider when OpenCode exited non-zero, the next account
   its last `error` event is a `provider.rate-limit`. The job log says that account rate-limited the run after it took
   steps, and names the account that restarts it.
 
-The next provider runs the whole run again from scratch, as its own `Attempt`. Each provider runs a run at most once,
-so a run restarts at most once. Go never restarts a run. A `provider.quota` after a step fails the job. The chain
-leaves out a Z.AI account without a key.
+`PR Review Checks` hands a review on in two more cases, which no other caller does:
+
+- An OpenCode Go link failed the run with `provider.transport`, `provider.internal` or `provider.invalid-output`, before
+  or after the run took steps. OpenCode 2.2.5 retries a failed step up to 10 times when `isRetryable` in
+  [`provider-error.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/ai/src/provider-error.ts) accepts
+  its error; see [`step.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/session/runner/step.ts)
+  and [`model-retry.ts`](https://github.com/anomalyco/opencode/blob/v2.2.5/packages/core/src/model-retry.ts). So such an
+  error in the stream either outlasted those retries or was one OpenCode does not retry, and another provider can still
+  serve the review. The job log says that model failed the run with that type, and names the link that restarts it.
+- A link other than the last served an answer the review rejects. The job log names the reason and the link that
+  restarts the review. The last link's rejected answer fails the review.
+
+The next provider runs the whole run again from scratch, as its own `Attempt`. Each provider runs a run at most once.
+Outside `PR Review Checks`, a run therefore restarts at most once, and Go never restarts one. A `provider.quota` after a
+step fails the job. The chain leaves out a Z.AI account without a key.
 
 OpenCode 2.2.5 types any HTTP 402, and a Z.AI HTTP 429 whose message names a plan, quota or balance limit,
 `provider.quota`. Those 429s include the 5-hour, weekly and monthly windows (`1308`, `1310`, `1316` to `1321`), an
@@ -397,8 +498,8 @@ request-rate limits and `1305` overload; see `classify` in
 limit that outlasts those retries hands the run to the other account too, before or after the run took steps.
 
 Every other failure fails the job, including a rejected key, a provider outage, a time-budget stop, a timeout and an
-invalid answer. A run the other account also refuses or rate-limits fails the job. A fallback run, a restart
-included, gets only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only,
+invalid answer that no case above hands on. A run the other account also refuses or rate-limits fails the job. A
+fallback run, a restart included, gets only the rest of the time budget. OpenCode 2.2.5 reads the Coding Plan key from `ZHIPU_API_KEY` only,
 so each Z.AI run sets that variable to its account's key. Each run's config allows only its provider and pins the `title`,
 `compaction` and `summary` agents to its model. Its environment holds no provider key but that account's. The job log names the
 model and the plan that served the run. When a run's process fails, the job log names that run's model, its plan, and the
@@ -415,7 +516,7 @@ and, for a Go limit, names the Go workspace. When douwebot, `PR Review Checks` o
 stream or answer, the job log names the reason: a fixed message from `final_text` in
 `.github/scripts/douwebot_opencode_result.py`, the sorted validation error types, or the exception's class name. It
 never prints model text, because the answer can hold a private report. A Z.AI run sends Z.AI the same content a Go
-run sends Go, fork pull request content included. Start any new CI OpenCode run through `run_with_fallback`.
+run sends Go. Start any new CI OpenCode run through `run_with_fallback`.
 
 With `LOGFIRE_TOKEN` set, `run_with_fallback` makes each run export OpenCode's spans and logs to Logfire over OTLP.
 douwebot's OpenCode fallback, `Category Classify`'s OpenCode fallback and `PR Review Checks` set the token. Each
@@ -423,7 +524,8 @@ run's resource attributes name the repository, `github.run_id`, `github.run_atte
 caller's attributes. They end with the run's plan as `opencode_fallback.plan`, and its place in the chain, counting
 from 1, as `opencode_fallback.attempt`. OpenCode's own spans carry no model or plan attribute, and both Coding Plan
 accounts call the same endpoint, so only `opencode_fallback.plan` tells their runs apart. A restart is its own
-attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` when the review's chain restarted a run.
+attempt. The `PR Review Checks` review span adds `pr_review_checks.restarted` when the review's chain moved past a run
+that took a step or served a rejected answer.
 
 As each run ends, `run_with_fallback` also exports an `OpenCode run` span for it, under the service
 `opencode-fallback`, so a later run's failure cannot drop it. Each span carries its run's resource attributes above,
@@ -431,7 +533,8 @@ As each run ends, `run_with_fallback` also exports an `OpenCode run` span for it
 provider that run different models, such as two OpenCode Go links of a configured chain. Each span also counts the
 `step_finish` events in the run's stream and the tokens they report,
 every kind summed as in `pr_review_checks.tokens`, as `opencode_fallback.steps` and `opencode_fallback.tokens`, a failed
-or handed-over run's included. A run that did not serve has an error status. When the run's process failed, the span
+or handed-over run's included. A run that did not serve has an error status. A run whose answer `PR Review Checks`
+rejected before it handed the review on adds `opencode_fallback.rejected`. When the run's process failed, the span
 adds the error type, status, provider code, Go usage window and retry-after the job log names, as
 `opencode_fallback.error_type`, `opencode_fallback.error_status`, `opencode_fallback.error_code`,
 `opencode_fallback.limit_name` and `opencode_fallback.retry_after_ms`, and whether the stream holds a `step_finish`, as
@@ -475,12 +578,12 @@ outside this table makes the whole value invalid:
 
 The review step passes each secret by a fixed `secrets.<NAME>` expression, never by `secrets[...]`. The runner hands
 an entry's key only to the provider the table pairs it with. So the variable cannot send a key to another provider,
-and cannot reach any other secret. Nothing in a pull request reaches the variable: the workflow runs default-branch
-code on `pull_request_target`, and only users with write access set repository variables. To add a provider or a
-secret, open a pull request that adds its `Provider` to `CHAIN_LINKS`, its row to the table above, and its secret to
-the review step's `env`.
+and cannot reach any other secret. Nothing in a pull request reaches the variable: the review step runs default-branch
+code, and only users with write access set repository variables. To add a provider or a secret, open a pull request
+that adds its `Provider` to `CHAIN_LINKS`, its row to the table above, and its secret to the review step's `env`.
 
-An entry changes only its link's model. Each link keeps its provider's hand-over errors and restart rule from above:
+An entry changes only its link's model. Each link keeps its provider's hand-over errors and restart rules from above,
+the `PR Review Checks` cases included:
 
 - A link whose secret is empty is left out.
 - Consecutive entries on one model rotate by the run number plus the check's place in the matrix, as the two Coding
@@ -492,8 +595,8 @@ An entry changes only its link's model. Each link keeps its provider's hand-over
   Zen model, such as `opencode/gemini-3.1-pro`, fails with `provider.no-route` and fails the review. Zen's free usage
   is limited. Zen reports a spent allowance as `FreeUsageLimitError`, which OpenCode 2.2.5 types `provider.free-limit`.
   Zen hands a run on after `provider.free-limit`, `provider.quota` or `provider.rate-limit` before the run's first
-  step, and never restarts a run.
-- A Zen run sends Zen the same content a Go run sends Go, fork pull request content included. Zen offers free models
+  step, and restarts a run only after the review rejects its answer.
+- A Zen run sends Zen the same content a Go run sends Go. Zen offers free models
   for a limited time. Before you add one, check its data retention on
   [Zen's model list](https://opencode.ai/v2/docs/console/models/).
 
