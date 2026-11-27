@@ -376,10 +376,14 @@ def _parse_args(parser: argparse.ArgumentParser) -> argparse.Namespace:
         argv, literal = argv[:end], argv[end + 1 :]
     args = parser.parse_args(argv)
     args.literal_prompt = False
+    updating = args.command == 'update'
     while args.command == 'update':
         # `pax update` is `pax --update`; options after it parse as they would before it.
         parser.parse_args(args.arguments, namespace=args)
         args.update = True
+    if updating and args.command is not None and args.command not in _SUBCOMMANDS:
+        # `pax update the docs` reads as a prompt, but `update` is the subcommand.
+        parser.error(f'`{parser.prog} update` takes no prompt; to send it as a prompt, use -p or put it after --')
     if args.command in _SUBCOMMANDS:
         if literal is not None:
             args.arguments = [*args.arguments, '--', *literal]
