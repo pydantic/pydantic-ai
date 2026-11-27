@@ -105,6 +105,27 @@ memory = Memory(FileMemoryStore('.agent-memory'), inject_memory=False)
 
 With `injection_errors='ignore'` (the default), a store failure skips automatic injection and emits content-safe telemetry. Spans record the backend type and a hash of the resolved scope; successful injection records counts and whether a snapshot was appended (`memory.appended`), and failures record the exception type. They do not record memory content. Set `injection_errors='raise'` when a run must fail rather than proceed without injected memory. Namespace and store resolver failures always propagate. This setting controls automatic injection only. In the tools, a path that resolves outside the store asks the model to retry, and a workspace failure during `write_memory` or `delete_memory` is returned as a failed tool call unless the workspace is unavailable. The failure message names only the memory file, so backend paths and the namespace stay out of the model's context. A write or delete that keeps conflicting with concurrent changes asks the model to retry. Any other store error ends the run.
 
+## Changing your instructions between runs
+
+`Memory` adds its own instructions after the agent's. On some models, that weakens an instruction you change between runs of a conversation, such as a new language or a tightened policy: the model keeps following the earlier version. Give that instruction a `name` and `on_change='append'`, so the change is sent after the latest message instead of rewriting the instructions at the start of the request:
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai_harness import Memory
+from pydantic_ai_harness.memory import InMemoryMemoryStore
+
+settings = {'language': 'English'}
+
+agent = Agent('anthropic:claude-opus-5-5', capabilities=[Memory(InMemoryMemoryStore())], defer_model_check=True)
+
+
+@agent.instructions(name='language', on_change='append')
+def language() -> str:
+    return f'Reply only in {settings["language"]}.'
+```
+
+See [appending instruction changes](https://pydantic.dev/docs/ai/core-concepts/agent/#appending-instruction-changes) for how appended changes are sent.
+
 ## Persistence and concurrency
 
 Writes and deletes are compare-and-swap: a mutation based on stale content fails with a conflict instead of overwriting a concurrent edit. A replayed tool call is not applied twice, and reusing its operation identifier with different arguments raises `MemoryOperationConflictError`. Custom stores must make both checks atomic inside `write` and `delete` rather than composing separate read and write calls.
