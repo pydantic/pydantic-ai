@@ -2732,14 +2732,12 @@
     },
     "AbstractCapability.after_run": {
       "engines": [
-        "hatchet",
         "temporal"
       ],
       "kinds": [
         "override"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/hatchet/_durability.py::_TerminalEventPublisher.after_run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_durability.py::_TerminalEventPublisher.after_run"
       ]
     },

@@ -118,7 +118,7 @@ async for event in durability.stream_agent_events(ref.workflow_run_id):
     print(event)
 ```
 
-Model events are published from the model request task that produces them, so tokens stream through while the model responds. A replayed durable task publishes its events again, and the iterator yields each one once. If the run fails, including by its `timeout=`, the iterator ends early and its `error` holds the name of the exception's class, but not its message, which can carry a provider's error body.
+Model events are published from the model request task that produces them, so tokens stream through while the model responds. A replayed durable task publishes its events again, and the iterator yields each one once. A model request task that Hatchet retries publishes its events again under new IDs, so the iterator yields the failed attempt's partial response before the retry's. If the run fails, including by its `timeout=`, the iterator ends early and its `error` holds the name of the exception's class, but not its message, which can carry a provider's error body.
 
 !!! note "A cancelled durable task publishes no terminal event"
     Hatchet stops a durable task it evicts the same way as one that's cancelled, and an evicted task's run continues once it's restored, so neither publishes a terminal event and the iterator keeps waiting. To notice a cancelled run, check the workflow run's status alongside the stream, e.g. with `hatchet.runs.aio_get_status(workflow_run_id)`.

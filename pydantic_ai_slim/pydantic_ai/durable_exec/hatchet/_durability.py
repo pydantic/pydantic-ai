@@ -553,8 +553,8 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
 class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
     """Publishes the run's terminal event from the `outermost` tier, once every capability has shaped the result.
 
-    `HatchetDurability` is `innermost`, and `after_run` runs innermost-first, so its own `after_run` would publish
-    a result other capabilities still transform.
+    `HatchetDurability` is `innermost`, so publishing from its own hooks would see a result other capabilities still
+    transform, or a run they still fail.
     """
 
     def __init__(self, durability: HatchetDurability[AgentDepsT]) -> None:
@@ -563,20 +563,17 @@ class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
     def get_ordering(self) -> CapabilityOrdering:
         return CapabilityOrdering(position='outermost')
 
-    async def after_run(self, ctx: RunContext[AgentDepsT], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
-        await self._durability._publish_terminal_event(ctx, result)  # pyright: ignore[reportPrivateUsage]
-        return result
-
     async def wrap_run(self, ctx: RunContext[AgentDepsT], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        """End subscribers' iteration when the run fails, as no result event will: a topic outlives its runs.
+        """Publish the run's result once every `after_run` has returned, or end subscribers' iteration if it fails.
 
         Wrapping the run sees a failure from any capability's hook, including an `after_run` that raises, which
-        `on_run_error` doesn't. A run's own cancellation, by its `timeout=` or `RunContext.cancel()`, reaches it as
+        `on_run_error` doesn't, so a run is never published as both a success and a failure. Subscribers need the
+        failure too, as no result event will come: a topic outlives its runs. A run's own cancellation, by its `timeout=` or `RunContext.cancel()`, reaches it as
         a `CancelledError` and ends the run with `RunTimedOut` or `RunCancelled`, so it's published as that. Hatchet
         cancelling or evicting the durable task isn't the run's own, and publishes nothing.
         """
         try:
-            return await handler()
+            result = await handler()
         except Exception as error:
             await self._durability._publish_terminal_error(ctx, type(error).__name__)  # pyright: ignore[reportPrivateUsage]
             raise
@@ -588,3 +585,5 @@ class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
                 with anyio.CancelScope(shield=True):
                     await self._durability._publish_terminal_error(ctx, error_name)  # pyright: ignore[reportPrivateUsage]
             raise
+        await self._durability._publish_terminal_event(ctx, result)  # pyright: ignore[reportPrivateUsage]
+        return result
