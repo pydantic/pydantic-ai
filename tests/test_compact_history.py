@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import copy
 from collections.abc import AsyncIterable
+from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -55,6 +56,13 @@ with try_import() as logfire_imports_successful:
     from logfire.testing import CaptureLogfire
 
 COMPACTION_USAGE = RequestUsage(input_tokens=1000, output_tokens=50)
+
+
+def warns_without_a_hook(no_hook: bool) -> AbstractContextManager[object]:
+    """Expect the warning a compaction request no capability can serve gets, when the agent has no `compact_history` hook."""
+    if no_hook:
+        return pytest.warns(UserWarning, match='no capability of this agent has a `compact_history` hook')
+    return nullcontext()
 
 
 def not_sent(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
@@ -267,27 +275,45 @@ class CancelStart(AbstractCapability[Any]):
         event.cancel()
 
 
-@pytest.mark.parametrize('capability', [Decline(), CancelStart()], ids=['declined', 'cancelled'])
-async def test_nothing_to_compact_returns_the_history_unchanged(capability: AbstractCapability[Any]):
-    """When no capability compacts, the history comes back as it was given, with no compactions."""
+@pytest.mark.parametrize(
+    'capabilities',
+    [[Decline()], [CancelStart(), Summarize()], []],
+    ids=['declined', 'cancelled', 'no-hook'],
+)
+async def test_nothing_to_compact_returns_the_history_unchanged(capabilities: list[AbstractCapability[Any]]):
+    """When no capability compacts, the history comes back as it was given, with no compactions.
+
+    A hook can decline, or a listener cancel the compaction's start. An agent with no `compact_history` hook at all
+    can't compact, so no compaction starts and the run warns that the request was dropped. Either way, the run
+    still ends after its compaction step, and no model request is sent.
+    """
     lifecycle = Lifecycle()
-    agent = Agent(FunctionModel(not_sent), instructions='Be brief.', capabilities=[lifecycle, capability])
+    agent = Agent(FunctionModel(not_sent), instructions='Be brief.', capabilities=[lifecycle, *capabilities])
     given = history()
 
-    result = await agent.compact_history(given)
+    with warns_without_a_hook(not capabilities):
+        result = await agent.compact_history(given)
 
     assert result.all_messages() == given
     assert result.compactions == []
     assert result.new_messages() == []
     assert result.usage.requests == 0
     assert 'after_run' in lifecycle.calls
+    assert 'after_model_request' not in lifecycle.calls
+    if capabilities:
+        assert lifecycle.calls.count('CompactionStartEvent') == 1
+    else:
+        # Nothing could serve the request, so no compaction starts.
+        assert 'CompactionStartEvent' not in lifecycle.calls
 
 
 async def test_a_history_ending_in_a_request_keeps_it():
     """A request the history ends with is the one the compaction keeps, and it stays when nothing is compacted."""
     given = [*history(), ModelRequest(parts=[UserPromptPart('Which database?')])]
 
-    unchanged = await Agent(FunctionModel(not_sent)).compact_history(given)
+    with warns_without_a_hook(True):
+        unchanged = await Agent(FunctionModel(not_sent)).compact_history(given)
+    assert unchanged.compactions == []
     assert unchanged.all_messages()[:-1] == given[:-1]
     # Like any run continuing from the request a history ends with, it stamps that request with its IDs.
     last = unchanged.all_messages()[-1]
@@ -423,7 +449,8 @@ async def test_a_changed_appending_system_prompt_isnt_added_to_the_history(compa
 
     given = (await agent.run('Hello')).all_messages()
     state['plan'] = 'two'
-    result = await agent.compact_history(given)
+    with warns_without_a_hook(not compacts):
+        result = await agent.compact_history(given)
 
     if compacts:
         assert shapes(result.all_messages()) == snapshot(
@@ -476,7 +503,8 @@ async def test_a_message_a_hook_enqueues_is_kept_and_the_added_request_isnt(comp
     agent = Agent(FunctionModel(not_sent), capabilities=capabilities)
     given = history()
 
-    result = await agent.compact_history(given)
+    with warns_without_a_hook(not compacts):
+        result = await agent.compact_history(given)
 
     remembered = result.all_messages()[-1]
     assert isinstance(remembered, ModelRequest)
