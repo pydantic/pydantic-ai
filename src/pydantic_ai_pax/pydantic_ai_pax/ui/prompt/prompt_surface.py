@@ -124,10 +124,16 @@ class PromptSurface(io.StringIO):
         """
         self._transcript_rows = 0
         """How many of the frame's top rows show the transcript."""
+        self._joins: tuple[bool, ...] = ()
+        """Which of the frame's transcript rows wrap on from the row above, for a selection.
+
+        Read when the frame paints, since output before the next paint can change the rows.
+        Pinned rows never wrap on, and neither does a row `SCROLLED_HINT` covers.
+        """
         self._hint_on_transcript = False
         """Whether `SCROLLED_HINT` covers the last transcript row, as when no editor rule is pinned."""
         self._select_pinned = False
-        """Whether a drag can also highlight and copy pinned rows, not only the transcript."""
+        """Whether a drag or multi-click can also highlight and copy pinned rows, not only the transcript."""
         self._paint_scheduled = False
         self._paint_delayed = False
         """A paint waits for the frame interval to end; see `changed`."""
@@ -257,12 +263,13 @@ class PromptSurface(io.StringIO):
         self._paint_soon()
 
     def transcript_key(self, key: str, data: str = '') -> str | None:
-        """Page, wheel, drag-select, or click a URL for one of `TRANSCRIPT_KEYS`; return the text a drag copied.
+        """Page, wheel, select, or click a URL for one of `TRANSCRIPT_KEYS`; return the text a selection copied.
 
         Reporting the wheel stops most terminals from selecting text themselves, so a left-button
-        drag highlights cells here and its release copies them to the clipboard. It also stops them
-        opening links on Cmd/Ctrl+click, and mouse reports cannot say Cmd was held, so a click
-        without a drag on a status row link, or on a URL the transcript shows as text, opens it here.
+        drag, double-click, or triple-click highlights cells here and its release copies them to the
+        clipboard. It also stops them opening links on Cmd/Ctrl+click, and mouse reports cannot say
+        Cmd was held, so a click without a drag on a status row link, or on a URL the transcript shows
+        as text, opens it here; the second click of a double-click selects instead.
         """
         if key != 'mouse':
             self.scroll(self.page if key == 'pageup' else -self.page)
@@ -275,9 +282,11 @@ class PromptSurface(io.StringIO):
             return None
         with self._lock:
             clicked = report.released and report.button == LEFT and self.selection.held and self.selection.head is None
-            if self.selection.feed(report) and self._frame is not None:
+            if self.selection.feed(report, now=self.clock()) and self._frame is not None:
                 text = self.selection.text(
-                    self._frame, rows=self._frame.height if self._select_pinned else self._transcript_rows
+                    self._frame,
+                    rows=self._frame.height if self._select_pinned else self._transcript_rows,
+                    joins=self._joins,
                 )
                 if text.strip():
                     copy_text(text, output=self.output)
@@ -342,7 +351,7 @@ class PromptSurface(io.StringIO):
     def paint(self, rows: tuple[str, ...], *, select_pinned: bool = False) -> None:
         """Pin `rows` under the transcript and enable the editor's input modes.
 
-        `select_pinned` lets a drag highlight and copy the pinned rows too. The default excludes
+        `select_pinned` lets a drag or multi-click highlight and copy the pinned rows too. The default excludes
         editor and status rows from selection.
 
         The editor also repaints on a timer to pick up status changes, so a frame identical to the
@@ -393,7 +402,10 @@ class PromptSurface(io.StringIO):
             paint_row(frame.region(Rect(0, bottom + index, width, 1)), y=0, row=row, links=links)
         # A URL the hint covers part of is not opened.
         self._hint_on_transcript = self.view.anchor is not None and _show_scrolled_hint(frame, top=bottom)
-        self.selection.highlight(frame, rows=height if self._select_pinned else bottom, previous=self._frame)
+        self._joins = self.view.joins()[: bottom - self._hint_on_transcript]
+        self.selection.highlight(
+            frame, rows=height if self._select_pinned else bottom, joins=self._joins, previous=self._frame
+        )
         parts.append(render_diff(self._previous, frame))
         self._previous = self._frame = frame
         self._links = links

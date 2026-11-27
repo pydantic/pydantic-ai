@@ -1,0 +1,246 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "931"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice:
+            allowed_tools:
+              mode: any
+              tools:
+              - final_result
+              - get_weather
+        store: false
+        tools:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          type: function
+        - description: Get the current time in a timezone.
+          name: get_time
+          parameters:
+            additionalProperties: false
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+          type: function
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Get weather for Paris and summarize
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=1627
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 225
+          total_input_tokens: 153
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 153
+          total_cached_tokens: 0
+          total_output_tokens: 16
+          total_tool_use_tokens: 0
+          total_thought_tokens: 56
+          initial_input_tokens: 59
+        created: 2026-11-06T02:05:06Z
+        updated: 2026-11-06T02:05:06Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            ErACCq0CAWkUfRMg8om8t2T/HyKYSMV8ZA08PKzlah+zGdfKfh67FTFWnejASCoae8BPPEvGPVvvfpwCK2n8ZUgBfuvp+u/D2Uzq0DdNrv+fJIcug/4rkRdAbWJdYKiki4XBQuAbGTCaJx/1gaGfRT7VGcC8R14A75/nyPOmy9Py2L+wq/txigU3vtfCIYGbL69ARsYlXFQlUhbHee3igViMXicOFyr8Spme7oZz8/kTBy0dHB/XBvgmOLuK7/pubW2usvEyo0Hzg3cEpdMYn2cJEQW8Wwg/sYGmP3GNRz0c4OAhibN1PFz0cVuEE3av8ugN150Lvj2F45xnbdBqC+slWi4OdyrxP7gXFCpWf67x2I6EAUKWEasn+FFX3UB6jw+Toqmtm8JjvKVuX9kKx/ClZQ==
+          type: thought
+        - id: call_1279800054306993022
+          type: function_call
+          name: get_weather
+          arguments:
+            city: Paris
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:05:06.525027+00:00
+- request:
+    method: POST
+    uri: https://generativelanguage.googleapis.com/v1beta/interactions
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1642"
+      content-type:
+      - application/json
+      host:
+      - generativelanguage.googleapis.com
+    body:
+      type: json
+      content:
+        model: gemini-3.8-flash
+        generation_config:
+          tool_choice:
+            allowed_tools:
+              mode: any
+              tools:
+              - final_result
+              - get_weather
+        store: false
+        tools:
+        - description: Get the current weather for a city.
+          name: get_weather
+          parameters:
+            additionalProperties: false
+            properties:
+              city:
+                type: string
+            required:
+            - city
+            type: object
+          type: function
+        - description: Get the current time in a timezone.
+          name: get_time
+          parameters:
+            additionalProperties: false
+            properties:
+              timezone:
+                type: string
+            required:
+            - timezone
+            type: object
+          type: function
+        - description: The final response which ends this conversation
+          name: final_result
+          parameters:
+            properties:
+              city:
+                type: string
+              summary:
+                type: string
+            required:
+            - city
+            - summary
+            type: object
+          type: function
+        input:
+        - type: user_input
+          content:
+          - type: text
+            text: Get weather for Paris and summarize
+        - signature: >-
+            ErACCq0CAWkUfRMg8om8t2T/HyKYSMV8ZA08PKzlah+zGdfKfh67FTFWnejASCoae8BPPEvGPVvvfpwCK2n8ZUgBfuvp+u/D2Uzq0DdNrv+fJIcug/4rkRdAbWJdYKiki4XBQuAbGTCaJx/1gaGfRT7VGcC8R14A75/nyPOmy9Py2L+wq/txigU3vtfCIYGbL69ARsYlXFQlUhbHee3igViMXicOFyr8Spme7oZz8/kTBy0dHB/XBvgmOLuK7/pubW2usvEyo0Hzg3cEpdMYn2cJEQW8Wwg/sYGmP3GNRz0c4OAhibN1PFz0cVuEE3av8ugN150Lvj2F45xnbdBqC+slWi4OdyrxP7gXFCpWf67x2I6EAUKWEasn+FFX3UB6jw+Toqmtm8JjvKVuX9kKx/ClZQ==
+          type: thought
+        - id: call_1279800054306993022
+          name: get_weather
+          type: function_call
+          arguments:
+            city: Paris
+        - type: function_result
+          name: get_weather
+          call_id: call_1279800054306993022
+          is_error: false
+          result:
+          - type: text
+            text: Sunny, 22C in Paris
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json
+      server-timing:
+      - gfet4t7; dur=2383
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        status: requires_action
+        usage:
+          total_tokens: 347
+          total_input_tokens: 233
+          input_tokens_by_modality:
+          - modality: text
+            tokens: 233
+          total_cached_tokens: 0
+          total_output_tokens: 37
+          total_tool_use_tokens: 0
+          total_thought_tokens: 77
+          initial_input_tokens: 142
+        created: 2026-11-06T02:05:08Z
+        updated: 2026-11-06T02:05:08Z
+        service_tier: standard
+        steps:
+        - signature: >-
+            EoIDCv8CAWkUfROGAPvI2QPulwf5QkGyHcep2UPsb1eVGaKPxUxDuQn8Iyxuz63mpoKTIF2VuJChE8/frGImSHgMNXrPPvjWs+y7fonkGiMm3chLo+xy7EV8HhcOC+5hAN5BrVYG9Wkare/WOZgXKyAMLb4/ZNwY36O0Gu3Z1IGInfTHNJgWIwHZuriMhnY63axufAUML3GjDsoNLi2EgzfHiDk+Wm0C6nEXXPnT9Gu5ww4rbtfUaHb8Htqi+guB20Nv9OmN8sl5tdtbHMRtsQYGd4rQreZ9S4hl9YPxJyzgTndMz9k+o5dzTxWeWPfiEVOy/AEMuGQ9u7KqJ8oPLHFpH5BFvd6LC0LwIQt9/KTvw14PUo7xZmMw2Umywgadl2eCnS2NWxYcnO8A21PoK/xGPNrmcT6/M5e9NYt7WnIMw211VmGqgunugGfkneoTJFBGWgyYLlj+gUNPAxY3t9yKc1QtDD1aUf7SJIT5B9Ed/hUDxZ0ZbgeFEfr99+gRPvdv+cQ=
+          type: thought
+        - id: call_1976890002877261642
+          type: function_call
+          name: final_result
+          arguments:
+            city: Paris
+            summary: The weather in Paris is sunny with a temperature of 22°C.
+        object: interaction
+        model: gemini-3.8-flash
+  recorded_at: 2026-11-06T02:05:08.947101+00:00

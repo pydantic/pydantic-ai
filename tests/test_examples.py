@@ -16,7 +16,7 @@ from contextlib import asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import timedelta
 from importlib.util import find_spec
-from inspect import FrameInfo, unwrap
+from inspect import FrameInfo, currentframe, unwrap
 from pathlib import Path
 from textwrap import indent
 from typing import Any, ClassVar
@@ -30,6 +30,7 @@ from genai_prices import UpdatePrices
 from genai_prices.data_snapshot import get_snapshot
 from pytest_examples import CodeExample, EvalExample, find_examples
 from pytest_examples.config import ExamplesConfig as BaseExamplesConfig
+from pytest_examples.run_code import Arg, MockPrintFunction, PrintStatement, parent_frame_id
 from pytest_mock import MockerFixture
 
 from pydantic_ai import (
@@ -613,6 +614,7 @@ def test_docs_examples(
     mocker.patch('pydantic_ai.images.infer_image_generation_model', side_effect=mock_infer_image_generation_model)
     mocker.patch('pydantic_ai._utils.group_by_temporal', side_effect=mock_group_by_temporal)
     mocker.patch.object(BatchModelRequests, '__post_init__', fast_batching)
+    mocker.patch.object(MockPrintFunction, '__call__', mock_print)
     mocker.patch('pydantic_evals.reporting.render_numbers._render_duration', side_effect=mock_render_duration)
 
     mocker.patch('httpx.Client.get', side_effect=http_request)
@@ -817,6 +819,22 @@ def mock_render_duration(seconds: float, force_signed: bool) -> str:
 
 def custom_include_print(path: Path, frame: FrameInfo, args: Sequence[Any]) -> bool:
     return path.samefile(frame.filename) or frame.filename.endswith('test_examples.py')
+
+
+# `MockPrintFunction.__call__` finds its caller with `inspect.stack()`, which scans `sys.modules` on every print for
+# each frame whose file belongs to no module: https://github.com/pydantic/pytest-examples/issues/102. This replacement
+# finds the caller by walking `f_back` and keeps upstream's private filter and line lookup, hence the
+# `reportPrivateUsage` ignores.
+def mock_print(self: MockPrintFunction, *args: Any, sep: str = ' ', **kwargs: Any) -> None:
+    caller = currentframe()
+    for _ in range(parent_frame_id):
+        assert caller is not None
+        caller = caller.f_back
+    assert caller is not None
+    frame = FrameInfo(caller, caller.f_code.co_filename, caller.f_lineno, caller.f_code.co_name, None, None)
+    if self._include_file(frame, args):  # pyright: ignore[reportPrivateUsage]
+        line = self._find_line_number(frame)  # pyright: ignore[reportPrivateUsage]
+        self.statements.append(PrintStatement(line, sep, [Arg(arg) for arg in args]))
 
 
 def http_request(url: str, **kwargs: Any) -> httpx.Response:
@@ -1210,6 +1228,7 @@ text_responses: dict[str, str | ToolCallPart | Sequence[ToolCallPart]] = {
     'Remember that I live in Mexico City': "Got it! I've recorded that you live in Mexico City. I'll remember this for future reference.",
     'Where do I live?': 'You live in Mexico City.',
     'Tell me about the pydantic/pydantic-ai repo.': 'The pydantic/pydantic-ai repo is a Python agent framework for building Generative AI applications.',
+    'Use Google Maps to find the address of the Eiffel Tower.': 'The Eiffel Tower is at Av. Gustave Eiffel, 75007 Paris, France.',
     'What do I have on my calendar today?': "You're going to spend all day playing with Pydantic AI.",
     'Write a long story about a cat': 'Once upon a time, there was a curious cat named Whiskers who loved to explore the world around him...',
     'What is the first sentence on https://ai.pydantic.dev?': 'Pydantic AI is a Python agent framework designed to make it less painful to build production grade applications with Generative AI.',

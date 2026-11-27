@@ -290,6 +290,50 @@ diverge from the recorded workflow. Turns that run as activities keep it (see [R
 activities](#remote-turns-as-activities)). The memory and suspension caps still apply. Put
 time-bounded work behind a Temporal activity.
 
+## Submitting the final output
+
+When the code has computed the final output, such as an object built from tool results with long IDs in it, returning it means the model has to copy it into its output on another turn, at the cost of a model request and the risk of a mistyped ID. Pass `allow_final_output=True` to let the code submit it directly:
+
+```python
+from pydantic import BaseModel
+
+from pydantic_ai import Agent
+from pydantic_ai_harness import CodeMode
+
+
+class Invoice(BaseModel):
+    order_id: str
+    customer_id: str
+    total_cents: int
+
+
+agent = Agent('anthropic:claude-sonnet-5-5', output_type=Invoice, capabilities=[CodeMode(allow_final_output=True)])
+
+
+@agent.tool_plain
+def get_order(order_id: str) -> dict:
+    """Look up an order."""
+    return {'id': order_id, 'customer': 'cus_Q8fZ3kLmW2', 'lines': [1250, 4999]}
+
+
+result = agent.run_sync('Invoice order ord_8Kq2Zp.')
+print(result.output)
+#> order_id='ord_8Kq2Zp' customer_id='cus_Q8fZ3kLmW2' total_cents=6249
+```
+
+The sandbox gets one function per output type, named and typed like the outputs in [`RunContext.output_tools`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.output_tools), whatever the [output mode](https://ai.pydantic.dev/output/#output-modes). Here that's `final_result`, so the model can write:
+
+```python
+order = await get_order(order_id='ord_8Kq2Zp')
+final_result(order_id=order['id'], customer_id=order['customer'], total_cents=sum(order['lines']))
+```
+
+With a union output type, there's one function per member, so the code picks the type it means by calling its function. On a fresh REPL's first snippet, the sandbox's type checker checks the arguments against the function's signature before the code runs. Either way, they then go through [`RunContext.submit_output`](https://ai.pydantic.dev/api/tools/#pydantic_ai.tools.RunContext.submit_output), which validates and processes them exactly like output from the model, so the run still only ends on output that matches `output_type`.
+
+Calling an output function stops the code there. If the output is accepted, `run_code` returns as usual with what the code printed before it, and the run ends without another model request. If it's rejected, `run_code` is answered with the validation errors, the rejection uses up one of the agent's output retries, and the REPL keeps the variables the code defined, so the model can fix the value and call the function again.
+
+If the same response has other tool calls, the agent's [`end_strategy`](https://ai.pydantic.dev/api/agent/#pydantic_ai.agent.Agent.end_strategy) decides whether they still run, as for a parallel output tool call. An output function whose name clashes with a sandboxed tool raises a `UserError`; rename the output with `ToolOutput(name=...)`.
+
 ## Concurrent tool calls
 
 Sandboxed tools render as `async def` functions, so code can start several calls and await them with
@@ -382,8 +426,8 @@ Memory is shared by the session.
 Limitations:
 
 - Side effects from code that already ran can't be undone.
-- With a parallel `InputGuardrail`, nested calls from eager statements wait for its verdict, so a
-  blocked prompt runs no tool.
+- With a parallel `InputGuardrail`, nested calls and host module calls
+  from eager statements wait for its verdict, so a blocked prompt runs no tool or module function.
 - If the model later requests `restart: true`, some work may run again.
 - If the model changes an earlier line while streaming, `CodeMode` resets the REPL and asks it to
   resend the code.
@@ -949,6 +993,69 @@ the clock; `{'timezone': 'Europe/Paris'}` alone keeps the clock on `os_access` b
 local time in that zone rather than as UTC. In a Temporal workflow a `'system'` clock or
 `random_start` is read again on replay, so keep the defaults (or fixed values) there.
 
+## Host modules
+
+Monty runs a subset of Python and can't import third-party libraries. `external_modules` lets
+sandboxed code import modules you build on the host from `pydantic_monty.ExternalModule`. The
+sandbox sees a normal module, and each call into one of its functions runs your Python function on
+the host, outside the sandbox. Use it for a library the sandbox can't run, such as a database client
+or a dataframe engine, wrapped in the functions you want the model to have.
+
+```python
+import sqlite3
+
+from pydantic_ai import Agent
+from pydantic_monty import ExternalModule
+from pydantic_ai_harness import CodeMode
+
+# Read-only, so model-written SQL can't change the data.
+db = sqlite3.connect('file:sales.db?mode=ro', uri=True, check_same_thread=False)
+
+
+def query(sql: str) -> list[dict[str, object]]:
+    cursor = db.execute(sql)
+    columns = [column[0] for column in cursor.description]
+    return [dict(zip(columns, row)) for row in cursor.fetchall()]
+
+
+warehouse = ExternalModule(
+    {'query': query},
+    stubs=(
+        'def query(sql: str) -> list[dict[str, object]]:\n'
+        '    """Run a read-only SQLite query against the sales warehouse; rows come back as dicts."""\n'
+    ),
+)
+# Sandboxed code can now run `import warehouse` and `warehouse.query('select ...')`:
+agent = Agent('anthropic:claude-sonnet-4-6', capabilities=[CodeMode(external_modules={'warehouse': warehouse})])
+```
+
+The `stubs` are required. They are the module's `.pyi` text: the `run_code` description shows them
+to the model, and the type checker checks calls against them. A submodule is an `ExternalModule`
+attribute with its own stubs, imported as `warehouse.util`. Attributes starting with `_` stay hidden
+from the sandbox. A name Monty already provides, such as `math` or `json`, raises `UserError`, since
+the sandbox would import Monty's module instead.
+
+Calls into a module behave like this:
+
+- **Sync functions** run in a worker thread, so a blocking driver doesn't stall the event loop.
+  Inside a Temporal workflow they run inline, since workflow code can't start threads.
+- **Async functions** run on the event loop like async tools, and `asyncio.gather` runs them
+  alongside tool calls.
+- **Exceptions** a function raises are raised at the call site in the sandbox, where the code can
+  catch them.
+- **Values** cross as Monty converts them, so tuples, sets, `bytes` and dates arrive unchanged. A
+  value it can't convert fails the snippet with a `TypeError`. Return plain data.
+- **Not tool calls**: module calls don't count toward `max_tool_calls` (each one counts toward
+  `max_suspensions`, as every sandbox pause does), and they don't appear in the message history or
+  in the `run_code` metadata. They emit no spans of their own; instrument your functions if you want
+  them traced.
+
+Under durable execution, module functions run in workflow code, as `os_access` does, so they run
+again when a [Temporal](#temporal-durability) workflow replays or a DBOS or Prefect workflow
+recovers. Keep them to reads that return the same result each time. Put side effects in a tool the
+engine records as an activity, step or task (under DBOS, one decorated with `@DBOS.step`), and make
+it idempotent, since a recorded call can still run again if it fails before its result is saved.
+
 ## Sandbox restrictions
 
 Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python subset:
@@ -957,7 +1064,8 @@ Code runs inside [Monty](https://github.com/pydantic/monty), a sandboxed Python 
   `unicodedata`, `datetime`, `time`, `random`, `os`, `pathlib`, `collections`, `itertools`,
   `functools`, `dataclasses`, `copy`, `base64`, `binascii`, `bisect`, `csv`, `decimal`, `fnmatch`,
   `hashlib`, `os.path`, `tomllib`, `annotationlib`, `colorsys`, `keyword`, `stat`,
-  `statistics`); each must be imported before use
+  `statistics`); each must be imported before use. [Host modules](#host-modules) adds modules of
+  your own
 - `asyncio.gather(...)` takes positional awaitables but no keyword arguments; other task creation
   and wait APIs are unavailable
 - No clock or randomness by default: `datetime.datetime.now()`, `datetime.date.today()`,
@@ -1007,6 +1115,7 @@ CodeMode(
     speculate=None,  # read-only tool names, or 'declared'
     monty_sandbox=None,  # http(s):// server root URL, or a pool factory
     repl_store=None,  # keep the REPL across runs (CodeModeReplStore)
+    allow_final_output=False,  # let the code submit the run's final output
     dynamic_catalog=True,
 )
 ```

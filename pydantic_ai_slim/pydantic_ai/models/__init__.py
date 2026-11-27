@@ -222,6 +222,7 @@ from ._speech import assistant_speech_text
 from ._tool_call_ids import hashed_tool_call_id, response_tool_call_id_scopes, with_unqualified_tool_call_ids
 
 if TYPE_CHECKING:
+    from google.genai import Client
     from httpx import AsyncClient
 
     from ..agent.abstract import AbstractAgent
@@ -1989,7 +1990,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         deprecation = self.profile.get('deprecation')
         if deprecation is None or DEPRECATED_MODEL_WARNING_SUPPRESSED.get():
             return
-        retirement = f', with a retirement date of {deprecation.retirement_date}' if deprecation.retirement_date else ''
+        retirement_date, rerouted_to = deprecation.retirement_date, deprecation.rerouted_to
+        retirement = f', with a retirement date of {retirement_date}' if retirement_date else ''
+        if rerouted_to:
+            retirement += (
+                f', from which it routes requests to {rerouted_to!r}'
+                if retirement_date
+                else f', and it routes requests to {rerouted_to!r}'
+            )
         replacement = f' It recommends {deprecation.replacement!r} instead.' if deprecation.replacement else ''
         # Attributed to this line, so the default filters don't repeat it for a model until something changes the filters.
         warnings.warn(
@@ -2876,6 +2884,14 @@ class Model(AbstractModel, Generic[InterfaceClient]):
         if (provider := self.provider) is None:
             return {}
         return provider._configured_model_profile(self.model_name) or {}  # pyright: ignore[reportPrivateUsage]
+
+    def _classifies_schema_too_complex(self) -> bool:
+        """Whether this model raises `ModelSchemaTooComplexError` when the provider can't compile a request's strict schemas.
+
+        Only for such a model does a run attempt a request again in Tool Output when the provider rejects the Native
+        Output schema the model inferred, and open a stream that sends one before handing it over, to see the rejection.
+        """
+        return False
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Adjust the provider's profile defaults for this model instance, before the user's `profile=` is applied.
@@ -3775,6 +3791,11 @@ def infer_model_profile(model: str) -> ModelProfile:
         context_window = lookup_context_window(model_name, provider_name=provider)
         if context_window is not None:
             profile = merge_profile(profile, ModelProfile(context_window=context_window))
+    if provider == 'google-interactions':
+        from ..profiles.google import google_interactions_model_profile
+
+        # The overrides `GoogleInteractionsModel._instance_profile_defaults` applies over the `GoogleProvider` profile.
+        profile = merge_profile(profile, google_interactions_model_profile(model_name))
     return profile
 
 
@@ -3901,10 +3922,8 @@ def infer_model(  # noqa: C901
         from .openai import OpenAIChatModel
 
         return OpenAIChatModel(model_name, provider=provider)
-    elif model_kind in ('google', 'google-cloud'):
-        from .google import GoogleModel
-
-        return GoogleModel(model_name, provider=provider)
+    elif model_kind in ('google', 'google-cloud', 'google-interactions'):
+        return _infer_google_model(model_kind, model_name, provider)
     elif model_kind == 'groq':
         from .groq import GroqModel
 
@@ -3948,6 +3967,20 @@ def infer_model(  # noqa: C901
         return XaiModel(model_name, provider=provider)
     else:
         raise UserError(f'Unknown model: {model}')  # pragma: no cover
+
+
+def _infer_google_model(
+    kind: Literal['google', 'google-cloud', 'google-interactions'],
+    model_name: str,
+    provider: Provider[Client],
+) -> Model:
+    if kind == 'google-interactions':
+        from .google_interactions import GoogleInteractionsModel
+
+        return GoogleInteractionsModel(model_name, provider=provider)
+    from .google import GoogleModel
+
+    return GoogleModel(model_name, provider=provider)
 
 
 def create_async_http_client(*, timeout: int = DEFAULT_HTTP_TIMEOUT, connect: int = 5) -> AsyncClient:
@@ -4579,6 +4612,21 @@ def _standing_system_prompt_count(request: ModelRequest) -> int:
             break
         count += 1
     return count
+
+
+def _leading_standing_system_prompt(messages: Sequence[ModelMessage]) -> list[SystemPromptPart]:  # pyright: ignore[reportUnusedFunction]
+    """The parts of the standing system prompt of `messages`, as the request to a model counts them.
+
+    The requests a history starts with are merged into one before they're sent, so their parts are counted together,
+    with `_standing_system_prompt_count`'s rule.
+    """
+    parts: list[ModelRequestPart] = []
+    for message in messages:
+        if not isinstance(message, ModelRequest):
+            break
+        parts.extend(message.parts)
+    count = _standing_system_prompt_count(ModelRequest(parts=parts))
+    return [part for part in parts[:count] if isinstance(part, SystemPromptPart)]
 
 
 def _trim_messages_before_compaction(

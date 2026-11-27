@@ -149,8 +149,60 @@ A few things to know about falling back on refusals:
 - **A [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] doesn't fall back on refusals by default.** Pass it `fallback_on=(ModelAPIError, ContentFilterError)`.
 - **It happens per request.** When a model refuses partway through a run, only that request moves to the next model, with the run's message history so far. The responses the first model gave earlier in the run stay in the history. Anthropic recommends staying on the fallback model for the rest of the conversation, which [`sticky=True`](#staying-on-the-model-that-answered) does.
 - **Without a fallback, an empty refusal raises `ContentFilterError`.** It's an [`UnexpectedModelBehavior`][pydantic_ai.exceptions.UnexpectedModelBehavior], not a `ModelAPIError`, and so is a thinking-only refusal. Its message starts with `Content filter triggered.` and then names the reason: `Refusal: '...'` with the text from `provider_details['refusal']` for an OpenAI refusal, or `Finish reason: 'refusal'` for an Anthropic one, whose refusal text is then only in the error's `body`, the serialized response. [`failed_attempts`][pydantic_ai.messages.ModelResponse.failed_attempts] records a refused attempt as `rejected`, without its `provider_details`.
-- **A [streamed](#streaming) refusal isn't fallen back from.** It's only known once it has been streamed, so it's accepted, without a warning, and an empty one then raises `ContentFilterError`. To fall back there, catch it and run again with another model passed as `model=`.
+- **A [streamed](#streaming) refusal isn't fallen back from.** It's only known once it has been streamed, so it's accepted, without a warning, and an empty one then raises `ContentFilterError`. To fall back there, catch it and run again with another model, as [shown below](#catching-a-refusal).
 - **Some refusals are caused by the prompt.** Anthropic's `reasoning_extraction` refusals come from prompts or tool schemas that ask the model to put its reasoning in its output, which Anthropic says to change instead (see [Refusals on repeated prompts](../models/anthropic.md#refusals-on-repeated-prompts)). Falling back to another provider still works for them.
+
+### Catching a refusal yourself {#catching-a-refusal}
+
+Without `ModelFallback`, or on a streamed run, catch `ContentFilterError` and run again with another model. To keep the work the run had done, such as tool calls, wrap it in [`capture_run_messages`][pydantic_ai.capture_run_messages] and pass the captured messages as `message_history`, leaving out the last one, the refused response:
+
+```python {title="catch_content_filter_error.py"}
+from pydantic_ai import (
+    Agent,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    capture_run_messages,
+)
+from pydantic_ai.exceptions import ContentFilterError
+from pydantic_ai.models.function import AgentInfo, FunctionModel
+
+
+def refuse(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(
+        parts=[],
+        finish_reason='content_filter',
+        provider_details={
+            'finish_reason': 'refusal',
+            'refusal_category': 'reasoning_extraction',
+        },
+    )
+
+
+def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[TextPart('Here is the review.')])
+
+
+primary = FunctionModel(refuse, model_name='primary')
+backup = FunctionModel(answer, model_name='backup')
+agent = Agent(primary)
+
+def review(prompt: str) -> str:
+    with capture_run_messages() as messages:
+        try:
+            return agent.run_sync(prompt).output
+        except ContentFilterError:
+            pass
+    return agent.run_sync(message_history=messages[:-1], model=backup).output  # (1)!
+
+
+print(review('Review this transcript.'))
+#> Here is the review.
+```
+
+1. This run starts outside the `capture_run_messages` block, since within one block `messages` holds only the first run's messages. `messages[:-1]` leaves out the refused response.
+
+See [Recovering a failed run's messages](../agent.md#recovering-a-failed-run) for more.
 
 ## Falling back when the output is cut off {#token-limit}
 
@@ -223,7 +275,7 @@ Model names are resolved when they're attempted, like those passed to `ModelFall
 Each model attempted is an *attempt* within the same request step, not a new step:
 
 - `before_model_request` and `wrap_model_request` run once per step, and the model never sees a retry prompt.
-- [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] runs again for every attempt, with `request_context.model` set to the model about to serve it. [`RunContext.model`][pydantic_ai.tools.RunContext.model] stays the model selected for the step, so a hook that depends on the serving model, its [profile](../models/overview.md#inspecting-a-models-profile) or its context window reads `request_context.model`. The model's own message preparation and token counting are redone for each candidate, and so is any preparation a capability does in `prepare_model_request`, rather than inherited from the previous one. The built-in compaction capabilities, including the Harness ones, still run in `before_model_request` for now, so they decide once per step for the step's model, and every candidate inherits that decision. See [Retrying and falling back](custom.md#model-request-attempts).
+- [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] runs again for every attempt, with `request_context.model` set to the model about to serve it. [`RunContext.model`][pydantic_ai.tools.RunContext.model] stays the model selected for the step, so a hook that depends on the serving model, its [profile](../models/overview.md#inspecting-a-models-profile) or its context window reads `request_context.model`. The model's own message preparation and token counting are redone for each candidate, and so is any preparation a capability does in `prepare_model_request`, rather than inherited from the previous one. The built-in compaction capabilities, including the Harness ones, still run in `before_model_request` for now, so they decide once per step for the step's model, and every candidate inherits that decision. A capability's [`compact_history`](compaction.md#the-compaction-hook) hook runs per attempt instead, for the candidate serving it. See [Retrying and falling back](custom.md#model-request-attempts).
 - Instructions and model settings are resolved again for each model after the first, with that model as `ctx.model`: the agent's and capabilities' [instructions](../agent.md#instructions), including [`get_instructions`][pydantic_ai.capabilities.AbstractCapability.get_instructions] functions, and [`model_settings`](../agent.md#model-run-settings) and [`get_model_settings`][pydantic_ai.capabilities.AbstractCapability.get_model_settings] callables. So each model is sent the instructions and settings it would be sent on its own, and the request recorded in message history has the instructions and settings of the model that answered. Settings a `before_model_request` hook changed still apply on top. Instruction parts a `before_model_request` hook changed are sent to every model as the hook left them. Other hooks, and the run's tools, see the step's model as `ctx.model`. See [Instructions for each model](#instructions-for-each-model).
 - A [native tool factory](../native-tools.md#dynamic-configuration) is called again for each model after the first, with that model as `ctx.model`, so each model is sent the native tools it would be sent on its own, and a [provider-adaptive tool](overview.md#provider-adaptive-tools)'s local fallback is offered to a model its native tool doesn't apply to. A native tool a `before_model_request` hook removed stays removed.
 - `after_model_request` hooks of capabilities outside `ModelFallback` only ever see the response that was accepted. `ModelFallback` is positioned innermost, so it judges a response before them.

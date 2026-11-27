@@ -29,6 +29,7 @@ def test_codex_wire_dialect_flags():
     assert profile.get('openai_responses_requires_store_false') is True
     assert profile.get('openai_supports_input_token_counting') is False
     assert profile.get('openai_supports_batch_api') is False
+    assert profile.get('supports_compaction_on_demand') is False
     assert profile.get('openai_supports_prompt_cache_breakpoints') is False
     assert profile.get('supports_cache') is False
     assert profile.get('supported_cache_retentions') == ()
@@ -51,6 +52,7 @@ def test_codex_profile_extends_the_standard_openai_profile():
         'openai_responses_requires_store_false',
         'openai_supports_input_token_counting',
         'openai_supports_batch_api',
+        'supports_compaction_on_demand',
         'openai_supports_prompt_cache_breakpoints',
         'supports_cache',
         'supported_cache_retentions',
@@ -73,6 +75,7 @@ def test_codex_provider_layers_wire_dialect_over_first_party_profile():
         'openai_responses_requires_store_false',
         'openai_supports_input_token_counting',
         'openai_supports_batch_api',
+        'supports_compaction_on_demand',
         'openai_supports_prompt_cache_breakpoints',
         'supports_cache',
         'supported_cache_retentions',
