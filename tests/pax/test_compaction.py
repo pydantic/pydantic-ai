@@ -266,6 +266,39 @@ def test_threshold_and_protected_tokens_reach_every_strategy(strategy: str, stra
         CompactionSettings.model_validate({'strategy': strategy, 'threshold': 0.6, 'protected_tokens': 0})
     )
     assert chosen.max_fraction == 0.6 and protected_tails(chosen) == [0] * strategies
+    tokens = build_chain(
+        CompactionSettings.model_validate({'strategy': strategy, 'threshold': 0.6, 'threshold_tokens': 120_000})
+    )
+    assert (tokens.max_tokens, tokens.max_fraction) == (120_000, None), 'a token count replaces the fraction'
+    assert default.max_tokens is None
+
+
+@pytest.mark.parametrize('strategy', ['summarization', 'truncation'])
+async def test_threshold_tokens_compacts_and_alerts_at_that_count(strategy: str) -> None:
+    """Far below 85% of the window, the token count alone triggers compaction and colours the gauge."""
+    session = Session(Agent(TestModel(custom_output_text='gist')), deps=None)
+    plugin = make_plugin(session, strategy=strategy, threshold_tokens=500, protected_tokens=0)
+    session.plugins = plugin.capabilities
+    old = 'old ' * 1000
+    session.replace_messages(
+        [
+            ModelRequest.user_text_prompt('first'),
+            ModelResponse(parts=[TextPart('reply')]),
+            ModelRequest.user_text_prompt(old),
+            ModelResponse(parts=[TextPart('reply')]),
+        ]
+    )
+    await session.prompt('new')
+    assert not any(
+        isinstance(part, UserPromptPart) and part.content == old
+        for message in session.messages
+        for part in message.parts
+    )
+    assert not plugin.host.status.context_alert, 'the compacted request is under the token count'
+    cramped = make_plugin(session, strategy=strategy, threshold_tokens=1, protected_tokens=50_000)
+    session.plugins = cramped.capabilities
+    await session.prompt('again')
+    assert cramped.host.status.context_alert, 'the protected tail still exceeds the token count'
 
 
 async def test_settings_are_validated_on_activation() -> None:
@@ -275,6 +308,8 @@ async def test_settings_are_validated_on_activation() -> None:
         make_plugin(strategy='magic')
     with pytest.raises(ValidationError):
         make_plugin(compact_at=0.5)
+    with pytest.raises(ValidationError):
+        make_plugin(threshold_tokens=0)
 
 
 @pytest.mark.parametrize('strategy', ['summarization', 'truncation'])
@@ -470,10 +505,11 @@ def test_settings_source_shows_validates_saves_and_resets() -> None:
         save_settings=saved.append,
     )
     source = CompactionSource(host)
-    strategy, threshold, protected, window, summarizer, background, start = source.rows()
+    strategy, threshold, tokens, protected, window, summarizer, background, start = source.rows()
     assert [source.current(row) for row in source.rows()] == [
         'summarization',
         '0.85',
+        '(not set)',
         '0',
         '(not set)',
         '(not set)',
@@ -483,6 +519,7 @@ def test_settings_source_shows_validates_saves_and_resets() -> None:
     assert [row.default for row in source.rows()] == [
         'summarization',
         '0.85',
+        '(not set)',
         '50000',
         '(not set)',
         '(not set)',
@@ -496,6 +533,11 @@ def test_settings_source_shows_validates_saves_and_resets() -> None:
     assert source.problem(threshold, '0') == 'Input should be greater than 0'
     assert source.problem(threshold, 'most') is not None
     assert source.problem(protected, '2.5') == 'Input should be a valid integer'
+    assert source.problem(tokens, '0') == 'Input should be greater than 0'
+    assert source.apply(tokens, '150000') == 'Saved Threshold tokens.'
+    assert source.current(tokens) == '150000'
+    assert source.reset(tokens) == 'Reset Threshold tokens.'
+    assert 'threshold_tokens' not in saved[-1]
     assert source.problem(threshold, '1') is None
     assert source.apply(threshold, '0.7') == 'Saved Threshold.'
     assert source.apply(window, '200000') == 'Saved Context window.'
@@ -790,7 +832,7 @@ async def test_unloading_cancels_the_background_summary() -> None:
     assert session.conversation_id not in chain.background_conversations and model.written == 0
 
 
-async def test_background_settings_are_tagged_for_older_builds(tmp_path: Path) -> None:
+async def test_feature_settings_are_tagged_for_older_builds(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'settings.db')
     compaction = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'compaction')
     plugins = PluginLoader[None](
@@ -804,10 +846,13 @@ async def test_background_settings_are_tagged_for_older_builds(tmp_path: Path) -
         await plugins.load_all()
         loaded = plugins.entries()[0].loaded
         assert loaded is not None
-        loaded.host.save_settings(CompactionSettings(background_compaction=True, background_start=0.9))
+        loaded.host.save_settings(
+            CompactionSettings(background_compaction=True, background_start=0.9, threshold_tokens=150_000)
+        )
         assert store.plugin_requirements('compaction') == {
             'background_compaction': ['compaction-background'],
             'background_start': ['compaction-background'],
+            'threshold_tokens': ['compaction-threshold-tokens'],
         }
     finally:
         await plugins.close('exit')

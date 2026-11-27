@@ -2319,7 +2319,11 @@ back to truncation; other exceptions propagate. The summary request is billed
 to the current model unless `summarization_model` selects another.
 
 The chain runs automatically before requests above `threshold` (85% of the context
-window by default). `/compact` runs the same chain between turns regardless of that
+window by default). To compact at a fixed size instead, set `threshold_tokens` in the **Threshold tokens** row of
+`/plugins configure compaction`, or declare it, as in
+`/plugins add compaction pydantic_ai_pax.builtin_plugins.compaction '{"threshold_tokens": 150000}'`:
+the chain then runs once a request passes that many tokens, whatever the model's window, and
+`threshold` is ignored. `/compact` runs the same chain between turns regardless of that
 threshold, but it caps the protected tokens at half the conversation, so it usually has older
 messages to summarise; the protected tail can exceed that cap by the whole message that crosses it. Add free text to say what the summary must keep, for example
 `/compact don't lose the "auth" decisions`. The focus is passed to the summariser
@@ -2347,6 +2351,7 @@ You can also redeclare the plugin with your own settings;
 |---|---|---|
 | `strategy` | `"summarization"` | `"truncation"` skips the summary and only drops older messages |
 | `threshold` | `0.85` | fraction of the window above which the fallback chain runs |
+| `threshold_tokens` | unset | tokens above which the fallback chain runs, in place of `threshold` |
 | `protected_tokens` | `50000` | tokens of the most recent messages never compacted |
 | `context_window` | unset | overrides the catalog when it is wrong or silent for your model |
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
@@ -2363,7 +2368,7 @@ Until a response in the conversation reports its usage, the used figure is an es
 from the text's length that leaves out most tool definitions, shown with `~`, such as `~13k/1m`.
 It usually reads low, so it can rise sharply once the first response arrives.
 
-The context figure turns yellow when a request still exceeds `threshold` after
+The context figure turns yellow when a request still exceeds `threshold` (or `threshold_tokens`) after
 compaction, for example because the protected tail is too large. For windows smaller
 than 50,000 tokens, redeclare the plugin with a smaller `protected_tokens` value;
 `/compact` does not override that protection. Run `/compact` to retry the chain,

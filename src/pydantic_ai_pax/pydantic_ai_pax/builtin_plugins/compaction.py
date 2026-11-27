@@ -55,6 +55,12 @@ class CompactionSettings(BaseModel):
         allow_inf_nan=False,
         description='Compact once the history exceeds this fraction of the context window.',
     )
+    threshold_tokens: int | None = Field(
+        default=None,
+        gt=0,
+        description='Compact once the history exceeds this many tokens, instead of the threshold fraction. '
+        'Unset uses the threshold.',
+    )
     protected_tokens: int = Field(
         default=50_000,
         ge=0,
@@ -91,6 +97,9 @@ class CompactionSettings(BaseModel):
 BACKGROUND_COMPACTION_FEATURE = 'compaction-background'
 """Builds without it would reject a saved `background_compaction` or `background_start`, so they drop both."""
 
+THRESHOLD_TOKENS_FEATURE = 'compaction-threshold-tokens'
+"""Builds without it would reject a saved `threshold_tokens`, so they drop it and compact at `threshold`."""
+
 _TEXT_FIELDS = frozenset({'strategy', 'summarization_model'})
 """Settings typed as plain text; the others are typed as JSON numbers."""
 
@@ -120,6 +129,7 @@ class CompactionSource:
         return (
             row('strategy', 'Strategy', ('summarization', 'truncation')),
             row('threshold', 'Threshold'),
+            row('threshold_tokens', 'Threshold tokens'),
             row('protected_tokens', 'Protected tokens'),
             row('context_window', 'Context window'),
             row('summarization_model', 'Summarization model'),
@@ -132,6 +142,7 @@ class CompactionSource:
         values: dict[str, JsonValue] = {
             'strategy': settings.strategy,
             'threshold': settings.threshold,
+            'threshold_tokens': settings.threshold_tokens,
             'protected_tokens': settings.protected_tokens,
             'context_window': settings.context_window,
             'summarization_model': settings.summarization_model,
@@ -164,20 +175,29 @@ class CompactionSource:
 
 
 def build_chain(config: CompactionSettings) -> FallbackCompaction[None]:
-    """Code Puppy's chain: summarise, and truncate when the summary fails or blows the usage limit."""
+    """Code Puppy's chain: summarise, and truncate when the summary fails or blows the usage limit.
+
+    It triggers at `threshold_tokens` when set, else at `threshold` of the window.
+    """
     sliding: SlidingWindowCompaction[None] = SlidingWindowCompaction(
         max_messages=1, keep_tokens=config.protected_tokens
     )
+    max_tokens = config.threshold_tokens
+    max_fraction = config.threshold if max_tokens is None else None
     if config.strategy == 'truncation':
         return FallbackCompaction(
-            fallback_chain=[sliding], max_fraction=config.threshold, context_window=config.context_window
+            fallback_chain=[sliding],
+            max_tokens=max_tokens,
+            max_fraction=max_fraction,
+            context_window=config.context_window,
         )
     summarizer: SummarizingCompaction[None] = SummarizingCompaction(
         model=config.summarization_model, max_messages=1, keep_tokens=config.protected_tokens
     )
     return FallbackCompaction(
         fallback_chain=[summarizer, sliding],
-        max_fraction=config.threshold,
+        max_tokens=max_tokens,
+        max_fraction=max_fraction,
         context_window=config.context_window,
         fallback_on=(ModelAPIError, FallbackExceptionGroup, UsageLimitExceeded),
         background_start=config.background_start if config.background_compaction else None,
@@ -190,6 +210,7 @@ class _ContextGauge(AbstractCapability[None]):
 
     status: Status
     threshold: float
+    threshold_tokens: int | None = None
 
     @on_event(ContextUsageMeasuredEvent)
     async def _gauge(self, ctx: RunContext[None], event: ContextUsageMeasuredEvent) -> None:
@@ -200,7 +221,10 @@ class _ContextGauge(AbstractCapability[None]):
             isinstance(message, ModelResponse) and message.usage.input_tokens for message in ctx.messages
         )
         self.status.context_window = event.window_tokens if event.resolved else None
-        self.status.context_alert = event.fraction > self.threshold
+        if self.threshold_tokens is None:
+            self.status.context_alert = event.fraction > self.threshold
+        else:
+            self.status.context_alert = event.used_tokens > self.threshold_tokens
 
 
 class CompactionPlugin(Plugin[CompactionSettings]):
@@ -212,8 +236,9 @@ class CompactionPlugin(Plugin[CompactionSettings]):
 
     @classmethod
     def from_host(cls, host: PluginHost[None]) -> Self:
-        # Tags the settings, so a build without background compaction uses the defaults instead of failing to load.
+        # Tags the settings, so a build without a feature uses the defaults instead of failing to load.
         requires = {key: [BACKGROUND_COMPACTION_FEATURE] for key in ('background_compaction', 'background_start')}
+        requires['threshold_tokens'] = [THRESHOLD_TOKENS_FEATURE]
         return cls(host, host.settings(CompactionSettings, requires=requires))
 
     def __init__(self, host: PluginHost[None], settings: CompactionSettings) -> None:
@@ -224,7 +249,11 @@ class CompactionPlugin(Plugin[CompactionSettings]):
         return (
             self.chain,
             ReportContextUsage(context_window=self.settings.context_window),
-            _ContextGauge(status=self.host.status, threshold=self.settings.threshold),
+            _ContextGauge(
+                status=self.host.status,
+                threshold=self.settings.threshold,
+                threshold_tokens=self.settings.threshold_tokens,
+            ),
         )
 
     def get_commands(self) -> Sequence[Command]:

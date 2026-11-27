@@ -273,7 +273,7 @@ greys their rows out. Their saved `enabled` flag is untouched, so turning the
 including plugin off loads them again. Add a row there; do not special-case ids.
 
 Compaction registers harness `FallbackCompaction` directly with `max_fraction`
-and `context_window` for both strategies. Harness owns the trigger; do not add
+(or `max_tokens`, when `threshold_tokens` is set) and `context_window` for both strategies. Harness owns the trigger; do not add
 threshold math or an orchestrator in Pax. Register the usage gauge after the
 chain so yellow means the compacted request still exceeds the threshold.
 `/compact` drives the same chain regardless of threshold, keeps the result only
