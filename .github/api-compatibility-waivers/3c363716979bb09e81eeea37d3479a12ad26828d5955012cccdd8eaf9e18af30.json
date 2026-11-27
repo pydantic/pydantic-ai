@@ -1,0 +1,5 @@
+{
+  "against": "v2.76.0",
+  "reason": "Pax 0.x: removes `pydantic_ai_pax.runtime.session.folder_authority`, the helper `coder`'s project skills used to read the session folder's trust authority when a capability function's workspace was attached only after `Skills` read its catalog. That workspace is now attached before `for_run`, so the helper has no caller. It was undocumented and never part of the plugin API; the trust authority on Pax's `LocalWorkspace` stays.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10528"
+}
