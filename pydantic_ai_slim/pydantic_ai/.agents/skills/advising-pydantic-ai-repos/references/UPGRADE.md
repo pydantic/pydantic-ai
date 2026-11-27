@@ -1,6 +1,6 @@
 # Upgrade notes
 
-Map what changes between the installed Pydantic AI version and the target version (the latest, unless the user names one) to the code you inventoried. The source is the [upgrade guide](https://pydantic.dev/docs/ai/project/changelog/), which is versioned with the release: read the copy for the target version.
+Map what changes between the installed Pydantic AI version and the target version (the latest, unless the user names one) to the code you inventoried. The source is the [upgrade guide](https://pydantic.dev/docs/ai/project/changelog/), which is published for the latest release. When the target is an older release, read that release's copy, `https://raw.githubusercontent.com/pydantic/pydantic-ai/v<target>/docs/changelog.md`, or use the published guide and ignore releases newer than the target.
 
 ## Installed on V1 (1.x)
 
