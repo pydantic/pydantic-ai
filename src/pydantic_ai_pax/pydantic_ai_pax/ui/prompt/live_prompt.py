@@ -503,8 +503,12 @@ class LivePrompt:
             self._queue_open = False
             return False
         if entry not in entries:
-            # The selected entry ran or was removed while the panel was open.
+            # The selected entry ran or was removed while the panel was open: its actions explain why they do nothing,
+            # and any other key reaches the editor.
             self._queue_open = False
+            if key in ('e', 'd', 's'):
+                self.notice = 'That message is no longer queued.'
+                return True
             return False
         match key:
             case 'up' | 'down':

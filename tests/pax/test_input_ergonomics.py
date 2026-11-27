@@ -587,19 +587,19 @@ async def test_visible_queue_remove_and_steer_cannot_execute_a_finished_entry() 
         live.feed('f4')
         await anyio.lowlevel.checkpoint()
         assert await live.read() == 'first'
-        # Selected first already ran: the key closes the panel and types, never steering the next entry instead.
-        live.feed('s')
-        assert steered == [] and live.queued_messages == ('second',) and live.buffer.text == 'drafts'
+        live.feed('s')  # Selected first already ran; never steer the next entry instead.
+        assert steered == [] and live.queued_messages == ('second',)
+        assert live.notice == 'That message is no longer queued.' and live.buffer.text == 'draft'
         live.feed('f4')
         await anyio.lowlevel.checkpoint()
         live.feed('s')
         assert steered == ['second'] and live.queued_messages == ()
-        assert live.buffer.text == 'drafts'
+        assert live.buffer.text == 'draft'
         live.submit('remove me')
         live.feed('f4')
         await anyio.lowlevel.checkpoint()
         live.feed('d')
-        assert live.queued_messages == () and live.buffer.text == 'drafts'
+        assert live.queued_messages == () and live.buffer.text == 'draft'
 
 
 async def test_explicit_focused_approval_still_authorizes_only_its_current_call() -> None:
