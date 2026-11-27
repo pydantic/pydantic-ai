@@ -6,15 +6,15 @@ which no provider exchange captures.
 
 from __future__ import annotations
 
-import json
 import re
 from pathlib import Path
-from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
+from pydantic import TypeAdapter
 
 from pydantic_ai import Agent
+from pydantic_ai._instrumentation import CapabilityRecord
 from pydantic_ai.capabilities import LocalWorkspace
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.models.instrumented import InstrumentationSettings
@@ -29,8 +29,10 @@ with try_import() as otel_sdk_installed:
 
 pytestmark = [pytest.mark.skipif(not otel_sdk_installed(), reason='opentelemetry-sdk not installed')]
 
+_RECORDS = TypeAdapter(dict[str, list[CapabilityRecord]])
 
-async def _recorded_capabilities(tmp_path: Path, *, include_content: bool) -> dict[str, Any]:
+
+async def _recorded_capabilities(tmp_path: Path, *, include_content: bool) -> dict[str, list[CapabilityRecord]]:
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -43,7 +45,9 @@ async def _recorded_capabilities(tmp_path: Path, *, include_content: bool) -> di
 
     (span,) = [span for span in exporter.get_finished_spans() if span.name.startswith('invoke_agent')]
     # A run-assigned id ends in a random suffix that differs every run.
-    return json.loads(re.sub(r':[0-9a-f]{6}>', ':*>', str((span.attributes or {})['pydantic_ai.capabilities'])))
+    return _RECORDS.validate_json(
+        re.sub(r':[0-9a-f]{6}>', ':*>', str((span.attributes or {})['pydantic_ai.capabilities']))
+    )
 
 
 async def test_a_coder_run_records_coder_with_its_members(tmp_path: Path) -> None:
@@ -111,7 +115,7 @@ async def test_a_coder_run_without_content_records_only_chosen_ids(tmp_path: Pat
             'pydantic_ai.capabilities.LocalWorkspace',
         ]
     )
-    assert capabilities['pydantic_ai_harness.coder.Coder'][0]['members'] == snapshot(
+    assert capabilities['pydantic_ai_harness.coder.Coder'][0].get('members') == snapshot(
         {
             'pydantic_ai.capabilities.AbstractCapability': [
                 {'id': 'coder_instructions', 'defer_loading': False, 'active': True},
