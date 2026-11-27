@@ -164,9 +164,7 @@ try:
         deserialize_run_context,
     )
     from pydantic_ai.durable_exec.temporal._toolset import CallToolParams
-    from pydantic_ai.durable_exec.temporal._transports import (
-        _RequestParams,  # pyright: ignore[reportPrivateUsage]
-    )
+    from pydantic_ai.durable_exec.temporal._transports import _RequestParams
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -1001,7 +999,7 @@ async def test_temporal_marked_stream_activity_keeps_partial_only_for_a_requeste
     [registration] = [
         registered
         for registered in durability.temporal_activities
-        if ActivityDefinition.must_from_callable(registered).name.endswith('__model_request_stream')  # pyright: ignore[reportUnknownMemberType]
+        if (ActivityDefinition.must_from_callable(registered).name or '').endswith('__model_request_stream')  # pyright: ignore[reportUnknownMemberType]
     ]
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='marked-stream-run')
     params = _RequestParams(
