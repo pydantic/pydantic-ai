@@ -1119,7 +1119,7 @@ class TestSubAgentsTaskControl:
         result = await parent.run('Go.')
         returns = tool_returns(result.all_messages())
         assert '1 tasks are already running, the most allowed at once.' in returns[1]
-        assert 'Delegate budget' not in returns[-1]
+        assert returns[-1].endswith('(ok):\nfirst')
 
     async def test_a_vetoed_task_does_not_use_a_max_calls_slot(self) -> None:
         @dataclass
