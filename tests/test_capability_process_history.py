@@ -197,7 +197,13 @@ async def test_a_container_with_its_own_before_model_request_processes_first(con
     The combination is wrapped, since an agent dispatches to the children of a combination it's given directly.
     """
     log: list[str] = []
-    children: list[AbstractCapability[Any]] = [Logged('one', log), OnlyBefore('two', log)]
+
+    # The deferred child isn't loaded, so neither of its hooks runs.
+    async def never(ctx: RunContext[Any], request_context: ModelRequestContext) -> ModelRequestContext:
+        raise AssertionError('a deferred capability that was never loaded ran')  # pragma: no cover
+
+    later = Hooks[Any](before_model_request=never, id='later', description='Later.', defer_loading=True)
+    children: list[AbstractCapability[Any]] = [Logged('one', log), OnlyBefore('two', log), later]
     capability = (
         LoggingWrapper(CombinedCapability(children), log=log)
         if container == 'wrapper'
@@ -233,6 +239,26 @@ async def test_a_wrapper_can_process_the_history_of_a_capability_that_doesnt():
 
     assert log == ["one.before_model_request ['hi']"]
     assert texts(result.all_messages()) == ['hi', 'done']
+
+
+@dataclass
+class Shouting(CombinedCapability[Any]):
+    """A combination that processes the history itself, shouting what its children's processors return."""
+
+    async def process_history(self, ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
+        return [shouted(message) for message in await super().process_history(ctx, messages)]
+
+
+async def test_a_combination_can_process_the_history_of_children_that_dont():
+    """A combination's own `process_history` runs even when none of its children has one."""
+    log: list[str] = []
+    seen: list[list[ModelMessage]] = []
+    capability = WrapperCapability(Shouting([OnlyBefore('one', log)]))
+    result = await Agent(recording(seen), capabilities=[capability]).run('hi')
+
+    assert log == ["one.before_model_request ['HI']"]
+    assert texts(seen[0]) == ['HI', 'note']
+    assert texts(result.all_messages()) == ['HI', 'done']
 
 
 async def test_processed_history_is_written_back_as_returned():
@@ -355,8 +381,7 @@ async def test_compaction_requested_by_a_processor_compacts_the_processed_histor
     seen: list[list[ModelMessage]] = []
 
     def redact(ctx: RunContext[Any], messages: list[ModelMessage]) -> list[ModelMessage]:
-        if ctx.run_step == 1:
-            ctx.request_compaction(reason='threshold')
+        ctx.request_compaction(reason='threshold')
         return [shouted(message) for message in messages]
 
     compaction = KeepEverything()

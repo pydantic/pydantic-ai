@@ -272,7 +272,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
 
     @property
     def _has_process_history(self) -> bool:
-        return any(c._has_process_history for c in self._dispatch)
+        # A subclass's own override counts, as `WrapperCapability`'s does, so it runs even when no child processes.
+        return type(self).process_history is not CombinedCapability.process_history or any(
+            c._has_process_history for c in self._dispatch
+        )
 
     def _handles_model_request_error(self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext) -> bool:
         return any(
