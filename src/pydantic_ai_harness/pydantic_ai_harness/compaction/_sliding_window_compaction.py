@@ -6,10 +6,10 @@ from collections.abc import Callable
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
+from pydantic_ai._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest
 from pydantic_ai.tools import AgentDepsT, RunContext
-from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -18,6 +18,7 @@ from pydantic_ai_harness.compaction._receipts import (
     format_receipt,
     is_receipt_part,
     make_receipt_part,
+    receipt_capability_id,
     record_receipt,
 )
 from pydantic_ai_harness.compaction._shared import (
@@ -241,7 +242,7 @@ class SlidingWindowCompaction(AbstractCapability[AgentDepsT]):
             handle=handle,
             has_summary=False,
         )
-        return ModelRequest(parts=[make_receipt_part(text)])
+        return ModelRequest(parts=[make_receipt_part(text, capability_id=receipt_capability_id(ctx, self))])
 
     async def before_run(self, ctx: RunContext[AgentDepsT]) -> None:
         """Reject a registration without a trigger."""

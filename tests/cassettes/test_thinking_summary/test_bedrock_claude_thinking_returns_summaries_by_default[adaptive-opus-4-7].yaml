@@ -1,0 +1,70 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://bedrock-runtime.us-east-1.amazonaws.com/model/us.anthropic.claude-opus-4-7/converse
+    headers:
+      amz-sdk-invocation-id:
+      - e27be27d-34a8-4a44-a3ca-80d25be1e9d5
+      amz-sdk-request:
+      - attempt=1
+      content-length:
+      - "381"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        messages:
+        - role: user
+          content:
+          - text: >-
+              How many integers from 1 to 1000 inclusive are divisible by 3 or 5 but not by
+              7? Work it out carefully, then answer with just the number.
+        system: []
+        inferenceConfig:
+          maxTokens: 20000
+        additionalModelRequestFields:
+          thinking:
+            type: adaptive
+            display: summarized
+          output_config:
+            effort: high
+  response:
+    status: 200
+    headers:
+      connection:
+      - keep-alive
+      content-length:
+      - "1183"
+      content-type:
+      - application/json
+    body:
+      type: json
+      content:
+        metrics:
+          latencyMs: 3353
+        output:
+          message:
+            content:
+            - reasoningContent:
+                reasoningText:
+                  signature: >-
+                    EsMDCnoIExABGAIqQLPbn9y4Gqw9wOWhFxN/559L0gOxTSO3dtAry8HV5+MP1IwpaqXYAMBA+lxkjwbgVNQsSQIgx/e24hGJybDQNGoyD2NsYXVkZS1vcHVzLTQtNzgAQgh0aGlua2luZ1oMMjExMTI1Njc3ODQ1qAHR4evWBhIMfcok4AJxJVPXja9fGgzIKZMCG/LW8hdQTz8iMGs4osxBCRFuoojrKJK1sB+PRZj1t5W1eGtYyk2jU5O6zcjcHpSpI/XNErDIvpcZ6Cr2ARUmvhY7YXYu+cPIt9l0/149fhsDQGKwVaqlv5OTxJgBva/zVCGoatftNYY+BmVcRaVfCdEd3pIL/MhYIj1iCHFLmK8ZfQPow95EeJB4+C4lwm2JCkkxxuJvI2DxaFitrhbI3nPj5Ka3vAjKTaKg586bBR/eMasW1DGDN3euEYdCn56srdWhcNgHd9o9uXj4nqfZsjYdK2eiog5+NuQAxL/Z6UYCRndkhp6F9oK/6cK7zKcBjVaB3xAWqjAn/MBMpztHRKYJ2l7So3k4DUyM6njM9HmgaRXMG9U7ghaWddWObiJ+0qHeQBYtC9vOCa/l3FtvoDtb3BgB
+                  text: |+
+                    Counting multiples of 3 or 5 gives 467, then I need to exclude those that are also multiples of 7, which comes to 66, leaving 401 as the final count.
+
+            - text: "**401**"
+            role: assistant
+        stopReason: end_turn
+        usage:
+          cacheReadInputTokenCount: 0
+          cacheReadInputTokens: 0
+          cacheWriteInputTokenCount: 0
+          cacheWriteInputTokens: 0
+          inputTokens: 62
+          outputTokens: 156
+          serverToolUsage: {}
+          totalTokens: 218
+  recorded_at: 2026-10-23T05:29:53.506616+00:00

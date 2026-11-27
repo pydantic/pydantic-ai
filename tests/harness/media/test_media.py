@@ -540,7 +540,7 @@ class TestExternalizeRestoreWalker:
 
     async def test_restore_raises_when_marker_missing_uri(self, tmp_path: Path) -> None:
         store = FileMediaStore(tmp_path)
-        bad_node = {'__harness_external_media__': True, 'media_type': 'image/png'}
+        bad_node = {'__harness_external_media__': True, 'kind': 'binary', 'media_type': 'image/png'}
         with pytest.raises(ValueError, match='missing string uri'):
             await restore_media(bad_node, media_store=store)
 
@@ -897,6 +897,92 @@ class TestExternalizeRestoreWalker:
         # `_EXTERNAL_MARKER` node that lacks `_URI_KEY`.
         normal = {'part_kind': 'tool-return', 'content': 'small', 'uri': 'source://original'}
         assert await restore_media(normal, media_store=store) == normal
+
+    @pytest.mark.parametrize(
+        ('marker', 'reference_keys', 'restored'),
+        [
+            pytest.param(
+                {'kind': 'binary', 'media_type': 'image/png', 'identifier': 'abc'},
+                ('uri',),
+                {'kind': 'binary', 'media_type': 'image/png', 'identifier': 'abc', 'data': 'aGVsbG8gd29ybGQ='},
+                id='binary-before-text-externalization',
+            ),
+            pytest.param(
+                {'kind': 'binary', 'media_type': 'image/png'},
+                ('__harness_external_uri__', 'uri'),
+                {'kind': 'binary', 'media_type': 'image/png', 'data': 'aGVsbG8gd29ybGQ='},
+                id='binary',
+            ),
+            pytest.param(
+                {'part_kind': 'tool-return', 'tool_name': 'scrape', '__harness_external_text__': True},
+                ('__harness_external_uri__', 'uri'),
+                {'part_kind': 'tool-return', 'tool_name': 'scrape', 'content': 'hello world'},
+                id='text-part',
+            ),
+            pytest.param(
+                {'kind': 'text-content', 'metadata': None, '__harness_external_text__': True},
+                ('__harness_external_uri__', 'uri'),
+                {'kind': 'text-content', 'metadata': None, 'content': 'hello world'},
+                id='text-content',
+            ),
+            pytest.param(
+                {'kind': 'structured-content', 'value': {'rows': [1]}, '__harness_external_text__': True},
+                ('__harness_external_uri__', 'uri'),
+                {'kind': 'structured-content', 'value': {'rows': [1]}, 'content': 'hello world'},
+                id='structured-content',
+            ),
+        ],
+    )
+    async def test_markers_from_earlier_releases_restore(
+        self,
+        tmp_path: Path,
+        marker: dict[str, object],
+        reference_keys: tuple[str, ...],
+        restored: dict[str, object],
+    ) -> None:
+        """Each marker shape an earlier writer produced restores, outside any literal wrapper.
+
+        The first writer stored the reference under `uri` alone; later ones write
+        `__harness_external_uri__` and mirror it to `uri`.
+        """
+        store = FileMediaStore(tmp_path)
+        uri = await store.put(b'hello world')
+        node = {**marker, '__harness_external_media__': True, **dict.fromkeys(reference_keys, uri)}
+        assert await restore_media(node, media_store=store) == restored
+
+    @pytest.mark.parametrize(
+        'content',
+        [
+            pytest.param({'__harness_external_media__': True, 'status': 'ok'}, id='no-discriminator'),
+            pytest.param({'__harness_external_media__': True, 'kind': 'binary', 'data': 'aGk='}, id='binary-with-data'),
+            pytest.param(
+                {'__harness_external_media__': True, '__harness_external_text__': True, 'status': 'ok'},
+                id='text-key-without-discriminator',
+            ),
+            pytest.param(
+                {
+                    '__harness_external_media__': True,
+                    '__harness_external_text__': True,
+                    'kind': 'text-content',
+                    'content': 'hi',
+                },
+                id='text-with-content',
+            ),
+            pytest.param(
+                {'__harness_external_media__': True, 'part_kind': 'text'}, id='text-discriminator-without-text-key'
+            ),
+        ],
+    )
+    async def test_unwrapped_dict_without_a_marker_shape_is_caller_data(
+        self, tmp_path: Path, content: dict[str, object]
+    ) -> None:
+        """A dict that carries the marker key but not a marker's shape restores as it is.
+
+        A snapshot written before the literal wrapper stored a tool return like this unwrapped.
+        """
+        store = FileMediaStore(tmp_path)
+        node = {'part_kind': 'tool-return', 'tool_name': 'fetch', 'content': content}
+        assert await restore_media(node, media_store=store) == node
 
     async def test_sub_threshold_surrogate_passes_through(self, tmp_path: Path) -> None:
         """A below-threshold string with an unpaired surrogate passes through, not raising.

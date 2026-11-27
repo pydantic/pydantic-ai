@@ -52,10 +52,10 @@ matching path wins, relative paths resolve against the working directory, and a 
 listed. `await workspace.authority_of(path)` gives one file's level, following symlinks and taking the lower of the
 link's and the target's level. A capability that puts file text it reads from the workspace in instructions asks
 `authority_of` per file when it reads it, keeps that level with the text, and sends the text with no more authority
-(the harness `RepoContext` and `Skills` do; `Memory` attributes a snapshot from such a file to its author, and
-`CapabilityCreation` refuses such a directory). It is not access control: tools still reach every path, and a file
-read with a tool is tool output whatever its level. To disable workspace access
-for a run on purpose, pass `workspace=UnavailableWorkspace(reason=...)`: its operations raise
+(the harness `RepoContext` and `Skills` do; `Memory` attributes a snapshot from such a file to its author,
+`CapabilityCreation` refuses such a directory, and `SubAgents` skips such a disk agent definition). It is not access
+control: tools still reach every path, and a file read with a tool is tool output whatever its level. To disable
+workspace access for a run on purpose, pass `workspace=UnavailableWorkspace(reason=...)`: its operations raise
 `WorkspaceUnavailableError` with that reason, which a tool can catch as a `WorkspaceError`.
 
 `run(..., cwd=path)` starts one command in another existing directory (relative to the working directory)

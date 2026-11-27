@@ -149,7 +149,7 @@ def _recursion_limit(limit: int) -> Generator[None]:
 
 
 class StepCounter:
-    """Scan text with a pattern the way `re.finditer` does, counting the steps the backtracking takes."""
+    """Scan text with a pattern as `re.finditer`, `search` or `match` does, counting the steps the backtracking takes."""
 
     def __init__(self, pattern: str, flags: int = 0) -> None:
         nodes, pattern_flags = parse(pattern, flags)
@@ -164,14 +164,31 @@ class StepCounter:
         spans: list[tuple[int, int]] = []
         position, after_empty_match = 0, False
         with _recursion_limit(50 * len(text) + 1_000):
-            while (span := self._search(position, after_empty_match)) is not None:
+            while (span := self._search(position, after_empty_match, len(text))) is not None:
                 spans.append(span)
                 position, after_empty_match = span[1], span[0] == span[1]
         return Scan(spans, self._steps)
 
-    def _search(self, position: int, after_empty_match: bool) -> tuple[int, int] | None:
-        """The first match at or after `position`; right after an empty match, not another empty one there."""
-        for start in range(position, len(self._text) + 1):
+    def search(self, text: str, budget: int, position: int = 0) -> Scan:
+        """Find the first match at or after `position`, as `re.Pattern.search` does."""
+        return self._first(text, budget, position, last_start=len(text))
+
+    def match(self, text: str, budget: int, position: int = 0) -> Scan:
+        """Find a match that starts at `position`, as `re.Pattern.match` does."""
+        return self._first(text, budget, position, last_start=position)
+
+    def _first(self, text: str, budget: int, position: int, last_start: int) -> Scan:
+        self._text, self._steps, self._budget = text, 0, budget
+        with _recursion_limit(50 * len(text) + 1_000):
+            span = self._search(position, False, last_start)
+        return Scan([] if span is None else [span], self._steps)
+
+    def _search(self, position: int, after_empty_match: bool, last_start: int) -> tuple[int, int] | None:
+        """The first match that starts from `position` to `last_start`.
+
+        Right after an empty match, not another empty one at `position`.
+        """
+        for start in range(position, last_start + 1):
             ends: list[int] = []
             must_advance = after_empty_match and start == position
 
