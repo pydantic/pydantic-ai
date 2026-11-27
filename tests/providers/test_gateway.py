@@ -238,7 +238,7 @@ def _chat_completion(request: httpx2.Request) -> httpx2.Response:
                 'usage': usage,
             },
         )
-    chunks = [
+    chunks: list[dict[str, Any]] = [
         {'choices': [{'index': 0, 'delta': message, 'finish_reason': None}]},
         {'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}], 'usage': usage},
     ]
@@ -303,7 +303,11 @@ async def test_gateway_route_for_another_providers_models_is_priced_as_that_prov
     ],
 )
 async def test_gateway_route_pricing_provider_follows_the_upstream(
-    allow_model_requests: None, upstream: str, route: str | None, model_name: str, pricing_provider: str | None
+    allow_model_requests: None,
+    upstream: Literal['openai', 'doubleword'],
+    route: str | None,
+    model_name: str,
+    pricing_provider: str | None,
 ):
     """Only a route for another provider's models over the OpenAI API names a pricing provider, custom route or not.
 
