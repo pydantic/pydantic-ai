@@ -525,17 +525,25 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
         # keywords, like `multipleOf`, would raise on NaN instead of reporting an error.
         problems = [f'at `{path}`: {number!r} is not a finite number' for path, number in _non_finite_numbers(value)]
         if not problems:
-            try:
-                problems = [_error_message(error) for error in sorted(validator.iter_errors(value), key=_error_path)]
-            except Unresolvable as e:
-                raise exceptions.UserError(
-                    f'`StructuredDict(validate=True)` can only resolve references inside the schema, not {e.ref!r}.'
-                ) from e
+            problems = _schema_problems(validator, value, Unresolvable)
         if problems:
             raise _schema_mismatch(problems)
         return value
 
     return validate
+
+
+def _schema_problems(validator: Any, value: dict[str, Any], unresolvable: type[Exception]) -> list[str]:
+    """What's wrong with `value` according to `validator`, one line per problem."""
+    try:
+        return [_error_message(error) for error in sorted(validator.iter_errors(value), key=_error_path)]
+    except unresolvable as e:
+        raise exceptions.UserError(
+            f'`StructuredDict(validate=True)` can only resolve references inside the schema, not {getattr(e, "ref", e)!r}.'
+        ) from e
+    except OverflowError:
+        # `multipleOf` divides by a float, which overflows for an integer beyond the float range.
+        return ['a number is too large to check against the schema']
 
 
 def _error_path(error: Any) -> list[str]:

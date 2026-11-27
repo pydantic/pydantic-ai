@@ -3246,10 +3246,50 @@ def test_output_type_structured_dict_refuses_nan_under_multiple_of():
     It feeds deliberately invalid output, which no provider sends on demand, so this is a unit test.
     """
     Step = StructuredDict({'type': 'object', 'properties': {'step': {'multipleOf': 0.5}}}, validate=True)
-    agent = Agent(TestModel(custom_output_args={'step': float('nan')}), output_type=Step, retries=0)
+    retry_messages: list[str] = []
 
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
-        agent.run_sync('Step')
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            step = float('nan')
+        else:
+            retry = messages[-1].parts[-1]
+            assert isinstance(retry, ToolReturnPart)
+            retry_messages.append(retry.model_response_str())
+            step = 1.5
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'step': step})])
+
+    result = Agent(FunctionModel(call_tool), output_type=Step).run_sync('Step')
+
+    assert result.output == snapshot({'step': 1.5})
+    assert len(retry_messages) == 1
+    assert 'nan is not a finite number' in retry_messages[0]
+
+
+def test_output_type_structured_dict_refuses_numbers_too_large_to_check():
+    """An integer beyond the float range under `multipleOf` is reported back to the model instead of crashing the run.
+
+    It feeds deliberately invalid output, which no provider sends on demand, so this is a unit test.
+    """
+    Step = StructuredDict({'type': 'object', 'properties': {'step': {'multipleOf': 0.5}}}, validate=True)
+    retry_messages: list[str] = []
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            step = 10**400
+        else:
+            retry = messages[-1].parts[-1]
+            assert isinstance(retry, ToolReturnPart)
+            retry_messages.append(retry.model_response_str())
+            step = 2
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'step': step})])
+
+    result = Agent(FunctionModel(call_tool), output_type=Step).run_sync('Step')
+
+    assert result.output == snapshot({'step': 2})
+    assert len(retry_messages) == 1
+    assert 'a number is too large to check against the schema' in retry_messages[0]
 
 
 def test_structured_dict_validate_does_not_fetch_remote_refs():
