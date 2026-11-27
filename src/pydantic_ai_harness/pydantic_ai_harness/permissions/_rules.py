@@ -394,8 +394,11 @@ _CLAUDE_CODE_TOOLS: dict[str, str] = {
     'Glob': '`find_files`',
     'Grep': '`grep`',
     'WebFetch': '`web_fetch`',
+    'WebSearch': '`web_search`',
 }
 """Claude Code tool names a rule string can't use, with the tools to name instead."""
+_SHELL_TOOL_NAMES = frozenset({'bash', 'shell', 'run_command', 'start_command'})
+"""Lowercase names of shell tools, whose calls have no `path` for a pattern to match."""
 
 
 def _split_rule(rule: str) -> tuple[str, str | None]:
@@ -434,17 +437,16 @@ def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str 
       written.
     - `'web_fetch(url=https://example.com/*)'`: calls whose `url` argument matches the glob.
 
-    A pattern ending in `:*` on any other name, such as a lowercase `'shell(rm -rf:*)'`, raises `UserError`, and so
-    does a wildcard in a tool name, such as `'mcp__github__*'`, or Claude Code's rule for a whole MCP server, such as
+    A pattern ending in `:*` on any other name raises `UserError`, and so does a `path` pattern on a shell tool's
+    lowercase name, such as `'bash(rm -rf)'` or `'run_command(rm -rf)'`, whose calls have no `path`. So does
+    a wildcard in a tool name, such as `'mcp__github__*'`, or Claude Code's rule for a whole MCP server, such as
     `'mcp__github'`: a rule names tools exactly.
 
     The text between the first `(` and the last `)` is the pattern, so a command may hold parentheses. Claude Code's
     own tool names, such as `Read` or `Edit`, raise `UserError` naming the tool to use: no tool here has them, so
     a rule naming one would match nothing.
     """
-    if verdict not in _SEVERITY:
-        # A typo such as `'denny'` would otherwise build a rule that neither allows nor denies, so it would ask.
-        raise UserError(f'Permission rule {rule!r} has the verdict {verdict!r}: use `allow`, `ask` or `deny`.')
+    _check_verdict(verdict, f'Permission rule {rule!r}')
     name, inner = _split_rule(rule)
     if (instead := _CLAUDE_CODE_TOOLS.get(name)) is not None:
         raise UserError(f'Permission rule {rule!r} uses the Claude Code tool name {name!r}: name {instead} instead.')
@@ -466,6 +468,12 @@ def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str 
         raise UserError(f'Permission rule {rule!r} uses `:*`, which only `Bash(...)` and `Shell(...)` take.')
     arg, equals, glob = inner.partition('=')
     arg, glob = (arg, glob.strip()) if equals and arg.isidentifier() and glob else ('path', inner)
+    if arg == 'path' and name.lower() in _SHELL_TOOL_NAMES:
+        # A shell tool's call has no `path`, so the rule would match nothing.
+        raise UserError(
+            f'Permission rule {rule!r} matches a path, which a shell command has none of: '
+            f'write `Bash({inner})` for a command rule.'
+        )
     return PermissionRule(
         verdict, tools=[name], args={arg: _path_glob(rule, glob, verdict) if arg == 'path' else glob}, reason=reason
     )
@@ -501,9 +509,22 @@ def _path_glob(rule: str, glob: str, verdict: PermissionVerdict) -> str:
             f'Permission rule {rule!r} starts its path with {glob[0]!r}: write it relative, such as `secrets/**`, '
             'which also matches the end of a longer path.'
         )
-    while glob.startswith('./') or (verdict != 'allow' and glob.startswith('**/')):
-        glob = glob.removeprefix('./').removeprefix('**/')
-    return glob
+    while True:
+        if glob.startswith('./'):
+            glob = glob[2:]
+        elif verdict != 'allow' and glob.startswith('**/'):
+            glob = glob[3:]
+        else:
+            return glob
+
+
+def _check_verdict(verdict: str, where: str) -> None:
+    """Raise `UserError` unless `verdict` is `'allow'`, `'ask'` or `'deny'`.
+
+    A typo such as `'denny'` would otherwise build a rule that neither allows nor denies, so it would ask.
+    """
+    if verdict not in _SEVERITY:
+        raise UserError(f'{where} has the verdict {verdict!r}: use `allow`, `ask` or `deny`.')
 
 
 def parse_permission_rules(rules: Mapping[PermissionVerdict, Sequence[str]]) -> list[PermissionRule[Any]]:
@@ -514,6 +535,7 @@ def parse_permission_rules(rules: Mapping[PermissionVerdict, Sequence[str]]) -> 
     `UserError`, since settings files that people write by hand aren't type-checked.
     """
     for verdict, strings in rules.items():
+        _check_verdict(verdict, 'A permission rules mapping')
         if isinstance(strings, str):
             raise UserError(f'Permission rules for {verdict!r} must be a list of strings, not one string: {strings!r}.')
     return [parse_permission_rule(rule, verdict) for verdict, strings in rules.items() for rule in strings]
