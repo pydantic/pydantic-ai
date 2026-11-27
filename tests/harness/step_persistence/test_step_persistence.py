@@ -479,8 +479,7 @@ class TestFileStepStore:
         read_text = Path.read_text
 
         def counting_read_text(path: Path, encoding: str | None = None, errors: str | None = None) -> str:
-            if path.parent.name == 'snapshots':
-                reads.append(path.name)
+            reads.append(f'{path.parent.name}/{path.name}')
             return read_text(path, encoding, errors)
 
         monkeypatch.setattr(Path, 'read_text', counting_read_text)
@@ -497,10 +496,10 @@ class TestFileStepStore:
         # A second store over the same directory reads each existing snapshot once, then only those another
         # store wrote since.
         other = FileStepStore(tmp_path)
-        assert await save(other, 4) == ['0.json', '1.json', '2.json', '3.json']
+        assert await save(other, 4) == ['snapshots/0.json', 'snapshots/1.json', 'snapshots/2.json', 'snapshots/3.json']
         assert await save(other, 5) == []
-        assert await save(writer, 6) == ['4.json', '5.json']
-        assert await save(other, 7) == ['6.json']
+        assert await save(writer, 6) == ['snapshots/4.json', 'snapshots/5.json']
+        assert await save(other, 7) == ['snapshots/6.json']
 
     async def test_keyed_event_append_parses_only_lines_appended_since_the_last_one(
         self, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
