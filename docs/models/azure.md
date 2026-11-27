@@ -171,6 +171,8 @@ model = OpenAIResponsesModel(
 
 This has been verified on the v1 API with `gpt-5.6-luna`, `gpt-6-sol`, `gpt-6-luna`, `gpt-6.1-sol` and `gpt-6-astra`. It hasn't been verified with `gpt-6.1-terra`, `gpt-6.2-sol` or `gpt-6.2-astra`, which weren't available to test, or on `api-version`-based deployments.
 
+On `gpt-6.2-sol` and `gpt-6.2-astra` deployments, all instructions stay in the top-level `instructions` field. On OpenAI's own API, these models read that field after the conversation and never cache it, so Pydantic AI sends the static and [`on_change='append'`](../agent.md#appending-instruction-changes) instructions as [leading input messages](openai.md#prompt-caching) there. That hasn't been measured on Azure, so it isn't the default here. To opt in, pass `profile=OpenAIModelProfile(openai_responses_stable_instructions_as_input=True)` to the model, and see [Referencing earlier responses](openai.md#referencing-earlier-responses) for what that changes when seeding with a concrete `openai_previous_response_id`.
+
 ## Grok tool schemas
 
 For deployments whose names start with `grok` (case-insensitive), [`AzureProvider`][pydantic_ai.providers.azure.AzureProvider] inlines non-recursive tool-schema definitions while retaining OpenAI's schema conversion, including nested `additionalProperties: false` where applicable. This applies with both [`OpenAIChatModel`][pydantic_ai.models.openai.OpenAIChatModel] and [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
