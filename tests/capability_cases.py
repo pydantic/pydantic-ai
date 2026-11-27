@@ -7,10 +7,11 @@ one entry that says what two of it mean (`combine`), and, when its defaults can'
 or why it can't run offline (`Unbuildable`). The suites that run over every capability read their cases from
 here: `tests/test_history_append_only.py` and `tests/test_capability_combine.py`, and their Harness twins. A case
 whose `calls` run its tools is also run by the `CONTRACTS` at the end of this module, which
-`tests/harness/test_capability_contracts.py` checks, and by `tests/harness/test_durable_tool_io.py` when its
-calls name `durable_steps`. A case whose capability contributes a toolset or a tool hook declares `calls`, or an
-exemption from `DECLARES_CALLS` with its reason. `agent_docs/capability-conformance.md` lists what each area's
-contracts require of a capability.
+`tests/harness/test_capability_contracts.py` checks, and under each durable engine, by
+`tests/harness/test_durable_tool_io.py` (DBOS) and `tests/harness/test_durable_temporal_replay.py` (Temporal),
+which check the units its calls record against its `durable_steps`. A case whose capability contributes a toolset
+or a tool hook declares `calls`, or an exemption from `DECLARES_CALLS` with its reason.
+`agent_docs/capability-conformance.md` lists what each area's contracts require of a capability.
 
 This module imports nothing from Pydantic AI Harness: `tests/conftest.py` leaves `tests/harness` out of a
 lane that doesn't install it, and the core suites import this module on every lane.
@@ -172,17 +173,35 @@ class Unbuildable:
 
 
 @dataclass(frozen=True)
+class DurableSteps:
+    """The durable units a case's calls record under each engine, in the order they record them.
+
+    The names are persisted: a workflow recorded by one release replays by them in the next, so `DURABLE_DBOS` and
+    `DURABLE_TEMPORAL` fail when a case records anything else. The run's own model requests are left out, as
+    every case makes one per call and one to answer. A case whose tools do no I/O through a durable unit records
+    nothing, which is checked too.
+    """
+
+    dbos: tuple[str, ...] = ()
+    """DBOS step names, without the `<agent name>__` prefix: `capability__<id>.<operation>` for a
+    `durable_operation` or a workspace call, `mcp_server__<toolset id>.<operation>` for an MCP server."""
+    temporal: tuple[str, ...] = ()
+    """Temporal activity names, without the `agent__<agent name>__` prefix: `toolset__<toolset id>__call_tool` for a
+    function tool, which runs in its activity, `capability__<id>__<operation>` for a `durable_operation` that
+    workflow code calls, and `mcp_server__<toolset id>__<operation>` for an MCP server."""
+
+
+@dataclass(frozen=True)
 class Calls:
     """Tool calls that run a capability's tools offline, in order, for the suites that call its tools."""
 
     made: tuple[ToolCall, ...]
     build: Fixture
     """What the calls run against, offline: stand-ins for any client its tools send requests through. It must
-    not need a test's state beyond the directory it is given: the durable suite builds it at import, as DBOS
-    registers a workflow before launch."""
-    durable_steps: tuple[str, ...] = ()
-    """The DBOS steps the calls record, as `<capability id>.<operation>`, for tools whose requests a recovered
-    run must not make again. `tests/harness/test_durable_tool_io.py` runs every case that names some."""
+    not need a test's state beyond the directory it is given: the DBOS suite builds it at import, as DBOS
+    registers a workflow before launch. A toolset it builds has an `id`, which Temporal names its activities by."""
+    durable_steps: DurableSteps = DurableSteps()
+    """What the calls record under each durable engine, run one per response."""
     moves_cache_prefix: str | None = None
     """Why running the calls rewrites earlier history by design, which moves the prompt-cache prefix: a suite
     that runs them one per response marks the run `moves_cache_prefix` with it."""
@@ -308,9 +327,18 @@ ECHO: tuple[ToolCall, ...] = (('echo', {'text': 'hi'}),)
 """A call to the `echo` tool `with_echo` adds."""
 
 
+ECHO_STEPS = DurableSteps(temporal=('toolset__echo__call_tool',))
+"""What `ECHO` records under each durable engine: `echo` does no I/O, so only Temporal's activity for it."""
+
+
+def echo_toolset() -> FunctionToolset[None]:
+    """A toolset with one `echo` tool, and the `id` a durable engine names its units after."""
+    return FunctionToolset([echo], id='echo')
+
+
 def with_echo(build: Callable[[], AbstractCapability[None]]) -> Fixture:
     """The capability beside a toolset with one `echo` tool, for a capability whose hooks run around other tools."""
-    return lambda _: [build(), Toolset(FunctionToolset([echo]))]
+    return lambda _: [build(), Toolset(echo_toolset())]
 
 
 def _keep_history(messages: list[ModelMessage]) -> list[ModelMessage]:
@@ -474,7 +502,7 @@ CASES: dict[str, CapabilityCase] = {
             ),
             _check_instrumentation,
         ),
-        calls=Calls(ECHO, with_echo(Instrumentation)),
+        calls=Calls(ECHO, with_echo(Instrumentation), durable_steps=ECHO_STEPS),
     ),
     'ReinjectSystemPrompt': CapabilityCase(
         Combines(
@@ -552,7 +580,8 @@ CASES: dict[str, CapabilityCase] = {
         build=lambda _: PrefixTools(Toolset(FunctionToolset([_no_op_tool])), prefix='extra'),
         calls=Calls(
             (('extra_echo', {'text': 'hi'}),),
-            lambda _: PrefixTools(Toolset(FunctionToolset([echo])), prefix='extra'),
+            lambda _: PrefixTools(Toolset(echo_toolset()), prefix='extra'),
+            durable_steps=ECHO_STEPS,
         ),
     ),
     'DynamicCapability': CapabilityCase(
@@ -576,12 +605,20 @@ CASES: dict[str, CapabilityCase] = {
         ),
         build=lambda _: MCP(local=MCPToolset(_mcp_server())),
         requires='fastmcp',
-        calls=Calls((('extra_tool', {}),), lambda _: MCP(local=MCPToolset(_mcp_server()))),
+        calls=Calls(
+            (('extra_tool', {}),),
+            lambda _: MCP(local=MCPToolset(_mcp_server(), id='extra')),
+            # The server's instructions are left out, as `include_instructions` is off by default.
+            durable_steps=DurableSteps(
+                dbos=('mcp_server__extra.get_tools', 'mcp_server__extra.call_tool'),
+                temporal=('mcp_server__extra__get_tools', 'mcp_server__extra__call_tool'),
+            ),
+        ),
     ),
     'Toolset': CapabilityCase(
         Anonymous('one per toolset'),
         build=lambda _: Toolset(FunctionToolset([_no_op_tool])),
-        calls=Calls(ECHO, lambda _: Toolset(FunctionToolset([echo]))),
+        calls=Calls(ECHO, lambda _: Toolset(echo_toolset()), durable_steps=ECHO_STEPS),
     ),
     'Hooks': CapabilityCase(Anonymous('several hook bundles compose')),
     'HandleDeferredToolCalls': CapabilityCase(
@@ -639,11 +676,11 @@ CASES: dict[str, CapabilityCase] = {
     ),
     'SetToolMetadata': CapabilityCase(
         Anonymous('one per `ToolSelector`; several selectors compose'),
-        calls=Calls(ECHO, with_echo(lambda: SetToolMetadata(source='case'))),
+        calls=Calls(ECHO, with_echo(lambda: SetToolMetadata(source='case')), durable_steps=ECHO_STEPS),
     ),
     'IncludeToolReturnSchemas': CapabilityCase(
         Anonymous('one per `ToolSelector`; several selectors compose'),
-        calls=Calls(ECHO, with_echo(IncludeToolReturnSchemas)),
+        calls=Calls(ECHO, with_echo(IncludeToolReturnSchemas), durable_steps=ECHO_STEPS),
     ),
     'DeferredCapabilityLoader': CapabilityCase(Anonymous('auto-injected only when absent')),
     'PendingMessageDrainCapability': CapabilityCase(Anonymous('auto-injected only when absent')),
@@ -846,6 +883,37 @@ vacuously. An exemption says why the tools can't run offline; one whose reason s
 case still to be backfilled, which `test_pending_calls_backfill` counts.
 """
 
+DURABLE_DBOS = Contract('durable_dbos', applies=lambda _, case: case.calls is not None)
+"""D1: in a DBOS workflow, a case's calls record the steps its `durable_steps.dbos` lists, and re-executing the
+workflow from after its last step, as recovering a committed run does, makes none of their requests again.
+
+DBOS runs a function tool in workflow code, so a request the tool makes outside a `durable_operation` or a
+workspace call is made again on every recovery.
+"""
+
+ID_LESS_TOOLSETS = ('BrowserUse', 'PydanticAIDocs')
+"""The cases whose toolset has no id, which Temporal and Prefect refuse."""
+
+DURABLE_TEMPORAL = Contract(
+    'durable_temporal',
+    applies=lambda _, case: case.calls is not None,
+    exempt={
+        **dict.fromkeys(ID_LESS_TOOLSETS, Exempt(_TOOLSET_WITHOUT_ID)),
+        'CompactOnRequest': Exempt(
+            f'its `for_run` copy builds a new toolset, which Temporal refuses as one added at run time: {_ISSUES}14403'
+        ),
+        'Planning': Exempt(
+            f'its tools emit plan events, which Temporal cannot deliver from an activity yet: {_ISSUES}7971'
+        ),
+    },
+)
+"""D1: in a Temporal workflow, a case's calls schedule the activities its `durable_steps.temporal` lists, and a
+`Replayer` replays the recorded history equal, without a request.
+
+Temporal runs a function tool in an activity named after its toolset's `id`, so an agent with an id-less toolset is
+refused, and what replays is the workflow code around it: hooks, instructions and workflow-side tools.
+"""
+
 CONTRACTS = (
     RENAMED,
     UNSET_ID,
@@ -854,5 +922,7 @@ CONTRACTS = (
     FORWARDS_USAGE,
     WORKSPACE_FROM_FUNCTION,
     DECLARES_CALLS,
+    DURABLE_DBOS,
+    DURABLE_TEMPORAL,
 )
 """Every contract, so a meta-test can check each one's exemptions."""

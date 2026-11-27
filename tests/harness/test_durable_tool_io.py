@@ -1,15 +1,19 @@
-"""Capabilities whose tools make requests record them under durable execution, instead of repeating them.
+"""Every capability case's calls, run in a DBOS workflow: `DURABLE_DBOS`, half of D1.
 
 DBOS runs function tools in workflow code, so a capability's tool I/O is only recorded when the
-capability routes it through a `durable_operation`. Each scenario runs the calls of one case in
-`tests/harness/capability_cases.py` that names `durable_steps`, in a DBOS workflow, then re-executes
-the workflow from after its last recorded step, the way recovering a committed run does, and checks
-that no request was made again. Planning's tools also run with an event stream handler, whose steps
-for the events a tool emits must replay in their recorded order. Shell's `shell` tool names its job
-in workflow code, so a recovered workflow must report the job it started.
+capability routes it through a `durable_operation` or a workspace call. Each case in
+`tests/capability_cases.py` and `tests/harness/capability_cases.py` with `calls` makes them in a DBOS
+workflow, one per response, then re-executes the workflow from after its last recorded step, the way
+recovering a committed run does. No request may be made again, and the steps the run recorded must be
+the ones the case's `durable_steps.dbos` lists. `tests/harness/test_durable_temporal_replay.py` runs
+the same calls under Temporal.
 
-The other engines run function tools in their own durable unit, which needs the toolset's `id`; the
-construction tests below check every one of those capabilities supplies one.
+Planning's tools also run with an event stream handler, whose steps for the events a tool emits must
+replay in their recorded order. Shell's `shell` tool names its job in workflow code, so a recovered
+workflow must report the job it started.
+
+Prefect runs function tools in their own durable unit, which needs the toolset's `id`; until a Prefect
+suite runs the calls, the construction test below checks every case Temporal runs supplies one.
 """
 
 from __future__ import annotations
@@ -19,7 +23,7 @@ import json
 import tempfile
 import uuid
 from collections import Counter
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator
 from pathlib import Path
 from typing import Any
 
@@ -30,35 +34,29 @@ from pydantic_ai import Agent, AgentStreamEvent, RunContext, ToolDefinition
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, ValidatedToolArgs, durable_operation
 from pydantic_ai.messages import CapabilityEvent, ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai_harness.capability_creation import CapabilityStore
-from pydantic_ai_harness.conversation_search import SnapshotHistorySource
-from pydantic_ai_harness.memory import InMemoryMemoryStore
 from pydantic_ai_harness.planning import (
     InMemoryPlanStore,
     PlanCompletedEvent,
     PlanItem,
     Planning,
     PlanStatusChangedEvent,
-    SqlitePlanStore,
 )
 from pydantic_ai_harness.shell import Shell
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
-from ._counting_clients import AWS_CLI_COUNT_VARIABLE, REQUESTS
-from .capability_cases import CASES
+from ..append_only import skip_unless_installed
+from ..capability_cases import DURABLE_DBOS, DURABLE_TEMPORAL, ID_LESS_TOOLSETS
+from ._contracts import CASES, assert_holds, contract_cases
+from ._durable_cases import build_case, counting_requests, installed, journal_breaks, one_call_per_response
 
 # Module scope builds the agents and registers their DBOS workflows, which DBOS requires before launch.
 try:
-    # The Exa and You.com cases' `requires`, which their builds below need.
-    import exa_py  # noqa: F401  # pyright: ignore[reportUnusedImport]
-    import youdotcom  # noqa: F401  # pyright: ignore[reportUnusedImport]
     from dbos import DBOS, DBOSConfig, SetWorkflowID
 
     from pydantic_ai.durable_exec.dbos import DBOSDurability
     from pydantic_ai.durable_exec.prefect import PrefectDurability
-    from pydantic_ai.durable_exec.temporal import TemporalDurability
 except ImportError:  # pragma: lax no cover
-    pytest.skip('dbos, prefect, temporalio, exa-py or youdotcom not installed', allow_module_level=True)
+    pytest.skip('dbos or prefect not installed', allow_module_level=True)
 
 
 @pytest.fixture
@@ -87,27 +85,22 @@ def _call_tools(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:
     return FunctionModel(respond)
 
 
-def _capabilities(
-    built: AbstractCapability[None] | Sequence[AbstractCapability[None]],
-) -> list[AbstractCapability[None]]:
-    return [built] if isinstance(built, AbstractCapability) else list(built)
-
-
-_DURABLE = {name: case.calls for name, case in CASES.items() if case.calls is not None and case.calls.durable_steps}
-"""The cases whose tools make requests a recovered run must not repeat."""
-
-_AGENTS: dict[str, Agent[None, str]] = {
-    name: Agent(
-        _call_tools(*calls.made),
+def _case_agent(name: str) -> Agent[None, str]:
+    calls = CASES[name].calls
+    assert calls is not None
+    directory = Path(tempfile.mkdtemp(prefix=f'harness_durable_tool_io_{name}_'))
+    return Agent(
+        one_call_per_response(calls.made),
         name=f'{name}_agent',
         deps_type=type(None),
-        capabilities=[
-            *_capabilities(calls.build(Path(tempfile.mkdtemp(prefix=f'harness_durable_tool_io_{name}_')))),
-            DBOSDurability[None](),
-        ],
+        capabilities=[*build_case(name, directory), DBOSDurability[None]()],
     )
-    for name, calls in _DURABLE.items()
+
+
+_AGENTS: dict[str, Agent[None, str]] = {
+    name: _case_agent(name) for name, case in CASES.items() if DURABLE_DBOS.applies(name, case) and installed(name)
 }
+"""The agent that makes each case's calls, for every case `DURABLE_DBOS` applies to whose dependency is installed."""
 
 
 def _workflow(agent: Agent[None, str]) -> Callable[[], Awaitable[str]]:
@@ -123,68 +116,21 @@ _WORKFLOWS = {key: _workflow(agent) for key, agent in _AGENTS.items()}
 
 @pytest.fixture
 def count_requests(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> Callable[[], Counter[str]]:
-    """Count every request the cases' stand-ins, the `aws` stand-in, and the stores make."""
-    REQUESTS.clear()
-    aws_count = tmp_path / 'aws_cli_count'
-    monkeypatch.setenv(AWS_CLI_COUNT_VARIABLE, str(aws_count))
-
-    for method in ('write', 'list_all', 'disable'):
-        original = getattr(CapabilityStore, method)
-
-        def counted(self: CapabilityStore, *args: Any, _original: Any = original, _method: str = method) -> Any:
-            REQUESTS[f'store.{_method}'] += 1
-            return _original(self, *args)
-
-        monkeypatch.setattr(CapabilityStore, method, counted)
-
-    # A memory write first looks up its idempotency key; the write is what recovery must not repeat.
-    original_memory_write = InMemoryMemoryStore.write
-
-    async def counted_memory_write(self: InMemoryMemoryStore, *args: Any, **kwargs: Any) -> Any:
-        REQUESTS['memory.write'] += 1
-        return await original_memory_write(self, *args, **kwargs)
-
-    monkeypatch.setattr(InMemoryMemoryStore, 'write', counted_memory_write)
-
-    # The plan tools read the store many times; a write is what recovery must not repeat.
-    for method in ('set_items', 'add_item'):
-        original = getattr(SqlitePlanStore, method)
-
-        async def counted_plan(
-            self: SqlitePlanStore, *args: Any, _original: Any = original, _method: str = method
-        ) -> Any:
-            REQUESTS[f'plan.{_method}'] += 1
-            return await _original(self, *args)
-
-        monkeypatch.setattr(SqlitePlanStore, method, counted_plan)
-
-    original_list_runs = SnapshotHistorySource.list_runs
-
-    async def counted_list_runs(self: SnapshotHistorySource) -> Any:
-        REQUESTS['history.list_runs'] += 1
-        return await original_list_runs(self)
-
-    monkeypatch.setattr(SnapshotHistorySource, 'list_runs', counted_list_runs)
-
-    def snapshot() -> Counter[str]:
-        counts = Counter(REQUESTS)
-        if aws_count.exists():
-            counts['aws_cli'] = len(aws_count.read_text().splitlines())
-        return counts
-
-    return snapshot
+    return counting_requests(monkeypatch, tmp_path)
 
 
-@pytest.mark.parametrize('scenario', sorted(_AGENTS))
+@pytest.mark.parametrize('name', contract_cases(DURABLE_DBOS))
 async def test_dbos_recovery_does_not_repeat_tool_requests(
-    scenario: str, dbos: DBOS, count_requests: Callable[[], Counter[str]]
+    name: str, dbos: DBOS, count_requests: Callable[[], Counter[str]]
 ) -> None:
+    skip_unless_installed(name, CASES[name].requires)
+    calls = CASES[name].calls
+    assert calls is not None
     workflow_id = str(uuid.uuid4())
     with SetWorkflowID(workflow_id):
-        assert await _WORKFLOWS[scenario]() == 'done'
+        assert await _WORKFLOWS[name]() == 'done'
     first_run = count_requests()
-    assert first_run, 'the scenario made no requests to count'
-    assert set(first_run.values()) == {1}
+    assert set(first_run.values()) <= {1}, f'a request was made more than once: {first_run}'
 
     steps = await dbos.list_workflow_steps_async(workflow_id)
     # Re-execute the workflow function from after its last step, the way recovery does. Calling it
@@ -192,13 +138,17 @@ async def test_dbos_recovery_does_not_repeat_tool_requests(
     handle = await DBOS.fork_workflow_async(workflow_id, len(steps))
     # The default 1s result poll would add up to a second on top of the internal queue's own poll.
     assert await handle.get_result(polling_interval_sec=0.01) == 'done'
-    assert count_requests() == first_run, 'recovery made a request again'
-
-    step_names = {step['function_name'] for step in steps}
-    agent_name = _AGENTS[scenario].name
-    for operation in _DURABLE[scenario].durable_steps:
-        capability_id, name = operation.split('.')
-        assert f'{agent_name}__capability__{capability_id}.{name}' in step_names
+    recovered = count_requests()
+    breaks = [] if recovered == first_run else [f'recovery made a request again: {first_run} became {recovered}']
+    breaks += journal_breaks(
+        [step['function_name'] for step in steps],
+        prefix=f'{_AGENTS[name].name}__',
+        model_request='model.request',
+        calls=len(calls.made),
+        expected=calls.durable_steps.dbos,
+        engine='dbos',
+    )
+    assert_holds(DURABLE_DBOS, name, breaks)
 
 
 _SHELL_DIRECTORY = Path(tempfile.mkdtemp(prefix='harness_durable_tool_io_shell_'))
@@ -388,15 +338,21 @@ async def test_dbos_recovery_replays_plan_tool_events_in_recorded_order(
     assert await handle.get_result(polling_interval_sec=0.01) == 'done'
 
 
-@pytest.mark.parametrize('durability', [TemporalDurability, PrefectDurability])
-@pytest.mark.parametrize('scenario', sorted(_DURABLE))
-def test_toolset_can_be_wrapped_by_engines_that_wrap_function_tools(
-    scenario: str, durability: type[TemporalDurability | PrefectDurability], tmp_path: Path
-) -> None:
-    """Temporal and Prefect run each function tool in its own unit, named after the toolset's `id`."""
+@pytest.mark.parametrize(
+    'name',
+    [
+        name
+        for name, case in sorted(CASES.items())
+        if DURABLE_TEMPORAL.applies(name, case) and name not in ID_LESS_TOOLSETS
+    ],
+)
+def test_prefect_wraps_every_toolset_temporal_does(name: str, tmp_path: Path) -> None:
+    """Prefect, like Temporal, runs each function tool in its own unit, named after the toolset's `id`, so it refuses
+    the same id-less toolsets."""
+    skip_unless_installed(name, CASES[name].requires)
     Agent(
         _call_tools(),
         name=f'wrapped_{uuid.uuid4().hex}',
         deps_type=type(None),
-        capabilities=[*_capabilities(_DURABLE[scenario].build(tmp_path)), durability()],
+        capabilities=[*build_case(name, tmp_path), PrefectDurability[None]()],
     )

@@ -120,12 +120,14 @@ from pydantic_ai_harness.system_reminders import Reminder
 from ..append_only import CLOCK, Fixture, discover_capabilities
 from ..capability_cases import (
     ECHO,
+    ECHO_STEPS,
     Anonymous,
     Calls,
     CapabilityCase,
     Collides,
     Combines,
     Contract,
+    DurableSteps,
     Narrows,
     Rejected,
     Unbuildable,
@@ -168,9 +170,25 @@ def _hosted(cls: Callable[..., AbstractCapability[None]]) -> Fixture:
     return lambda _: cls(client=hosted_server())
 
 
-def _hosted_calls(cls: Callable[..., AbstractCapability[None]], tool: str) -> Calls:
-    """A call to the hosted stand-in's one tool, under the name `cls` gives it."""
-    return Calls(((tool, {}),), _hosted(cls))
+def _mcp_steps(toolset_id: str, *, instructions: bool = True) -> DurableSteps:
+    """What one call to a tool of the MCP server `toolset_id` records: its tools, listed once per run and cached, the
+    call, and, when the server's instructions are included, a read of them for each of the run's two requests."""
+    reads = ('get_instructions',) if instructions else ()
+    operations = ('get_tools', *reads, 'call_tool', *reads)
+    return DurableSteps(
+        dbos=tuple(f'mcp_server__{toolset_id}.{operation}' for operation in operations),
+        temporal=tuple(f'mcp_server__{toolset_id}__{operation}' for operation in operations),
+    )
+
+
+def _hosted_calls(cls: Callable[..., AbstractCapability[None]], tool: str, toolset_id: str) -> Calls:
+    """A call to the hosted stand-in's one tool, under the name `cls` gives it, through the toolset `toolset_id`."""
+    return Calls(((tool, {}),), _hosted(cls), durable_steps=_mcp_steps(toolset_id))
+
+
+def _workspace_steps(calls: int) -> tuple[str, ...]:
+    """The DBOS steps of `calls` workspace calls, the run's `ensure` included."""
+    return ('capability__workspace.call',) * calls
 
 
 def _workspace(build: Callable[[], AbstractCapability[None]]) -> Fixture:
@@ -413,7 +431,15 @@ CASES: dict[str, CapabilityCase] = {
             _check_skills,
         ),
         build=_skills,
-        calls=Calls((('list_skills', {}), ('load_skill', {'name': 'weather'})), _lowered_skills),
+        calls=Calls(
+            (('list_skills', {}), ('load_skill', {'name': 'weather'})),
+            _lowered_skills,
+            durable_steps=DurableSteps(
+                dbos=_workspace_steps(22),
+                # Under Temporal, the tools' own workspace reads run inside their `call_tool` activities.
+                temporal=(*('capability__workspace__call',) * 8, *('toolset__skills_lowered__call_tool',) * 2),
+            ),
+        ),
     ),
     'Memory': CapabilityCase(
         Narrows(
@@ -429,7 +455,16 @@ CASES: dict[str, CapabilityCase] = {
                 ('delete_memory', {'file': 'missing.md'}),
             ),
             lambda _: Memory(store=InMemoryMemoryStore()),
-            durable_steps=('memory.write_memory', 'memory.read_memory', 'memory.search_memory', 'memory.delete_memory'),
+            durable_steps=DurableSteps(
+                dbos=(
+                    'capability__memory.load_snapshot',
+                    'capability__memory.write_memory',
+                    'capability__memory.read_memory',
+                    'capability__memory.search_memory',
+                    'capability__memory.delete_memory',
+                ),
+                temporal=('capability__memory__load_snapshot', *('toolset__memory__call_tool',) * 4),
+            ),
         ),
     ),
     'ModelRouter': CapabilityCase(
@@ -466,7 +501,20 @@ CASES: dict[str, CapabilityCase] = {
                 ('add_task', {'content': 'Run the tests'}),
             ),
             lambda tmp_path: Planning(store=SqlitePlanStore(database=str(tmp_path / 'plan.db'))),
-            durable_steps=('planning.set_items', 'planning.add_item'),
+            durable_steps=DurableSteps(
+                dbos=(
+                    'capability__planning.read_plan',
+                    'capability__planning.read_plan',
+                    'capability__planning.set_items',
+                    'capability__planning.read_plan',
+                    'capability__planning.read_plan',
+                    'capability__planning.read_plan',
+                    'capability__planning.add_item',
+                    'capability__planning.read_plan',
+                    'capability__planning.read_plan',
+                ),
+                # Its run fails under Temporal (`DURABLE_TEMPORAL` exempts it, #7971), so nothing is recorded there.
+            ),
         ),
     ),
     'SpendLimits': CapabilityCase(
@@ -482,7 +530,46 @@ CASES: dict[str, CapabilityCase] = {
             lambda: (StepPersistence[None](agent_name='first'), StepPersistence[None](agent_name='second')),
             _check_step_persistence,
         ),
-        calls=Calls(ECHO, with_echo(StepPersistence)),
+        calls=Calls(
+            ECHO,
+            with_echo(StepPersistence),
+            # Every hook that records the run is a `durable_operation` that workflow code calls.
+            durable_steps=DurableSteps(
+                dbos=(
+                    'capability__step_persistence.registration_id',
+                    'capability__step_persistence.register_run',
+                    'capability__step_persistence.append_event',
+                    'capability__step_persistence.append_event',
+                    'capability__step_persistence.append_event',
+                    'capability__step_persistence.record_tool_effect',
+                    'capability__step_persistence.append_event',
+                    'capability__step_persistence.finish_tool_effect',
+                    'capability__step_persistence.append_event',
+                    'capability__step_persistence.save_snapshot',
+                    'capability__step_persistence.append_event',
+                    'capability__step_persistence.append_event',
+                    'capability__step_persistence.save_snapshot',
+                    'capability__step_persistence.append_event',
+                ),
+                temporal=(
+                    'capability__step_persistence__registration_id',
+                    'capability__step_persistence__register_run',
+                    'capability__step_persistence__append_event',
+                    'capability__step_persistence__append_event',
+                    'capability__step_persistence__append_event',
+                    'capability__step_persistence__record_tool_effect',
+                    'capability__step_persistence__append_event',
+                    'toolset__echo__call_tool',
+                    'capability__step_persistence__finish_tool_effect',
+                    'capability__step_persistence__append_event',
+                    'capability__step_persistence__save_snapshot',
+                    'capability__step_persistence__append_event',
+                    'capability__step_persistence__append_event',
+                    'capability__step_persistence__save_snapshot',
+                    'capability__step_persistence__append_event',
+                ),
+            ),
+        ),
     ),
     'RelevanceCompaction': CapabilityCase(
         Combines(
@@ -540,6 +627,8 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('compact_context', {}),),
             lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
+            # Temporal refuses its per-run toolset (`DURABLE_TEMPORAL` exempts it), so it records nothing there.
+            durable_steps=DurableSteps(dbos=('capability__compact_on_request.compact',)),
             moves_cache_prefix=COMPACTION_REWRITES_HISTORY,
         ),
     ),
@@ -558,6 +647,7 @@ CASES: dict[str, CapabilityCase] = {
                 ('prune_tool_result', {'tool_call_id': 'call_0', 'summary': 'Quiet.'}),
             ),
             lambda _: PruneToolResults(),
+            durable_steps=DurableSteps(temporal=('toolset__prune_tool_results__call_tool',) * 2),
             moves_cache_prefix=COMPACTION_REWRITES_HISTORY,
         ),
     ),
@@ -601,7 +691,9 @@ CASES: dict[str, CapabilityCase] = {
             lambda _: Advisor(
                 counting_model('advisor.model', lambda _: ModelResponse(parts=[TextPart('advice')])), native=False
             ),
-            durable_steps=('advisor.consult',),
+            durable_steps=DurableSteps(
+                dbos=('capability__advisor.consult',), temporal=('toolset__advisor__call_tool',)
+            ),
         ),
     ),
     'SSHWorkspace': CapabilityCase(
@@ -655,7 +747,8 @@ CASES: dict[str, CapabilityCase] = {
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'RepairToolArguments': CapabilityCase(
-        Anonymous('repairing valid arguments again is a no-op'), calls=Calls(ECHO, with_echo(RepairToolArguments))
+        Anonymous('repairing valid arguments again is a no-op'),
+        calls=Calls(ECHO, with_echo(RepairToolArguments), durable_steps=ECHO_STEPS),
     ),
     'ServingModelRecorder': CapabilityCase(Anonymous('one per sub-agent run, added by the delegating toolset')),
     '_Skill': CapabilityCase(
@@ -738,6 +831,10 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('read_file', {'path': 'notes.md'}), ('read_file', {'path': 'notes.md'})),
             _deduplicate_file_reads,
+            durable_steps=DurableSteps(
+                dbos=_workspace_steps(8),
+                temporal=('capability__workspace__call', *('toolset__file_system__call_tool',) * 2),
+            ),
             moves_cache_prefix=COMPACTION_REWRITES_HISTORY,
         ),
     ),
@@ -760,14 +857,21 @@ CASES: dict[str, CapabilityCase] = {
     'PromptInjectionDefender': CapabilityCase(
         Anonymous('one per `tool_filter`; several scopes compose'),
         requires='stackone_defender',
-        calls=Calls(ECHO, with_echo(lambda: pydantic_ai_harness.PromptInjectionDefender())),
+        # It declares durable operations and no default id, so a durable agent needs one given.
+        calls=Calls(
+            ECHO,
+            with_echo(lambda: pydantic_ai_harness.PromptInjectionDefender(id='prompt_injection_defender')),
+            durable_steps=ECHO_STEPS,
+        ),
     ),
     'StreamGuardrail': CapabilityCase(
         Anonymous('several guards is the design'),
         build=lambda _: StreamGuardrail(guard=lambda part: True),
     ),
     'ToolGuardrail': CapabilityCase(
-        Anonymous('several guards is the design'), calls=Calls(ECHO, with_echo(ToolGuardrail))
+        Anonymous('several guards is the design'),
+        # It declares durable operations and no default id, so a durable agent needs one given.
+        calls=Calls(ECHO, with_echo(lambda: ToolGuardrail(id='tool_guardrail')), durable_steps=ECHO_STEPS),
     ),
     'ToolCallJudge': CapabilityCase(
         Anonymous('one per risk question; stacked judges must all allow a call'),
@@ -792,7 +896,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(LogfireMCP),
-        calls=_hosted_calls(LogfireMCP, 'logfire_search'),
+        calls=_hosted_calls(LogfireMCP, 'logfire_search', 'logfire-mcp'),
     ),
     'RepoContext': CapabilityCase(Anonymous('one per workspace root'), build=_repo_context),
     'ReportContextUsage': CapabilityCase(Anonymous('a passive observer; several callbacks compose')),
@@ -811,7 +915,11 @@ CASES: dict[str, CapabilityCase] = {
     'StackOne': CapabilityCase(
         Anonymous('one per linked account, and `account_id` is what names it'),
         build=lambda _: StackOne('account', client=hosted_server()),
-        calls=Calls((('search', {}),), lambda _: StackOne('account', client=hosted_server())),
+        calls=Calls(
+            (('search', {}),),
+            lambda _: StackOne('account', client=hosted_server()),
+            durable_steps=_mcp_steps('stackone-account', instructions=False),
+        ),
     ),
     'TieredCompaction': CapabilityCase(
         Anonymous('drives other strategies; one per tier list'),
@@ -831,11 +939,11 @@ CASES: dict[str, CapabilityCase] = {
     ),
     'ReportToolErrors': CapabilityCase(
         Anonymous('a wrapper toolset; the innermost (last listed) formats the error and outer ones see a ToolFailed'),
-        calls=Calls(ECHO, with_echo(ReportToolErrors)),
+        calls=Calls(ECHO, with_echo(ReportToolErrors), durable_steps=ECHO_STEPS),
     ),
     'ToolBudgets': CapabilityCase(
         Anonymous('only a hook; each counts the calls it lets run, so stacked budgets all apply'),
-        calls=Calls(ECHO, with_echo(ToolBudgets)),
+        calls=Calls(ECHO, with_echo(ToolBudgets), durable_steps=ECHO_STEPS),
     ),
     'RefineOutput': CapabilityCase(
         Anonymous('only a hook; each counts its own rounds and adds its instructions to a round')
@@ -886,6 +994,11 @@ CASES: dict[str, CapabilityCase] = {
                 ('read_file', {'path': 'notes.md'}),
             ),
             _workspace(FileSystem),
+            durable_steps=DurableSteps(
+                dbos=_workspace_steps(17),
+                # `write_file` and `edit_file` run in the workflow, so their workspace calls are activities.
+                temporal=(*('capability__workspace__call',) * 14, 'toolset__file_system__call_tool'),
+            ),
         ),
     ),
     'Goal': CapabilityCase(
@@ -918,7 +1031,13 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(default_timeout=10.0), cls(default_timeout=20.0)),
         ),
         build=_workspace(Shell),
-        calls=Calls((('run_command', {'command': 'echo hi'}),), _workspace(Shell)),
+        calls=Calls(
+            (('run_command', {'command': 'echo hi'}),),
+            _workspace(Shell),
+            durable_steps=DurableSteps(
+                dbos=_workspace_steps(2), temporal=('capability__workspace__call', 'toolset__shell__call_tool')
+            ),
+        ),
     ),
     'CapabilityCreation': CapabilityCase(
         Narrows(
@@ -933,7 +1052,45 @@ CASES: dict[str, CapabilityCase] = {
                 ('disable_authored_capability', {'name': 'marker'}),
             ),
             _capability_creation,
-            durable_steps=('capability_creation.write', 'capability_creation.list_all', 'capability_creation.disable'),
+            durable_steps=DurableSteps(
+                dbos=(
+                    'capability__workspace.call',
+                    'capability__capability_creation.absolute_directory',
+                    'capability__workspace.call',
+                    'capability__workspace.call',
+                    'capability__capability_creation.absolute_directory',
+                    'capability__workspace.call',
+                    'capability__workspace.call',
+                    'capability__capability_creation.write',
+                    'capability__capability_creation.absolute_directory',
+                    'capability__workspace.call',
+                    'capability__workspace.call',
+                    'capability__capability_creation.list_all',
+                    'capability__capability_creation.absolute_directory',
+                    'capability__workspace.call',
+                    'capability__workspace.call',
+                    'capability__capability_creation.disable',
+                ),
+                # Its tools resolve the store directory and check it through the workspace in workflow code first.
+                temporal=(
+                    'capability__workspace__call',
+                    'capability__capability_creation__absolute_directory',
+                    'capability__workspace__call',
+                    'capability__workspace__call',
+                    'capability__capability_creation__absolute_directory',
+                    'capability__workspace__call',
+                    'capability__workspace__call',
+                    'toolset__capability_creation__call_tool',
+                    'capability__capability_creation__absolute_directory',
+                    'capability__workspace__call',
+                    'capability__workspace__call',
+                    'toolset__capability_creation__call_tool',
+                    'capability__capability_creation__absolute_directory',
+                    'capability__workspace__call',
+                    'capability__workspace__call',
+                    'toolset__capability_creation__call_tool',
+                ),
+            ),
         ),
     ),
     'PydanticAIDocs': CapabilityCase(
@@ -941,7 +1098,12 @@ CASES: dict[str, CapabilityCase] = {
             'one `read_pyai_docs` tool per id; two that differ need their own ids and PrefixTools',
             lambda cls: (cls(), cls(cache=False)),
         ),
-        calls=Calls((('read_pyai_docs', {'topic': 'hooks'}),), _pydantic_ai_docs),
+        calls=Calls(
+            (('read_pyai_docs', {'topic': 'hooks'}),),
+            _pydantic_ai_docs,
+            # Temporal refuses its id-less toolset (`DURABLE_TEMPORAL` exempts it), so it records nothing there.
+            durable_steps=DurableSteps(dbos=_workspace_steps(2)),
+        ),
     ),
     'Notion': CapabilityCase(
         Narrows(
@@ -949,7 +1111,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(Notion),
-        calls=_hosted_calls(Notion, 'search'),
+        calls=_hosted_calls(Notion, 'search', 'notion'),
     ),
     'PyaiDocs': CapabilityCase(
         Narrows(
@@ -963,7 +1125,13 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(timeout=10.0), cls(timeout=20.0)),
         ),
         build=_workspace(Macroscope),
-        calls=Calls((('run_macroscope_review', {}),), _macroscope),
+        calls=Calls(
+            (('run_macroscope_review', {}),),
+            _macroscope,
+            durable_steps=DurableSteps(
+                dbos=_workspace_steps(2), temporal=('capability__workspace__call', 'toolset__macroscope__call_tool')
+            ),
+        ),
     ),
     'LocalStack': CapabilityCase(
         Narrows(
@@ -973,7 +1141,9 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('aws_cli', {'command': 's3 ls'}),),
             lambda tmp_path: LocalStack(aws_cli_path=counting_aws_cli(tmp_path), include_instructions=False),
-            durable_steps=('localstack.aws_cli',),
+            durable_steps=DurableSteps(
+                dbos=('capability__localstack.aws_cli',), temporal=('toolset__localstack__call_tool',)
+            ),
         ),
     ),
     'Linear': CapabilityCase(
@@ -982,7 +1152,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(Linear),
-        calls=_hosted_calls(Linear, 'linear_search'),
+        calls=_hosted_calls(Linear, 'linear_search', 'linear'),
     ),
     'Ordinal': CapabilityCase(
         Narrows(
@@ -990,7 +1160,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(Ordinal),
-        calls=_hosted_calls(Ordinal, 'search'),
+        calls=_hosted_calls(Ordinal, 'search', 'ordinal'),
     ),
     'Grain': CapabilityCase(
         Narrows(
@@ -998,7 +1168,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(Grain),
-        calls=_hosted_calls(Grain, 'grain_search'),
+        calls=_hosted_calls(Grain, 'grain_search', 'grain'),
     ),
     'DayAI': CapabilityCase(
         Narrows(
@@ -1006,7 +1176,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(DayAI),
-        calls=_hosted_calls(DayAI, 'day_ai_search'),
+        calls=_hosted_calls(DayAI, 'day_ai_search', 'day_ai'),
     ),
     'PostHog': CapabilityCase(
         Narrows(
@@ -1014,7 +1184,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(PostHog),
-        calls=_hosted_calls(PostHog, 'posthog_search'),
+        calls=_hosted_calls(PostHog, 'posthog_search', 'posthog'),
     ),
     'Pylon': CapabilityCase(
         Narrows(
@@ -1022,7 +1192,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(Pylon),
-        calls=_hosted_calls(Pylon, 'pylon_search'),
+        calls=_hosted_calls(Pylon, 'pylon_search', 'pylon'),
     ),
     'CodeMode': CapabilityCase(
         Narrows(
@@ -1040,6 +1210,8 @@ CASES: dict[str, CapabilityCase] = {
     'BrowserUse': CapabilityCase(
         Collides('its toolset registers its browser tools under fixed names'),
         requires='browser_use',
+        # Temporal refuses its id-less toolset (`DURABLE_TEMPORAL` exempts it). Only the browser-use CI job installs
+        # `browser_use`, and it doesn't run the durable suites, so neither checks this case in CI.
         calls=Calls((('browse_web', {'task': 'Find the price of the Pro plan.'}),), _browser_use),
     ),
     'SmartSearch': CapabilityCase(
@@ -1049,7 +1221,12 @@ CASES: dict[str, CapabilityCase] = {
         ),
         build=_workspace(lambda: SmartSearch(model=TestModel())),
         calls=Calls(
-            (('smart_search', {'query': 'parse the config'}),), _smart_search, durable_steps=('smart_search.judge',)
+            (('smart_search', {'query': 'parse the config'}),),
+            _smart_search,
+            durable_steps=DurableSteps(
+                dbos=(*_workspace_steps(6), 'capability__smart_search.judge'),
+                temporal=('capability__workspace__call', 'toolset__smart_search__call_tool'),
+            ),
         ),
     ),
     'PlaywrightBrowser': CapabilityCase(
@@ -1081,7 +1258,10 @@ CASES: dict[str, CapabilityCase] = {
             lambda _: ConversationSearch(
                 SnapshotHistorySource(InMemoryStepStore()), scope='all', add_instructions=False
             ),
-            durable_steps=('conversation_search.search',),
+            durable_steps=DurableSteps(
+                dbos=('capability__conversation_search.search',),
+                temporal=('toolset__conversation-search__call_tool',),
+            ),
         ),
     ),
     'ExaAgent': CapabilityCase(
@@ -1094,7 +1274,10 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('exa_agent', {'query': 'q'}),),
             lambda _: pydantic_ai_harness.ExaAgent(runs=ExaAgentRuns()),
-            durable_steps=('exa_agent.create_run', 'exa_agent.resolve_run'),
+            durable_steps=DurableSteps(
+                dbos=('capability__exa_agent.create_run', 'capability__exa_agent.resolve_run'),
+                temporal=('toolset__exa_agent__call_tool', 'capability__exa_agent__resolve_run'),
+            ),
         ),
     ),
     'Pixeltable': CapabilityCase(
@@ -1119,7 +1302,14 @@ CASES: dict[str, CapabilityCase] = {
                 ('deep_search', {'question': 'q'}),
             ),
             lambda _: pydantic_ai_harness.ExaSearch(client=ExaClient(), include_deep_search=True),
-            durable_steps=('exa_search.web_search', 'exa_search.get_page', 'exa_search.deep_search'),
+            durable_steps=DurableSteps(
+                dbos=(
+                    'capability__exa_search.web_search',
+                    'capability__exa_search.get_page',
+                    'capability__exa_search.deep_search',
+                ),
+                temporal=('toolset__exa_search__call_tool',) * 3,
+            ),
         ),
     ),
     'GitHub': CapabilityCase(
@@ -1128,7 +1318,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(GitHub),
-        calls=_hosted_calls(GitHub, 'github_search'),
+        calls=_hosted_calls(GitHub, 'github_search', 'github'),
     ),
     'YouResearch': CapabilityCase(
         Narrows(
@@ -1140,7 +1330,14 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('answer', {'query': 'q'}), ('research', {'input': 'q'}), ('finance_research', {'input': 'q'})),
             lambda _: pydantic_ai_harness.YouResearch(client=YouClient()),
-            durable_steps=('you_research.answer', 'you_research.research', 'you_research.finance_research'),
+            durable_steps=DurableSteps(
+                dbos=(
+                    'capability__you_research.answer',
+                    'capability__you_research.research',
+                    'capability__you_research.finance_research',
+                ),
+                temporal=('toolset__you_research__call_tool',) * 3,
+            ),
         ),
     ),
     'YouSearch': CapabilityCase(
@@ -1153,7 +1350,10 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('web_search', {'query': 'q'}), ('get_page', {'url': 'https://a.dev'})),
             lambda _: pydantic_ai_harness.YouSearch(client=YouClient()),
-            durable_steps=('you_search.web_search', 'you_search.get_page'),
+            durable_steps=DurableSteps(
+                dbos=('capability__you_search.web_search', 'capability__you_search.get_page'),
+                temporal=('toolset__you_search__call_tool',) * 2,
+            ),
         ),
     ),
     'KeenableSearch': CapabilityCase(
@@ -1164,7 +1364,10 @@ CASES: dict[str, CapabilityCase] = {
         calls=Calls(
             (('web_search', {'query': 'q'}), ('get_page', {'url': 'https://a.dev'})),
             lambda _: KeenableSearch(client=KeenableClient()),
-            durable_steps=('keenable_search.web_search', 'keenable_search.get_page'),
+            durable_steps=DurableSteps(
+                dbos=('capability__keenable_search.web_search', 'capability__keenable_search.get_page'),
+                temporal=('toolset__keenable_search__call_tool',) * 2,
+            ),
         ),
     ),
     'Slack': CapabilityCase(
@@ -1173,7 +1376,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(auth='first-key'), cls(auth='second-key')),
         ),
         build=_hosted(Slack),
-        calls=_hosted_calls(Slack, 'search'),
+        calls=_hosted_calls(Slack, 'search', 'slack'),
     ),
 }
 """Every Pydantic AI Harness capability, public or not, keyed by class name."""

@@ -2,7 +2,9 @@
 
 They run here, where the Harness is installed, because its cases are most of what they apply to, over the public
 capabilities the suites build. A case a contract exempts must still break it, so fixing the capability fails the
-suite until the exemption is removed.
+suite until the exemption is removed. The durable contracts run under their engines, in
+`tests/harness/test_durable_tool_io.py` (DBOS) and `tests/harness/test_durable_temporal_replay.py` (Temporal); how
+they read a run's journal is checked here.
 """
 
 from __future__ import annotations
@@ -18,7 +20,6 @@ from typing import TypeVar
 
 import anyio
 import pytest
-from _pytest.mark import ParameterSet
 
 from pydantic_ai import Agent, AgentRunResult
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, LocalWorkspace, Toolset
@@ -30,12 +31,10 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.usage import UsageLimits
 
-from .. import capability_cases as core
-from ..append_only import ToolCall, build_capabilities, discover_capabilities, drain_events, skip_unless_installed
+from ..append_only import ToolCall, build_capabilities, drain_events, skip_unless_installed
 from ..capability_cases import (
     COMBINE_FIXED_POINT,
     CONTRACTS as CORE_CONTRACTS,
-    CORE_CAPABILITY_PACKAGES,
     CUSTOM_ID,
     DECLARES_CALLS,
     FORWARDS_USAGE,
@@ -50,31 +49,18 @@ from ..capability_cases import (
     Contract,
 )
 from ..function_model_prefix import RequestRecorder, patch_models
+from ._contracts import CASES, PUBLIC, assert_holds as _assert_holds, contract_cases as _cases
+from ._counting_clients import REQUESTS
+from ._durable_cases import PROMPT, UNPROMPTED_REQUEST, journal_breaks, one_call_per_response
 from .capability_cases import (
-    CASES as HARNESS_CASES,
     CONTRACTS as HARNESS_CONTRACTS,
-    HARNESS_CAPABILITY_PACKAGES,
     HOSTED_MCP_CONNECTION,
     hosted_server,
 )
 
 DepsT = TypeVar('DepsT')
 
-CASES: dict[str, CapabilityCase] = {**core.CASES, **HARNESS_CASES}
 CONTRACTS: tuple[Contract, ...] = (*CORE_CONTRACTS, *HARNESS_CONTRACTS)
-PUBLIC = {**discover_capabilities(CORE_CAPABILITY_PACKAGES), **discover_capabilities(HARNESS_CAPABILITY_PACKAGES)}
-"""The public capabilities, which the suites build; a private class only has to say what two of it mean."""
-
-
-def _cases(contract: Contract) -> list[ParameterSet]:
-    """The cases `contract` applies to, each whose calls rewrite history marked `moves_cache_prefix`."""
-    return [
-        pytest.param(name, marks=pytest.mark.moves_cache_prefix(reason=reason))
-        if case.calls is not None and (reason := case.calls.moves_cache_prefix)
-        else pytest.param(name)
-        for name, case in sorted(CASES.items())
-        if name in PUBLIC and contract.applies(name, case)
-    ]
 
 
 def test_every_exemption_names_a_case_the_contract_applies_to() -> None:
@@ -92,14 +78,6 @@ def test_every_exemption_names_a_case_the_contract_applies_to() -> None:
         if not exempt.reason.strip()
     ]
     assert not problems, '\n'.join(problems)
-
-
-def _assert_holds(contract: Contract, name: str, breaks: Sequence[str]) -> None:
-    """`breaks` says how the case breaks `contract`: it must say nothing, unless `contract` exempts the case."""
-    if exempt := contract.exempt.get(name):
-        assert breaks, f'{name} now passes: remove its `{contract.name}` exemption ({exempt.reason})'
-    else:
-        assert not breaks, '; '.join(breaks)
 
 
 def _one_call_per_response(made: tuple[ToolCall, ...], prefix: str) -> FunctionModel:
@@ -457,6 +435,47 @@ def test_a_capability_that_runs_with_tools_declares_calls(
         return
     declared = CASES[name].calls is not None
     _assert_holds(DECLARES_CALLS, name, [] if declared else [f'it contributes {contributes} but declares no `calls`'])
+
+
+async def test_a_nested_run_on_a_durable_case_model_is_answered_and_counted() -> None:
+    """The durable suites count it, so a nested run's request a recovery repeats breaks them like any other."""
+    REQUESTS.clear()
+
+    model = one_call_per_response((('ask', {}),))
+
+    async def ask() -> str:
+        return (await Agent(model).run('nested')).output
+
+    try:
+        result = await Agent(model, tools=[ask]).run(PROMPT)
+        assert (result.output, REQUESTS) == ('done', {UNPROMPTED_REQUEST: 1})
+    finally:
+        REQUESTS.clear()
+
+
+def test_a_drifted_journal_breaks_the_durable_contracts() -> None:
+    """A unit renamed, added or dropped breaks them, and so does a model request too many or too few."""
+    expected = ('capability__memory.write_memory',)
+    recorded = ['a__model.request', 'a__capability__memory.write_memory', 'a__model.request']
+
+    def read(units: list[str]) -> list[str]:
+        return journal_breaks(
+            units, prefix='a__', model_request='model.request', calls=1, expected=expected, engine='dbos'
+        )
+
+    assert read(recorded) == []
+    renamed = ['a__model.request', 'a__capability__memory.write', 'a__model.request']
+    assert len(read(renamed)) == 1
+    assert len(read(['a__model.request', 'a__model.request'])) == 1, 'a dropped unit breaks them'
+    assert read(['a__capability__memory.write_memory', 'a__model.request']) == [
+        'the run recorded 1 `model.request` units, not one per call and one to answer'
+    ]
+    assert read([*recorded, 'a__model.request', 'a__capability__memory.read_memory']) == [
+        'the run recorded 3 `model.request` units, not one per call and one to answer',
+        "the calls record `dbos=('capability__memory.write_memory', 'capability__memory.read_memory')`, not "
+        "('capability__memory.write_memory',). A recorded name is what a workflow from an earlier release replays by: "
+        'change the case only with a compatibility note (agent_docs/capability-conformance.md, "Durable execution")',
+    ]
 
 
 def test_pending_calls_backfill() -> None:
