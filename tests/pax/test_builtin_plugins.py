@@ -46,12 +46,14 @@ CURATED = {
     'posthog',
     'grain',
     'linear',
+    'browser',
     'web',
     'sandbox',
     'workspaces',
 }
 OPT_IN = {
     'aoe',
+    'browser',
     'day_ai',
     'github',
     'google_workspace',

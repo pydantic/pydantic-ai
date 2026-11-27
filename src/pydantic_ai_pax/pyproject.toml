@@ -111,10 +111,12 @@ modal = ["pydantic-ai-harness[modal]==0.{{ minor }}.{{ patch }}{% if distance %}
 opensandbox = ["pydantic-ai-harness[opensandbox]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 render = ["pydantic-ai-harness[render]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 sprites = ["pydantic-ai-harness[sprites]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+# The `browser` plugin: harness `PlaywrightBrowser`. Chromium is a separate download, `playwright install chromium`.
+playwright = ["pydantic-ai-harness[playwright]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
 # Every extra above that installs on every platform: all but `local`, whose SDKs have no Windows wheel.
 all = [
     "pydantic-ai-slim[anthropic,bedrock,bedrock-mantle,cerebras,cohere,crusoe,google,groq,huggingface,mistral,openai,openrouter,snowflake,typesafe,xai,zai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
-    "pydantic-ai-harness[boxd,daytona,e2b,kubernetes,modal,opensandbox,render,sprites]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
+    "pydantic-ai-harness[boxd,daytona,e2b,kubernetes,modal,opensandbox,playwright,render,sprites]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
 ]
 
 [project.urls]

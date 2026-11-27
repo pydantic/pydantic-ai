@@ -2293,7 +2293,7 @@ that code mode's sandbox keeps the folder as the turn mounted it until the next 
 
 The mode is the `run.permissions` setting: `/permissions MODE` saves it as the default for new sessions too,
 and Settings, General edits it. It is harness [`Permissions`](../../../docs/harness/permissions.md), which checks
-the coding tools' file writes and commands only; other tools, such as MCP servers', run as before. File tools
+the coding tools' file writes and commands only; other tools, such as MCP servers' and the `browser` plugin's, run as before. File tools
 only reach files inside the session's folder, so `auto` lets them write. In `full` and `auto`, where code mode's
 sandbox mounts the folder read-write, `pathlib` there can also delete and rename files in it without asking; in
 `read-only`, the sandbox gets the folder read-only for the run. The command patterns are a convenience, not a sandbox. A session no one
@@ -3488,6 +3488,13 @@ default, and opens its settings menu (`/plugins configure linear` reopens it). T
 key is picked from `/keys` by name (a new one is saved there as `LINEAR_API_KEY`),
 or choose browser sign-in. See [PLUGINS.md](../PLUGINS.md#linear-issues-and-projects).
 
+`/plugins enable browser` gives the agent a headless Chromium it drives: navigate, click,
+type, and read pages that need JavaScript or several steps. It needs the `playwright` extra
+(`uv tool install 'pydantic-ai-pax[playwright]'`) and Playwright's Chromium; enabling it
+without either prints the command to run. It refuses private and loopback addresses, and
+its `allowed_domains` setting limits it to the sites you list. See
+[PLUGINS.md](../PLUGINS.md#browser-a-headless-chromium-the-model-drives).
+
 ### Built-in plugins at a glance
 
 The coding tools,
@@ -3525,7 +3532,7 @@ Logfire, tools, and a key picked from `/keys`, never stored in plugin settings;
 otherwise browser sign-in, which also signs new users up and works over SSH:
 `/logfire login`). Reopen it with `/plugins configure logfire_mcp`; see
 [Logfire](../PLUGINS.md#logfire-query-your-telemetry).
-Hosted integrations such as `github`, `slack`, `linear`, and `logfire_mcp` load on
+Hosted integrations such as `github`, `slack`, `linear`, and `logfire_mcp`, and the `browser` plugin, load on
 demand: the model sees one catalog line for each enabled one and loads its tools
 with `load_capability` when a task needs them; see
 [the built-in plugins](../PLUGINS.md#the-built-in-plugins).
