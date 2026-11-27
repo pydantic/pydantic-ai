@@ -8,7 +8,7 @@ from dataclasses import KW_ONLY, dataclass, field, replace
 from typing import TYPE_CHECKING, Any, ClassVar, Literal
 
 from opentelemetry.baggage import set_baggage as _otel_set_baggage
-from opentelemetry.context import attach as _otel_attach, detach as _otel_detach
+from opentelemetry.context import Context, attach as _otel_attach, detach as _otel_detach
 from opentelemetry.trace import StatusCode, get_current_span
 from pydantic_core import ValidationError, to_json
 
@@ -16,7 +16,10 @@ from pydantic_ai import _usage_attribution
 from pydantic_ai._cache_health import CacheHealthDetector, CollapseReason, ConversationCacheMarkStore
 from pydantic_ai._durable_replay import start_as_current_span
 from pydantic_ai._instrumentation import (
+    AGENT_NAME_BAGGAGE_KEY,
+    CONVERSATION_ID_BAGGAGE_KEY,
     DEFAULT_INSTRUMENTATION_VERSION,
+    RUN_ID_BAGGAGE_KEY,
     InstrumentationNames,
     MessageJsonCache,
     get_agent_run_baggage_attributes,
@@ -30,8 +33,10 @@ from pydantic_ai._instrumentation import (
     record_exception as _record_exception,
     record_uncaught_errors as _record_uncaught_errors,
     redact_binary_content,
+    root_conversation_attributes,
     safe_to_json,
     serialize_any,
+    track_top_level_conversation,
 )
 from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._telemetry import bind_tool_call_span, run_telemetry_scope
@@ -102,6 +107,17 @@ _CACHE_COLLAPSE_EVENT_REASONS: frozenset[CollapseReason] = frozenset({'unexpecte
 _conversation_cache_marks = ConversationCacheMarkStore()
 """Process-wide, because the `Instrumentation` capability can't carry the marks across runs: the one
 `Agent(instrument=...)` and `Agent.instrument_all()` inject is built afresh for every run."""
+
+
+def _agent_run_baggage(agent_name: str, ctx: RunContext[Any]) -> Context:
+    """Return the OTel context to run an agent in.
+
+    It holds the agent name, run ID and conversation ID as baggage, so the model request and tool
+    spans started inside the run can copy them as attributes.
+    """
+    otel_ctx = _otel_set_baggage(AGENT_NAME_BAGGAGE_KEY, agent_name)
+    otel_ctx = _otel_set_baggage(RUN_ID_BAGGAGE_KEY, ctx.run_id or '', context=otel_ctx)
+    return _otel_set_baggage(CONVERSATION_ID_BAGGAGE_KEY, ctx.conversation_id or '', context=otel_ctx)
 
 
 def _default_settings() -> InstrumentationSettings:
@@ -291,6 +307,7 @@ class Instrumentation(AbstractCapability[Any]):
             'gen_ai.operation.name': 'invoke_agent',
             'logfire.msg': f'{agent_name} run',
         }
+        span_attributes.update(root_conversation_attributes(ctx.conversation_id))
 
         if (workspace_ref := ctx.workspace.ref) is not None:
             span_attributes['pydantic_ai.workspace.provider'] = workspace_ref.provider
@@ -302,6 +319,8 @@ class Instrumentation(AbstractCapability[Any]):
                 span_attributes['gen_ai.agent.description'] = rendered
 
         with (
+            # Entered before the span starts, so the span can't take the attribute from baggage.
+            track_top_level_conversation(ctx.conversation_id),
             start_as_current_span(
                 settings.tracer,
                 names.get_agent_run_span_name(agent_name),
@@ -317,10 +336,7 @@ class Instrumentation(AbstractCapability[Any]):
             # value is gone for an outer `wrap_run` once this one returns.
             run_telemetry_scope(ctx, span),
         ):
-            otel_ctx = _otel_set_baggage('gen_ai.agent.name', agent_name)
-            otel_ctx = _otel_set_baggage('gen_ai.agent.call.id', ctx.run_id or '', context=otel_ctx)
-            otel_ctx = _otel_set_baggage('gen_ai.conversation.id', ctx.conversation_id or '', context=otel_ctx)
-            token = _otel_attach(otel_ctx)
+            token = _otel_attach(_agent_run_baggage(agent_name, ctx))
             result: AgentRunResult[Any] | None = None
             try:
                 result = await handler()
