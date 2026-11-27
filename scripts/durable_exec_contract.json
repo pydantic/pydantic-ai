@@ -90,6 +90,41 @@
       ]
     }
   },
+  "pydantic_ai_slim/pydantic_ai/_compaction_requests.py": {
+    "CompactionRequests": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
+      ]
+    },
+    "CompactionRequests.request": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::CompactionRequestGuard.request"
+      ]
+    },
+    "RequestedCompaction": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "annotation_only"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
+      ]
+    }
+  },
   "pydantic_ai_slim/pydantic_ai/_deferred.py": {
     "DeferredToolResults": {
       "engines": [
@@ -565,6 +600,21 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field"
+      ]
+    },
+    "RunContext._compaction_requests": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.restore",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::guard_run_context"
       ]
     },
     "RunContext._deferred_capability_ids": {
@@ -2175,6 +2225,21 @@
       ]
     },
     "AgentRunEvents": {
+      "engines": [
+        "dbos",
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "annotation_only"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::<module>"
+      ]
+    },
+    "CompactionOptions": {
       "engines": [
         "dbos",
         "prefect",
@@ -4307,6 +4372,28 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::<module>"
       ]
     },
+    "CompactionEndEvent.event_kind": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._call_event_stream_handler_activity"
+      ]
+    },
+    "CompactionStartEvent.event_kind": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._call_event_stream_handler_activity"
+      ]
+    },
     "CustomEvent": {
       "engines": [
         "durable_exec",
@@ -6026,6 +6113,21 @@
       ]
     }
   },
+  "pydantic_ai_slim/pydantic_ai/models/_unwrap.py": {
+    "unwrap_model": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "annotation_only",
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>"
+      ]
+    }
+  },
   "pydantic_ai_slim/pydantic_ai/models/instrumented.py": {
     "InstrumentationSettings": {
       "engines": [
@@ -6442,7 +6544,6 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream.replay_request_parameters",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::reject_serving_wrapper",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::unwrap_model",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel.__init__.wrapped_request_stream_step",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.__init__.request_stream_task",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::PrefectModel.cancel_suspended_response",
