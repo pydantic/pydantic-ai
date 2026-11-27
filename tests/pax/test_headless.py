@@ -386,6 +386,20 @@ def test_cli_prompt_from_terminal_stdin_fails_fast(
 
 
 @pytest.mark.parametrize(
+    ('args', 'stdin'),
+    [(['-p', ' '], ''), ([' '], ''), (['--', ' '], ''), (['-p'], ''), (['-'], ' \n')],
+)
+def test_cli_empty_prompt_fails(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], args: list[str], stdin: str
+) -> None:
+    """A blank prompt from `-p`, the positional words, or stdin fails without naming an option the user didn't type."""
+    monkeypatch.setattr('sys.stdin', io.StringIO(stdin))
+    code, out, err = run_cli(tmp_path, monkeypatch, capsys, '-a', 'echo', *args)
+    assert (code, out) == (2, '')
+    assert err.endswith('the prompt is empty; give text with -p, after the options, or on stdin\n')
+
+
+@pytest.mark.parametrize(
     ('args', 'expected'),
     [
         (['-a', 'city', '-p', 'go'], {'name': 'a', 'population': 0}),

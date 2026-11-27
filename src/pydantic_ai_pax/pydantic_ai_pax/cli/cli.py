@@ -711,4 +711,4 @@ def _validate_prompt_args(args: argparse.Namespace, parser: argparse.ArgumentPar
             parser.error('-p without TEXT, or the prompt -, reads the prompt from stdin; pipe it in or give TEXT')
         args.prompt = sys.stdin.read()
     if not args.prompt.strip():
-        parser.error('--prompt requires non-empty text')
+        parser.error('the prompt is empty; give text with -p, after the options, or on stdin')
