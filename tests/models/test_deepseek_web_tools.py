@@ -1,11 +1,17 @@
-"""DeepSeek Flash hosted web tools on the Responses API."""
+"""DeepSeek Flash hosted web tools on the Responses API, through `DeepSeekResponsesModel`."""
+
+from __future__ import annotations
+
+import json
 
 import httpx2
 import pytest
+from inline_snapshot import snapshot
+from pydantic import JsonValue
 
 from pydantic_ai import Agent, ModelRequest, ModelResponse
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.capabilities import WebFetch, WebSearch
+from pydantic_ai.capabilities import AbstractCapability, WebFetch, WebSearch
 from pydantic_ai.messages import (
     ContentCitationAnchor,
     ModelMessagesTypeAdapter,
@@ -22,12 +28,35 @@ from ..conftest import RequestCapture, try_import
 with try_import() as imports_successful:
     from openai.types import responses
 
+    from pydantic_ai.models.deepseek import DeepSeekResponsesModel
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.providers.deepseek import DeepSeekProvider
+    from pydantic_ai.providers.openai import OpenAIProvider
 
     from .mock_openai import MockOpenAIResponses, response_message
 
 pytestmark = pytest.mark.skipif(not imports_successful(), reason='OpenAI SDK required')
+
+
+def _reply(*output: JsonValue) -> dict[str, JsonValue]:
+    return {'id': 'resp_1', 'model': 'deepseek-flash', 'status': 'completed', 'created_at': 1, 'output': list(output)}
+
+
+_FOUND_IT: dict[str, JsonValue] = {
+    'type': 'message',
+    'role': 'assistant',
+    'content': [{'type': 'output_text', 'text': 'Found it.', 'annotations': []}],
+}
+
+
+def _mock_client(reply: dict[str, JsonValue], requests: list[dict[str, JsonValue]]) -> httpx2.AsyncClient:
+    """A client that answers every request with `reply` and records each request body in `requests`."""
+
+    def handle(request: httpx2.Request) -> httpx2.Response:
+        requests.append(json.loads(request.content))
+        return httpx2.Response(200, json=reply)
+
+    return httpx2.AsyncClient(transport=httpx2.MockTransport(handle))
 
 
 @pytest.mark.vcr
@@ -35,7 +64,7 @@ pytestmark = pytest.mark.skipif(not imports_successful(), reason='OpenAI SDK req
 async def test_web_fetch_signed_history(
     stream: bool, request_capture: RequestCapture, deepseek_api_key: str, allow_model_requests: None
 ) -> None:
-    model = OpenAIResponsesModel(
+    model = DeepSeekResponsesModel(
         'deepseek-flash', provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=request_capture.client)
     )
     agent = Agent(model, capabilities=[WebFetch()], model_settings={'thinking': False})
@@ -86,7 +115,13 @@ async def test_web_fetch_signed_history(
 async def test_web_search_citations(
     request_capture: RequestCapture, deepseek_api_key: str, allow_model_requests: None
 ) -> None:
-    model = OpenAIResponsesModel(
+    """A streamed search maps DeepSeek's citations, usage and search item, and replays the item.
+
+    DeepSeek's `url_citation` offsets span the claim the source supports: in the recording they are 0 and 59, and the
+    answer's first 59 characters are the sentence the RFC supports, with no citation marker in them. So they map to a
+    `ContentCitationAnchor`, not the `MarkerCitationAnchor` OpenAI's link offsets map to.
+    """
+    model = DeepSeekResponsesModel(
         'deepseek-flash', provider=DeepSeekProvider(api_key=deepseek_api_key, http_client=request_capture.client)
     )
     agent = Agent(model, capabilities=[WebSearch()], model_settings={'thinking': False})
@@ -96,8 +131,11 @@ async def test_web_search_citations(
         response = result.response
         history = result.all_messages()
     assert len(response.native_tool_calls) == 1
-    assert response.usage.details['web_search_requests'] == 2
+    # DeepSeek bills no search, so the count stays in the details and isn't billed as `web_searches`.
+    assert response.usage.details['tool_search'] == 2
     assert 'tool_fetch' not in response.usage.details
+    assert 'web_search_requests' not in response.usage.details
+    assert not hasattr(response.usage, 'web_searches')
     citations = [
         (part.content, citation)
         for part in response.parts
@@ -126,7 +164,10 @@ async def test_web_search_citations(
 
 @pytest.mark.parametrize('with_added', [True, False])
 async def test_web_tool_final_args(with_added: bool, allow_model_requests: None) -> None:
-    """The completed item supplies the final arguments even when the initial event is partial or absent."""
+    """The completed item supplies the final arguments even when the initial event is partial or absent.
+
+    The recorded streams send the full arguments on `output_item.added`, so only a built stream can leave them out.
+    """
     item = responses.ResponseFunctionWebSearch.model_validate(
         {
             'type': 'web_search_call',
@@ -153,7 +194,7 @@ async def test_web_tool_final_args(with_added: bool, allow_model_requests: None)
             responses.ResponseCompletedEvent(response=reply, type='response.completed', sequence_number=3),
         ]
     )
-    model = OpenAIResponsesModel('deepseek-flash', provider=DeepSeekProvider(openai_client=client))
+    model = DeepSeekResponsesModel('deepseek-flash', provider=DeepSeekProvider(openai_client=client))
     async with model.request_stream(
         [ModelRequest.user_text_prompt('Search.')], None, ModelRequestParameters()
     ) as stream:
@@ -165,6 +206,42 @@ async def test_web_tool_final_args(with_added: bool, allow_model_requests: None)
     assert call.args_as_dict() == {'type': 'search', 'query': 'RFC 9110'}
 
 
+@pytest.mark.parametrize(('model_name', 'billed'), [('deepseek-v4-pro', 1), ('deepseek-flash', 0)])
+async def test_streamed_web_search_billing(model_name: str, billed: int, allow_model_requests: None) -> None:
+    """A streamed search goes unbilled where DeepSeek's web tools run, and counts as on `OpenAIResponsesModel` elsewhere.
+
+    No recording holds a `deepseek-v4-pro` search, so a built stream carries a standard search item.
+    """
+    item = responses.ResponseFunctionWebSearch.model_validate(
+        {
+            'type': 'web_search_call',
+            'id': 'search_1',
+            'status': 'completed',
+            'action': {'type': 'search', 'query': 'RFC 9110'},
+        }
+    )
+    reply = response_message([item])
+    client = MockOpenAIResponses.create_mock_stream(
+        [
+            responses.ResponseCreatedEvent(response=reply, type='response.created', sequence_number=0),
+            responses.ResponseOutputItemAddedEvent(
+                item=item, output_index=0, sequence_number=1, type='response.output_item.added'
+            ),
+            responses.ResponseOutputItemDoneEvent(
+                item=item, output_index=0, sequence_number=2, type='response.output_item.done'
+            ),
+            responses.ResponseCompletedEvent(response=reply, type='response.completed', sequence_number=3),
+        ]
+    )
+    model = DeepSeekResponsesModel(model_name, provider=DeepSeekProvider(openai_client=client))
+    async with model.request_stream(
+        [ModelRequest.user_text_prompt('Search.')], None, ModelRequestParameters()
+    ) as stream:
+        async for _ in stream:
+            pass
+    assert getattr(stream.get().usage, 'web_searches', 0) == billed
+
+
 @pytest.mark.parametrize(
     'provider_details',
     [None, {'deepseek_web_tool': 'edited'}, {'deepseek_web_tool': {}}],
@@ -173,35 +250,20 @@ async def test_web_tool_final_args(with_added: bool, allow_model_requests: None)
 async def test_deepseek_replays_standard_search_history(
     provider_details: dict[str, object] | None, allow_model_requests: None
 ) -> None:
-    """A standard OpenAI web_search_call without kind follows the ordinary stateless Responses replay path."""
-    reply: dict[str, object] = {
-        'id': 'resp_1',
-        'model': 'deepseek-flash',
+    """A standard OpenAI `web_search_call` without `kind`, or one with edited metadata, isn't sent back as a DeepSeek item.
+
+    The edits are made to history no recording holds, so a mock transport answers both requests.
+    """
+    standard_search: dict[str, JsonValue] = {
+        'type': 'web_search_call',
+        'id': 'search_1',
         'status': 'completed',
-        'created_at': 1,
-        'output': [
-            {
-                'type': 'web_search_call',
-                'id': 'search_1',
-                'status': 'completed',
-                'action': {'type': 'search', 'query': 'example'},
-            },
-            {
-                'type': 'message',
-                'role': 'assistant',
-                'content': [{'type': 'output_text', 'text': 'Found it.', 'annotations': []}],
-            },
-        ],
+        'action': {'type': 'search', 'query': 'example'},
     }
-    requests: list[bytes] = []
-
-    def handle(request: httpx2.Request) -> httpx2.Response:
-        requests.append(request.content)
-        return httpx2.Response(200, json=reply)
-
-    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handle)) as client:
+    requests: list[dict[str, JsonValue]] = []
+    async with _mock_client(_reply(standard_search, _FOUND_IT), requests) as client:
         agent = Agent(
-            OpenAIResponsesModel('deepseek-flash', provider=DeepSeekProvider(api_key='test', http_client=client)),
+            DeepSeekResponsesModel('deepseek-flash', provider=DeepSeekProvider(api_key='test', http_client=client)),
             capabilities=[WebSearch()],
         )
         result = await agent.run('Search for an example.')
@@ -209,17 +271,117 @@ async def test_deepseek_replays_standard_search_history(
         assert returned.tool_call_id == 'search_1'
         returned.provider_details = provider_details
         await agent.run('What did you find?', message_history=result.all_messages())
-    assert b'Found it.' in requests[1]
-    assert b'search_1' not in requests[1]
+    assert 'Found it.' in json.dumps(requests[1])
+    assert 'search_1' not in json.dumps(requests[1])
 
 
-@pytest.mark.parametrize('flash_name', ['deepseek-flash', 'deepseek-v4-flash'])
-def test_deepseek_web_tool_profile_scope(flash_name: str) -> None:
+def _search_example(query: str) -> str:
+    """Search the web."""
+    return 'No results.'
+
+
+def _fetch_example(url: str) -> str:
+    """Fetch a URL."""
+    return 'Empty page.'
+
+
+@pytest.mark.parametrize(
+    'capability',
+    [
+        pytest.param(
+            WebSearch(native=WebSearchTool(allowed_domains=['example.com']), local=_search_example),
+            id='restricted-search',
+        ),
+        pytest.param(WebFetch(native=False, local=_fetch_example), id='fetch-native-off'),
+    ],
+)
+async def test_web_tool_local_fallback(capability: AbstractCapability[object], allow_model_requests: None) -> None:
+    """A web tool DeepSeek's server can't run as asked is declared as the local function tool instead.
+
+    The choice is made before the request goes out, so the test reads the request a mock transport receives.
+    """
+    requests: list[dict[str, JsonValue]] = []
+    async with _mock_client(_reply(_FOUND_IT), requests) as client:
+        model = DeepSeekResponsesModel('deepseek-flash', provider=DeepSeekProvider(api_key='test', http_client=client))
+        await Agent(model, capabilities=[capability]).run('Look it up.')
+    (request,) = requests
+    tools = request['tools']
+    assert isinstance(tools, list)
+    assert [tool['type'] for tool in tools if isinstance(tool, dict)] == ['function']
+
+
+async def test_web_fetch_history_to_another_provider(allow_model_requests: None) -> None:
+    """A signed DeepSeek read in history stays out of a request to another provider.
+
+    The claim is about what the second request carries, so a mock transport stands in for both providers.
+    """
+    read_link: dict[str, JsonValue] = {
+        'type': 'web_search_call',
+        'id': 'read_1',
+        'status': 'completed',
+        'kind': 'read_link',
+        'action': {'type': 'open_page', 'url': 'https://example.com'},
+        'page': {'url': 'https://example.com', 'title': 'Example'},
+        'signature': 'signed-page',
+    }
+    deepseek_requests: list[dict[str, JsonValue]] = []
+    async with _mock_client(_reply(read_link, _FOUND_IT), deepseek_requests) as client:
+        model = DeepSeekResponsesModel('deepseek-flash', provider=DeepSeekProvider(api_key='test', http_client=client))
+        result = await Agent(model, capabilities=[WebFetch()]).run('Read https://example.com.')
+    openai_requests: list[dict[str, JsonValue]] = []
+    async with _mock_client(_reply(_FOUND_IT), openai_requests) as client:
+        model = OpenAIResponsesModel('gpt-5.4', provider=OpenAIProvider(api_key='test', http_client=client))
+        await Agent(model).run('What did the page say?', message_history=result.all_messages())
+    (request,) = openai_requests
+    assert request['input'] == snapshot(
+        [
+            {'role': 'user', 'content': 'Read https://example.com.'},
+            {'role': 'assistant', 'content': 'Found it.'},
+            {'role': 'user', 'content': 'What did the page say?'},
+        ]
+    )
+
+
+@pytest.mark.parametrize(
+    ('model', 'model_name', 'tool_type'),
+    [
+        pytest.param(OpenAIResponsesModel, 'deepseek-flash', 'web_search', id='openai-responses-model'),
+        pytest.param(DeepSeekResponsesModel, 'deepseek-v4-pro', 'web_search', id='deepseek-v4-pro'),
+        pytest.param(DeepSeekResponsesModel, 'deepseek-flash', 'deepseek_web_search', id='deepseek-flash'),
+    ],
+)
+async def test_web_search_declaration(
+    model: type[OpenAIResponsesModel], model_name: str, tool_type: str, allow_model_requests: None
+) -> None:
+    """Only `DeepSeekResponsesModel` with `deepseek-flash` declares DeepSeek's web search; the others keep the standard tool.
+
+    The declaration is what the request carries, so the test reads the request a mock transport receives.
+    """
+    requests: list[dict[str, JsonValue]] = []
+    async with _mock_client(_reply(_FOUND_IT), requests) as client:
+        await Agent(
+            model(model_name, provider=DeepSeekProvider(api_key='test', http_client=client)), capabilities=[WebSearch()]
+        ).run('Search.')
+    (request,) = requests
+    tools = request['tools']
+    assert isinstance(tools, list)
+    assert [tool['type'] for tool in tools if isinstance(tool, dict)] == [tool_type]
+
+
+def test_deepseek_web_tool_profile_scope() -> None:
+    """Only `DeepSeekResponsesModel` with `deepseek-flash` gets DeepSeek's web tools and their restrictions.
+
+    These are the profile and the restricting settings, which no request shows.
+    """
     provider = DeepSeekProvider(api_key='test')
-    pro = OpenAIResponsesModel('deepseek-v4-pro', provider=provider)
-    flash = OpenAIResponsesModel(flash_name, provider=provider)
-    native_tool = WebSearchTool(allowed_domains=['example.com'])
+    pro = DeepSeekResponsesModel('deepseek-v4-pro', provider=provider)
+    flash = DeepSeekResponsesModel('deepseek-flash', provider=provider)
+    openai_flash = OpenAIResponsesModel('deepseek-flash', provider=provider)
+    restricted = WebSearchTool(allowed_domains=['example.com'])
+    assert WebFetchTool not in OpenAIResponsesModel.supported_native_tools()
+    assert WebFetchTool not in openai_flash.profile.get('supported_native_tools', frozenset())
     assert WebFetchTool not in pro.profile.get('supported_native_tools', frozenset())
     assert WebFetchTool in flash.profile.get('supported_native_tools', frozenset())
-    assert pro.unsupported_native_tool_settings(native_tool) == frozenset()
-    assert flash.unsupported_native_tool_settings(native_tool) == frozenset({'allowed_domains'})
+    assert openai_flash.unsupported_native_tool_settings(restricted) == frozenset()
+    assert pro.unsupported_native_tool_settings(restricted) == frozenset()
+    assert flash.unsupported_native_tool_settings(restricted) == frozenset({'allowed_domains'})

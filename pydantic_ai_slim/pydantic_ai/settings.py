@@ -183,6 +183,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * DeepSeek
     * GitHub Copilot
     * Ollama
     * OpenRouter
@@ -213,6 +214,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * DeepSeek
     * GitHub Copilot (not sent for the Anthropic models that reject sampling settings, e.g.
       `claude-opus-4.8`)
     * Ollama
@@ -245,6 +247,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * DeepSeek
     * GitHub Copilot (not sent for the Anthropic models that reject sampling settings, e.g.
       `claude-opus-4.8`)
     * Ollama
@@ -292,6 +295,7 @@ class ModelSettings(TypedDict, total=False):
     * Mistral (numeric seconds only, not `httpx.Timeout`)
     * Cerebras
     * Crusoe
+    * DeepSeek
     * GitHub Copilot
     * Ollama
     * OpenRouter
@@ -403,6 +407,7 @@ class ModelSettings(TypedDict, total=False):
     * Cohere
     * Cerebras
     * Crusoe
+    * DeepSeek
     * GitHub Copilot
     * Ollama
     * OpenRouter
@@ -428,6 +433,7 @@ class ModelSettings(TypedDict, total=False):
     * xAI
     * Cerebras
     * Crusoe
+    * DeepSeek
     * GitHub Copilot
     * Ollama
     * OpenRouter
@@ -604,6 +610,7 @@ class ModelSettings(TypedDict, total=False):
     * Bedrock
     * Cerebras
     * Crusoe
+    * DeepSeek
     * GitHub Copilot
     * Ollama
     * OpenRouter
@@ -740,6 +747,7 @@ class ModelSettings(TypedDict, total=False):
     * Cerebras (sent and enum-validated — HTTP 200 on an ordinary key; the tiers are in private
       preview, so no effect is observable without access)
     * Crusoe
+    * DeepSeek
     * GitHub Copilot
     * Groq (`'default'` is sent as `'on_demand'`; `'priority'` is omitted; `'performance'` via `groq_service_tier`)
     * Ollama
@@ -767,6 +775,7 @@ class ModelSettings(TypedDict, total=False):
     * HuggingFace
     * Cerebras
     * Crusoe
+    * DeepSeek
     * GitHub Copilot
     * Ollama
     * OpenRouter

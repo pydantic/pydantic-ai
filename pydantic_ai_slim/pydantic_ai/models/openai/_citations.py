@@ -13,7 +13,6 @@ from ... import _utils
 from ..._thinking_part import split_content_into_text_and_thinking
 from ...messages import (
     Citation,
-    CitationAnchor,
     ContentCitationAnchor,
     DocumentCitationSource,
     MarkerCitationAnchor,
@@ -46,12 +45,6 @@ def jsonable_annotation(annotation: object) -> object:
 def marker_citation_anchor(start: int, end: int, text: str) -> MarkerCitationAnchor | None:
     # OpenAI URL annotation offsets select the rendered link already present in the output, not the supported claim.
     return MarkerCitationAnchor(start=start, end=end) if 0 <= start < end <= len(text) else None
-
-
-def _url_citation_anchor(start: int, end: int, text: str, *, content_offsets: bool) -> CitationAnchor | None:
-    if content_offsets:
-        return ContentCitationAnchor(start=start, end=end) if 0 <= start < end <= len(text) else None
-    return marker_citation_anchor(start, end, text)
 
 
 def responses_citation_annotations(
@@ -92,7 +85,9 @@ def map_responses_citations(
             citations.append(
                 Citation(
                     sources=[WebCitationSource(url=annotation.url, title=annotation.title)],
-                    anchor=_url_citation_anchor(start, end, text, content_offsets=content_offsets),
+                    anchor=(ContentCitationAnchor(start=start, end=end) if 0 <= start < end <= len(text) else None)
+                    if content_offsets
+                    else marker_citation_anchor(start, end, text),
                 )
             )
         elif annotation.file_id or annotation.filename:  # a file citation naming no file has no source to show

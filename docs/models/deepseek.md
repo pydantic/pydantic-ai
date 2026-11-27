@@ -116,10 +116,10 @@ DeepSeek [documents](https://api-docs.deepseek.com/guides/responses_api) which p
 
 - The API is stateless, so [`openai_conversation_id`](openai.md#using-durable-conversations), [background mode](openai.md#background-mode) and [message compaction](openai.md#message-compaction) are unavailable. Pass [message history](../message-history.md) back on each run instead.
 - Leave [`openai_previous_response_id`](openai.md#referencing-earlier-responses) unset. Setting it makes Pydantic AI drop the earlier turns it assumes the server already holds, and DeepSeek stores nothing, so the model silently loses the conversation instead of erroring.
-- [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] uses the Responses `web_search` declaration with `deepseek-v4-pro`. See [Native web tools](#native-web-tools) for Flash.
+- [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] works with `deepseek-v4-pro` and is ignored with `deepseek-flash`. DeepSeek ignores the other [native tools](../native-tools.md) instead of reporting an error. For search and URL reading with `deepseek-flash`, see [Native web tools](#native-web-tools).
 - Image and document inputs are replaced with placeholder text rather than rejected.
 - Reasoning is configured with `openai_reasoning_effort` (or the unified [`thinking`](../capabilities/thinking.md) setting); `openai_reasoning_summary` is accepted but produces no summary.
-- [`NativeOutput`][pydantic_ai.output.NativeOutput] with a strict JSON Schema is supported on Responses for requests without native web tools. Chat Completions rejects a strict JSON Schema with `This response_format type is unavailable now`.
+- [`NativeOutput`][pydantic_ai.output.NativeOutput] is available here but not on Chat Completions: DeepSeek honors a strict JSON Schema on the Responses API, while its Chat Completions endpoint rejects one with `This response_format type is unavailable now`.
 
 The one difference Pydantic AI handles for you: DeepSeek merges each function call into its adjacent assistant message. Replaying a turn that interleaves calls with thinking or text would therefore create separate messages with unanswered calls, which DeepSeek rejects with `No tool output found for tool call ...`. Pydantic AI moves the calls after the other items when building the request. This reorders only the request; your [message history](../message-history.md) is unchanged.
 
@@ -127,18 +127,22 @@ Reordering applies only when every function call has a result and the turn conta
 
 ## Native web tools
 
-With `deepseek-flash`, [`WebSearch()`][pydantic_ai.capabilities.WebSearch] enables `deepseek_web_search`, and [`WebFetch()`][pydantic_ai.capabilities.WebFetch] enables `deepseek_read_url` on the Responses API. The alias `deepseek-v4-flash` also supports both tools. The model chooses when to search or read a link. URL reading considers links in the last user message. With thinking enabled, web search runs in deep search mode and decides which pages to open. This mode takes precedence over URL reading when both tools are declared. See the [DeepSeek web tools guide](https://api-docs.deepseek.com/guides/web_tools/).
+DeepSeek runs two server-side [web tools](https://api-docs.deepseek.com/guides/web_tools/) on `deepseek-flash`. Use [`DeepSeekResponsesModel`][pydantic_ai.models.deepseek.DeepSeekResponsesModel], where [`WebSearch()`][pydantic_ai.capabilities.WebSearch] declares `deepseek_web_search` and [`WebFetch()`][pydantic_ai.capabilities.WebFetch] declares `deepseek_read_url`. With other models it behaves like [`OpenAIResponsesModel`][pydantic_ai.models.openai.OpenAIResponsesModel].
 
-The tools have no domain filters or caller-specified use limits. Keep the complete message history to let DeepSeek restore signed page context in later turns, including turns with web tools disabled. Use the Responses API for those turns.
+The model chooses when to search or read a link. URL reading only considers [links in the last user message](https://api-docs.deepseek.com/guides/web_tools/#read-links). With thinking enabled, web search runs as [deep thinking search](https://api-docs.deepseek.com/guides/web_tools/#search-while-thinking), opening and searching pages over several steps, and a request that also declares URL reading doesn't read links separately.
 
-DeepSeek Responses requires a text response format when these tools are enabled. Use plain text or [`ToolOutput`][pydantic_ai.output.ToolOutput] for these requests. Leave `openai_top_logprobs` unset.
+The tools take no domain filters or use limits, so a [restricting parameter](../native-tools.md#restricting-parameters) makes the tool unsupported. Keep the complete message history: DeepSeek signs each page it reads, and sending the signature back restores the page in later turns, including turns with the web tools off. Use `DeepSeekResponsesModel` for those turns too.
+
+DeepSeek rejects any response format but text alongside these tools, so use plain text or [`ToolOutput`][pydantic_ai.output.ToolOutput] output, and leave `openai_top_logprobs` unset.
+
+[`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] holds DeepSeek's non-zero `tool_search`, `tool_fetch` and `tool_image_search` counts. DeepSeek [doesn't bill](https://api-docs.deepseek.com/quick_start/pricing/) these calls, so `web_searches` stays unset.
 
 ```python {title="deepseek_web_fetch.py" test="skip" gateway_toggle="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import WebFetch
-from pydantic_ai.models.openai import OpenAIResponsesModel
+from pydantic_ai.models.deepseek import DeepSeekResponsesModel
 
-model = OpenAIResponsesModel('deepseek-flash', provider='deepseek')
+model = DeepSeekResponsesModel('deepseek-flash')
 agent = Agent(model, capabilities=[WebFetch()])
 result = agent.run_sync('Read https://example.com and summarize the page.')
 print(result.output)

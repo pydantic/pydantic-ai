@@ -29,6 +29,21 @@ DeepSeekModelName = Literal[
 ]
 
 
+class DeepSeekModelProfile(OpenAIModelProfile, total=False):
+    """Profile for models used with [`DeepSeekResponsesModel`][pydantic_ai.models.deepseek.DeepSeekResponsesModel].
+
+    ALL FIELDS MUST BE `deepseek_` PREFIXED SO YOU CAN MERGE THEM WITH OTHER MODELS.
+    """
+
+    deepseek_supports_web_tools: bool
+    """Whether the model runs DeepSeek's server-side `deepseek_web_search` and `deepseek_read_url` tools. Default: `False`.
+
+    When set, [`DeepSeekResponsesModel`][pydantic_ai.models.deepseek.DeepSeekResponsesModel] sends
+    [`WebSearchTool`][pydantic_ai.native_tools.WebSearchTool] and [`WebFetchTool`][pydantic_ai.native_tools.WebFetchTool]
+    as these tools. See [DeepSeek's web tools guide](https://api-docs.deepseek.com/guides/web_tools/).
+    """
+
+
 class DeepSeekProvider(_OpenAISDKProvider):
     """Provider for DeepSeek API."""
 
@@ -57,13 +72,9 @@ class DeepSeekProvider(_OpenAISDKProvider):
         return merge_profile(
             OpenAIModelProfile(json_schema_transformer=OpenAIJsonSchemaTransformer),
             profile,
-            # Scope this API alias's thinking support to DeepSeek's endpoint.
-            OpenAIModelProfile(
-                supports_thinking=True,
-                openai_responses_deepseek_web_tools=True,
-                openai_responses_url_citation_content_offsets=True,
-            )
-            if model_name in ('deepseek-flash', 'deepseek-v4-flash')
+            # Scope this API alias's thinking and web tool support to DeepSeek's endpoint.
+            DeepSeekModelProfile(supports_thinking=True, deepseek_supports_web_tools=True)
+            if model_name == 'deepseek-flash'
             else None,
             OpenAIModelProfile(
                 supports_json_object_output=True,

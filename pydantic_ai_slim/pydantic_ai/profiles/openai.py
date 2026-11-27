@@ -535,10 +535,12 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """
 
     openai_responses_url_citation_content_offsets: bool
-    """Whether URL citation offsets identify cited text instead of an inline citation marker."""
+    """Whether a Responses `url_citation` annotation's offsets span the cited text. Default: `False`.
 
-    openai_responses_deepseek_web_tools: bool
-    """Whether the endpoint uses DeepSeek Flash's signed web tool protocol."""
+    OpenAI's offsets span the citation marker the model wrote, such as a Markdown link, so they map to a
+    [`MarkerCitationAnchor`][pydantic_ai.messages.MarkerCitationAnchor]. With `True`, they map to a
+    [`ContentCitationAnchor`][pydantic_ai.messages.ContentCitationAnchor], as DeepSeek's do.
+    """
 
     openai_responses_supports_interleaved_function_calls: bool
     """Whether the Responses API accepts function calls interleaved with other assistant items in one

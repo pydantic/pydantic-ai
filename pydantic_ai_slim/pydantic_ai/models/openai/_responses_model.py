@@ -121,7 +121,6 @@ from ...native_tools import (
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
-    WebFetchTool,
     WebSearchTool,
 )
 from ...native_tools._tool_search import ToolSearchTool
@@ -186,7 +185,6 @@ from ._computer import (
     map_computer_result,
     stored_computer_call,
 )
-from ._deepseek_web_tools import replayable_web_results, web_tool_param, web_tool_parts, web_tool_replay, web_tool_usage
 from ._errors import (
     check_azure_content_filter,
     is_azure,
@@ -745,9 +743,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
         if profile.get('openai_responses_supports_json_schema_output', False):
             profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
-        if not profile.get('openai_responses_deepseek_web_tools', False):
-            tools = profile.get('supported_native_tools', self.supported_native_tools()) - {WebFetchTool}
-            profile = merge_profile(profile, ModelProfile(supported_native_tools=tools))
         if isinstance(self._provider, OAuthCredentialsProvider):
             # These providers authenticate HTTP requests without configuring the SDK socket client.
             profile = merge_profile(profile, OpenAIModelProfile(openai_responses_supports_websocket=False))
@@ -794,7 +789,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         return frozenset(
             {
                 WebSearchTool,
-                WebFetchTool,
                 CodeExecutionTool,
                 FileSearchTool,
                 MCPServerTool,
@@ -805,11 +799,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         )
 
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
-        """DeepSeek Flash accepts no restricting web tool settings; standard Responses web search excludes `max_uses`."""
-        if self.profile.get('openai_responses_deepseek_web_tools', False) and isinstance(
-            native_tool, WebSearchTool | WebFetchTool
-        ):
-            return native_tool.restricting_settings
+        """Return `native_tool`'s restricting settings that the Responses `web_search` tool doesn't take: `max_uses`."""
         if isinstance(native_tool, WebSearchTool):
             return native_tool.restricting_settings - {'allowed_domains', 'blocked_domains', 'external_web_access'}
         return frozenset()
@@ -1275,15 +1265,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             parts=items
             if response.status in (None, 'completed')
             else block_computer_calls(items, model_request_parameters),
-            usage=map_usage(
-                response,
-                self._provider.name,
-                self._provider.base_url,
-                self.model_name,
-                web_tool_usage=web_tool_usage(response.usage)
-                if self.profile.get('openai_responses_deepseek_web_tools', False)
-                else None,
-            ),
+            usage=self._map_usage(response),
             model_name=response.model,
             provider_response_id=response.id,
             timestamp=timestamp,
@@ -1295,13 +1277,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             provider_details=provider_details or None,
         )
 
+    def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
+        """Map a response's usage.
+
+        This method may be overridden by subclasses of `OpenAIResponsesModel` to provide their own usage mapping.
+        """
+        return map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+
     def _map_web_search_call(
         self, item: responses.ResponseFunctionWebSearch
     ) -> tuple[NativeToolCallPart, NativeToolReturnPart]:
-        if self.profile.get('openai_responses_deepseek_web_tools', False) and (
-            parts := web_tool_parts(item, self.system)
-        ):
-            return parts
+        """Map a `web_search_call` output item to its call and return parts.
+
+        This method may be overridden by subclasses of `OpenAIResponsesModel` whose API extends the item.
+        """
         return map_web_search_tool_call(item, self.system)
 
     def _map_output_items(  # noqa: C901
@@ -1459,6 +1448,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if output_item := tool_search_outputs.get(call_part.tool_call_id):
                 yield build_tool_search_return_part(call_part.tool_call_id, output_item, self.system)
 
+    @property
+    def _streamed_response_cls(self) -> type[OpenAIResponsesStreamedResponse]:
+        """Returns the `StreamedResponse` type that will be used for streamed responses.
+
+        This method may be overridden by subclasses of `OpenAIResponsesModel` to provide their own `StreamedResponse` type.
+        """
+        return OpenAIResponsesStreamedResponse
+
     async def _process_streamed_response(
         self,
         response: AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream,
@@ -1508,7 +1505,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
             # A retry can overflow to HTTP after this request copy reserved a socket lane.
             is_websocket = isinstance(response, ResponsesWebSocketStream)
-        streamed_response = OpenAIResponsesStreamedResponse(
+        streamed_response = self._streamed_response_cls(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
             _model_settings=model_settings,
@@ -1522,7 +1519,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
             _process_provider_details=self._process_provider_details,
             _citation_content_offsets=self.profile.get('openai_responses_url_citation_content_offsets', False),
-            _deepseek_web_tools=self.profile.get('openai_responses_deepseek_web_tools', False),
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         if tool_call_ids_are_response_scoped:
@@ -2511,11 +2507,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _get_native_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
         has_image_generating_tool = False
-        deepseek_web_tools = self.profile.get('openai_responses_deepseek_web_tools', False)
         for tool in model_request_parameters.native_tools:
             match tool:
-                case WebSearchTool() | WebFetchTool() if deepseek_web_tools:
-                    tools.append(web_tool_param(tool))
                 case WebSearchTool():
                     tools.append(map_web_search_tool_param(tool))
                 case FileSearchTool():
@@ -3097,12 +3090,6 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             same_endpoint=same_endpoint,
             response_start=len(context.openai_messages),
         )
-        if self.profile.get('openai_responses_deepseek_web_tools', False):
-            response_context.deepseek_web_items = replayable_web_results(
-                part
-                for part in message.parts
-                if isinstance(part, NativeToolReturnPart) and self.accepts_stateless_artifacts(message, part)
-            )
         response_parts: Sequence[ModelResponsePart] = message.parts
         if not self.profile.get('openai_responses_supports_interleaved_function_calls', True):
             response_parts = group_settled_portable_function_calls(
@@ -3334,6 +3321,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             param['namespace'] = synthesized_ns
         return param
 
+    def _map_native_tool_call_replay(
+        self, item: NativeToolCallPart, message: ModelResponse
+    ) -> list[responses.ResponseInputItemParam] | None:
+        """The input items that send `item` back in place of the default mapping, or `None` to map it as usual.
+
+        This method may be overridden by subclasses of `OpenAIResponsesModel` whose API extends a native tool's items.
+        An empty list sends nothing for the call.
+        """
+        return None
+
     def _map_response_native_tool_call_part(
         self,
         item: NativeToolCallPart,
@@ -3343,12 +3340,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         from_same_provider: bool,
         should_send_item_id: bool,
     ) -> None:
-        if (
-            result := response_context.deepseek_web_items.get((item.tool_name, item.tool_call_id))
-        ) is not None and self.accepts_stateless_artifacts(response_context.message, item):
-            if (replay := web_tool_replay(item, result)) is not None:
-                context.openai_messages.append(replay)
-                response_context.message_item = None
+        if (replay := self._map_native_tool_call_replay(item, response_context.message)) is not None:
+            context.openai_messages.extend(replay)
+            # Text after the call starts a new message item.
+            response_context.message_item = None
             return
         # Hosted tool-search items carry their state inline, so they replay to any provider
         # that accepts this one's stateless data; their IDs stay with the same provider.
@@ -3775,9 +3770,6 @@ class _ResponsesMapModelResponseContext:
     message: ModelResponse
     same_endpoint: bool
     response_start: int
-    deepseek_web_items: dict[tuple[str, str], NativeToolReturnPart] = field(
-        default_factory=dict[tuple[str, str], NativeToolReturnPart]
-    )
     message_item: responses.ResponseOutputMessageParam | None = None
     reasoning_item: responses.ResponseReasoningItemParam | None = None
     web_search_item: responses.ResponseFunctionWebSearchParam | None = None
