@@ -164,7 +164,7 @@ class _ToXml:
         elif isinstance(value, str):
             element.text = value.value if isinstance(value, Enum) else value
         elif isinstance(value, bytes | bytearray):
-            element.text = value.decode(errors='ignore')
+            element.text = value.decode(errors='replace')
         elif isinstance(value, bool | int | float | Enum):
             element.text = str(value)
         elif isinstance(value, date | time):
