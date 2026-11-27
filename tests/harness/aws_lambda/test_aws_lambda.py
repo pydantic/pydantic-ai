@@ -148,7 +148,7 @@ class TestDurableRun:
         assert [op.status for op in ctx.failed] == ['failed']
 
     def test_in_flight_is_refused_in_handler_level_code(self) -> None:
-        """A durable execution runs tool calls sequentially, so no work can run alongside the run."""
+        """Lambda identifies each step by the order it starts in, so no work can run alongside the run."""
         errors: list[str] = []
 
         class StartsWork(AbstractCapability[None]):
@@ -163,7 +163,7 @@ class TestDurableRun:
 
         assert errors == snapshot(
             [
-                '`ctx.in_flight` is not supported in this AWS Lambda run, which executes tool calls sequentially: work running alongside the run could start steps in an order a replay does not reproduce. Run the work in the tool call itself instead.'
+                '`ctx.in_flight` is not supported in AWS Lambda runs yet: AWS Lambda identifies each recorded step by the order it starts in, so on recovery work running alongside the run could start its steps in a different order and read the recorded result of another step (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call itself instead.'
             ]
         )
 

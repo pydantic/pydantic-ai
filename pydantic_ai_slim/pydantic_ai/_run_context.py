@@ -1427,25 +1427,14 @@ class RunContext(Generic[RunContextAgentDepsT]):
         Raises:
             UserError: If this `RunContext` isn't backed by a running agent in this process (e.g. the synthetic
                 context from `Agent.system_prompt_parts`, or a realtime session), it runs inside a durable
-                execution unit, where work it starts would be lost on replay, or the run is durable and executes
-                tool calls sequentially, as AWS Lambda durable functions always do, Absurd and pgtask do by default,
-                and DBOS does with a workspace attached: work running alongside the run could start durable units in
-                an order a replay doesn't reproduce. Or the run is durable on an engine that identifies each
-                recorded unit by the order it starts in: DBOS, AWS Lambda, Absurd and pgtask, until
-                https://github.com/pydantic/pydantic-ai/issues/14500 lands.
+                execution unit, where work it starts would be lost on replay, or the run is durable on an engine
+                that identifies each recorded unit by the order it starts in: DBOS, AWS Lambda, Absurd and pgtask,
+                until https://github.com/pydantic/pydantic-ai/issues/14500 lands.
         """
         queue = self.pending_messages
         if isinstance(queue, EnqueueGuard):
             raise queue.in_flight_error()
         if (durability := self._durability) is not None and durability.in_durable_context:
-            from .tool_manager import _parallel_execution_mode_ctx_var  # pyright: ignore[reportPrivateUsage]
-
-            if _parallel_execution_mode_ctx_var.get() == 'sequential':
-                raise UserError(
-                    f'`ctx.in_flight` is not supported in this {durability.engine_name} run, which executes tool calls '
-                    f'sequentially: work running alongside the run could start {durability.durable_unit_plural} in an '
-                    'order a replay does not reproduce. Run the work in the tool call itself instead.'
-                )
             if durability.engine_spec._steps_identified_by_start_order:  # pyright: ignore[reportPrivateUsage]
                 engine, unit = durability.engine_name, durability.durable_unit_noun
                 raise UserError(

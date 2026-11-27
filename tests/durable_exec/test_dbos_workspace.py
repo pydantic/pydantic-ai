@@ -244,12 +244,12 @@ async def in_flight_workflow() -> str:
 
 
 async def test_dbos_with_a_workspace_rejects_in_flight(dbos: DBOS) -> None:
-    """A workspace makes the run execute tool calls sequentially, which refuses `ctx.in_flight` first."""
+    """A workspace makes the run execute tool calls sequentially, and DBOS still refuses `ctx.in_flight` for its start order."""
     in_flight_errors.clear()
     provider.reset()
     await in_flight_workflow()
     assert in_flight_errors == snapshot(
         [
-            '`ctx.in_flight` is not supported in this DBOS run, which executes tool calls sequentially: work running alongside the run could start steps in an order a replay does not reproduce. Run the work in the tool call itself instead.'
+            '`ctx.in_flight` is not supported in DBOS runs yet: DBOS identifies each recorded step by the order it starts in, so on recovery work running alongside the run could start its steps in a different order and read the recorded result of another step (https://github.com/pydantic/pydantic-ai/issues/14500). Run the work in the tool call itself instead.'
         ]
     )
