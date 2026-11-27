@@ -14,17 +14,18 @@ module only depends on `messages`, `exceptions`, and `_utils`, so
 from __future__ import annotations as _annotations
 
 from collections.abc import Mapping
-from dataclasses import KW_ONLY, dataclass, field
+from dataclasses import KW_ONLY, dataclass, field, fields
 from typing import Annotated, Any, Literal, TypeAlias, cast
 
 from pydantic import Discriminator, Field, StrictBool, Tag
+from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import to_jsonable_python
 
 from . import _utils
 from .exceptions import ModelRetry, ToolFailed, UserError
 
 # TODO(v3): remove `RetryPromptPart`
-from .messages import RetryPromptPart, ToolCallPart, ToolReturn  # pyright: ignore[reportDeprecated]
+from .messages import NativeToolCallPart, RetryPromptPart, ToolCallPart, ToolReturn  # pyright: ignore[reportDeprecated]
 
 DeferredToolKind: TypeAlias = Literal['approval', 'question', 'external']
 """What a deferred tool call waits for.
@@ -77,6 +78,30 @@ class DeferredToolRequests:
     approval or is external has none: that path doesn't validate the call
     ([#13690](https://github.com/pydantic/pydantic-ai/issues/13690)).
     """
+
+    # Left out of the serialized form when empty, and of the JSON schema, so what a standard run (which never has
+    # these) stores and describes is unchanged.
+    native_approvals: Annotated[SkipJsonSchema[list[NativeToolCallPart]], Field(exclude_if=lambda calls: not calls)] = (
+        field(default_factory=list[NativeToolCallPart])
+    )
+    """Calls the model's provider runs itself that it asked to approve first, like a tool on an MCP server
+    configured on the provider's side to require approval.
+
+    Kept apart from `approvals`, the run's own tools, so a policy written for those never decides these by
+    mistake. They are answered the same way, in
+    [`DeferredToolResults.approvals`][pydantic_ai.tools.DeferredToolResults.approvals], and one left undecided is
+    denied. Only realtime sessions ask about these for now (see
+    [Deferred and approval-required tools](../realtime/tools.md#deferred-and-approval-required-tools))."""
+
+    def __repr__(self) -> str:
+        # As the dataclass would, without `native_approvals` when there are none (a standard run never has any).
+        shown = [
+            f'{f.name}={getattr(self, f.name)!r}'
+            for f in fields(self)
+            if f.repr and (f.name != 'native_approvals' or self.native_approvals)
+        ]
+        return f'{type(self).__name__}({", ".join(shown)})'
+
     # Internal, not part of the public API: read a call's kind with `kind()`. The calls in `calls` that are
     # questions, keyed by `tool_call_id`. Serialized as `_kinds` only when there are any, so a
     # `DeferredToolRequests` stored, journaled or recorded in telemetry keeps its questions, and one
@@ -88,13 +113,13 @@ class DeferredToolRequests:
     def kind(self, tool_call_id: str) -> DeferredToolKind:
         """What the pending call with this ID waits for: an approval, an answer to a question, or an external result.
 
-        A call in `approvals` is an `'approval'`, and one in `calls` is a `'question'` when the tool deferred
-        it with `CallDeferred(kind='question')`, and otherwise `'external'`.
+        A call in `approvals` or `native_approvals` is an `'approval'`, and one in `calls` is a `'question'`
+        when the tool deferred it with `CallDeferred(kind='question')`, and otherwise `'external'`.
 
         Raises:
             ValueError: No pending call has this ID.
         """
-        if any(call.tool_call_id == tool_call_id for call in self.approvals):
+        if any(call.tool_call_id == tool_call_id for call in [*self.approvals, *self.native_approvals]):
             return 'approval'
         if not any(call.tool_call_id == tool_call_id for call in self.calls):
             raise ValueError(f'No pending deferred tool call has ID {tool_call_id!r}')
@@ -113,13 +138,14 @@ class DeferredToolRequests:
 
         Args:
             approvals: Results for tool calls that required approval. Keys must match
-                `tool_call_id`s in `self.approvals`.
+                `tool_call_id`s in `self.approvals` or `self.native_approvals`.
             calls: Results for tool calls that required external execution. Keys must
                 match `tool_call_id`s in `self.calls`.
             metadata: Per-call metadata, keyed by `tool_call_id`.
             answered_by: Who answered each call, keyed by `tool_call_id`.
-            approve_all: If `True`, every approval-requesting call not already listed in
-                `approvals` is approved (with default `ToolApproved()`).
+            approve_all: If `True`, every call in `self.approvals` not already listed in
+                `approvals` is approved (with default `ToolApproved()`). Calls in `self.native_approvals`
+                are never approved by `approve_all`: answer them by `tool_call_id` in `approvals`.
 
         Raises:
             ValueError: If a key in `approvals`/`calls` doesn't match a pending request of
@@ -129,12 +155,13 @@ class DeferredToolRequests:
         calls = dict(calls) if calls else {}
 
         approval_ids = {c.tool_call_id for c in self.approvals}
+        native_approval_ids = {c.tool_call_id for c in self.native_approvals}
         call_ids = {c.tool_call_id for c in self.calls}
 
-        if extra_approvals := set(approvals) - approval_ids:
-            raise ValueError(
-                f'`approvals` contains tool call IDs not in this `DeferredToolRequests.approvals`: {sorted(extra_approvals)}'
-            )
+        if extra_approvals := set(approvals) - approval_ids - native_approval_ids:
+            # Names `native_approvals` only when there are any, so a standard run (which never has them) reads as before.
+            where = '`DeferredToolRequests.approvals`' + (' or `native_approvals`' if self.native_approvals else '')
+            raise ValueError(f'`approvals` contains tool call IDs not in this {where}: {sorted(extra_approvals)}')
         if extra_calls := set(calls) - call_ids:
             raise ValueError(
                 f'`calls` contains tool call IDs not in this `DeferredToolRequests.calls`: {sorted(extra_calls)}'
@@ -159,9 +186,10 @@ class DeferredToolRequests:
             approvals=[c for c in self.approvals if c.tool_call_id not in approval_result_ids],
             metadata={k: v for k, v in self.metadata.items() if k not in resolved_ids},
             validated_args={k: v for k, v in self.validated_args.items() if k not in resolved_ids},
+            native_approvals=[c for c in self.native_approvals if c.tool_call_id not in approval_result_ids],
             _kinds={k: v for k, v in self._kinds.items() if k not in resolved_ids},
         )
-        return remaining if remaining.calls or remaining.approvals else None
+        return remaining if remaining.calls or remaining.approvals or remaining.native_approvals else None
 
 
 def jsonable_validated_args(validated_args: dict[str, Any] | None) -> dict[str, Any]:
@@ -294,7 +322,7 @@ class DeferredToolResults:
 
 def filter_deferred_results(requests: DeferredToolRequests, results: DeferredToolResults) -> DeferredToolResults:
     """Keep results whose IDs belong to the matching request category."""
-    approval_ids = {call.tool_call_id for call in requests.approvals}
+    approval_ids = {call.tool_call_id for call in (*requests.approvals, *requests.native_approvals)}
     call_ids = {call.tool_call_id for call in requests.calls}
     return DeferredToolResults(
         approvals={

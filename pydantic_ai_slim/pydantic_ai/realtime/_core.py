@@ -93,6 +93,7 @@ from .codec import (
     ConversationItemCreated,
     InputRejected,
     InputTranscript,
+    NativeToolApprovalRequest,
     OutputSpeechTimestamps,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -133,7 +134,7 @@ class InputSent:
 
     `request` is the history entry recording it, when it records one, placed where the provider adds the
     input to its conversation. `solicits` is whether the input asks for a response, which makes it a
-    reply obligation. `tool_call_id` names the call a tool result answers.
+    reply obligation. `tool_call_id` names the call a tool result, or an approval, answers.
     """
 
     input_id: InputId
@@ -406,6 +407,8 @@ class _Response:
     message: ModelResponse | None = None
     """What history records for it, built once it ended (and `None` if it ended with nothing to record)."""
     tool_calls: list[str] = field(default_factory=list[str])
+    approvals: list[str] = field(default_factory=list[str])
+    """The calls of the provider's own it asked to approve while this response was under way (see `_approval`)."""
     placed_at: float = 0
     """Its position among the entities that joined the conversation (see `SessionCore._place`)."""
 
@@ -577,6 +580,8 @@ class SessionCore:
         """Calls that settled: their result is recorded (sent or not), or the provider cancelled or abandoned them."""
         self._abandoned_calls: set[str] = set()
         """Calls the provider abandoned: they run on, but no response answers their results (see `ToolCallsAbandoned`)."""
+        self._approvals: set[str] = set()
+        """The calls of the provider's own it asked to approve: owed the session's answer until it goes out."""
         self._input_audio = bytearray()
         # What `retain_audio_max_seconds` bounds, as `retain_images_max` bounds images: the audio built into history,
         # the audio of turns waiting to be recorded, and what is still coming in (`_input_audio`, `open_audio`).
@@ -635,8 +640,8 @@ class SessionCore:
                 self._response_content(item)
             case OutputSpeechTimestamps():
                 self._speech_timestamps(item)
-            case ToolCall():
-                self._tool_call(item)
+            case ToolCall() | NativeToolApprovalRequest():
+                self._call_event(item)
             case RealtimeSessionReconnectEvent():
                 self._reconnected()
             case ConversationItemCreated():
@@ -1032,6 +1037,22 @@ class SessionCore:
         response.tool_calls.append(event.tool_call_id)
         self._call_response[event.tool_call_id] = response
         self._undispatched.add(event.tool_call_id)
+
+    def _call_event(self, event: ToolCall | NativeToolApprovalRequest) -> None:
+        if isinstance(event, ToolCall):
+            self._tool_call(event)
+        else:
+            self._approval(event.tool_call_id)
+
+    def _approval(self, call_id: str) -> None:
+        """The provider asked to approve one of its own calls: what the model does next waits on the answer.
+
+        A waiter is owed the answer (it is the next thing the exchange needs, as a function tool's result is),
+        whether it was waiting on the response under way, or started waiting after it ended.
+        """
+        self._approvals.add(call_id)
+        if (response := self._open_response(None)) is not None:
+            response.approvals.append(call_id)
 
     def _refuse_call(self, call_id: str) -> None:
         self._undispatched.discard(call_id)
@@ -1938,6 +1959,7 @@ class SessionCore:
             for call_id, response in self._call_response.items()
             if call_id not in self._settled_calls and response.status in (None, 'completed')
         }
+        tokens |= {Owed('call', call_id, epoch) for call_id in self._approvals}
         owed = self.still_owed(frozenset(tokens))
         # An input a response under way (or the tool round it started, while a call or the input carrying its result
         # is owed) answers is followed from the input itself, so a waiter still waits for it if the response turns out
@@ -2003,7 +2025,9 @@ class SessionCore:
         if response.status is None:
             owed.add(token)
         elif response.status == 'completed':
-            pending.extend(replace(token, kind='call', key=call_id) for call_id in response.tool_calls)
+            pending.extend(
+                replace(token, kind='call', key=call_id) for call_id in [*response.tool_calls, *response.approvals]
+            )
             if (continuation := self._continued_by.get(token.key)) is not None:
                 pending.append(replace(token, key=continuation))
 

@@ -12,7 +12,7 @@ from typing import Annotated, Any
 
 import pytest
 from opentelemetry.trace import NoOpTracer
-from pydantic import AliasChoices, BaseModel, Field, ValidationError, field_validator
+from pydantic import AliasChoices, BaseModel, Field, TypeAdapter, ValidationError, field_validator
 from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import ErrorDetails, PydanticCustomError
 
@@ -37,6 +37,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
     RetryInfo,
     TextPart,
     ToolCallPart,
@@ -6189,3 +6190,46 @@ async def test_deferred_tool_handler_via_hooks_returns_none_when_unhandled():
     # Falls through to bubble-up since no handler resolved anything
     assert isinstance(result.output, DeferredToolRequests)
     assert len(result.output.approvals) == 1
+
+
+def test_deferred_tool_requests_native_approvals_are_answered_only_by_id():
+    """Calls the provider runs itself are answered in `approvals` by id, and never by `approve_all`."""
+    native = NativeToolCallPart('crm_lookup', {'email': 'ada@example.com'}, tool_call_id='mcp_1', provider_name='p')
+    requests = DeferredToolRequests(
+        approvals=[ToolCallPart('a', {}, tool_call_id='approval_1')], native_approvals=[native]
+    )
+
+    results = requests.build_results(approve_all=True)
+    assert set(results.approvals) == {'approval_1'}
+
+    results = requests.build_results(approvals={'mcp_1': True})
+    assert results.approvals == {'mcp_1': True}
+    assert requests.remaining(results) == DeferredToolRequests(approvals=requests.approvals)
+    assert requests.remaining(DeferredToolResults(approvals={'approval_1': True})) == DeferredToolRequests(
+        native_approvals=[native]
+    )
+    assert requests.remaining(DeferredToolResults(approvals={'approval_1': True, 'mcp_1': False})) is None
+    assert requests.kind('mcp_1') == 'approval'
+    with pytest.raises(
+        ValueError, match=r"not in this `DeferredToolRequests.approvals` or `native_approvals`: \['mcp_2'\]"
+    ):
+        requests.build_results(approvals={'mcp_2': True})
+
+
+def test_deferred_tool_requests_round_trip_with_and_without_native_approvals():
+    adapter = TypeAdapter(DeferredToolRequests)
+    native = NativeToolCallPart('crm_lookup', {'email': 'ada@example.com'}, tool_call_id='mcp_1', provider_name='p')
+    requests = DeferredToolRequests(native_approvals=[native], metadata={'mcp_1': {'server': 'crm'}})
+    assert adapter.validate_json(adapter.dump_json(requests)) == requests
+    assert repr(requests).endswith(f'native_approvals={[native]!r})')
+    # A standard run never has any: what it stores and shows is as it was, and what it stored still loads.
+    assert adapter.dump_python(DeferredToolRequests()) == {
+        'calls': [],
+        'approvals': [],
+        'metadata': {},
+        'validated_args': {},
+    }
+    assert (
+        repr(DeferredToolRequests()) == 'DeferredToolRequests(calls=[], approvals=[], metadata={}, validated_args={})'
+    )
+    assert adapter.validate_python({'calls': [], 'approvals': [], 'metadata': {}}) == DeferredToolRequests()

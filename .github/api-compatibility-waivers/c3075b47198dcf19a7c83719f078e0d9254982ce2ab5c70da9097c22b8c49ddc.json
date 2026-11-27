@@ -1,0 +1,5 @@
+{
+  "against": "v2.75.0",
+  "reason": "Adds `NativeToolApprovalRequest` to the `RealtimeCodecEvent` union a connection yields, for a provider asking the session to approve a tool call it runs itself; every existing member is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/10387"
+}

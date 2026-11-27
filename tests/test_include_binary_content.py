@@ -24,6 +24,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
     NativeToolReturnPart,
     TextPart,
     ToolCallPart,
@@ -31,6 +32,7 @@ from pydantic_ai import (
     ToolReturnPart,
     UserPromptPart,
 )
+from pydantic_ai._instrumentation import redact_binary_content
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.messages import ModelMessagesTypeAdapter
@@ -646,6 +648,7 @@ def test_redacted_shapes_keep_every_field_but_the_data() -> None:
         'approvals',
         'metadata',
         'validated_args',
+        'native_approvals',
         '_kinds',
     }
 
@@ -665,3 +668,16 @@ def test_message_history_round_trip_preserves_binary_content() -> None:
     dumped = ModelMessagesTypeAdapter.dump_json(messages)
     assert IMAGE.base64 in dumped.decode()
     assert ModelMessagesTypeAdapter.validate_json(dumped) == messages
+
+
+def test_native_approvals_take_the_same_walk_as_approvals() -> None:
+    """A provider's call awaiting approval is exported as a function tool's is, and only when there is one."""
+    call = NativeToolCallPart('lookup', {'q': 'ada'}, tool_call_id='mcp_1')
+    settings = InstrumentationSettings(include_binary_content=False)
+    assert redact_binary_content(DeferredToolRequests(native_approvals=[call]), settings) == {
+        'calls': [],
+        'approvals': [],
+        'metadata': {},
+        'native_approvals': [call],
+    }
+    assert redact_binary_content(DeferredToolRequests(), settings) == {'calls': [], 'approvals': [], 'metadata': {}}

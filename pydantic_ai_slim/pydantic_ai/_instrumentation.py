@@ -397,7 +397,7 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
         if isinstance(value, DeferredToolRequests):
             # Carries the metadata a deferring tool attached, so the run's own output has to drop
             # the same binary the tool's span already did.
-            return {
+            redacted: dict[str, object] = {
                 'calls': _redact_binary_content(value.calls, active),
                 'approvals': _redact_binary_content(value.approvals, active),
                 'metadata': _redact_binary_content(value.metadata, active),
@@ -406,6 +406,9 @@ def _redact_binary_content(value: Any, active: set[int]) -> object:
                 # Kind names, so never binary; serialized only when there are questions, as the type does.
                 **({'_kinds': value._kinds} if value._kinds else {}),  # pyright: ignore[reportPrivateUsage]
             }
+            if value.native_approvals:
+                redacted['native_approvals'] = _redact_binary_content(value.native_approvals, active)
+            return redacted
         if isinstance(value, Mapping):
             return {  # pyright: ignore[reportUnknownVariableType]
                 key: _redact_binary_content(item, active)

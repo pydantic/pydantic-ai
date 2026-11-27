@@ -33,6 +33,7 @@ from typing_extensions import TypeAliasType
 
 from .. import _agent_graph, _instructions, _system_prompt
 from .._capability_parts import render_capability_parts_for_live_channel
+from .._deferred import DeferredToolRequests, DeferredToolResult, ToolApproved, ToolDenied
 from .._deferred_capabilities import LoadCapabilityCallPart, registered_loaded_capability_ids
 from .._enqueue import (
     EnqueueContent,
@@ -85,6 +86,7 @@ from ..messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    NativeToolCallPart,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
@@ -170,6 +172,8 @@ from .codec import (
     CreateResponse,
     InputRejected,
     InputTranscript,
+    NativeToolApproval,
+    NativeToolApprovalRequest,
     OutputSpeechTimestamps,
     OutputTranscript,
     RealtimeCodecEvent,
@@ -192,7 +196,7 @@ from .settings import AudioRetention, RealtimeModelSettings
 if TYPE_CHECKING:
     from ..messages import AgentStreamEvent
     from ..models.instrumented import InstrumentationSettings
-    from ..tools import DeferredToolRequests, DeferredToolResults, RunContext, ToolDefinition
+    from ..tools import DeferredToolResults, RunContext, ToolDefinition
     from ..toolsets import AbstractToolset
     from .model import RealtimeModel, RealtimeProviderSession
 
@@ -560,6 +564,20 @@ def _unsettled_call_return(call: ToolCallPart, error: BaseException) -> ToolRetu
         ui_visibility=call.ui_visibility,
         outcome='failed',
     )
+
+
+def _native_tool_approval(call: NativeToolCallPart, decision: DeferredToolResult | None) -> NativeToolApproval:
+    """The answer to a provider's request to run `call`, from what the approval handler decided (if anything)."""
+    if isinstance(decision, ToolApproved):
+        if decision.override_args is None:
+            return NativeToolApproval(call.tool_call_id, approved=True)
+        # The provider runs the call with its own arguments: approving it with others can't be honored.
+        reason = f'The {call.tool_name!r} tool was approved with other arguments, which the provider cannot use.'
+    elif isinstance(decision, ToolDenied):
+        reason = decision.message
+    else:
+        reason = f'The {call.tool_name!r} tool requires approval, which was not given during the realtime session.'
+    return NativeToolApproval(call.tool_call_id, approved=False, reason=reason)
 
 
 def _user_prompt_text(part: UserPromptPart) -> str | None:
@@ -2481,7 +2499,9 @@ class RealtimeSession:
                             input_id=input_index,
                             request=request if position == 0 else None,
                             solicits=isinstance(content, (str, CreateResponse, ToolResult)),
-                            tool_call_id=content.tool_call_id if isinstance(content, ToolResult) else None,
+                            tool_call_id=content.tool_call_id
+                            if isinstance(content, (ToolResult, NativeToolApproval))
+                            else None,
                         )
                     )
                     if settled := await self._connection.send(content):
@@ -2811,6 +2831,44 @@ class RealtimeSession:
         So a consumer can relay the request — e.g. to a person a handler is awaiting — while it's pending.
         """
         self._queue_put(DeferredToolRequestsEvent(requests))
+
+    async def _answer_native_tool_approval(self, request: NativeToolApprovalRequest) -> None:
+        """Ask the approval handler whether the provider may run one of its own tool calls, and tell it.
+
+        The call goes through the same `HandleDeferredToolCalls` path as a function tool that requires
+        approval, announced with a `DeferredToolRequestsEvent` and, once a handler decides, a
+        `DeferredToolResultsEvent`. Without a decision the call is denied: an approval nobody gave isn't one.
+        Closing the session cancels this task, so a handler still deciding then answers no provider that's gone.
+        """
+        try:
+            await self._decide_native_tool_approval(request)
+        finally:
+            self._exchange_progress.set()
+
+    async def _decide_native_tool_approval(self, request: NativeToolApprovalRequest) -> None:
+        call = NativeToolCallPart(
+            tool_name=request.tool_name,
+            args=request.args,
+            tool_call_id=request.tool_call_id,
+            provider_name=self._provider_name,
+        )
+        # Apart from the function tools that require approval, so no policy for those decides it by mistake.
+        requests = DeferredToolRequests(
+            native_approvals=[call], metadata={call.tool_call_id: request.metadata} if request.metadata else {}
+        )
+        await self._announce_deferred_requests(requests)
+        async with self._tool_manager_lock:
+            if (ctx := self._tool_manager.ctx) is not None:  # pragma: no branch
+                # The conversation so far, as a function tool's handler sees it (see `_execute_tool`).
+                ctx.messages[:] = self._core.conversation_so_far()
+            tool_manager = self._tool_manager
+        results = await tool_manager.resolve_deferred_tool_calls(requests)
+        decision: DeferredToolResult | None = None
+        if results is not None:
+            # (Results are only ever for the calls asked about: this one.)
+            decision = results.to_tool_call_results().get(call.tool_call_id)
+            self._queue_put(DeferredToolResultsEvent(results))
+        await self._send_frame(_native_tool_approval(call, decision))
 
     async def _execute_tool(
         self,
@@ -3345,6 +3403,13 @@ class RealtimeSession:
             return False
         if isinstance(event, InputRejected):
             self._handle_input_rejected(event)
+            return False
+        if isinstance(event, NativeToolApprovalRequest):
+            # Decided in the background: an approval handler may wait on a person, and the provider goes on
+            # talking (and may ask about more calls) meanwhile.
+            task = asyncio.create_task(self._answer_native_tool_approval(event))
+            self._background_tasks.add(task)
+            task.add_done_callback(self._tool_task_done)
             return False
         if isinstance(event, ToolCallCancelled):
             # The model abandoned the calls (usually a barge-in): their siblings' results still go out, but no
