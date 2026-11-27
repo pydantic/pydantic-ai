@@ -19,7 +19,11 @@ from . import ModelRequestParameters
 try:
     from anthropic.types.beta import BetaCompactionConfigParam
 
-    from ..providers._claude_agent_sessions import CONVERSATION_HEADER, INHERIT_MCP_SERVERS_HEADER
+    from ..providers._claude_agent_sessions import (
+        CONVERSATION_HEADER,
+        INHERIT_MCP_SERVERS_HEADER,
+        KEEP_TRANSCRIPTS_HEADER,
+    )
     from ..providers.claude_agent import ClaudeAgentProvider
     from .anthropic import AnthropicModel, AnthropicModelName, AnthropicModelSettings
     from .anthropic._request_params import PreparedMessagesCreate
@@ -58,6 +62,14 @@ class ClaudeAgentModelSettings(AnthropicModelSettings, total=False):
     [`NativeToolCallPart`][pydantic_ai.messages.NativeToolCallPart] and a
     [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart], as with Anthropic's own MCP connector.
     Defaults to `False`: Claude Code offers only the agent's own tools.
+    """
+
+    claude_agent_keep_transcripts: bool
+    """Let Claude Code keep each session's transcript, as it does for any Claude Code session.
+
+    Claude Code then writes it in its configuration directory, where it shows up in `claude --resume`. Defaults to
+    `False`: Pydantic AI sends each session the history it needs, so nothing reads the transcript back, and an agent
+    that makes many requests leaves no files behind.
     """
 
 
@@ -204,4 +216,6 @@ class ClaudeAgentModel(AnthropicModel):
         claude_agent_settings = cast(ClaudeAgentModelSettings, model_settings)
         if inherit := claude_agent_settings.get('claude_agent_inherit_mcp_servers'):
             prepared.extra_headers = {**prepared.extra_headers, INHERIT_MCP_SERVERS_HEADER: json.dumps(inherit)}
+        if claude_agent_settings.get('claude_agent_keep_transcripts'):
+            prepared.extra_headers = {**prepared.extra_headers, KEEP_TRANSCRIPTS_HEADER: '1'}
         return prepared

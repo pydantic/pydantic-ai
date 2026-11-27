@@ -77,13 +77,22 @@ except ImportError as _import_error:
         'you can use the `claude-agent` optional group — `pip install "pydantic-ai-slim[claude-agent]"`'
     ) from _import_error
 
-__all__ = ('ClaudeCodeSessions', 'ClaudeCodeTransport', 'CONVERSATION_HEADER', 'INHERIT_MCP_SERVERS_HEADER')
+__all__ = (
+    'ClaudeCodeSessions',
+    'ClaudeCodeTransport',
+    'CONVERSATION_HEADER',
+    'INHERIT_MCP_SERVERS_HEADER',
+    'KEEP_TRANSCRIPTS_HEADER',
+)
 
 CONVERSATION_HEADER = 'x-pydantic-ai-conversation-id'
 """Carries the request's `conversation_id` from `ClaudeAgentModel` to the transport. It never leaves the process."""
 
 INHERIT_MCP_SERVERS_HEADER = 'x-pydantic-ai-claude-agent-inherit-mcp-servers'
 """Carries `claude_agent_inherit_mcp_servers`, as JSON, from `ClaudeAgentModel` to the transport, like the above."""
+
+KEEP_TRANSCRIPTS_HEADER = 'x-pydantic-ai-claude-agent-keep-transcripts'
+"""Carries `claude_agent_keep_transcripts` from `ClaudeAgentModel` to the transport, like the above."""
 
 _MCP_SERVER = 'pydantic_ai'
 _TOOL_PREFIX = f'mcp__{_MCP_SERVER}__'
@@ -115,6 +124,9 @@ _ENV = {
     'CLAUDE_CODE_DISABLE_ATTACHMENTS': '1',
     'CLAUDE_CODE_DISABLE_CLAUDE_MDS': '1',
     'CLAUDE_CODE_DISABLE_AUTO_MEMORY': '1',
+    # No transcript under `~/.claude/projects/` unless `claude_agent_keep_transcripts` asks for one: a session is sent
+    # its history, so nothing reads it back (verified: with this, Claude Code writes none).
+    'CLAUDE_CODE_SKIP_PROMPT_HISTORY': '1',
     'DISABLE_AUTO_COMPACT': '1',
     'DISABLE_COMPACT': '1',
     # Pydantic AI retries a failed request itself, as `max_retries` says (verified: with this, a 529 is sent once).
@@ -224,6 +236,8 @@ class _MessagesRequest(BaseModel):
     stream: bool = False
     inherit_mcp_servers: bool | list[str] = False
     """`claude_agent_inherit_mcp_servers`, from its header: the user's own MCP servers Claude Code may bring."""
+    keep_transcripts: bool = False
+    """`claude_agent_keep_transcripts`, from its header."""
 
     @property
     def calls_tools(self) -> bool:
@@ -267,6 +281,7 @@ class _SessionConfig:
     effort: EffortLevel | None
     max_tokens: int
     inherit_mcp_servers: str
+    keep_transcripts: bool
 
     @classmethod
     def of(cls, request: _MessagesRequest) -> _SessionConfig:
@@ -280,6 +295,7 @@ class _SessionConfig:
             effort=request.output_config.effort if request.output_config else None,
             max_tokens=request.max_tokens,
             inherit_mcp_servers=json.dumps(request.inherited_servers),
+            keep_transcripts=request.keep_transcripts,
         )
 
 
@@ -585,6 +601,13 @@ class _Session:
             await anyio.Path(self.system_prompt_file).unlink(missing_ok=True)
 
 
+def _session_env(config: _SessionConfig) -> dict[str, str]:
+    env = {**_ENV, 'CLAUDE_CODE_MAX_OUTPUT_TOKENS': str(config.max_tokens)}
+    if config.keep_transcripts:
+        del env['CLAUDE_CODE_SKIP_PROMPT_HISTORY']
+    return env
+
+
 def _write_private_file(text: str) -> str:
     # `mkstemp` creates the file readable and writable by the user alone.
     fd, path = tempfile.mkstemp(prefix='pydantic-ai-claude-agent-', suffix='.txt')
@@ -671,7 +694,7 @@ class ClaudeCodeSessions:
             cli_path=self.options.cli_path,
             cwd=self.options.cwd,
             client_app=f'pydantic-ai/{__version__}',
-            env={**_ENV, 'CLAUDE_CODE_MAX_OUTPUT_TOKENS': str(config.max_tokens)},
+            env=_session_env(config),
         )
 
     async def _find_user_mcp_servers(self) -> dict[str, str]:
@@ -932,6 +955,7 @@ class ClaudeCodeTransport(httpx2.AsyncBaseTransport):
         assert body.messages[-1].role == 'user'
         if (inherit := request.headers.get(INHERIT_MCP_SERVERS_HEADER)) is not None:
             body.inherit_mcp_servers = _inherit_ta.validate_json(inherit)
+        body.keep_transcripts = KEEP_TRANSCRIPTS_HEADER in request.headers
 
         try:
             session, kept = await self.sessions.open(request.headers.get(CONVERSATION_HEADER), body)

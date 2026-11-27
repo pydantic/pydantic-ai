@@ -45,7 +45,7 @@ with try_import() as imports_successful:
     from claude_agent_sdk import ClaudeAgentOptions, ProcessError
 
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
-    from pydantic_ai.models.claude_agent import ClaudeAgentModel
+    from pydantic_ai.models.claude_agent import ClaudeAgentModel, ClaudeAgentModelSettings
     from pydantic_ai.providers import _claude_agent_sessions
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.claude_agent import ClaudeAgentProvider
@@ -305,6 +305,17 @@ async def test_the_system_prompt_goes_in_a_file_only_the_user_can_read():
     assert isinstance(system_prompt, dict) and system_prompt['type'] == 'file'
     assert session.closed
     assert not await anyio.Path(system_prompt['path']).exists()
+
+
+async def test_claude_code_keeps_a_transcript_only_when_asked():
+    model, fake = claude_agent(FakeResponse([text('Ok.')]), FakeResponse([text('Ok.')]))
+
+    await Agent(model).run('Hi')
+    keep = ClaudeAgentModelSettings(claude_agent_keep_transcripts=True)
+    await Agent(model).run('Hi', model_settings=keep)
+
+    # Keeping a transcript is fixed when Claude Code starts, so the second run gets a session of its own.
+    assert [session.options.env.get('CLAUDE_CODE_SKIP_PROMPT_HISTORY') for session in fake.sessions] == ['1', None]
 
 
 async def test_a_cancelled_close_still_removes_the_system_prompt_file():

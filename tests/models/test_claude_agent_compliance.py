@@ -116,6 +116,7 @@ async def test_claude_code_runs_with_exactly_these_options():
                 'CLAUDE_CODE_DISABLE_ATTACHMENTS': '1',
                 'CLAUDE_CODE_DISABLE_CLAUDE_MDS': '1',
                 'CLAUDE_CODE_DISABLE_AUTO_MEMORY': '1',
+                'CLAUDE_CODE_SKIP_PROMPT_HISTORY': '1',
                 'DISABLE_AUTO_COMPACT': '1',
                 'DISABLE_COMPACT': '1',
                 'CLAUDE_CODE_MAX_RETRIES': '0',
