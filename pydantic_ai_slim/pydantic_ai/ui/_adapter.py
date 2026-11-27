@@ -633,7 +633,7 @@ def _take_new_turn(
     answered_calls = (
         {part.tool_call_id for part in last_stored_response.parts if isinstance(part, ToolCallPart)}
         if last_stored_response
-        else set()
+        else set[str]()
     ) - pending
     kept: list[ModelMessage] = []
     dropped = 0

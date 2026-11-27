@@ -534,7 +534,7 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         answered_calls = (
             {part.tool_call_id for part in last_response.parts if isinstance(part, ToolCallPart)}
             if last_response
-            else set()
+            else set[str]()
         ) - pending_ids
         if dropped := len(orphaned - pending_ids - answered_calls):
             warn_dropped_tool_results(dropped, stacklevel=5)
