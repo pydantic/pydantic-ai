@@ -135,3 +135,48 @@ async def test_xai_previous_response_id_orders_tool_results_by_the_stored_respon
     second_kwargs = get_mock_chat_create_kwargs(mock_client)[1]
     assert second_kwargs['previous_response_id'] == 'grok-123'
     assert [message['tool_call_id'] for message in second_kwargs['messages']] == snapshot(['call_a', 'call_b'])
+
+
+async def test_xai_previous_response_id_continues_with_the_same_history_digest_key(allow_model_requests: None):
+    """A model with the same `history_digest_key` continues from the response it recorded."""
+    mock_client = MockXai.create_mock([create_response(content='first'), create_response(content='second')])
+    m = XaiModel(XAI_NON_REASONING_MODEL, provider=XaiProvider(xai_client=mock_client), history_digest_key=b'secret')
+    settings = XaiModelSettings(xai_store_messages=True)
+
+    first = await Agent(m, instructions='Be brief.', model_settings=settings).run('hello')
+    [*_, stored] = first.all_messages()
+    assert isinstance(stored, ModelResponse) and stored.history_digest is not None
+    await Agent(m, instructions='Be brief.', model_settings=settings).run(
+        'again',
+        message_history=first.all_messages(),
+        model_settings=XaiModelSettings(xai_previous_response_id='grok-123'),
+    )
+
+    second_kwargs = get_mock_chat_create_kwargs(mock_client)[1]
+    assert second_kwargs['previous_response_id'] == 'grok-123'
+    assert second_kwargs['messages'] == snapshot([{'content': [{'text': 'again'}], 'role': 'ROLE_USER'}])
+
+
+@pytest.mark.parametrize(('recorded_with', 'continued_with'), [(None, b'secret'), (b'secret', None), (b'one', b'two')])
+async def test_xai_previous_response_id_resends_a_response_recorded_with_another_history_digest_key(
+    allow_model_requests: None, recorded_with: bytes | None, continued_with: bytes | None
+):
+    """A response recorded with another key, or none, isn't continued from: send everything, without the id."""
+    mock_client = MockXai.create_mock([create_response(content='first'), create_response(content='second')])
+    provider = XaiProvider(xai_client=mock_client)
+    settings = XaiModelSettings(xai_store_messages=True)
+    recording = XaiModel(XAI_NON_REASONING_MODEL, provider=provider, history_digest_key=recorded_with)
+    first = await Agent(recording, instructions='Be brief.', model_settings=settings).run('hello')
+
+    continuing = XaiModel(XAI_NON_REASONING_MODEL, provider=provider, history_digest_key=continued_with)
+    await Agent(continuing, instructions='Be brief.', model_settings=settings).run(
+        'again',
+        message_history=first.all_messages(),
+        model_settings=XaiModelSettings(xai_previous_response_id='grok-123'),
+    )
+
+    second_kwargs = get_mock_chat_create_kwargs(mock_client)[1]
+    assert 'previous_response_id' not in second_kwargs
+    assert [message['role'] for message in second_kwargs['messages']] == snapshot(
+        ['ROLE_SYSTEM', 'ROLE_USER', 'ROLE_ASSISTANT', 'ROLE_USER']
+    )

@@ -151,6 +151,13 @@ async def main():
 
 When the stored response is in the `message_history`, only the messages after it are sent, without the instructions: the stored response already holds them. If the instructions or the history before it have changed since, the request starts over and sends everything without continuing from the response, since xAI would otherwise carry on from its own copy. Without the response in the `message_history`, the request sends what it's given, the instructions included, so the model may see the instructions twice.
 
+!!! warning "Redacting stored history"
+    Each stored response records a digest of its parts and the history it was created from as [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest], which is how the next request knows it can continue. The digest is a plain SHA-256 by default, so anyone holding the stored history can use it to test guesses at content redacted from that history after it was sent, such as a PIN or an account number. If you redact history after the fact, pass a secret as the `history_digest_key` argument to [`XaiModel`][pydantic_ai.models.xai.XaiModel] to make it an HMAC.
+
+    Clearing `history_digest` also works: a response without one isn't continued from, and the full history is sent instead.
+
+Every model continuing the same conversations needs the same `history_digest_key`, including workers under [durable execution](../durable_execution/overview.md); a response recorded with a different key, or none, is resent rather than continued from.
+
 ## SDK retries {#sdk-retries}
 
 The `xai_sdk.AsyncClient` turns on gRPC's own retries: a request that fails with `UNAVAILABLE` is attempted up to 5 times, with a backoff between 0.1 and 1 second. gRPC also transparently retries an attempt that never reached the server. These retries happen inside the gRPC channel, so Pydantic AI can't see or count them. To keep the retry policy in your own code, pass a client with gRPC retries disabled:

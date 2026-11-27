@@ -422,6 +422,7 @@ class XaiModel(Model[AsyncClient]):
 
     _model_name: str
     _provider: Provider[AsyncClient]
+    _history_digest_key: bytes | None
 
     def __init__(
         self,
@@ -430,6 +431,7 @@ class XaiModel(Model[AsyncClient]):
         provider: Literal['xai'] | Provider[AsyncClient] = 'xai',
         profile: ModelProfileSpec | None = None,
         settings: ModelSettings | None = None,
+        history_digest_key: bytes | None = None,
     ):
         """Initialize the xAI model.
 
@@ -438,8 +440,14 @@ class XaiModel(Model[AsyncClient]):
             provider: The provider to use for API calls. Defaults to `'xai'`.
             profile: Optional model profile specification. Defaults to a profile picked by the provider based on the model name.
             settings: Optional model settings.
+            history_digest_key: A secret to key each stored response's
+                [`history_digest`][pydantic_ai.messages.ModelResponse.history_digest] with (an HMAC-SHA256), so
+                stored history can't be used to test guesses at content redacted from it later. Every model
+                continuing the same conversations needs the same key; a response recorded with another key, or
+                none, is resent rather than continued from.
         """
         self._model_name = model_name
+        self._history_digest_key = history_digest_key
 
         if isinstance(provider, str):
             provider = infer_provider(provider)
@@ -979,7 +987,9 @@ class XaiModel(Model[AsyncClient]):
         """
         # Convert messages to xAI format
         instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
-        continued, messages, model_settings = _continuation(messages, model_settings, instruction_parts)
+        continued, messages, model_settings = _continuation(
+            messages, model_settings, instruction_parts, self._history_digest_key
+        )
         xai_messages = await self._map_messages(
             messages, model_request_parameters, continued=continued, instruction_parts=instruction_parts
         )
@@ -1135,7 +1145,9 @@ class XaiModel(Model[AsyncClient]):
         """
         if not settings.get('xai_store_messages'):
             return None
-        return _history_hasher(messages, self._get_instruction_parts(messages, model_request_parameters))
+        return _history_hasher(
+            messages, self._get_instruction_parts(messages, model_request_parameters), self._history_digest_key
+        )
 
     def _process_response(self, response: chat_types.Response) -> ModelResponse:
         """Convert xAI SDK response to pydantic_ai ModelResponse.
@@ -2025,9 +2037,14 @@ def _tool_call_ids(response: ModelResponse) -> list[str]:
     return [part.tool_call_id for part in response.parts if isinstance(part, ToolCallPart) and part.tool_call_id]
 
 
-def _history_hasher(messages: Sequence[ModelMessage], instruction_parts: Sequence[InstructionPart] | None) -> Hasher:
-    """The history a stored response is created from: the instructions it was sent with, then the messages."""
-    return history_hasher(messages, None, leading_instructions=[part.content for part in instruction_parts or ()])
+def _history_hasher(
+    messages: Sequence[ModelMessage], instruction_parts: Sequence[InstructionPart] | None, key: bytes | None
+) -> Hasher:
+    """The history a stored response is created from: the instructions it was sent with, then the messages.
+
+    It's an HMAC with `key`, the model's `history_digest_key`, when there is one.
+    """
+    return history_hasher(messages, key, leading_instructions=[part.content for part in instruction_parts or ()])
 
 
 def _with_history_digest(response: ModelResponse, history: Hasher | None) -> ModelResponse:
@@ -2037,7 +2054,10 @@ def _with_history_digest(response: ModelResponse, history: Hasher | None) -> Mod
 
 
 def _continuation(
-    messages: list[ModelMessage], settings: XaiModelSettings, instruction_parts: list[InstructionPart] | None
+    messages: list[ModelMessage],
+    settings: XaiModelSettings,
+    instruction_parts: list[InstructionPart] | None,
+    history_digest_key: bytes | None,
 ) -> tuple[ModelResponse | None, list[ModelMessage], XaiModelSettings]:
     """The stored response a request continues from, the messages it sends, and its settings.
 
@@ -2053,7 +2073,7 @@ def _continuation(
         response = messages[index]
         if isinstance(response, ModelResponse) and response.provider_response_id == previous_response_id:
             if response.history_digest is not None and response.history_digest == continuation_digest(
-                _history_hasher(messages[:index], instruction_parts), response.parts
+                _history_hasher(messages[:index], instruction_parts, history_digest_key), response.parts
             ):
                 return response, messages[index + 1 :], settings
             restarted = {key: value for key, value in settings.items() if key != 'xai_previous_response_id'}
