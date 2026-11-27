@@ -559,8 +559,10 @@ async def test_a_deferred_groups_instructions_are_stated_only_after_it_loads(dyn
         received.messages.append(messages)
         return responses.pop(0) if responses else ModelResponse(parts=[TextPart('Done.')])
 
+    notes = notes_capability()
+    notes.toolsets = (FunctionToolset(instructions='Toolset note.'),)
     group = CombinedCapability[Notes](
-        [notes_capability()], id='notes_group', description='Notes tools.', defer_loading=True
+        [notes], id='notes_group', description='Notes tools.', defer_loading=True
     ).with_authority('none')
     capability = DynamicCapability(lambda ctx: group).with_authority('none') if dynamic else group
     agent = Agent(
@@ -571,15 +573,16 @@ async def test_a_deferred_groups_instructions_are_stated_only_after_it_loads(dyn
     result = await agent.run('Hi', deps=Notes())
 
     assert 'Static note.' not in str(received.messages[0])
+    assert 'Toolset note.' not in str(received.messages[0])
     assert statements(result.all_messages()) == [
         InstructionDeltaPart(
             id=InstructionId(CapabilityInstructionSource('notes_group')),
-            content='Static note.\n\nThe count is 1.',
+            content='Static note.\n\nThe count is 1.\n\nToolset note.',
             authority='none',
         )
     ]
     assert last_request_texts(received.messages[-1])[-1] == (
-        '<capability_instructions>\nStatic note.\n\nThe count is 1.\n</capability_instructions>'
+        '<capability_instructions>\nStatic note.\n\nThe count is 1.\n\nToolset note.\n</capability_instructions>'
     )
 
 

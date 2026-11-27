@@ -187,20 +187,47 @@ async def resolve_capability_block_instructions(
     sourced = capability._collect_instructions() if own else []  # pyright: ignore[reportPrivateUsage]
     parts = await resolve_sourced_instructions(sourced, ctx)
 
-    owned: list[CapabilityOwnedToolset[AgentDepsT]] = []
-
-    def collect(ts: AbstractToolset[AgentDepsT]) -> None:
-        if isinstance(ts, CapabilityOwnedToolset) and ts.capability is capability:
-            owned.append(ts)
-
-    toolset.apply(collect)
-    for ts in owned:
+    for ts in _capability_owned_toolsets(toolset, capability):
         # Attributed to the capability, as `CapabilityOwnedToolset.get_instructions` would: what the toolset enqueues
         # while resolving them is held to the capability's authority.
         parts.extend(await collect_toolset_instructions(ts.wrapped, ctx._attributed_to(capability)))  # pyright: ignore[reportPrivateUsage]
 
     source = CapabilityInstructionSource(block_id)
     return [replace(part, id=InstructionId(source, name=part.name)) for part in parts]
+
+
+def _capability_owned_toolsets(
+    toolset: AbstractToolset[AgentDepsT], capability: AbstractCapability[AgentDepsT]
+) -> list[CapabilityOwnedToolset[AgentDepsT]]:
+    """The innermost toolsets owned by `capability` within `toolset`.
+
+    A loaded capability's outer stable toolset can contain finer owners from the capability it resolved to. Collecting
+    only the outer owner skips instructions its inner owners withhold for normal prefix collection. Collecting every
+    owner would state the same nested instructions more than once.
+    """
+    roots: list[CapabilityOwnedToolset[AgentDepsT]] = []
+
+    def collect_root(ts: AbstractToolset[AgentDepsT]) -> None:
+        if isinstance(ts, CapabilityOwnedToolset) and ts.capability is capability:
+            roots.append(ts)
+
+    toolset.apply(collect_root)
+    candidates = {id(root): root for root in roots}
+    for root in roots:
+
+        def collect_nested(ts: AbstractToolset[AgentDepsT]) -> None:
+            if isinstance(ts, CapabilityOwnedToolset):
+                candidates[id(ts)] = ts
+
+        root.wrapped.apply(collect_nested)
+
+    owned: list[CapabilityOwnedToolset[AgentDepsT]] = []
+    for candidate in candidates.values():
+        descendants: list[AbstractToolset[AgentDepsT]] = []
+        candidate.wrapped.apply(descendants.append)
+        if not any(id(ts) in candidates for ts in descendants):
+            owned.append(candidate)
+    return owned
 
 
 @dataclass(frozen=True)
