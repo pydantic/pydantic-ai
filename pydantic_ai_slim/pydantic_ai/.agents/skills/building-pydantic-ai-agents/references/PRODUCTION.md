@@ -28,7 +28,7 @@ Reach for more only when one of these is true:
 
 Then there are two levels, and they are not the same:
 
-- **`StepPersistence`** (Harness) continues from the last tool-call snapshot, with no engine to run. A tool call in the ledger that never finished has an unknown outcome, so check the external system before re-running it.
+- **`StepPersistence`** (Harness) continues from the last tool-call snapshot, with no engine to run. A tool call in the ledger that never finished has an unknown outcome, so check the external system before re-running it. Snapshots hold messages only, not the usage and pending deferred calls a `Conversation` carries, so they complement storing it rather than replace it.
 - **Durable execution** replays completed model requests and journaled tool calls after a crash, and **re-runs the one that was in flight from its start**. So a tool with side effects has to be safe to repeat, for instance by passing an idempotency key to the API it calls. This is the point to get right: a crash mid-call is *not* covered for you. Runs on an engine the user operates, via `pydantic-ai-slim` with one engine's extra such as `[dbos]` or `[temporal]`. See [Use Durable Execution](./ORCHESTRATION-AND-INTEGRATIONS.md#use-durable-execution).
 
 ## Bound cost and runaway loops
@@ -68,8 +68,11 @@ durable execution.
 
 ## Limit what the agent can touch
 
-Three separate controls, often needed together: per-caller tool exposure, approval on the risky
-tools, and a sandbox for model-written code. `LocalWorkspace` isolates nothing: for untrusted code
+Three separate controls, often needed together: per-caller tool exposure
+([Organize or Restrict Which Tools an Agent Can Use](./TOOLS-CORE.md#organize-or-restrict-which-tools-an-agent-can-use)),
+approval on the risky tools
+([Require Tool Approval](./TOOLS-ADVANCED.md#require-tool-approval-human-in-the-loop)),
+and a sandbox for model-written code. `LocalWorkspace` isolates nothing: for untrusted code
 use a sandbox provider. See [Workspaces](./WORKSPACES.md).
 
 ## See what happened
