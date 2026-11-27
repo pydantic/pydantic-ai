@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import anyio
 import pytest
+import sniffio
 
 from pydantic_ai import (
     Agent,
@@ -571,6 +572,8 @@ def _text_document_agent(seen: list[list[ModelMessage]]) -> Agent[None, str]:
 
 
 async def test_text_documents_by_url_are_downloaded_one_at_a_time(monkeypatch: pytest.MonkeyPatch):
+    if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
+        pytest.skip('Agent.run() requires asyncio')
     """Text documents share the request's download total, and are downloaded one after another.
 
     Each download in flight reserves up to the per-file limit of the total, so 11 at once would leave the last one
@@ -591,6 +594,8 @@ async def test_text_documents_by_url_are_downloaded_one_at_a_time(monkeypatch: p
 
 
 async def test_text_documents_by_url_are_downloaded_while_the_total_has_room(monkeypatch: pytest.MonkeyPatch):
+    if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
+        pytest.skip('Agent.run() requires asyncio')
     """With most of the total already downloaded, each small document still gets what is left of it.
 
     A cap of downloads in flight would not do: with 9 KiB of the 10 KiB total held, ten small documents in flight at
@@ -623,6 +628,8 @@ async def test_text_documents_by_url_are_downloaded_while_the_total_has_room(mon
 async def test_text_documents_by_url_are_refused_past_the_download_limits(
     sizes: dict[str, int], error: str, monkeypatch: pytest.MonkeyPatch
 ):
+    if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
+        pytest.skip('Agent.run() requires asyncio')
     """The text documents one request downloads are refused past the per-request total and the per-file limit."""
     serve_text_files(monkeypatch, sizes)
     agent = _text_document_agent([])
