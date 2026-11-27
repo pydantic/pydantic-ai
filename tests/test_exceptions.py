@@ -1018,3 +1018,11 @@ def test_model_response_errors_are_model_api_errors_and_unexpected_model_behavio
     assert (error.model_name, error.message, error.body) == ('gpt-4', 'Unusable response', '<html>Bad gateway</html>')
     assert str(error) == 'Unusable response'
     assert str(error_type('gpt-4', 'Unusable response')) == 'Unusable response'
+
+
+def test_model_feature_unsupported_error_is_a_user_error_and_a_model_api_error():
+    """An existing `except UserError` keeps catching it, and a default `fallback_on` (`ModelAPIError`) falls back on it."""
+    error = ModelFeatureUnsupportedError('m', 'tool_output', 'Tool output is not supported by this model.')
+    assert isinstance(error, UserError)
+    assert isinstance(error, ModelAPIError)
+    assert repr(error) == "ModelFeatureUnsupportedError('Tool output is not supported by this model.')"

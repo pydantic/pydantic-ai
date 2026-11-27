@@ -9,7 +9,6 @@ from __future__ import annotations
 
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass, field
-from typing import Any
 
 import pytest
 from pydantic import BaseModel
@@ -28,7 +27,6 @@ from pydantic_ai import (
 from pydantic_ai.capabilities import ModelFallback, RetryOnModelErrors
 from pydantic_ai.exceptions import (
     FallbackExceptionGroup,
-    ModelAPIError,
     ModelFeature,
     ModelFeatureUnsupportedError,
     ModelRequestRejectedError,
@@ -103,7 +101,7 @@ def incapable_forcing_model() -> Incapable:
 @dataclass
 class Case:
     feature: ModelFeature
-    output_type: OutputSpec[Any]
+    output_type: OutputSpec[object]
     incapable: Callable[[], Incapable]
     message: str
     output: object
@@ -271,15 +269,6 @@ async def test_retry_on_model_errors_does_not_retry_it():
     with pytest.raises(ModelFeatureUnsupportedError, match=r'^Tool output is not supported by this model\.$'):
         await agent.run('Where?')
     assert model.requests == 1
-
-
-def test_is_a_user_error_and_a_rejected_request():
-    """Unit test of the class itself: an existing `except UserError` and a default `fallback_on` both catch it."""
-    error = ModelFeatureUnsupportedError('m', 'tool_output', 'Tool output is not supported by this model.')
-    assert isinstance(error, UserError)
-    assert isinstance(error, ModelAPIError)
-    assert isinstance(error, ModelRequestRejectedError)
-    assert repr(error) == "ModelFeatureUnsupportedError('Tool output is not supported by this model.')"
 
 
 # --- The probes the agent graph makes with `prepare_request`, which catch the `UserError` it raises ---

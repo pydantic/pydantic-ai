@@ -952,13 +952,10 @@ class ModelSchemaTooComplexError(ModelRequestRejectedError):
     """
 
 
-ModelFeature: TypeAlias = Literal[
-    'function_tools', 'tool_output', 'native_output', 'text_output', 'image_output', 'tool_choice'
-]
+ModelFeature: TypeAlias = Literal['tool_output', 'native_output', 'text_output', 'image_output', 'tool_choice']
 """A feature a request can ask of a model, which the model may not support; see
 [`ModelFeatureUnsupportedError.feature`][pydantic_ai.exceptions.ModelFeatureUnsupportedError.feature].
 
-- `'function_tools'`: function tools.
 - `'tool_output'`: [Tool Output](../output.md#tool-output).
 - `'native_output'`: [Native Output](../output.md#native-output), which needs JSON schema output.
 - `'text_output'`: plain text output.

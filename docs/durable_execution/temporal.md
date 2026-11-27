@@ -1293,7 +1293,7 @@ Upgrading to this version changes what a workflow does when its model can't serv
 
 Temporal doesn't retry a model error that another attempt at the same request can't fix. By default, `non_retryable_model_errors` on [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability] lists:
 
-- [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError], including [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError], [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError]: the provider rejects the same request again.
+- [`ModelRequestRejectedError`][pydantic_ai.exceptions.ModelRequestRejectedError], including [`ModelContextWindowExceededError`][pydantic_ai.exceptions.ModelContextWindowExceededError], [`ModelAuthenticationError`][pydantic_ai.exceptions.ModelAuthenticationError], [`ModelNotFoundError`][pydantic_ai.exceptions.ModelNotFoundError] and [`ModelSchemaTooComplexError`][pydantic_ai.exceptions.ModelSchemaTooComplexError]: the provider rejects the same request again. ([`ModelFeatureUnsupportedError`][pydantic_ai.exceptions.ModelFeatureUnsupportedError] is one too, but reports `UserError`, so it's never retried whatever this lists.)
 - [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError]: the quota stays exhausted until it resets, often hours later.
 - [`ModelRequestTimeout`][pydantic_ai.exceptions.ModelRequestTimeout]: the request's [deadline](../timeouts.md#model-request-deadlines) ran out, so there's no time left for another attempt.
 

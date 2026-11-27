@@ -147,6 +147,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.output import OutputSpec
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import RealtimeModel, RealtimeModelProfile, RealtimeModelSettings
 from pydantic_ai.realtime.codec import RealtimeCodecEvent, RealtimeConnection, RealtimeInput, ResponseDone
@@ -615,7 +616,9 @@ def _feature_capable_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelR
     return ModelResponse(parts=[TextPart('{"label": "city", "answer": "Paris"}')])
 
 
-def _feature_fallback_agent(name: str, output_type: Any, incapable_profile: ModelProfile) -> Agent[None, Answer]:
+def _feature_fallback_agent(
+    name: str, output_type: OutputSpec[Answer], incapable_profile: ModelProfile
+) -> Agent[None, Answer]:
     return Agent(
         FunctionModel(_feature_unsupported_fn, model_name='incapable', profile=incapable_profile),
         name=name,
