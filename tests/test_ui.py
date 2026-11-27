@@ -3522,3 +3522,39 @@ def test_messages_builder_copies_parts_it_did_not_make():
     assert own_parts == [TextPart('a')]
     assert message.parts == [TextPart('a'), TextPart('b'), TextPart('c')]
     assert builder.last_modified(checkpoint, of_type=ModelResponse) is message
+
+
+async def test_interrupted_closeout_carries_the_output_tool_kind():
+    """The closeout of an interrupted output tool call carries `tool_kind='output'`; a function tool's has none.
+
+    Not VCR-backed: the closeout is built locally by the UI event stream when a run is cancelled or errors.
+    """
+    closeouts: list[tuple[str, str | None, str]] = []
+
+    class RecordingEventStream(DummyUIEventStream[None, str]):
+        async def handle_output_tool_result(self, event: OutputToolResultEvent) -> AsyncIterator[str]:
+            closeouts.append((event.part.tool_name, event.part.tool_kind, event.part.outcome))
+            async for e in super().handle_output_tool_result(event):
+                yield e
+
+        async def handle_function_tool_result(self, event: FunctionToolResultEvent) -> AsyncIterator[str]:
+            closeouts.append((event.part.tool_name, event.part.tool_kind, event.part.outcome))
+            async for e in super().handle_function_tool_result(event):
+                yield e
+
+    stream = RecordingEventStream(DummyUIRunInput(messages=[]))
+    calls: list[tuple[str, Literal['function', 'output'], str]] = [
+        ('call_1', 'output', 'submit_report'),
+        ('call_2', 'function', 'lookup'),
+    ]
+    for tool_call_id, kind, tool_name in calls:
+        [
+            e
+            async for e in stream._interrupted_tool_result(  # pyright: ignore[reportPrivateUsage]
+                tool_call_id, kind, tool_name, cancelled=True
+            )
+        ]
+    assert closeouts == [
+        ('submit_report', 'output', 'interrupted'),
+        ('lookup', None, 'interrupted'),
+    ]
