@@ -19,7 +19,7 @@ Text after the object or the closing fence still fails.
 
 If GitHub rejects inline publication with HTTP 422, retry once with the findings in the review body.
 Recheck the live head before that retry. Preserve the verdict; body findings still prevent a clean approval.
-Cancellation keeps ordinary-label cleanup and ends without a failure notice. Report actual review or publisher failures.
+Cancellation keeps ordinary-label cleanup, and says so: a review or OpenCode fallback cancelled by a push comments that the review did not finish and the label should be re-applied, because the label is gone and no verdict was posted, which otherwise reads as nobody having asked. Report actual review or publisher failures separately.
 
 The `douwebot:review-agent-config` label requests one review only from its first `labeled` event. The workflow checks the sender's current repository permission, the event's immutable head against the live PR head, and that the label is still present before each reviewer starts. API errors, non-`User` senders, reruns, stale heads, and removed labels deny the request. An ordinary `douwebot` event never inherits approval from the label. To retry or approve a new head, a maintainer removes and reapplies the label; do not rerun the old event. The workflow never removes this label automatically because an old run could consume a newer request.
 

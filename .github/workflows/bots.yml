@@ -938,7 +938,7 @@ jobs:
         # is still consumed above, which is correct: a lingering label means a review is in flight. Without
         # this comment the PR shows no label, no review and no failed job, which reads as nobody having
         # asked for one.
-        if: always() && needs.review.result == 'cancelled'
+        if: always() && (needs.review.result == 'cancelled' || needs.douwebot-opencode.result == 'cancelled')
         run: |
           gh pr comment "${{ github.event.pull_request.number }}" --repo "${{ github.repository }}" --body \
             "A push cancelled the \`douwebot\` review before it finished, so there is no verdict on this PR. "\
