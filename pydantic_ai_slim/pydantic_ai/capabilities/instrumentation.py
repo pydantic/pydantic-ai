@@ -170,7 +170,6 @@ class Instrumentation(AbstractCapability[Any]):
     # a run — if the agent loop ever issues concurrent model requests, accesses to
     # these fields would race.
     _agent_name: str = field(default='agent', repr=False, init=False)
-    _new_message_index: int = field(default=0, repr=False, init=False)
     _run_usage: RunUsage = field(default_factory=RunUsage, repr=False, init=False)
     """Usage this run recorded while its span was open, credited by `_usage_attribution`.
 
@@ -178,6 +177,8 @@ class Instrumentation(AbstractCapability[Any]):
     what a delegate records is the delegate's; this holds only what this run recorded itself.
     """
     _last_messages: list[ModelMessage] | None = field(default=None, repr=False, init=False)
+    _last_new_messages: list[ModelMessage] = field(default_factory=list[ModelMessage], repr=False, init=False)
+    """The messages the run had added to its history when it sent the request `_last_messages` holds."""
     _last_model_request_parameters: ModelRequestParameters | None = field(default=None, repr=False, init=False)
     _last_formatted_instructions: str | None | Unset = field(default=UNSET, repr=False, init=False)
     """Last formatted instructions sent to the model, or `UNSET` before the first request."""
@@ -268,9 +269,6 @@ class Instrumentation(AbstractCapability[Any]):
         """Return a fresh copy for per-run state isolation."""
         inst = replace(self)
         inst._agent_name = (ctx.agent.name if ctx.agent else None) or 'agent'
-        # Run-start boundary, kept as the fallback index for failed runs; successful runs derive
-        # `pydantic_ai.new_message_index` at span end from the run's own messages.
-        inst._new_message_index = len(ctx.messages)
         # Usage this run's span is accountable for, credited by `_usage_attribution` for as long as
         # the span is open in `wrap_run`; see `_run_span_end_attributes`.
         inst._run_usage = RunUsage()
@@ -361,14 +359,12 @@ class Instrumentation(AbstractCapability[Any]):
                     # ctx.messages/ctx.metadata may be stale because the run state is mutated during execution.
                     if result is not None:
                         message_history = result.all_messages()
-                        run_new_messages = result.new_messages()
+                        new_messages = result.new_messages()
                         metadata = result.metadata
                     else:
-                        # On error, use the last messages seen during model requests.
-                        message_history = self._last_messages or ctx.messages
-                        run_new_messages = None
+                        message_history, new_messages = self._failed_run_messages(ctx)
                         metadata = ctx.metadata
-                    span.set_attributes(self._run_span_end_attributes(ctx, message_history, metadata, run_new_messages))
+                    span.set_attributes(self._run_span_end_attributes(ctx, message_history, new_messages, metadata))
                     if result is not None:
                         # One O(history) pass per run: turn any silent staleness the per-request
                         # fragment cache may have recorded into a loud signal. Skipped when the run
@@ -386,17 +382,25 @@ class Instrumentation(AbstractCapability[Any]):
                                 MessageHistoryMutatedWarning,
                             )
 
+    def _failed_run_messages(self, ctx: RunContext[Any]) -> tuple[list[ModelMessage], list[ModelMessage]]:
+        """The history a failed run's span records, and the messages the run added that end it.
+
+        The history is the messages of the last model request, or `ctx.messages` when the run made none.
+        """
+        if self._last_messages:
+            return self._last_messages, self._last_new_messages
+        return ctx.messages, []
+
     def _run_span_end_attributes(
         self,
         ctx: RunContext[Any],
         message_history: list[ModelMessage],
+        new_messages: list[ModelMessage],
         metadata: dict[str, Any] | None,
-        run_new_messages: list[ModelMessage] | None = None,
     ) -> dict[str, str | int | float | bool]:
         """Compute the end-of-run span attributes.
 
-        `run_new_messages` is the messages this run added; `None` (failed runs) falls back to the
-        run-start boundary snapshot.
+        `new_messages` is the messages this run added, which end `message_history`.
         """
         settings = self.settings
 
@@ -410,24 +414,19 @@ class Instrumentation(AbstractCapability[Any]):
                 )
             )
         )
-        converted_messages = settings.messages_to_otel_messages(
-            list(message_history), mcp_url_ids=mcp_telemetry_history_ids(message_history, mcp_url_ids)
-        )
+        history_ids = mcp_telemetry_history_ids(message_history, mcp_url_ids)
+        otel_messages = settings.messages_to_otel_messages(list(message_history), mcp_url_ids=history_ids)
         attrs: dict[str, Any] = {
-            'pydantic_ai.all_messages': safe_to_json(converted_messages).decode(),
+            'pydantic_ai.all_messages': safe_to_json(otel_messages).decode(),
             **settings.system_instructions_attributes(last_instructions),
         }
 
-        # The boundary is derived at span end in the same converted units as `pydantic_ai.all_messages`:
-        # each `ModelMessage` converts to one entry, so this run's first message sits at
-        # `len(all) - len(new)` even when a mid-run history merge shifted the run-start snapshot.
-        if run_new_messages is not None:
-            new_message_index = len(converted_messages) - len(
-                settings.messages_to_otel_messages(list(run_new_messages))
-            )
-        else:
-            new_message_index = self._new_message_index
-        if 0 < new_message_index < len(converted_messages):
+        # Counted in `pydantic_ai.all_messages` entries, not `ModelMessage`s: a request makes one entry per
+        # role, so a system prompt and a user prompt make two.
+        new_message_index = len(otel_messages) - len(
+            settings.messages_to_otel_messages(list(new_messages), mcp_url_ids=history_ids)
+        )
+        if new_message_index > 0:
             attrs['pydantic_ai.new_message_index'] = new_message_index
 
         if self._variable_instructions:
@@ -470,6 +469,9 @@ class Instrumentation(AbstractCapability[Any]):
     ) -> ModelResponse:
         def track_request(context: ModelRequestContext) -> None:
             self._last_messages = context.messages
+            # The run's own messages as `new_messages()` will count them; no public surface holds them mid-run.
+            appended = ctx._appended_messages  # pyright: ignore[reportPrivateUsage]
+            self._last_new_messages = (appended.messages or [])[appended.new_message_index :]
             self._last_model_request_parameters = context.model_request_parameters
             current_instructions = get_instructions(context.messages, context.model_request_parameters)
             if not isinstance(self._last_formatted_instructions, Unset):
