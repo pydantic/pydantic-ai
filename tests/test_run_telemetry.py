@@ -14,7 +14,7 @@ from typing import Any
 
 import pytest
 from inline_snapshot import snapshot
-from opentelemetry.trace import INVALID_SPAN, Span, Tracer, TracerProvider as ApiTracerProvider
+from opentelemetry.trace import INVALID_SPAN, NoOpTracer, Span, Tracer, TracerProvider as ApiTracerProvider
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, AgentRunResult, RunContext
@@ -271,6 +271,18 @@ async def test_a_sub_agents_for_run_does_not_write_to_its_parents_span():
     await run_marking_sub_agent(Instrumentation(settings=settings), Instrumentation(settings=settings))
 
     assert marked_spans(exporter) == []
+
+
+def test_an_uninstrumented_run_records_nothing():
+    """A run without `Instrumentation` has a `NoOpTracer`, so the helpers open no span and record no decision."""
+    ctx = RunContext(deps=None, model=TestModel(), usage=RunUsage(), tracer=NoOpTracer())
+
+    with open_span(ctx, 'example work') as span:
+        pass
+    record_decision(ctx, 'example decided')
+
+    assert span is INVALID_SPAN
+    assert tool_call_span(ctx) is INVALID_SPAN
 
 
 def test_a_durable_unit_that_did_not_carry_the_tracer_is_untraced():
