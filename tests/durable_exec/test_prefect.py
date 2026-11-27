@@ -2429,11 +2429,11 @@ def test_cache_policy_keys_for_instruction_ids_are_pinned():
 
 
 def test_cache_policy_keys_for_unset_ui_visibility_are_pinned():
-    """An unset `ui_visibility` or `allowed_callers` stays out of the key, so a flow retried across the upgrade that
-    added it hits.
+    """An unset `ui_visibility` stays out of the key, so a flow retried across the upgrade that added it hits.
 
-    The digests were computed before the fields existed. A set value stays in the key: the model task's cached response
-    carries a `ui_visibility` stamp, and `allowed_callers` changes where Code Mode puts the tool.
+    The digests were computed before the field existed. A set stamp stays in the key: the model task's cached response
+    carries it. `allowed_callers` always stays out, so the `{'programmatic'}` Code Mode writes onto a tool that
+    `run_code` calls keeps that nested call's key too.
     """
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
@@ -2450,7 +2450,7 @@ def test_cache_policy_keys_for_unset_ui_visibility_are_pinned():
     assert key_for(ModelRequestParameters(function_tools=[tool_def])) == snapshot('feac05e3f14461938e4e34e24d9c1493')
     assert key_for(history) == snapshot('b738f0514ffcdc82afbe3d15062093a1')
     assert key_for(replace(tool_def, ui_visibility='private')) != key_for(tool_def)
-    assert key_for(replace(tool_def, allowed_callers={'direct'})) != key_for(tool_def)
+    assert key_for(replace(tool_def, allowed_callers={'programmatic'})) == snapshot('cc5bcf7fd396f7c465b0f76f152dd958')
     stamped_history: list[ModelMessage] = [
         ModelResponse(
             parts=[ToolCallPart(tool_name='get_weather', args='{}', tool_call_id='call_1', ui_visibility='private')]
