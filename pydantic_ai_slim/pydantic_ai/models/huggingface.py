@@ -207,7 +207,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
     _relocates_tool_files = True
 
     unsupported_settings = frozenset(
-        {'extra_headers', 'max_retries', 'parallel_tool_calls', 'service_tier', 'timeout', 'top_k'}
+        {'citations', 'extra_headers', 'max_retries', 'parallel_tool_calls', 'service_tier', 'timeout', 'top_k'}
     )
 
     _model_name: str = field(repr=False)

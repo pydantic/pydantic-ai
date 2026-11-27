@@ -201,7 +201,7 @@ class CohereModel(Model[AsyncClientV2]):
     _unsupported_file_inputs = frozenset({'image', 'document', 'audio', 'video'})
 
     unsupported_settings = frozenset(
-        {'extra_body', 'extra_headers', 'logit_bias', 'parallel_tool_calls', 'service_tier', 'timeout'}
+        {'citations', 'extra_body', 'extra_headers', 'logit_bias', 'parallel_tool_calls', 'service_tier', 'timeout'}
     )
 
     _model_name: CohereModelName = field(repr=False)
