@@ -788,21 +788,6 @@ def test_nested_aliased_tool_arguments_cross_the_activity_input_by_alias(durable
     assert observed == [('A1', 10.0, 'Ada')]
 
 
-class CallToolRecordingWorker(InMemoryWorker):
-    """Also record the parameters of each `call_tool` activity, by tool name, as they cross into the activity."""
-
-    def __init__(self) -> None:
-        super().__init__()
-        self.call_tool_parameters: dict[str, dict[str, object]] = {}
-
-    def activity_turn(self, instance_id: str, name: str, task_id: int, encoded: str | None) -> None:
-        if name.endswith('.call_tool'):
-            assert encoded is not None
-            parameters = json.loads(encoded)['parameters']
-            self.call_tool_parameters[parameters['name']] = parameters
-        super().activity_turn(instance_id, name, task_id, encoded)
-
-
 def test_function_tool_argument_shapes_cross_the_activity_input() -> None:
     """Each shape in `function_tool_arg_shapes` reaches its tool as `check_shapes` expects.
 
@@ -811,6 +796,22 @@ def test_function_tool_argument_shapes_cross_the_activity_input() -> None:
 
     Not a VCR test: the claim is about what crosses into the activities, and no provider request is involved.
     """
+
+    # Defined here: `InMemoryWorker` exists only when `durabletask` is installed.
+    class CallToolRecordingWorker(InMemoryWorker):
+        """Also record the parameters of each `call_tool` activity, by tool name, as they cross into the activity."""
+
+        def __init__(self) -> None:
+            super().__init__()
+            self.call_tool_parameters: dict[str, dict[str, object]] = {}
+
+        def activity_turn(self, instance_id: str, name: str, task_id: int, encoded: str | None) -> None:
+            if name.endswith('.call_tool'):
+                assert encoded is not None
+                parameters = json.loads(encoded)['parameters']
+                self.call_tool_parameters[parameters['name']] = parameters
+            super().activity_turn(instance_id, name, task_id, encoded)
+
     plain = Agent(shapes_model(), tools=TOOLS, capabilities=[shapes_hooks()])
     RECEIVED.clear()
     plain.run_sync('go')
