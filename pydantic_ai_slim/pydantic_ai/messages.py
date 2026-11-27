@@ -6020,8 +6020,10 @@ class ModelResponse:
     With `anthropic_previous_message_id`, it also covers the response's `provider_response_id`, which a continue
     request names, and its `'thread_fingerprint'`.
     The `metadata` fields on messages, tool return parts and user prompt `TextContent` are never sent to
-    the model, so they're left out, and changing them doesn't count as a change. A request's `instructions`
-    are left out too: the server doesn't keep them with a response, so each request sends its own.
+    the model, so they're left out, and changing them doesn't count as a change. Each request's `instructions`
+    field is left out too. OpenAI and Anthropic don't keep instructions with a response, so each request sends its
+    own. xAI's stored response does hold them, so `XaiModel` digests the instructions ahead of the history, and
+    changing them counts as a change.
     Not sent to the model.
 
     Unless the model was given a key, it's a plain SHA-256, which anyone holding the stored history

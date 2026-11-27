@@ -5,7 +5,7 @@ import json
 from collections import defaultdict
 from collections.abc import AsyncGenerator, AsyncIterator, Generator, Iterable, Iterator, Mapping, Sequence
 from contextlib import asynccontextmanager, contextmanager
-from dataclasses import dataclass, field, replace
+from dataclasses import dataclass, field
 from datetime import datetime
 from functools import cached_property
 from typing import Any, Literal, assert_never, cast
@@ -87,7 +87,7 @@ from ..providers import Provider, infer_provider
 from ..settings import ModelSettings, ThinkingLevel
 from ..tools import ToolDefinition
 from ..usage import RequestUsage
-from ._history_digest import Hasher, continuation_digest, history_hasher
+from ._history_digest import Hasher, continuation_digest, history_hasher, with_history_digest
 from ._tool_choice import resolve_tool_choice, support_tool_forcing, tool_forcing_unavailable_reason
 
 try:
@@ -498,8 +498,8 @@ class XaiModel(Model[AsyncClient]):
         messages: list[ModelMessage],
         model_request_parameters: ModelRequestParameters,
         *,
-        continued: ModelResponse | None = None,
-        instruction_parts: list[InstructionPart] | None = None,
+        continued: ModelResponse | None,
+        instruction_parts: list[InstructionPart] | None,
     ) -> list[chat_types.chat_pb2.Message]:
         """Convert pydantic_ai messages to xAI SDK messages.
 
@@ -529,8 +529,6 @@ class XaiModel(Model[AsyncClient]):
                 case _:
                     assert_never(message)
 
-        if instruction_parts is None:
-            instruction_parts = self._get_instruction_parts(messages, model_request_parameters)
         # Insert instructions as system messages after existing system messages if present
         if continued is None and instruction_parts:
             system_prompt_count = next(
@@ -1099,7 +1097,7 @@ class XaiModel(Model[AsyncClient]):
         chat = await self._create_chat(messages, settings, model_request_parameters)
         with _map_api_errors(self.model_name):
             response = await chat.sample()
-        return _with_history_digest(
+        return with_history_digest(
             self._process_response(response), self._history_to_record(messages, settings, model_request_parameters)
         )
 
@@ -1122,9 +1120,10 @@ class XaiModel(Model[AsyncClient]):
         chat = await self._create_chat(messages, settings, model_request_parameters)
         response_stream = chat.stream()
         try:
-            streamed_response = await self._process_streamed_response(response_stream, model_request_parameters)
-            streamed_response._history = self._history_to_record(  # pyright: ignore[reportPrivateUsage]
-                messages, settings, model_request_parameters
+            streamed_response = await self._process_streamed_response(
+                response_stream,
+                model_request_parameters,
+                history=self._history_to_record(messages, settings, model_request_parameters),
             )
             yield streamed_response
         finally:
@@ -1254,6 +1253,8 @@ class XaiModel(Model[AsyncClient]):
         self,
         response: AsyncIterator[tuple[chat_types.Response, Any]],
         model_request_parameters: ModelRequestParameters,
+        *,
+        history: Hasher | None = None,
     ) -> 'XaiStreamedResponse':
         """Process a streamed response, and prepare a streaming response to return."""
         peekable_response: _utils.PeekableAsyncStream[
@@ -1273,6 +1274,7 @@ class XaiModel(Model[AsyncClient]):
             _response=peekable_response,
             _timestamp=first_response.created,
             _provider=self._provider,
+            _history=history,
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         return streamed_response
@@ -1289,7 +1291,7 @@ class XaiStreamedResponse(StreamedResponse):
     ]
     _timestamp: datetime
     _provider: Provider[AsyncClient]
-    _history: Hasher | None = field(default=None, init=False)
+    _history: Hasher | None = None
     """What this response was created from, digested with its parts as `ModelResponse.history_digest`."""
     # State to avoid re-emitting duplicate events.
     _encrypted_contents: dict[int, str] = field(default_factory=dict[int, str], init=False)
@@ -1316,7 +1318,7 @@ class XaiStreamedResponse(StreamedResponse):
     )
 
     def get(self) -> ModelResponse:
-        return _with_history_digest(super().get(), self._history)
+        return with_history_digest(super().get(), self._history)
 
     def get_stream_cancel_errors(self) -> tuple[type[BaseException], ...]:
         return (grpc.RpcError,)
@@ -2045,12 +2047,6 @@ def _history_hasher(
     It's an HMAC with `key`, the model's `history_digest_key`, when there is one.
     """
     return history_hasher(messages, key, leading_instructions=[part.content for part in instruction_parts or ()])
-
-
-def _with_history_digest(response: ModelResponse, history: Hasher | None) -> ModelResponse:
-    if history is None:
-        return response
-    return replace(response, history_digest=continuation_digest(history, response.parts))
 
 
 def _continuation(

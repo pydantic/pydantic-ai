@@ -1263,7 +1263,9 @@ async def _wire_huggingface(messages: list[ModelMessage]) -> object:
 
 async def _wire_xai(messages: list[ModelMessage]) -> object:
     model = XaiModel('grok-4-1-fast-non-reasoning', provider=XaiProvider(api_key='test-key'))
-    mapped = await model._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    mapped = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        messages, ModelRequestParameters(), continued=None, instruction_parts=None
+    )
     return [MessageToDict(message, preserving_proto_field_name=True) for message in mapped]
 
 

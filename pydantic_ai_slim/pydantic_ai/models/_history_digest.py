@@ -23,6 +23,7 @@ from ..messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelRequestPart,
+    ModelResponse,
     ModelResponsePart,
     TextContent,
     ToolCallPart,
@@ -35,6 +36,7 @@ __all__ = (
     'continuation_digest',
     'history_hasher',
     'part_without_application_metadata',
+    'with_history_digest',
     'without_application_metadata',
 )
 
@@ -92,6 +94,13 @@ def continuation_digest(history: Hasher, parts: Sequence[ModelResponsePart]) -> 
             )
         )
     return hasher.hexdigest()
+
+
+def with_history_digest(response: ModelResponse, history: Hasher | None) -> ModelResponse:
+    """`response` with its digest recorded, when `history` says a later request may continue from it."""
+    if history is None:
+        return response
+    return replace(response, history_digest=continuation_digest(history, response.parts))
 
 
 def call_as_sent(part: ToolCallPart) -> ToolCallPart:

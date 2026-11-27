@@ -2,6 +2,9 @@
 
 `MockXai` captures the `chat.create()` arguments as sent, so each test checks which messages follow the stored response
 and whether the id is kept, using the `history_digest` recorded on the stored `ModelResponse`.
+
+These are mock-client unit tests, not VCR tests: the xAI SDK uses gRPC for all calls, so they don't go through the
+HTTP cassettes the other model tests use, and cassette matching wouldn't check the exact request body these tests pin.
 """
 
 from __future__ import annotations as _annotations

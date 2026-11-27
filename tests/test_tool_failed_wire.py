@@ -137,7 +137,10 @@ async def _map_mistral(part: ModelRequestPart) -> Sequence[object]:
 async def _map_xai(part: ModelRequestPart) -> Sequence[object]:
     model = XaiModel('grok-4-fast-non-reasoning', provider=XaiProvider(api_key='test-key'))
     messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
-        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()), ModelRequestParameters()
+        model.prepare_messages([ModelRequest(parts=[part])], ModelRequestParameters()),
+        ModelRequestParameters(),
+        continued=None,
+        instruction_parts=None,
     )
     return [MessageToDict(message, preserving_proto_field_name=True) for message in messages]
 

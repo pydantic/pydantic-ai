@@ -282,7 +282,9 @@ async def _xai_outbound(case: Case) -> list[dict[str, object]]:
     model = XaiModel(
         case.model_name or 'grok-4-fast-reasoning', provider=XaiProvider(api_key='x'), profile=case.profile
     )
-    messages = await model._map_messages(case.history, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+    messages = await model._map_messages(  # pyright: ignore[reportPrivateUsage]
+        case.history, ModelRequestParameters(), continued=None, instruction_parts=None
+    )
     return [MessageToDict(m, preserving_proto_field_name=True) for m in messages]
 
 
