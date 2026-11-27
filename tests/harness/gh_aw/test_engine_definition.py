@@ -2300,6 +2300,50 @@ def record() -> str:
         # The agent module imports with the step's value: the default agent copies the environment for its commands then.
         assert json.loads((workspace / 'seen.json').read_text(encoding='utf-8')) == {'import': step_value, 'run': '1'}
 
+    @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
+    @requires_clai2
+    def test_a_dotenv_file_in_the_checkout_is_not_loaded(self, tmp_path: Path) -> None:
+        invocation = launch(
+            tmp_path,
+            {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'probe_agent:agent'},
+            extra_python_path=CLAI2_SOURCE,
+        )
+        workspace = Path(invocation.cwd)
+        (workspace / '.env').write_text('GH_AW_DOTENV_PROBE=loaded\n', encoding='utf-8')
+        (workspace / 'probe_agent.py').write_text(
+            """import json
+import os
+from pathlib import Path
+
+from pydantic_ai import Agent
+
+agent = Agent(name='probe')
+
+
+@agent.instructions
+def record() -> str:
+    probe = os.environ.get('GH_AW_DOTENV_PROBE')
+    Path(__file__).with_name('probe.json').write_text(json.dumps(probe), encoding='utf-8')
+    return 'Answer briefly.'
+""",
+            encoding='utf-8',
+        )
+        arguments = invocation.argv.copy()
+        arguments[arguments.index('-m') + 1] = 'test'
+
+        completed = subprocess.run(
+            [sys.executable, *arguments, *code_mode_off_args(tmp_path)],
+            cwd=workspace,
+            env=invocation.env,
+            input=invocation.stdin,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stdout
+        assert json.loads((workspace / 'probe.json').read_text(encoding='utf-8')) is None
+
 
 class TestLogParser:
     """The `log-parser` preserves trusted recorder events without inventing history."""
