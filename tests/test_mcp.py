@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gc
 import itertools
 import json
 import os
@@ -18,7 +19,8 @@ import re
 import subprocess
 import sys
 import warnings
-from collections.abc import Callable, Generator
+import weakref
+from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
 from pathlib import Path
@@ -68,6 +70,7 @@ from pydantic_ai.toolsets._instruction_collection import (
     make_contribution,
 )
 from pydantic_ai.usage import RunUsage
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 
 from .conftest import IsStr, try_import
@@ -90,6 +93,8 @@ with try_import() as imports_successful:
     from fastmcp.exceptions import McpError, ToolError
     from fastmcp.prompts import Message
     from fastmcp.server.dependencies import get_http_request
+    from fastmcp.server.middleware import CallNext, Middleware, MiddlewareContext
+    from fastmcp.tools import Tool as FastMCPTool
 
     # `mcp.types` serves either SDK generation: v2 keeps it as an exact re-export of `mcp_types`.
     from mcp import types as mcp_types
@@ -781,6 +786,33 @@ class TestMCPToolsetIntegration:
         with pytest.raises(ValueError, match='called more times than'):
             await toolset.__aexit__(None, None, None)
 
+    @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+    async def test_stdio_server_stops_once_agent_and_toolset_are_dropped(self):
+        """A stdio connection outlives `async with agent` while the toolset is held, and ends once the toolset is dropped.
+
+        FastMCP's `StdioTransport` keeps its server running between connections and stops it from its finalizer,
+        so the connection task that outlives the exit must not keep the toolset, and with it the transport, alive.
+        """
+        tasks_before = asyncio.all_tasks()
+        toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+        # A name skips the agent's name inference, which reads this frame's `f_locals`. Before Python 3.13, that
+        # read leaves a snapshot of the locals on the frame, which would still hold `toolset` after the `del` below.
+        agent = Agent(TestModel(call_tools=[]), name='stdio_agent', toolsets=[toolset])
+        async with agent:
+            await agent.run('Hello')
+
+        # The connection tasks own the server process. They're still pending, so the next run can reuse the server.
+        connection_tasks = asyncio.all_tasks() - tasks_before
+        assert connection_tasks
+
+        toolset_ref = weakref.ref(toolset)
+        del agent, toolset
+        gc.collect()
+        assert toolset_ref() is None
+        # The transport's finalizer stops the server, and the connection tasks end once the process has exited.
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await asyncio.wait(connection_tasks)
+
     async def test_get_tools_caches_and_lists(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server, include_instructions=True)
         async with toolset:
@@ -789,6 +821,61 @@ class TestMCPToolsetIntegration:
             assert {'echo', 'add', 'boom'} <= set(tools_first)
             # Second call should hit the cache (covers the cached-return branch).
             assert tools_first['echo'].tool_def.description == tools_second['echo'].tool_def.description
+
+    async def test_tools_list_changed_during_list_tools_is_not_lost(self):
+        """A tools `list_changed` notification that arrives while `tools/list` is in flight isn't lost.
+
+        The response was produced before the change, so caching it would keep the old tool list until the
+        next notification. The in-flight caller still gets that response, and the next `list_tools()` fetches
+        the changed list.
+        """
+        server: FastMCP[None] = FastMCP('list_changed_server')
+        list_produced = anyio.Event()
+        release_list = anyio.Event()
+
+        class HoldListTools(Middleware):
+            async def on_list_tools(
+                self,
+                context: MiddlewareContext[mcp_types.ListToolsRequest],
+                call_next: CallNext[mcp_types.ListToolsRequest, Sequence[FastMCPTool]],
+            ) -> Sequence[FastMCPTool]:
+                tools = await call_next(context)
+                # Hold only the first listing: the server also lists its tools to handle the tool call below.
+                if not list_produced.is_set():
+                    list_produced.set()
+                    await release_list.wait()
+                return tools
+
+        server.add_middleware(HoldListTools())
+
+        async def added_tool() -> None:
+            """Added while the first listing is in flight."""
+
+        @server.tool()
+        async def add_tool(ctx: Context) -> str:
+            server.add_tool(added_tool)
+            await ctx.send_notification(mcp_types.ToolListChangedNotification())
+            return 'done'
+
+        toolset = MCPToolset(server)
+        in_flight: list[list[str]] = []
+
+        async def list_tools_in_flight() -> None:
+            in_flight.append([tool.name for tool in await toolset.list_tools()])
+
+        async with toolset:
+            async with anyio.create_task_group() as tg:
+                tg.start_soon(list_tools_in_flight)
+                try:
+                    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                        await list_produced.wait()
+                    assert await toolset.direct_call_tool('add_tool', {}) == 'done'
+                finally:
+                    # Unblock the held listing even when the test fails, so the task group can drain.
+                    release_list.set()
+            assert in_flight == [['add_tool']]
+
+            assert [tool.name for tool in await toolset.list_tools()] == ['add_tool', 'added_tool']
 
     async def test_get_tools_hides_app_only_tools(self, run_context: RunContext):
         """MCP Apps (SEP-1865) tools whose `_meta.ui.visibility` leaves out `"model"` are hidden from the model."""
@@ -1984,6 +2071,34 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
 
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=user_handler)
+        notification = wrap_server_notification(
+            mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
+        )
+        await handler(notification)
+        assert seen == [notification]
+
+    async def test_message_handler_forwards_to_user_handler_after_toolset_is_collected(
+        self, fastmcp_server: FastMCP[None]
+    ):
+        """The handler holds the toolset weakly and keeps forwarding messages once it is collected.
+
+        A unit test: a connection only outlives its toolset over stdio, where a notification arriving after the
+        toolset is collected can't be triggered on demand.
+        """
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
+
+        seen: list[Any] = []
+
+        async def user_handler(message: Any) -> None:
+            seen.append(message)
+
+        toolset = MCPToolset(fastmcp_server)
+        handler = _build_message_handler(toolset, user_handler=user_handler)
+        toolset_ref = weakref.ref(toolset)
+        del toolset
+        gc.collect()
+        assert toolset_ref() is None
+
         notification = wrap_server_notification(
             mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
         )

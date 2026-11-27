@@ -6,6 +6,10 @@ everything before that point is secondhand and can re-verify rather than confabu
 receipt carries no timestamp -- it is a pure function of its inputs, so its bytes are
 deterministic and testable -- and, when a handle provider is attached and discoverable, an
 identifier for persisted run history. Each strategy gates it behind its `receipts` flag.
+
+The receipt is a `CompactionReceiptPart` in the application's voice, so its text is only ever the
+capability's own wording with config and counts filled in: the strategy name, who compacted, how
+much, and the run handle. Never the summary, the user's words, a tool's output or a file's text.
 """
 
 from __future__ import annotations
@@ -14,11 +18,20 @@ from contextvars import ContextVar, Token
 from dataclasses import dataclass
 from typing import Protocol, runtime_checkable
 
-from pydantic_ai.messages import ModelMessage, ModelRequest, TextContent, UserPromptPart
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.messages import (
+    InstructionCapabilityPart,
+    ModelMessage,
+    ModelRequest,
+    OperatorSource,
+    OperatorText,
+    TextContent,
+    UserPromptPart,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext
 
 _RECEIPT_MARKER = '[History before this point'
-"""Prefix identifying a receipt part, for detection and de-accumulation across compactions."""
+"""How a receipt's text opens. Never used to recognize one: that's by type."""
 
 RECEIPT_EVENT_NAME = 'compaction.receipt'
 """Name of the OTel span event emitted alongside the `compact_messages` span."""
@@ -42,10 +55,7 @@ class TranscriptHandleProvider(Protocol):
 
 def discover_transcript_handle(ctx: RunContext[AgentDepsT]) -> str | None:
     """Return a transcript handle from the first provider, else `None`."""
-    capabilities = getattr(ctx, 'capabilities', None)
-    if not capabilities:
-        return None
-    for capability in capabilities.values():
+    for capability in ctx.capabilities.values():
         if isinstance(capability, TranscriptHandleProvider):
             handle = capability.compaction_transcript_handle()
             if handle:
@@ -87,20 +97,53 @@ def format_receipt(
 
 
 _RECEIPT_METADATA = 'pydantic-ai-harness.compaction.receipt.v1'
-"""Model-invisible metadata identifying a receipt content item."""
+"""Metadata on the user-prompt receipts older versions wrote, which is how they're recognized."""
 
 
-def make_receipt_part(text: str) -> UserPromptPart:
-    """Wrap receipt *text* in a `UserPromptPart` for placement in the surviving history.
+@dataclass(kw_only=True)
+class CompactionReceiptPart(InstructionCapabilityPart, namespace='compaction', name='receipt'):
+    """The receipt a compaction strategy with `receipts=True` leaves at its cut point.
 
-    The text remains user-role context while its metadata lets compaction distinguish it from a
-    user turn.
+    It's in the application's voice and conversation-scoped, so it stays with the compacted
+    history. Find receipts in history by this type.
     """
-    return UserPromptPart(content=[TextContent(text, metadata=_RECEIPT_METADATA)])
+
+
+def make_receipt_part(text: str, *, capability_id: str | None) -> CompactionReceiptPart:
+    """Wrap receipt *text*, from `format_receipt`, for placement in the surviving history.
+
+    *capability_id* is the run id of the capability that wrote it, from `receipt_capability_id`.
+    """
+    return CompactionReceiptPart(
+        # The capability's own wording, with only config and counts filled in.
+        content=OperatorText(text),
+        source=OperatorSource(),
+        scope='conversation',
+        capability_id=capability_id,
+    )
+
+
+def receipt_capability_id(ctx: RunContext[AgentDepsT], capability: AbstractCapability[AgentDepsT]) -> str | None:
+    """The run id of the capability a receipt *capability* writes is attributed to.
+
+    That's *capability* itself when it's registered on the run. A strategy composed into another capability, such as a
+    tier of `TieredCompaction` or the strategy of `CompactOnRequest`, isn't registered, so its receipt is attributed to
+    the registered capability whose hook ran it. `None` only outside any capability's hook, as when the application
+    calls `compact_now`: then the application wrote it.
+    """
+    own = next((run_id for run_id, registered in ctx.capabilities.items() if registered is capability), None)
+    if own is not None:
+        return own
+    calling = ctx._calling_capability_id()  # pyright: ignore[reportPrivateUsage]
+    return calling if calling in ctx.capabilities else None
 
 
 def is_receipt_part(part: object) -> bool:
-    """Return True if *part* carries the receipt metadata marker."""
+    """Whether *part* is a compaction receipt: a `CompactionReceiptPart`, or the legacy user-prompt form."""
+    if isinstance(part, CompactionReceiptPart):
+        return True
+    # Legacy form: older versions wrote the receipt as a user prompt. It's recognized by its model-invisible
+    # metadata only, never by its text, so a user who types the receipt's wording isn't taken for one.
     return (
         isinstance(part, UserPromptPart)
         and not isinstance(part.content, str)
