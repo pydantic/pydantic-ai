@@ -2188,10 +2188,12 @@ not the filesystem the file tools act on there.
   the agent's own, or a plugin's) mounts it read-only for that run, and so does
   one with protected paths outside `full`, such as the session's under `auto`,
   since `pathlib` could change Pax's settings without asking. So does one with
-  a `managed_rules` ask or deny rule that isn't only about commands, since
-  `pathlib` could write a file that rule covers.
+  a `managed_rules` ask or deny rule that isn't only about commands and may
+  select a tool that writes, since `pathlib` could write a file that rule covers.
 - **Not mounted:** no `read_file`, `allowed_patterns` or `denied_patterns`, a
-  `ToolGuardrail` or `ToolCallJudge` that may check or hide `read_file`, no
+  `ToolGuardrail` or `ToolCallJudge` that may check or hide `read_file`, a bound
+  `Permissions` with a `managed_rules` ask or deny rule that isn't only about
+  commands and may select `read_file`, such as a `path` rule for every tool, no
   `FileSystem`, more than one, a supplied agent that does not expose its
   capabilities, or a plugin that adds a capability function or
   `DynamicCapability` (which could supply one at run time). So does any
