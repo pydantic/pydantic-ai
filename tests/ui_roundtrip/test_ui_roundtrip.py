@@ -754,8 +754,8 @@ _AGUI_ACTIVITY = (
 )
 _AGUI_FILE_IDENTIFIER = "`AGUIAdapter.dump_messages` doesn't carry a user file's custom `identifier`; #14284"
 _RETRY = (
-    "the AI SDK stream has no carrier for a tool's outcome, so a streamed retry reloads as "
-    '`outcome="failed"` instead of `"retried"`; #8185'
+    'the AI SDK stream carries no outcome claim for a streamed retry (a `tool-input-error` closeout could, through '
+    '`resultProviderMetadata`), so it reloads as `outcome="failed"` instead of `"retried"`; #8185'
 )
 _APPEND_INSTRUCTIONS = (
     'append-mode instruction records (`InstructionBaselinePart`, `InstructionDeltaPart`) are system voice, '
