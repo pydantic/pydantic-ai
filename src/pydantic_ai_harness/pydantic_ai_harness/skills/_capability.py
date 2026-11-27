@@ -36,6 +36,7 @@ from pydantic_ai_harness.skills._loader import (
     UnknownNames,
     catalog_description,
     load_skill_libraries,
+    normalize_skill_name,
     same_skill,
     skip_duplicate_name,
 )
@@ -355,7 +356,8 @@ class Skills(AbstractCapability[AgentDepsT]):
         for value in values:
             if not isinstance(value, str):
                 raise TypeError(f'{name} must contain only skill names as strings.')
-            normalized.add(value)
+            # As the loader matches them, so a name read again for `load_skill` is selected the same way.
+            normalized.add(normalize_skill_name(value))
         return frozenset(normalized)
 
     @classmethod
