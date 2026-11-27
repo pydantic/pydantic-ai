@@ -552,9 +552,13 @@ def _request_parts(messages: Sequence[ModelMessage]) -> list[ModelRequestPart]:
 
 
 def _without(text: str, removed: Sequence[str]) -> str:
-    """`text` with each of `removed`, longest first, taken out."""
+    """`text` with each of `removed` of at least `LOWERED_TEXT_MIN_LENGTH` characters, longest first, taken out.
+
+    A shorter piece can't hold a text the check looks for, and taking it out could split one that holds it.
+    """
     for piece in sorted(removed, key=len, reverse=True):
-        text = text.replace(piece, '\0')
+        if len(piece) >= LOWERED_TEXT_MIN_LENGTH:
+            text = text.replace(piece, '\0')
     return text
 
 
