@@ -596,6 +596,27 @@ def person_only_request(metadata: object) -> bool:
         return False
 
 
+def marks_reviewer_approvals(ctx: RunContext[Any]) -> bool:
+    """Whether an `ApprovalReviewer` must mark its approvals in this run, as `Permissions` holds calls for a person.
+
+    The run's own capability tree is searched, so a per-run copy, such as one a delegate inherits, counts. A run
+    without such a `Permissions` gets no marker, so its tool calls' metadata stays as it was.
+    """
+    found = False
+
+    def visit(capability: AbstractCapability[Any]) -> None:
+        nonlocal found
+        while isinstance(capability, WrapperCapability):
+            capability = capability.wrapped
+        if isinstance(capability, Permissions):
+            found |= _holds_for_a_person(capability)
+
+    # A run always has one; only a context built by hand, as for calling the reviewer directly, has none.
+    if ctx.root_capability is not None:  # pragma: no branch
+        ctx.root_capability.apply(visit)
+    return found
+
+
 def reviewed_approval_metadata() -> dict[str, Any]:
     """The metadata an `ApprovalReviewer` attaches to a call it approves, so `Permissions` won't take it for a person's."""
     return _ReviewedMetadata(approval_reviewer=_Reviewed(approved=True)).model_dump()
@@ -700,6 +721,17 @@ class _InheritedPermissions(Permissions[AgentDepsT]):
     def get_serialization_name(cls) -> str | None:
         """Return `None`: only `SubAgents` builds it, so no agent spec names it."""
         return None
+
+
+def _holds_for_a_person(permissions: Permissions[Any]) -> bool:
+    """Whether `permissions` can hold a call that only a person may approve.
+
+    Protected paths and commands, managed rules, and a `max_mode` other than `'full'` can; a `max_mode` function
+    counts too, since what it returns isn't known until a call.
+    """
+    return bool(permissions.protected_paths or permissions.protected_commands or permissions.managed_rules) or (
+        permissions.max_mode != 'full'
+    )
 
 
 def inherited_managed_permissions(ctx: RunContext[AgentDepsT]) -> list[Permissions[AgentDepsT]]:

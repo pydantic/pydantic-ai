@@ -630,9 +630,14 @@ class TestInheritedInDurableUnits:
         assert not (tmp_path / 'made').exists()
 
 
+def _read_only(ctx: RunContext[None]) -> PermissionMode:
+    return 'read-only'
+
+
 class TestReviewerApprovals:
+    @pytest.mark.parametrize('max_mode', ['read-only', _read_only])
     async def test_a_reviewers_approval_of_an_earlier_hold_does_not_answer_a_person_only_one(
-        self, tmp_path: Path
+        self, tmp_path: Path, max_mode: PermissionMode | Callable[[RunContext[None]], PermissionMode]
     ) -> None:
         """The first `Permissions` holds the call for anyone and the reviewer approves it; the ceiling holds it again.
 
@@ -646,7 +651,7 @@ class TestReviewerApprovals:
                 LocalWorkspace(tmp_path),
                 Shell(denied_commands=[]),
                 Permissions('read-only'),
-                Permissions('full', max_mode='read-only'),
+                Permissions('full', max_mode=max_mode),
                 _safe_reviewer(),
             ],
         )
