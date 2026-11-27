@@ -112,11 +112,11 @@ completed results from history. This shapes how you write agents for it:
 - **Orchestrator-side code runs on every replay.** Hooks, instruction functions, output validators and
   inline tools must be deterministic and do no network, file or thread I/O. Put I/O in tools or a
   capability's `@durable_operation` method.
-- **Code Mode runs snippets in orchestrator code.** `CodeMode`'s `run_code` re-runs its snippets
-  on every replay, with nested tool calls as activities; see [Code Mode's Azure Durable Task
-  section](../code_mode/README.md#azure-durable-task-durability).
-  `DynamicWorkflow` scripts run there too, with sub-agent model requests and tools as activities; see
-  [Dynamic Workflow's durable engines section](../dynamic_workflow/README.md#running-under-other-durable-engines).
+- **Code Mode runs each turn as an activity.** Nothing would stop a snippet that computes forever in
+  orchestrator code, so `CodeMode` needs a remote `monty_sandbox` and refuses configurations whose
+  turns can't run as activities; see [Code Mode's Azure Durable Task
+  section](../code_mode/README.md#azure-durable-task-durability). `DynamicWorkflow` isn't supported
+  ([#14974](https://github.com/pydantic/pydantic-ai/issues/14974)).
 - **Names are persisted.** Activity names come from the agent's `name`, toolset IDs and tool names.
   Don't rename them while orchestrations that use them are still running.
 - **Token counts are activities.** With `count_tokens_before_request=True`, the count ahead of each

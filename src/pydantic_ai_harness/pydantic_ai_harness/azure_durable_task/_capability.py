@@ -73,6 +73,8 @@ class AzureDurableTaskDurability(BaseDurabilityCapability[AgentDepsT]):
         unsupported_runtime_toolset_kinds=frozenset({'function', 'mcp', 'dynamic'}),
         tool_config_key='azure_durable_task',
         # The SDK replays the orchestrator after every activity, on a loop that rejects work from other threads.
+        # Nothing stops orchestrator code that blocks without yielding, so `bounds_blocking_orchestrator_code`
+        # keeps its default.
         replays_orchestrator_code=True,
         thread_wakeable_loop=False,
     )

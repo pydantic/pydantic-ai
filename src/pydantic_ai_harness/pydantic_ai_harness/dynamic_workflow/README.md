@@ -452,6 +452,10 @@ runs close to it can stop at a different point on replay. The replay may then fa
 `NondeterminismError` or, if it diverges after the script's last sub-agent call, continue with a
 different tool result than the recorded run.
 
+`DynamicWorkflow` doesn't support `AzureDurableTaskDurability` yet: the script would run in
+orchestrator code, where nothing stops one that computes forever, so `run_workflow` raises
+`UserError` there ([#14974](https://github.com/pydantic/pydantic-ai/issues/14974)).
+
 ## Running under other durable engines
 
 `DBOSDurability` numbers a workflow's steps in the order they start, so the steps of concurrent

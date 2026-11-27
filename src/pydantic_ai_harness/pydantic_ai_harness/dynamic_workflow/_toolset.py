@@ -62,9 +62,8 @@ from pydantic_ai_harness._monty_exec import (
     MontyExecutor,
     MontyRunState,
     PrintCapture,
-    durable_engine_spec,
-    in_durable_task_orchestration,
-    uses_portal,
+    in_temporal_workflow,
+    unbounded_replay_engine,
 )
 from pydantic_ai_harness._monty_turns import is_sandbox_panic
 from pydantic_ai_harness._sub_agent_output import (
@@ -101,8 +100,7 @@ class WorkflowResourceLimits(TypedDict, total=False):
     nor a concurrent `asyncio.gather` batch, because during that wait the script is suspended on
     the host, not running sandbox code. There is no default cap. Set one to bound a pure-CPU
     `while True` loop, which would otherwise burn a core in the sandbox worker (and block the
-    workflow thread under Temporal) -- the one runaway the sub-agent budgets do not catch. It is
-    off in Azure Durable Task orchestrator code, where the elapsed time could change a replay.
+    workflow thread under Temporal) -- the one runaway the sub-agent budgets do not catch.
     Sleeping is not execution time either, so when set, the script may also sleep for up to this
     long in total."""
 
@@ -111,21 +109,6 @@ class WorkflowResourceLimits(TypedDict, total=False):
 
     max_memory: int
     """Maximum sandbox memory, in bytes."""
-
-
-def _sandbox_limits(limits: ResourceLimits) -> ResourceLimits:
-    """The limits the sandbox enforces: without the elapsed-time check in Durable Task orchestrator code.
-
-    The SDK re-runs the script after every activity and checks a replayed activity only by sequence
-    number, type and name. A time limit that fires on one run but not the other after the script's
-    last sub-agent call would let the replay continue with a retry prompt where the recorded run had
-    the tool result. The sleep allowance is charged separately, so it is kept. Until script turns
-    run as activities (#14528), nothing bounds a CPU loop that never awaits there.
-
-    Unlike `CodeMode`, this doesn't read `DurabilityEngineSpec.replays_orchestrator_code`: Temporal
-    sets it, and Temporal workflow code keeps the limit until #14528 decides whether it should.
-    """
-    return limits | {'max_feed_duration_secs': None} if in_durable_task_orchestration() else limits
 
 
 def _default_resource_limits() -> ResourceLimits:
@@ -717,6 +700,17 @@ def index_workflow_agents(
     return by_name
 
 
+def _refuse_unbounded_scripts(ctx: RunContext[object]) -> None:
+    """Raise in replayed orchestrator code that nothing bounds, where a script would have no time limit."""
+    if (unbounded := unbounded_replay_engine(ctx)) is not None:
+        raise UserError(
+            f"`DynamicWorkflow` can't run scripts in this {unbounded.engine_name} "
+            f'{unbounded.durable_container_noun}: {unbounded.engine_name} replays orchestrator code, so a '
+            'script there has no time limit, and nothing stops one that computes forever. See '
+            'https://github.com/pydantic/pydantic-ai/issues/14974.'
+        )
+
+
 @dataclass(kw_only=True)
 class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     """Single-tool toolset that runs sub-agent orchestration scripts in a Monty sandbox."""
@@ -1048,6 +1042,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]
     ) -> Any:
+        _refuse_unbounded_scripts(ctx)
         code = tool_args['code']
         budget_exhausted = False
         completed_dispatches: list[_CompletedDispatch] = []
@@ -1063,6 +1058,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
             completed_dispatches.append(_CompletedDispatch(agent_name=agent_name, task=task, result=output))
             return output
 
+        in_temporal = in_temporal_workflow()
         bridge = _lambda_bridge()
         branches = _LambdaBranches(bridge, self.tool_name) if bridge is not None else None
         sequential = any(_runs_under_dbos(w.agent) for w in self._by_name.values())
@@ -1074,10 +1070,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
         monty = MontyRunState()
         try:
             session = await monty.get_session(
-                type_check=True,
-                type_check_stubs=type_check_stubs,
-                limits=_sandbox_limits(limits),
-                use_portal=uses_portal(durable_engine_spec(ctx)),
+                type_check=True, type_check_stubs=type_check_stubs, limits=limits, use_portal=in_temporal
             )
             # `_by_name` is not mutated while a script executes (reveals land in `get_tools`,
             # which does not interleave with `call_tool`), so it is a stable name registry for

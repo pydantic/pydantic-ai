@@ -28,4 +28,6 @@ TEMPORAL_ENGINE_SPEC = DurabilityEngineSpec(
     # Workflow code replays against the history, on a loop that rejects `call_soon_threadsafe()`.
     replays_orchestrator_code=True,
     thread_wakeable_loop=False,
+    # The deadlock detector fails a workflow task whose code doesn't yield for 2 seconds.
+    bounds_blocking_orchestrator_code=True,
 )

@@ -107,13 +107,12 @@ class DurabilityEngineSpec:
     """
 
     replays_orchestrator_code: bool = False
-    """Whether code that a capability runs in the durable container must not branch on elapsed wall-clock time.
+    """Whether the engine replays durable-container code and needs each replay to take the recorded path.
 
-    Set this when the engine replays container code and needs each replay to take the recorded path.
-    A capability that runs its own code there, such as Pydantic AI Harness's `CodeMode` sandbox, then
-    turns off its wall-clock execution limit, because a limit that fires on one execution but not the
-    other would make them diverge. Temporal and Azure Durable Task set it. DBOS and AWS Lambda also
-    re-run workflow code but keep the default for now, so Code Mode keeps its time limit there (#12539).
+    This tells a capability that runs its own code in the durable container whether that code must not
+    branch on elapsed wall-clock time: a wall-clock limit that fires on one execution but not on its
+    replay would make them diverge. Temporal and Azure Durable Task set it. DBOS and AWS Lambda also
+    re-run workflow code but keep the default for now (#12539).
     """
 
     thread_wakeable_loop: bool = True
@@ -121,9 +120,21 @@ class DurabilityEngineSpec:
 
     Set this to `False` when the container's loop doesn't run callbacks scheduled from other threads
     with `call_soon_threadsafe()`, as with Temporal's workflow loop and the loop Azure Durable Task
-    orchestrators run on. A capability whose async work completes on a thread of its own, such as
-    Pydantic AI Harness's Monty sandbox, then calls that work through a blocking portal: a helper
-    thread with an ordinary loop, while the container's thread waits for each call.
+    orchestrators run on. This tells a capability whose async work completes on a thread of its own
+    whether to call that work through a blocking portal instead: a helper thread with an ordinary loop,
+    while the container's thread waits for each call.
+    """
+
+    bounds_blocking_orchestrator_code: bool = False
+    """Whether the engine stops durable-container code that blocks without yielding to its event loop.
+
+    Set this when the engine fails a durable container whose code holds the worker thread for too
+    long, so a runaway synchronous computation can't hold the worker forever. Temporal sets it: its
+    deadlock detector fails the workflow task when workflow code doesn't yield for 2 seconds. This
+    tells a capability that runs code in the durable container whether it can rely on the engine to
+    bound that code. It matters only where
+    [`replays_orchestrator_code`][pydantic_ai.durable_exec.DurabilityEngineSpec.replays_orchestrator_code]
+    is `True`, since only there must that code run without a wall-clock limit of its own.
     """
 
     def __post_init__(self) -> None:

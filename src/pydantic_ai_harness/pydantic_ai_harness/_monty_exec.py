@@ -20,8 +20,8 @@ from __future__ import annotations
 import asyncio
 import inspect
 import sys
-from collections.abc import Awaitable, Callable, Container, Coroutine
-from contextlib import AbstractAsyncContextManager, AsyncExitStack
+from collections.abc import Awaitable, Callable, Container, Coroutine, Iterator, Mapping
+from contextlib import AbstractAsyncContextManager, AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
 from functools import partial
 from typing import Any, TypeVar, assert_never
@@ -31,8 +31,9 @@ from anyio.from_thread import BlockingPortal, start_blocking_portal
 from opentelemetry import context as otel_context
 from typing_extensions import TypeVarTuple, Unpack
 
+from pydantic_ai import RunContext
+from pydantic_ai._utils import is_async_callable, run_in_executor
 from pydantic_ai.durable_exec import BaseDurabilityCapability, DurabilityEngineSpec
-from pydantic_ai.tools import RunContext
 from pydantic_ai_harness._typeguards import is_object_tuple, is_str_keyed_dict
 
 try:
@@ -48,6 +49,7 @@ try:
         CollectString,
         ExternalException,
         ExternalFuture,
+        ExternalModule as ExternalModule,  # re-exported for `code_mode._capability`, behind this guard
         ExternalResult,
         ExternalReturnValue,
         ExternalSettledResult,
@@ -101,31 +103,51 @@ def in_durable_task_orchestration() -> bool:
     return bridge is not None and bridge.current_loop() is not None
 
 
-def durable_engine_spec(ctx: RunContext[Any]) -> DurabilityEngineSpec | None:
+def durable_engine_spec(ctx: RunContext[object]) -> DurabilityEngineSpec | None:
     """The spec of the durable engine whose workflow code this run executes in, or `None` outside one.
 
-    Read from the run's durability capability. An agent can also run in an engine's workflow code
-    without one, like an agent wrapped in the deprecated `TemporalAgent` or a sub-agent with no
-    capability of its own, so it gets the spec of the engine whose workflow code is running.
+    Read from the run's durability capability. The deprecated `TemporalAgent` runs a workflow without
+    one, so a Temporal workflow with none gets Temporal's spec. (`unbounded_replay_engine` refuses a
+    snippet in a Durable Task orchestration whose agent has none, so no fallback is needed there.)
     """
     durability = BaseDurabilityCapability.from_agent(ctx.agent) if ctx.agent is not None else None
     if durability is not None and durability.in_durable_context:
         return durability.engine_spec
-    # Each check finds its engine's module already imported, so these imports load nothing new.
     if in_temporal_workflow():
+        # Only reached in a workflow, so `temporalio` is already imported.
         from pydantic_ai.durable_exec.temporal._spec import TEMPORAL_ENGINE_SPEC
 
         return TEMPORAL_ENGINE_SPEC
-    if in_durable_task_orchestration():
-        from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability
-
-        return AzureDurableTaskDurability.engine_spec
     return None
 
 
 def uses_portal(spec: DurabilityEngineSpec | None) -> bool:
     """Whether Monty must be called through a portal: in workflow code whose loop Monty's thread can't wake."""
     return spec is not None and not spec.thread_wakeable_loop
+
+
+def unbounded_replay_engine(ctx: RunContext[object]) -> DurabilityEngineSpec | None:
+    """The engine running this code, when it replays the code but doesn't stop it when it blocks; else `None`.
+
+    Sandboxed code there can't have an elapsed-time limit, since every replay must take the recorded
+    path, and nothing else stops a snippet that computes forever, so it must not run there.
+    """
+    spec = next(
+        (
+            capability.engine_spec
+            for capability in ctx.capabilities.values()
+            if isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
+        ),
+        None,
+    )
+    if spec is None and in_durable_task_orchestration():
+        # An agent with no durability capability of its own, such as one an inline tool runs.
+        from pydantic_ai_harness.azure_durable_task import AzureDurableTaskDurability
+
+        spec = AzureDurableTaskDurability.engine_spec
+    if spec is None or not spec.replays_orchestrator_code or spec.bounds_blocking_orchestrator_code:
+        return None
+    return spec
 
 
 # Running Monty in workflow code whose loop can't be woken from another thread
@@ -195,6 +217,36 @@ def session_os_policy(os_policy: OSPolicy | None) -> OSPolicy:
     return _OS_POLICY | (os_policy or {})
 
 
+def module_attrs(modules: Mapping[str, ExternalModule]) -> Iterator[tuple[str, ExternalModule, dict[str, object]]]:
+    """Each module in `modules` and each of its submodules, by dotted name, with its public attributes.
+
+    The one walk behind both what the model is told (stubs) and what a call can reach (functions), so
+    the two can't disagree. Attributes starting with `_` are left out: the sandbox can't reach them,
+    and a remote worker, whose reported names Monty treats as untrusted, must not be able to call them
+    by naming them.
+    """
+    for name, module in modules.items():
+        public = {attr: value for attr, value in module.attrs.items() if not attr.startswith('_')}
+        yield name, module, public
+        yield from module_attrs(
+            {f'{name}.{attr}': value for attr, value in public.items() if isinstance(value, ExternalModule)}
+        )
+
+
+def module_functions(modules: Mapping[str, ExternalModule]) -> dict[str, Callable[..., object]]:
+    """The host functions in `modules` and their submodules, keyed by the dotted name a sandbox call reports.
+
+    Monty names a call after the module it was imported from, however the sandbox bound it, so
+    `from duckdb import sql; sql(...)` arrives as `duckdb.sql`.
+    """
+    return {
+        f'{name}.{attr}': value
+        for name, _, public in module_attrs(modules)
+        for attr, value in public.items()
+        if callable(value) and not isinstance(value, ExternalModule)
+    }
+
+
 async def build_remote_pool(
     sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]], limits: ResourceLimits
 ) -> AsyncMontyRemote:
@@ -219,6 +271,8 @@ class MontyRunState:
     """May carry credentials, so it stays out of `repr`."""
     os_policy: OSPolicy | None = None
     """Session policies merged over `_OS_POLICY` at checkout, key by key."""
+    external_modules: Mapping[str, ExternalModule] | None = None
+    """Host modules the session may import; `MontyExecutor.module_functions` answers calls into them."""
     pool_factory: Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = None
     """Builds the remote pool, sync or async, in place of `monty_sandbox_url`, with its own URL, metadata, and timeouts."""
     pool: AsyncMonty | AsyncMontyRemote | None = None
@@ -263,6 +317,7 @@ class MontyRunState:
                 type_check=type_check,
                 type_check_stubs=type_check_stubs,
                 os_policy=session_os_policy(self.os_policy),
+                external_modules=self.external_modules,
             )
             self.session = await self._checkout_with_retry(checkout)
         return self.session
@@ -547,6 +602,12 @@ class MontyExecutor:
     sleep: Callable[[float], Coroutine[Any, Any, None]] = anyio.sleep
     # CodeMode's `os_access`. Only needed here to answer host-state calls inside a Temporal workflow.
     os_handler: OsHandler | None = None
+    # Functions of the session's `external_modules`, by dotted name (see `module_functions`). Called
+    # here rather than by Monty, so their async calls are deferred and settled like parallel tool calls.
+    module_functions: Mapping[str, Callable[..., object]] = field(default_factory=dict[str, Callable[..., object]])
+    # Entered around each module function call, by dotted name. Raising on entry refuses the call: the error is
+    # raised at the sandbox call site, as a refused tool call's is.
+    module_call_guard: Callable[[str], AbstractAsyncContextManager[None]] = lambda _name: nullcontext()
     # Awaited before deferred calls are resolved. Every call dispatched so far has started by then, so
     # a host can run the calls it collected from them as one batch, in dispatch order. That holds for
     # parallel dispatch only: under `global_sequential`, calls start after this.
@@ -618,16 +679,22 @@ class MontyExecutor:
                     return await call_monty(self.portal, snapshot.resume_auto)
 
         name = snapshot.function_name
-        if name not in self.valid_names:
-            return await self._raise_in_sandbox(snapshot, NameError(f'Unknown function: {name}'))
+        start: Callable[[], Coroutine[Any, Any, object]]
+        if (function := self.module_functions.get(name)) is not None:
+            start = partial(self._call_module_function, name, function, snapshot.args, snapshot.kwargs)
+            inline = not is_async_callable(function)
+        else:
+            if name not in self.valid_names:
+                return await self._raise_in_sandbox(snapshot, NameError(f'Unknown function: {name}'))
+            if snapshot.args:
+                return await self._raise_in_sandbox(
+                    snapshot, TypeError(f'{name}() does not accept positional arguments; use keyword arguments')
+                )
+            start = partial(self.dispatch, name, snapshot.kwargs)
+            inline = name in self.sequential_names
 
-        if snapshot.args:
-            return await self._raise_in_sandbox(
-                snapshot, TypeError(f'{name}() does not accept positional arguments; use keyword arguments')
-            )
-
-        if name in self.sequential_names:
-            # Rendered as `def` (sync), so the sandbox code doesn't `await` the result --
+        if inline:
+            # A sequential tool or a sync module function, called without `await` --
             # resolve inline. Await pending parallel tasks first (barrier) for ordering.
             # The dispatch coroutine is created only after the barrier: it is not in
             # `_pending`, so if it existed while the barrier awaits and we were cancelled
@@ -635,7 +702,7 @@ class MontyExecutor:
             for cid in list(self._pending):
                 self._pre_resolved[cid] = await _await_external(self._pending.pop(cid))
             try:
-                call = self._dispatch(snapshot, parallel=False)
+                call = self._dispatch(snapshot, start, parallel=False)
             except Exception as exc:
                 return await self._raise_in_sandbox(snapshot, exc)
             # The wrapped outcome (`{'return_value': ...}` / `{'exception': ...}`) is already
@@ -644,7 +711,7 @@ class MontyExecutor:
 
         # Deferred execution -- resolved later at FutureSnapshot.
         try:
-            call = self._dispatch(snapshot, parallel=not self.global_sequential)
+            call = self._dispatch(snapshot, start, parallel=not self.global_sequential)
         except Exception as exc:
             # `dispatch` refused the call before building its coroutine (e.g. an exhausted
             # per-snippet budget). Deliver the error at the sandbox call site, the same way a
@@ -655,6 +722,20 @@ class MontyExecutor:
             return await self._raise_in_sandbox(snapshot, exc)
         self._pending[snapshot.call_id] = call
         return await call_monty(self.portal, snapshot.resume, ExternalFuture(future=...))
+
+    async def _call_module_function(
+        self, name: str, function: Callable[..., Any], args: tuple[object, ...], kwargs: dict[str, object]
+    ) -> object:
+        """Call a host module function inside `module_call_guard`: a sync one in a worker thread.
+
+        Like a tool call, it is called only once this coroutine runs, so one refused, or closed or
+        cancelled while still queued, leaves no unawaited coroutine behind.
+        """
+        async with self.module_call_guard(name):
+            if is_async_callable(function):
+                return await function(*args, **kwargs)
+            # Bound first, so a host keyword such as `func` can't collide with `run_in_executor`'s own.
+            return await run_in_executor(partial(function, *args, **kwargs))
 
     async def _sleep(self, snapshot: FunctionSnapshot) -> Snapshot:
         """Wait for a sandbox sleep here rather than in Monty, charging it to `max_sleep_seconds`.
@@ -706,11 +787,13 @@ class MontyExecutor:
         """Resume the suspended call by raising `exc` at its sandbox call site."""
         return await call_monty(self.portal, snapshot.resume, ExternalException(exception=exc))
 
-    def _dispatch(self, snapshot: FunctionSnapshot, *, parallel: bool) -> PendingCall:
+    def _dispatch(
+        self, snapshot: FunctionSnapshot, start: Callable[[], Coroutine[Any, Any, object]], *, parallel: bool
+    ) -> PendingCall:
         context = snapshot.trace_context()
         token = otel_context.attach(context)
         try:
-            call = self.dispatch(snapshot.function_name, snapshot.kwargs)
+            call = start()
             # Tasks inherit the active context; bare coroutines need it restored when awaited.
             return PendingCall(asyncio.ensure_future(call) if parallel else call, context)
         finally:

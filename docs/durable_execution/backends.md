@@ -116,23 +116,26 @@ toolsets, per-tool configuration key, and whether a run inside the container may
 delivery from other threads; see the field's docs). The default lifecycle policy enters function and MCP
 toolsets for every run and never enters dynamic toolsets.
 
-Two fields tell capabilities that run their own code in the durable container how to behave there,
-as Pydantic AI Harness's [Code Mode](../harness/code-mode.md) and
-[Dynamic Workflow](../harness/dynamic-workflow.md) do with their Monty sandbox:
+Three fields tell capabilities that run their own code in the durable container, such as a code
+sandbox, how that code must behave there:
 
 - [`replays_orchestrator_code`][pydantic_ai.durable_exec.DurabilityEngineSpec.replays_orchestrator_code]: set it to `True` when the engine replays container code and each replay
-  must take the recorded path. Code Mode then turns off `max_duration_seconds` there, because an
-  elapsed-time limit that fires on one execution but not the other would make them diverge.
-  Temporal and Azure Durable Task set it. DBOS and AWS Lambda also re-run workflow code but keep the
-  default for now, so Code Mode keeps its time limit there
+  must take the recorded path. Such code then can't use an elapsed-time limit, because a limit that
+  fires on one execution but not the other would make them diverge. Temporal and Azure Durable Task
+  set it. DBOS and AWS Lambda also re-run workflow code but keep the default for now
   ([#12539](https://github.com/pydantic/pydantic-ai/issues/12539)).
 - [`thread_wakeable_loop`][pydantic_ai.durable_exec.DurabilityEngineSpec.thread_wakeable_loop]: set it to `False` when the container's event loop doesn't run callbacks
-  scheduled from other threads with `call_soon_threadsafe()`. The sandbox completes each awaited call
-  from a thread of its own, so Code Mode and Dynamic Workflow then call it through a blocking portal,
-  and the container's thread waits for each call. Temporal and Azure Durable Task set it to `False`.
+  scheduled from other threads with `call_soon_threadsafe()`. Work that completes on a thread of its
+  own must then be called through a blocking portal, with the container's thread waiting for each
+  call. Temporal and Azure Durable Task set it to `False`.
+- [`bounds_blocking_orchestrator_code`][pydantic_ai.durable_exec.DurabilityEngineSpec.bounds_blocking_orchestrator_code]: set it to `True` when the engine stops container code that
+  blocks without yielding to its event loop, so a runaway synchronous computation can't hold the
+  worker forever. It matters only where `replays_orchestrator_code` is `True`, since only there must
+  such code run without an elapsed-time limit of its own. Temporal sets it: its deadlock detector
+  fails the workflow task after 2 seconds. Azure Durable Task keeps the default.
 
-Leave both at their defaults when container code runs on an ordinary asyncio loop and the engine
-doesn't need replays to repeat the recorded path.
+Leave all three at their defaults when container code runs on an ordinary asyncio loop and the
+engine doesn't need replays to repeat the recorded path.
 
 Define every field whose engine behavior differs from the defaults. The spec validates non-empty
 nouns and requires a lifecycle for every wrapped toolset kind when it is constructed, so an invalid
