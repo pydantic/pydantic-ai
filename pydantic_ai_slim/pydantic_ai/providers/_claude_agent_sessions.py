@@ -29,7 +29,7 @@ from typing import Literal, NotRequired, cast
 
 import anyio
 import httpx2
-from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError, field_validator
+from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, ValidationError
 from typing_extensions import TypedDict
 
 from .. import __version__
@@ -57,17 +57,18 @@ try:
         HookInput,
         HookJSONOutput,
         HookMatcher,
+        McpSdkServerConfig,
         Message,
         RateLimitEvent,
         ResultMessage,
-        SdkMcpTool,
         StreamEvent,
         ToolResultBlock,
         Transport,
         UserMessage,
-        create_sdk_mcp_server,
     )
     from claude_agent_sdk.types import EffortLevel
+    from mcp.server import Server, ServerRequestContext
+    from mcp.types import CallToolRequestParams, CallToolResult, ListToolsResult, PaginatedRequestParams, Tool
 except ImportError as _import_error:
     raise ImportError(
         'Please install `claude-agent-sdk` to use the Claude Agent provider, '
@@ -154,29 +155,6 @@ class _Tool(BaseModel):
     name: str
     description: str = ''
     input_schema: dict[str, JsonValue]
-
-    @field_validator('input_schema')
-    @classmethod
-    def _local_references_only(cls, schema: dict[str, JsonValue]) -> dict[str, JsonValue]:
-        """The Agent SDK validates tool arguments with `jsonschema`, which fetches a schema's remote references."""
-        if remote := sorted(_remote_references(schema)):
-            raise ValueError(f'A tool schema can only reference its own definitions, not {", ".join(remote)}.')
-        return schema
-
-
-_REFERENCE_KEYS = frozenset({'$ref', '$dynamicRef', '$recursiveRef'})
-
-
-def _remote_references(schema: JsonValue) -> Iterator[str]:
-    if isinstance(schema, dict):
-        for key, value in schema.items():
-            if key in _REFERENCE_KEYS and isinstance(value, str) and not value.startswith('#'):
-                yield value
-            else:
-                yield from _remote_references(value)
-    elif isinstance(schema, list):
-        for item in schema:
-            yield from _remote_references(item)
 
 
 class _TextBlock(BaseModel):
@@ -504,12 +482,26 @@ class _Session:
             if isinstance(block, ToolResultBlock) and block.tool_use_id in self.external_calls
         ]
 
-    def tool(self, tool: _Tool) -> SdkMcpTool[dict[str, JsonValue]]:
-        async def call(arguments: dict[str, JsonValue]) -> dict[str, JsonValue]:
-            tool_use_id = self.claims[_claim_key(f'{_TOOL_PREFIX}{tool.name}', arguments)].pop(0)
-            return await self.result(tool_use_id)
+    def server(self, tools: list[_Tool]) -> McpSdkServerConfig:
+        """The agent's tools as an MCP server, which hands each call to the agent to run and validate.
 
-        return SdkMcpTool(name=tool.name, description=tool.description, input_schema=tool.input_schema, handler=call)
+        Not the Agent SDK's `create_sdk_mcp_server`, which validates arguments itself with `jsonschema`: that
+        fetches a schema's remote references, and a `pattern` can take it exponential time.
+        """
+        listed = ListToolsResult(
+            tools=[Tool(name=tool.name, description=tool.description, input_schema=tool.input_schema) for tool in tools]
+        )
+
+        async def list_tools(ctx: ServerRequestContext, params: PaginatedRequestParams | None) -> ListToolsResult:
+            return listed
+
+        async def call_tool(ctx: ServerRequestContext, params: CallToolRequestParams) -> CallToolResult:
+            arguments = params.arguments or {}
+            tool_use_id = self.claims[_claim_key(f'{_TOOL_PREFIX}{params.name}', arguments)].pop(0)
+            return CallToolResult.model_validate(await self.result(tool_use_id))
+
+        server = Server(_MCP_SERVER, on_list_tools=list_tools, on_call_tool=call_tool)
+        return McpSdkServerConfig(type='sdk', name=_MCP_SERVER, instance=server)
 
     def continuation(self, messages: list[_Message]) -> _Message | None:
         """The new user message, when `messages` is the session's history followed by one; otherwise `None`."""
@@ -625,7 +617,7 @@ class ClaudeCodeSessions:
         self, session: _Session, request: _MessagesRequest, disallowed_tools: list[str]
     ) -> ClaudeAgentOptions:
         config = session.config
-        server = create_sdk_mcp_server(_MCP_SERVER, tools=[session.tool(tool) for tool in request.callable_tools])
+        server = session.server(request.callable_tools)
         hooks = [HookMatcher(matcher=f'^{_TOOL_PREFIX}', hooks=[session.pre_tool_use])]
         if request.inherited_servers:
             hooks.append(HookMatcher(matcher=f'^{MCP_PREFIX}', hooks=[session.pre_external_tool_use]))

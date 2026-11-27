@@ -95,8 +95,9 @@ google = ["google-genai>=2.30.0,<3"]
 anthropic = ["anthropic>=1.15.0,<3"]
 # Claude through the user's own Claude Code login. `claude-agent-sdk>=0.2.185` has `verbatim_prompts`, `client_app`,
 # `skills=[]` and `ResultMessage.api_error_status`, which `ClaudeAgentProvider` relies on to keep Claude Code from adding
-# to or reinterpreting requests, and to report its errors with their HTTP status.
-claude-agent = ["anthropic>=1.15.0,<3", "claude-agent-sdk>=0.2.185,<0.3"]
+# to or reinterpreting requests, and to report its errors with their HTTP status. `mcp>=2` takes a lowlevel `Server`'s
+# handlers in its constructor, for the MCP server that serves the agent's tools without the SDK's argument validation.
+claude-agent = ["anthropic>=1.15.0,<3", "claude-agent-sdk>=0.2.185,<0.3", "mcp>=2.3.0,<3"]
 # `xai-sdk>=1.16.0` adds the `image_file_id`/`image_file_ids` arguments to `image.sample()` and
 # `image.sample_batch()`, which carry `UploadedFile` reference images to the image generation API.
 # `xai-sdk>=1.17.0` adds the `service_tier` argument to `chat.create()` and `Response.service_tier`.

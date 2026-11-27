@@ -645,22 +645,28 @@ async def test_a_thinking_config_claude_code_cant_take():
     assert fake.sessions == []
 
 
-async def test_a_tool_schema_with_a_remote_reference_is_refused():
-    """The Agent SDK validates arguments with `jsonschema`, which would fetch the reference from this process."""
-    model, fake = claude_agent()
-    schema = {'type': 'object', 'properties': {'city': {'$ref': 'http://127.0.0.1:9/city.json'}}}
+async def test_tool_arguments_reach_the_agent_unvalidated_by_the_agent_sdk():
+    """The Agent SDK's own MCP server would match `pattern` with backtracking `jsonschema`, exponential in this input."""
+    word = 'a' * 40 + '!'
+    model, fake = claude_agent(
+        FakeResponse([tool_use('toolu_1', 'echo', {'word': word})], stop_reason='tool_use'),
+        FakeResponse([text('Done.')]),
+    )
+    schema = {'type': 'object', 'properties': {'word': {'type': 'string', 'pattern': '^(a+)+$'}}}
+    words: list[str] = []
 
-    def lookup(city: str) -> str:
-        return city  # pragma: no cover
+    def echo(word: str) -> str:
+        words.append(word)
+        return word
 
-    agent = Agent(model, tools=[Tool.from_schema(lookup, name='lookup', description='', json_schema=schema)])
+    agent = Agent(model, tools=[Tool.from_schema(echo, name='echo', description='', json_schema=schema)])
 
-    with pytest.raises(ModelHTTPError, match="Claude Code can't serve this request") as exc_info:
-        await agent.run('Hi')
+    result = await agent.run('Echo.')
 
-    assert exc_info.value.status_code == 400
-    assert 'http://127.0.0.1:9/city.json' in str(exc_info.value.body)
-    assert fake.sessions == []
+    assert result.output == 'Done.'
+    assert words == [word]
+    [session] = fake.sessions
+    assert frame_shape(session) == snapshot([('user', ['text'], True)])
 
 
 async def test_anthropic_settings_claude_code_doesnt_send_are_reported():
