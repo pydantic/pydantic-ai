@@ -107,9 +107,6 @@ pydantic-ai-examples = { workspace = true }
 pydantic-ai-harness = { workspace = true }
 pydantic-ai-pax = { workspace = true }
 pydantic-clai2 = { workspace = true }
-# TODO(mrkaye97): Remove once `hatchet-sdk` 2.0.0 is on PyPI and past the `exclude-newer` window; the
-# `hatchet` extra's floor needs `protobuf<8` (hatchet-dev/hatchet#5552) and the 2.0 API.
-hatchet-sdk = { git = "https://github.com/hatchet-dev/hatchet", rev = "9eb39e18a93f840a55aa408815fad43c1e8d9e8c", subdirectory = "sdks/python" }
 
 [tool.uv.workspace]
 members = [
