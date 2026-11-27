@@ -193,13 +193,15 @@ def keep_step_history(state: _agent_graph.GraphAgentState) -> None:
     per step.
     """
     appended, history = state.appended_messages, state.message_history
-    recorded = {id(message) for message in appended.messages or ()}
+    if appended.messages is None:
+        return
+    recorded = {id(message) for message in appended.messages}
     summaries = {
         id(message)
         for message in history
         if id(message) not in recorded and any(isinstance(part, _messages.CompactionPart) for part in message.parts)
     }
-    if summaries and appended.messages is not None:
+    if summaries:
         kept = [message for message in history if id(message) in recorded or id(message) in summaries]
         merge = _HistoryMerge(appended.messages, given=appended.new_message_index, history=kept)
         for message in kept:
