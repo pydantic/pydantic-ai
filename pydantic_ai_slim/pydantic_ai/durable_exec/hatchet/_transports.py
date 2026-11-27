@@ -7,9 +7,10 @@ run's `deps`, and the worker validates them back and rebuilds the `RunContext` f
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+import types
+from dataclasses import dataclass, fields
 from functools import cache
-from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, cast
+from typing import TYPE_CHECKING, Any, Generic, Protocol, TypeVar, Union, cast, get_args, get_origin, get_type_hints
 
 from pydantic import BaseModel, ConfigDict, JsonValue, TypeAdapter, with_config
 
@@ -93,7 +94,7 @@ class _JSONTransport(ParameterTransport[ParamsT, TaskInput], Generic[ParamsT, Wi
 
     def dump(self, params: ParamsT) -> TaskInput:
         wire, deps = self.to_wire(params)
-        payload = cast(JsonValue, _adapter(self.wire_type).dump_python(wire, mode='json'))
+        payload = _sort_sets(self.wire_type, _adapter(self.wire_type).dump_python(wire, mode='json'))
         # Tool definitions name their capability by its key too, so the run's synthetic keys are replaced there.
         if (ctx := _params_run_context(params)) is not None and (replacements := stable_capability_ids(ctx)):
             payload = _replace_capability_ids(payload, replacements)
@@ -108,6 +109,33 @@ class _JSONTransport(ParameterTransport[ParamsT, TaskInput], Generic[ParamsT, Wi
 
     def _deserialize(self, serialized: dict[str, Any], deps: Any) -> RunContext[Any]:
         return self._runtime.deserialize_operation_run_context(serialized, deps)
+
+
+def _is_set(annotation: object) -> bool:
+    if get_origin(annotation) in (types.UnionType, Union):
+        return any(_is_set(arg) for arg in get_args(annotation))
+    return get_origin(annotation) in (set, frozenset)
+
+
+@cache
+def _set_fields(wire_type: type[Any]) -> frozenset[str]:
+    """The fields of a wire dataclass, or of `ModelRequestParameters` inside one, that hold a set."""
+    hints = get_type_hints(wire_type)
+    return frozenset(field.name for field in fields(wire_type) if _is_set(hints[field.name]))
+
+
+def _sort_sets(wire_type: type[Any], payload: Any) -> JsonValue:
+    """Sort the lists the wire's sets were dumped as, in place.
+
+    A set's order depends on the process's hash seed, so a replay on a restarted worker would dump it in another
+    order, and Hatchet would find the task's input changed.
+    """
+    for name in _set_fields(wire_type):
+        if isinstance(payload.get(name), list):
+            payload[name] = sorted(payload[name])
+    if isinstance(parameters := payload.get('model_request_parameters'), dict):
+        _sort_sets(ModelRequestParameters, parameters)
+    return cast(JsonValue, payload)
 
 
 def _params_run_context(params: object) -> RunContext[Any] | None:
