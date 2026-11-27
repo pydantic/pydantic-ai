@@ -1181,6 +1181,7 @@ settings using the former import paths are redirected to the new modules.
 | `hooks` | `pydantic_ai_pax.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
 | `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; `/computer-use` lets the model use its desktop; see [Sandboxes](docs/reference.md#sandboxes-sandbox) and [Computer use](docs/reference.md#computer-use-computer-use) |
 | `slack` (off until enabled) | `pydantic_ai_pax.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
+| `web_search` (off until enabled) | `pydantic_ai_pax.builtin_plugins.web_search` | `{}` | web search and page reading through [Keenable](https://keenable.ai), with no key; your queries go to Keenable; see [below](#web_search-keyless-web-search-through-keenable) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
 are built in too, but start disabled because they need your Day AI or Grain
@@ -1193,6 +1194,8 @@ deferred-capability catalog instead of its tools and instructions. The model
 loads one with `load_capability` when a task needs it, and its tools and the
 server's instructions arrive then. Each still connects at the start of every
 run, so a missing key or sign-in is reported as before.
+[`web_search`](#web_search-keyless-web-search-through-keenable) is deferred the
+same way.
 
 ### Other harness capabilities
 
@@ -2490,6 +2493,47 @@ The settings can also be given up front:
 /plugins add grain pydantic_ai_pax.builtin_plugins.grain '{"read_only": false, "include_instructions": true}'
 ```
 
+### `web_search`: keyless web search through Keenable
+
+`web_search` (`pydantic_ai_pax.builtin_plugins.web_search`) gives the agent harness's
+[`KeenableSearch`](../pydantic_ai_harness/pydantic_ai_harness/keenable/README.md)
+capability: a `web_search` tool that returns matching pages with a short excerpt
+of each, and a `get_page` tool that reads one page as markdown. It needs no key,
+no sign-in, and no extra install. It starts disabled; `/plugins enable web_search`
+turns it on for the next prompt.
+
+Keenable is a hosted search service, so enabling this plugin sends it what the
+model searches for. Every `web_search` query and every URL passed to `get_page`
+goes to Keenable's API at `api.keenable.ai`, and `get_page` returns Keenable's
+copy of the page, so no page is fetched from your machine. A query can carry
+whatever the model put in it, including text from your files or the
+conversation. Leave it off for work you would not share with a search engine.
+
+Every model gets Keenable's tools, including one whose provider has its own web
+search: Pax turns on no provider-native search, so where queries go does not
+depend on the model you pick. Search results and pages reach the model as tool
+output, and the capability's instructions tell the model to treat them as
+untrusted data, not instructions.
+
+[`/permissions`](docs/reference.md#permissions) does not ask before a search or a
+page read in any mode: `auto` and `read-only` check file writes and shell
+commands, and these are neither.
+
+The plugin has no settings. `KEENABLE_API_KEY` in the environment, or in a `.env`
+file Pax loads, raises Keenable's rate limits; a `/keys` entry does not, since Pax
+does not export saved keys. To change how many results come back or how much of
+each page the model sees, declare `KeenableSearch` under the same id, which takes
+the built-in's place:
+
+```text
+/plugins add web_search pydantic_ai_harness.keenable:KeenableSearch '{"num_results": 10}'
+```
+
+That declaration is not deferred: its tools are in every request.
+`/plugins remove web_search` brings the built-in back. Enable one web search
+plugin at a time: `ExaSearch`, `YouSearch`, and core's `WebSearch` also name their
+tool `web_search`, and an agent with two tools of the same name fails its run.
+
 ## Managing plugins
 
 `/plugins` on its own opens a full-screen menu, the same kind Code Puppy uses
@@ -2615,7 +2659,9 @@ What "load" and "unload" mean for your plugin:
 
 Pydantic AI Harness ships capabilities that are plugins as they are. `ExaSearch`
 adds `web_search` and `get_page` tools backed by [Exa](https://exa.ai). Install
-the extra and set the key, then add the class by name:
+the extra and set the key, then add the class by name. (For search without a
+key, enable the built-in [`web_search`](#web_search-keyless-web-search-through-keenable)
+instead; its tools have the same names, so use one or the other.)
 
 ```sh
 pip install 'pydantic-ai-harness[exa]'

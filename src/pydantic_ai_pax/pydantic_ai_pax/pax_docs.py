@@ -54,6 +54,7 @@ _HARNESS_DOCS = (
     'google_workspace',
     'grain',
     'guardrails',
+    'keenable',
     'kubernetes_sandbox',
     'linear',
     'logfire_mcp',

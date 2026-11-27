@@ -47,6 +47,7 @@ CURATED = {
     'grain',
     'linear',
     'web',
+    'web_search',
     'sandbox',
     'workspaces',
 }
@@ -64,6 +65,7 @@ OPT_IN = {
     'pylon',
     'slack',
     'web',
+    'web_search',
     'workspaces',
 }
 
