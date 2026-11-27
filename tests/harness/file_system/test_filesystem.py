@@ -1782,72 +1782,52 @@ class TestSearchFiles:
         )
 
     @pytest.mark.parametrize(
-        ('pattern', 'refused'),
+        ('pattern', 'line'),
         [
-            ('(a+)+$', True),
-            ('(a*)*b', True),
-            ('(?:x|a{2,})+', True),
-            ('((a+)b)*', True),
-            (r'(\w+\s?)*$', True),
-            ('(a+){1,30}$', True),
-            ('(.*a){12}$', True),
-            ('(a{2})+', True),
-            (r'(?:\d{1,3}\.){3}\d{1,3}', False),
-            (r'(?:\d{4}){2}', False),
-            ('(?:[A-Fa-f0-9]{2}){1,8}', False),
-            ('(a{1,2}){50}$', True),
-            (r'((\d{1,3}){3}){3}', True),
-            ('(a{2}|a){3}', True),
-            (r'(\d{1,3}){1000}', True),
-            (r'(?:a{1,2}){10}(?:a{1,2}){10}$', True),
-            (r'(a{1,2}){10}$', True),
-            (r'(?:\d{1,3}\.){3}(?:\d{1,3}\.){1}\d', False),
-            ('(a+){0,1}', False),
-            ('(a+){1}', False),
-            ('(a?)+', True),
-            ('(a?b?)+$', True),
-            ('^(a{0,1}){100}a{100}$', True),
-            ('^(?:(?:a?){2}){40}b$', True),
-            ('^(?:a{2}a?){40}$', True),
-            ('(?:a+?)+$', True),
-            ('(?:ab)?c(?:de)?', False),
-            ('(?P<word>foo|bar)+', False),
-            ('(?:foo|bar)+?x', False),
-            ('colou?r', False),
-            ('(ab)+c*', False),
-            ('(?x) needle # trailing )', False),
-            ('(?x)(a+) +$', True),
-            ('(?x)(a+) # one or more\n +$', True),
-            ('(?x: (a+) + )$', True),
-            ('(?x) ( a + )', False),
-            ('(?i-x: (a+) + )', False),
-            ('(?x:(a+) # c\n)+', True),
-            ('[(?x]#(a+)+$', True),
-            (r'\(?x#(a+)+$', True),
-            ('(?x:a)#(a+)+$', True),
-            ('(?#[ comment )(a+)+$', True),
-            (r'(?#\))needle', False),
-            (r'(a+(?#\))b)+$', True),
-            ('(a+)(?#c)+$', True),
-            ('(?x)(a+) (?#c) +$', True),
-            (r'\(a+\)+', False),
-            ('([+*])+', False),
-            ('([]+)])+', False),
-            ('([^]+])+', False),
-            (r'([\]+])+', False),
+            pytest.param('(a+)+$', 'a' * 5000 + '!', id='nested-repetition'),
+            pytest.param('a*a*a*a*b', 'a' * 5000, id='adjacent-quantifiers'),
+            pytest.param('(a|a)*b', 'a' * 5000, id='overlapping-alternatives'),
+            pytest.param('.*.*.*.*x', 'a' * 5000, id='polynomial'),
         ],
     )
-    async def test_nested_repetition_is_refused_when_searching_in_python(
-        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend, pattern: str, refused: bool
+    async def test_backtracking_patterns_search_in_linear_time_in_python(
+        self, fs_root: Path, ws: LocalWorkspaceBackend, monkeypatch: pytest.MonkeyPatch, pattern: str, line: str
     ) -> None:
-        # Python's backtracking `re` can take exponential time on `(a+)+$` and has no timeout, and it
-        # runs on the event loop, so one model call would stall every run sharing it.
-        walked = ReadOnlyWorkspace(Workspace(ws))
-        if refused:
-            with pytest.raises(ModelRetry, match='repeats a group that itself repeats'):
-                await toolset.search_files(pattern, workspace=walked)
-        else:
-            assert 'repeats a group' not in await toolset.search_files(pattern, workspace=walked)
+        # The search runs on the event loop, so it must not use Python's backtracking `re`, which can take
+        # exponential or high polynomial time on these patterns and has no timeout. Patterns `re` compiles
+        # here fail the test if they're used to search.
+        class UnsearchablePattern:
+            def __init__(self, compiled: re.Pattern[str]) -> None:
+                self.flags = compiled.flags
+
+            def search(self, *args: object) -> None:  # pragma: no cover
+                raise AssertionError('searched with Python `re`')
+
+        guarded_re = SimpleNamespace(
+            **{name: getattr(re, name) for name in dir(re) if not name.startswith('__')},
+        )
+        guarded_re.compile = lambda pattern, *args: UnsearchablePattern(re.compile(pattern, *args))  # type: ignore[attr-defined]
+        monkeypatch.setattr('pydantic_ai_harness.file_system._toolset.re', guarded_re)
+
+        (fs_root / 'long.txt').write_text(line + '\n')
+        toolset = FileSystem[None](root_dir=fs_root).get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        result = await toolset.search_files(pattern, path='long.txt', workspace=ReadOnlyWorkspace(Workspace(ws)))
+        assert result == 'No matches found.'
+
+    @pytest.mark.parametrize('pattern', ['foo(?=bar)', 'foo(?!bar)', '(?<=x)foo', r'(foo)\1'])
+    async def test_patterns_the_linear_engine_cannot_compile_are_refused_in_python(
+        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend, pattern: str
+    ) -> None:
+        with pytest.raises(ModelRetry, match='such as a lookaround'):
+            await toolset.search_files(pattern, workspace=ReadOnlyWorkspace(Workspace(ws)))
+
+    async def test_previously_refused_nested_groups_search_in_python(
+        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend
+    ) -> None:
+        # The old heuristic refused harmless patterns like this one; the linear-time engine searches them.
+        result = await toolset.search_files('(li(ne)+)+[0-9]', workspace=ReadOnlyWorkspace(Workspace(ws)))
+        assert 'multi.txt' in result
 
     async def test_search_basic(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         result = await toolset.search_files('Hello', workspace=ws)
