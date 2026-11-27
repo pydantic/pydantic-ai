@@ -10,6 +10,7 @@ from __future__ import annotations
 from dataclasses import dataclass
 
 import pytest
+from pydantic_core import ErrorDetails
 
 import pydantic_ai.models as models
 from pydantic_ai._capability_parts import (
@@ -17,6 +18,7 @@ from pydantic_ai._capability_parts import (
     effective_authority,
     lowered_text_in_system_voice,
 )
+from pydantic_ai.exceptions import PydanticAIDeprecationWarning
 from pydantic_ai.messages import (
     CapabilityInstructionSource,
     CapabilityPart,
@@ -32,6 +34,7 @@ from pydantic_ai.messages import (
     ModelResponse,
     RetryFeedbackPart,
     RetryInfo,
+    RetryPromptPart,  # pyright: ignore[reportDeprecated]  # TODO(v3): remove RetryPromptPart
     SpeechPart,
     StructuredContent,
     SystemPromptPart,
@@ -230,6 +233,26 @@ def test_validation_errors_are_looked_for_as_the_text_that_lists_them() -> None:
         retry=RetryInfo(cause='validation_error'),
     )
     leaked = [ModelRequest(parts=[SystemPromptPart(part.model_response())])]
+    assert lowered_text_in_system_voice([ModelRequest(parts=[part])], leaked)
+
+
+# TODO(v3): remove RetryPromptPart
+@pytest.mark.parametrize('tool_name', [None, 'fetch'], ids=['tool-less', 'tool'])
+def test_a_legacy_retry_prompts_text_is_looked_for(tool_name: str | None) -> None:
+    """A history can still hold a `RetryPromptPart`, which `prepare_messages` translates only after the check reads it."""
+    with pytest.warns(PydanticAIDeprecationWarning):
+        part = RetryPromptPart(LOW, tool_name=tool_name)  # pyright: ignore[reportDeprecated]
+    leaked = [ModelRequest(parts=[SystemPromptPart(f'Note: {LOW}')])]
+    assert lowered_text_in_system_voice([ModelRequest(parts=[part])], leaked)
+
+
+# TODO(v3): remove RetryPromptPart
+def test_a_legacy_retry_prompts_validation_errors_are_looked_for_as_the_text_that_lists_them() -> None:
+    errors: list[ErrorDetails] = [{'type': 'value_error', 'loc': ('amount',), 'msg': LOW, 'input': -1}]
+    with pytest.warns(PydanticAIDeprecationWarning):
+        part = RetryPromptPart(errors)  # pyright: ignore[reportDeprecated]
+    listed = RetryFeedbackPart(content=errors, retry=RetryInfo(cause='validation_error')).model_response()
+    leaked = [ModelRequest(parts=[SystemPromptPart(listed)])]
     assert lowered_text_in_system_voice([ModelRequest(parts=[part])], leaked)
 
 

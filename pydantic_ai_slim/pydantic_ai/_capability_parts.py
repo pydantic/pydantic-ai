@@ -61,6 +61,7 @@ from .messages import (
     _CapabilityInstructionsPart,  # pyright: ignore[reportPrivateUsage]
     _lower_authority,  # pyright: ignore[reportPrivateUsage]
     _retry_feedback_speaks_for_the_harness,  # pyright: ignore[reportPrivateUsage]
+    _translate_legacy_retry_part,  # pyright: ignore[reportPrivateUsage]
 )
 
 
@@ -527,6 +528,10 @@ def _texts_of(content: object) -> list[str]:
 
 def _authored_texts(part: ModelRequestPart) -> list[str]:
     """The text `part` carries as its author wrote it, for finding it again after rendering."""
+    # TODO(v3): remove `RetryPromptPart`
+    if isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
+        # Still legacy in the authored history: `prepare_messages` translates it only after this reads it.
+        part = _translate_legacy_retry_part(part)
     if isinstance(part, ToolReturnPart):
         # Item by item, as a renderer sends the items beside a file: a list dumped whole can fail to serialize.
         return [item for item in part.content_items(mode='str', wrap_if_error=False) if isinstance(item, str)]
