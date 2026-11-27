@@ -65,20 +65,30 @@ class CompactionRequests:
             self.requested = None
 
 
-_compaction_only: ContextVar[bool] = ContextVar('pydantic_ai.compaction_only_run', default=False)
-"""Whether the next agent run started in this context is one of `AbstractAgent.compact_history`'s."""
+@dataclasses.dataclass
+class CompactionOnlyRun:
+    """A pending `compaction_only_run`, which records whether an agent run took it on."""
+
+    claimed: bool = False
+    """Whether an agent run started in the context claimed it, and so ended after its compaction step."""
+
+
+_compaction_only: ContextVar[CompactionOnlyRun | None] = ContextVar('pydantic_ai.compaction_only_run', default=None)
+"""The pending `compaction_only_run` for the next agent run started in this context, if any."""
 
 
 @contextmanager
-def compaction_only_run() -> Generator[None]:
+def compaction_only_run() -> Generator[CompactionOnlyRun]:
     """Make the next agent run started in this context end after its compaction step.
 
     A context variable rather than a run method argument, so it reaches the run through every agent wrapper's run
-    methods, like a durable agent's, unchanged.
+    methods, like a durable agent's, unchanged. The yielded holder says whether a run claimed it: one whose `run()`
+    never reached an `Agent` run didn't, and ran however it runs.
     """
-    token = _compaction_only.set(True)
+    pending = CompactionOnlyRun()
+    token = _compaction_only.set(pending)
     try:
-        yield
+        yield pending
     finally:
         _compaction_only.reset(token)
 
@@ -91,10 +101,11 @@ def claim_compaction_only_run() -> Generator[bool]:
     an engine that retries the code that started the run in the same context, like a Prefect flow retry, starts a
     compaction-only run again.
     """
-    if not _compaction_only.get():
+    if (pending := _compaction_only.get()) is None:
         yield False
         return
-    token = _compaction_only.set(False)
+    pending.claimed = True
+    token = _compaction_only.set(None)
     try:
         yield True
     finally:

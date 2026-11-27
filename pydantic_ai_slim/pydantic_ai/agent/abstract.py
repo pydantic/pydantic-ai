@@ -967,6 +967,11 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         queues during the run with [`RunContext.enqueue`][pydantic_ai.tools.RunContext.enqueue] isn't answered, so
         `all_messages()` ends with it as a request, and the next run sends it with its prompt.
 
+        It relies on this agent's [`run()`][pydantic_ai.agent.AbstractAgent.run] reaching an
+        [`Agent`][pydantic_ai.agent.Agent] run, and the first `Agent` run it starts is the one that compacts: a
+        `run()` that first runs another agent, like a router or a guardrail, has that one compact instead. A `run()`
+        that never reaches an `Agent` run raises [`UserError`][pydantic_ai.exceptions.UserError] once it returns.
+
         Example:
         ```python {test="skip"}
         from pydantic_ai import Agent
@@ -1018,7 +1023,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
         if focus is not None:
             compact['focus'] = focus
         # Through `run()`, so an agent wrapper's run methods, like a durable agent's, see a run like any other.
-        with compaction_only_run():
+        with compaction_only_run() as pending:
             run_result = await self.run(
                 message_history=message_history,
                 conversation_id=conversation_id,
@@ -1038,6 +1043,12 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                 capabilities=capabilities,
                 compact=compact,
                 spec=spec,
+            )
+        if not pending.claimed:
+            # The run that returned ran however its `run()` runs, so its history may well continue the conversation.
+            raise exceptions.UserError(
+                f'`compact_history()` needs the `run()` of {type(self).__name__} to reach an `Agent` run, which '
+                'compacts the history and ends, but it returned without starting one: nothing was compacted.'
             )
         return CompactionRunResult._of(run_result)  # pyright: ignore[reportPrivateUsage]
 

@@ -29,7 +29,7 @@ from pydantic_ai import (
     ToolCallPart,
     UserPromptPart,
 )
-from pydantic_ai.agent import AgentRunResult, WrapperAgent
+from pydantic_ai.agent import AbstractAgent, AgentRunResult, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CompactionRequest,
@@ -606,8 +606,14 @@ async def test_an_instrumented_compact_history_run_records_no_error(capfire: Cap
 
 
 async def test_a_wrap_model_request_that_catches_exceptions_doesnt_continue_the_run():
-    """Ending after the compaction step isn't an exception a `wrap_model_request` hook catching `Exception` can swallow."""
+    """Ending after the compaction step isn't an exception a `wrap_model_request` hook catching `Exception` can swallow.
+
+    The same hook does catch a failed request, as a regular run of the agent shows.
+    """
     caught: list[str] = []
+
+    def fail(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise ModelAPIError(model_name='primary', message='unavailable')
 
     class Guardrail(AbstractCapability[Any]):
         async def wrap_model_request(
@@ -615,13 +621,39 @@ async def test_a_wrap_model_request_that_catches_exceptions_doesnt_continue_the_
         ) -> ModelResponse:
             try:
                 return await handler(request_context)
-            except Exception as error:  # pragma: no cover - reached only if the compaction's end were an `Exception`
+            except Exception as error:
                 caught.append(type(error).__name__)
                 return ModelResponse(parts=[TextPart('fallback')])
 
-    agent = Agent(FunctionModel(not_sent), capabilities=[Guardrail(), Summarize()])
+    agent = Agent(FunctionModel(fail), capabilities=[Guardrail(), Summarize()])
     result = await agent.compact_history(history())
 
     assert caught == []
     assert shapes(result.all_messages()) == snapshot(['ModelRequest: CompactionPart', 'ModelResponse: TextPart'])
     assert [record.handler for record in result.compactions] == ['summarize']
+
+    answered = await agent.run('Which database?', message_history=result.all_messages())
+    assert (answered.output, caught) == ('fallback', ['ModelAPIError'])
+
+
+async def test_an_agent_whose_run_never_starts_an_agent_run_cant_compact():
+    """`compact_history()` through a `run()` that never reaches an `Agent` run fails, rather than report no compaction.
+
+    Like an adapter that answers from somewhere else: its run doesn't compact, so its result isn't a compaction's.
+    """
+    answered: list[str] = []
+
+    class Adapter(WrapperAgent[None, str]):
+        async def run(self, *args: Any, **kwargs: Any) -> AgentRunResult[Any]:
+            answered.append('answered elsewhere')
+            return AgentRunResult(output='answered elsewhere')
+
+    summarize = Summarize()
+    adapter = Adapter(Agent(FunctionModel(not_sent), capabilities=[summarize]))
+
+    with pytest.raises(UserError, match=r'needs the `run\(\)` of Adapter to reach an `Agent` run'):
+        # The path a custom `AbstractAgent` subclass gets; `WrapperAgent` itself forwards to the agent it wraps.
+        await AbstractAgent[None, str].compact_history(adapter, history())
+    # Its own `run()` ran, and the wrapped agent sent no model request and didn't compact.
+    assert answered == ['answered elsewhere']
+    assert summarize.calls == []
