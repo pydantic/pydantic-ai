@@ -18,7 +18,7 @@ from typing import Any, Literal
 from pydantic_ai import FunctionToolset, Tool, ToolKind
 from pydantic_ai._framing import second_model_prompt
 from pydantic_ai._utils import replace_no_init
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, durable_operation, tool_call_span
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
@@ -132,6 +132,34 @@ class _Unit:
     data: bytes
     value: ToolReturnContent
     suffix: str
+
+    @property
+    def attribute_prefix(self) -> str:
+        """The prefix of this unit's span attributes: `content` gets its own, so both can be recorded."""
+        return 'tool_output_limits.content' if self.suffix == '.content' else 'tool_output_limits'
+
+
+_ActionName = Literal['truncate', 'spill', 'summarize']
+
+
+@dataclass
+class _Reduction:
+    """What an action replaced a unit with, and which action that was after any fallbacks."""
+
+    text: str
+    action: _ActionName
+    handle: str | None = None
+    """The spill handle, set only when `action` is `'spill'`."""
+    fallback_from: _ActionName | None = None
+    """The band's action, when it could not run and a `then` fallback produced `text` instead."""
+
+
+@dataclass
+class _Unreduced:
+    """The band's action failed and no `then` fallback produced a replacement, so the unit is kept as is."""
+
+    fallback_from: _ActionName
+    """The band's action."""
 
 
 @dataclass
@@ -419,9 +447,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             new_value, value_handle, value_bytes = await self._reduce_data_beside_files(ctx, call, bands, items)
         else:
             value_unit = self._make_unit(return_value, tool_name=call.tool_name, suffix='')
-            new_value, value_handle = await self._reduce(ctx, call, bands, value_unit)
+            new_value, value_handle = _text_and_handle(await self._reduce(ctx, call, bands, value_unit))
             value_bytes = len(value_unit.data)
-        content_text, content_handle = await self._reduce_content(ctx, call, bands, content)
+        content_text, content_handle = _text_and_handle(await self._reduce_content(ctx, call, bands, content))
 
         if new_value is None and content_text is None:
             return original
@@ -458,10 +486,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             return None, None, 0
         value = data[0] if len(data) == 1 else data
         unit = self._make_unit(to_text(value) if is_binary(value) else value, tool_name=call.tool_name, suffix='')
-        reduced, handle = await self._reduce(ctx, call, bands, unit)
-        if reduced is None:
+        reduction = await self._reduce(ctx, call, bands, unit)
+        if reduction is None:
             return None, None, 0
-        return [reduced, *files], handle, len(unit.data)
+        return [reduction.text, *files], reduction.handle, len(unit.data)
 
     def _assemble(
         self,
@@ -524,12 +552,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         bands: Sequence[Band],
         unit: _Unit,
-    ) -> tuple[str | None, str | None]:
-        """Select a band for `unit` and apply it. Returns `(replacement, handle)`.
-
-        `replacement` is None when the unit passes through unchanged; `handle` is set only
-        when the unit was spilled.
-        """
+    ) -> _Reduction | None:
+        """Select a band for `unit` and apply it. Returns `None` when the unit passes through unchanged."""
         size = (
             len(unit.data)
             if unit.binary
@@ -537,8 +561,47 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         )
         action = _select_action(bands, size)
         if action is None:
-            return None, None
-        return await self._apply(ctx, call, action, unit)
+            return None
+        reduction = await self._apply(ctx, call, action, unit)
+        if isinstance(reduction, _Unreduced):
+            tool_call_span(ctx).set_attribute(f'{unit.attribute_prefix}.fallback_from', reduction.fallback_from)
+            return None
+        # A `Truncate` whose `max_chars` the text already fits returns it unchanged: nothing was cut. A
+        # fallback is still recorded: that the band's own action failed is what an operator needs to see.
+        if reduction is not None and (reduction.text != unit.text or reduction.fallback_from is not None):
+            self._record_reduction(ctx, unit, size, reduction)
+        return reduction
+
+    def _record_reduction(
+        self, ctx: RunContext[AgentDepsT], unit: _Unit, original_size: int, reduction: _Reduction
+    ) -> None:
+        """Say on the call's `execute_tool` span how a unit was reduced, in the unit its band was measured in."""
+        span = tool_call_span(ctx)
+        if not span.is_recording():
+            # Measuring the replacement can mean running a tokenizer.
+            return
+        prefix = unit.attribute_prefix
+        attributes: dict[str, str | int] = {
+            f'{prefix}.action': reduction.action,
+            f'{prefix}.original_size': original_size,
+            f'{prefix}.size_unit': 'bytes' if unit.binary else _text_size_unit(self.over_tokens),
+        }
+        if reduction.text == unit.text:
+            attributes[f'{prefix}.reduced_size'] = original_size
+        elif unit.binary:
+            attributes[f'{prefix}.reduced_size'] = len(reduction.text.encode('utf-8'))
+        else:
+            try:
+                attributes[f'{prefix}.reduced_size'] = measure(
+                    reduction.text, over_tokens=self.over_tokens, tokenizer=self.tokenizer
+                )
+            except Exception:
+                # The tokenizer accepted the return but not the replacement: the trace loses one number, the
+                # run keeps its result.
+                pass
+        if reduction.fallback_from is not None:
+            attributes[f'{prefix}.fallback_from'] = reduction.fallback_from
+        span.set_attributes(attributes)
 
     async def _reduce_content(
         self,
@@ -546,10 +609,10 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         bands: Sequence[Band],
         content: str | Sequence[UserContent] | None,
-    ) -> tuple[str | None, str | None]:
+    ) -> _Reduction | None:
         """Reduce model-visible `content`. Text content is reduced; other content warns."""
         if content is None:
-            return None, None
+            return None
         if isinstance(content, str):
             return await self._reduce(
                 ctx, call, bands, self._make_unit(content, tool_name=call.tool_name, suffix='.content')
@@ -564,7 +627,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
                 f'content ({len(content)} parts); leaving it unreduced.',
                 stacklevel=2,
             )
-        return None, None
+        return None
 
     async def _apply(
         self,
@@ -572,19 +635,17 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         action: Action,
         unit: _Unit,
-    ) -> tuple[str | None, str | None]:
+    ) -> _Reduction | _Unreduced | None:
         """Apply one action to a unit, falling back to its `then` when it cannot run."""
         if isinstance(action, Passthrough):
-            return None, None
+            return None
 
         if isinstance(action, Truncate):
             if unit.binary:
-                return await self._fallback(ctx, call, action.then, unit)
+                return await self._fallback(ctx, call, action, unit)
             assert unit.text is not None
-            return (
-                truncate_text(unit.text, action.max_chars, action.strategy, keep_tail_lines=action.keep_tail_lines),
-                None,
-            )
+            text = truncate_text(unit.text, action.max_chars, action.strategy, keep_tail_lines=action.keep_tail_lines)
+            return _Reduction(text, 'truncate')
 
         if isinstance(action, Spill):
             return await self._spill(ctx, call, action, unit)
@@ -595,13 +656,20 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         self,
         ctx: RunContext[AgentDepsT],
         call: ToolCallPart,
-        then: Action | None,
+        failed: Truncate | Spill | Summarize,
         unit: _Unit,
-    ) -> tuple[str | None, str | None]:
-        """Run the fallback action, or keep the unit unchanged when there is none."""
-        if then is None:
-            return None, None
-        return await self._apply(ctx, call, then, unit)
+    ) -> _Reduction | _Unreduced:
+        """Run the `then` of an action that could not run, or keep the unit unchanged when there is none."""
+        name: _ActionName = (
+            'truncate' if isinstance(failed, Truncate) else 'spill' if isinstance(failed, Spill) else 'summarize'
+        )
+        reduction = await self._apply(ctx, call, failed.then, unit) if failed.then is not None else None
+        # Set on the way out of a chain of fallbacks, so the outermost, the band's own action, is kept.
+        # Why each action failed is in the log.
+        if not isinstance(reduction, _Reduction):
+            return _Unreduced(name)
+        reduction.fallback_from = name
+        return reduction
 
     def _handle_key(self, ctx: RunContext[AgentDepsT], call: ToolCallPart, suffix: str = '') -> str:
         """Build a per-run, per-call, per-retry key so concurrent and retried calls never clash.
@@ -623,7 +691,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         action: Spill,
         unit: _Unit,
-    ) -> tuple[str | None, str | None]:
+    ) -> _Reduction | _Unreduced:
         key = self._handle_key(ctx, call, unit.suffix)
         # Text crosses the durable boundary as is; only binary needs base64 to travel as JSON.
         if unit.binary:
@@ -633,12 +701,12 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             payload = unit.text
         handle = await self._write_spill(ctx, call.tool_name, key, payload, unit.binary, _fallback_label(action.then))
         if handle is None:
-            return await self._fallback(ctx, call, action.then, unit)
+            return await self._fallback(ctx, call, action, unit)
 
         preview = _build_spill_preview(
             handle, unit, action.preview_chars, over_tokens=self.over_tokens, read_hint=self._read_hint(ctx, handle)
         )
-        return preview, handle
+        return _Reduction(preview, 'spill', handle)
 
     # A durable operation, so a replay returns the recorded outcome instead of writing again: a
     # second write could return a different handle, or succeed where the first failed.
@@ -674,9 +742,9 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         call: ToolCallPart,
         action: Summarize,
         unit: _Unit,
-    ) -> tuple[str | None, str | None]:
+    ) -> _Reduction | _Unreduced:
         if unit.binary:
-            return await self._fallback(ctx, call, action.then, unit)
+            return await self._fallback(ctx, call, action, unit)
         assert unit.text is not None
         try:
             if action.summarize is not None:
@@ -691,8 +759,8 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             raise
         except Exception as exc:
             _log_fallback('Summarizing', call.tool_name, _fallback_label(action.then), exc)
-            return await self._fallback(ctx, call, action.then, unit)
-        return f'[summary of {len(unit.text):,} chars of output{RERUN_NOTE}]\n{summary}', None
+            return await self._fallback(ctx, call, action, unit)
+        return _Reduction(f'[summary of {len(unit.text):,} chars of output{RERUN_NOTE}]\n{summary}', 'summarize')
 
     @durable_operation('summarize')
     async def _summarize(
@@ -780,6 +848,17 @@ async def _reads_a_spill(ctx: RunContext[Any], tool_def: ToolDefinition, args: d
         return False
     spill_dir = posixpath.join(await workspace.working_dir(), METADATA_DIR, SPILL_DIR)
     return (await workspace.resolve(path)).startswith(spill_dir + '/')
+
+
+def _text_and_handle(reduction: _Reduction | None) -> tuple[str | None, str | None]:
+    """A reduction's replacement text and spill handle, both `None` when the unit passed through."""
+    if reduction is None:
+        return None, None
+    return reduction.text, reduction.handle
+
+
+def _text_size_unit(over_tokens: bool) -> Literal['chars', 'tokens']:
+    return 'tokens' if over_tokens else 'chars'
 
 
 def _next_action(action: Action) -> Action | None:
@@ -874,7 +953,7 @@ def _build_spill_preview(handle: str, unit: _Unit, preview_chars: int, *, over_t
         sketch = ''
     else:
         text = unit.text or ''
-        size_unit = 'tokens' if over_tokens else 'chars'
+        size_unit = _text_size_unit(over_tokens)
         amount = measure(text, over_tokens=over_tokens, tokenizer=None) if over_tokens else len(text)
         size_description = f'{amount:,} {size_unit}'
         body = _head_tail_preview(text, preview_chars)

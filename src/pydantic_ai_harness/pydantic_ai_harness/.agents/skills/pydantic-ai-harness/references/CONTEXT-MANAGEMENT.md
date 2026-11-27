@@ -424,6 +424,10 @@ handle or summary; the payload is part of the operation input, and a custom `Ove
 treat a repeated `write` of a key as an overwrite. Distinct from `ClampOversizedMessages`, which
 clamps model responses, not tool returns. With `CodeMode`, the limits apply to the `run_code` return,
 not to each tool call inside the script.
+In traces, a reduction sets `tool_output_limits.action`, `original_size`, `reduced_size` and
+`size_unit` on the call's `execute_tool` span. `fallback_from` names the band's action when it could
+not run: a failing store or summarizer, or `Truncate` or `Summarize` on a binary return. A
+`ToolReturn`'s `content` uses the `tool_output_limits.content.*` prefix.
 
 ## WarnOnCacheBusts
 

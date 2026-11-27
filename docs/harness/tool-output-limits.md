@@ -469,6 +469,33 @@ overwrite. And a custom `summarize` callable runs directly rather than as a dura
 arbitrary callables cannot be reconstructed on the worker side -- so it may be called again on
 replay.
 
+## Telemetry
+
+When a run is instrumented, a reduced return is recorded on the call's `execute_tool` span, so a
+query on one attribute answers "which tool's output is spilled most often". It opens no span of
+its own: the tool call is already spanned, and the reduction happens inside it.
+
+| Attribute | Value |
+|---|---|
+| `tool_output_limits.action` | the action that produced the result, after any `then` fallback: `truncate`, `spill`, or `summarize` |
+| `tool_output_limits.original_size` | the measured size of the return, the number its band was matched on |
+| `tool_output_limits.reduced_size` | the size of what the model gets instead, in the same unit; absent when the tokenizer can't measure the replacement |
+| `tool_output_limits.size_unit` | `chars`, `tokens` (with `over_tokens=True`), or `bytes` for a binary return |
+| `tool_output_limits.fallback_from` | the band's own action, `spill`, `summarize`, or `truncate`, when it could not run; absent otherwise |
+
+A `ToolReturn`'s text `content` is reduced on its own, so its reduction is recorded under
+`tool_output_limits.content.*` with the same names. Nothing is recorded for a return no band applies
+to (below every `over`), one a `Passthrough()` band keeps, or one a `Truncate` keeps because the
+text already fits its `max_chars`. A `then` that produces a result is recorded even when it cuts
+nothing (then both sizes are equal). When the default `Spill(then=Truncate())` can't write to its
+store, a text return gets `action` `truncate` and `fallback_from` `spill`, which is how a failing
+store shows up in a trace; the store's error is in the log. A binary return gets only
+`fallback_from`, with no `action` or sizes, since `Truncate` can't take binary. The same holds for
+any action that can't run and has no `then`, or whose fallbacks all fail or end in `Passthrough()`:
+the return is unchanged and only `fallback_from` is recorded. When a `then` also fails and its own
+`then` produces the result, `fallback_from` still names the band's own action, the one the band was
+configured to run; the later failure is in the log.
+
 ## Edge cases
 
 - Raw `bytes` returns spill verbatim and are never stringify-truncated; `Truncate` / `Summarize`
