@@ -84,6 +84,7 @@ from pydantic_ai.exceptions import (
     ModelRateLimitError,
     ModelRequestTimeout,
     ModelRetry,
+    ModelSchemaTooComplexError,
     RunCancelled,
     RunTimedOut,
     ToolFailed,
@@ -105,6 +106,7 @@ from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.realtime import (
     RealtimeModel,
     RealtimeModelProfile,
@@ -120,6 +122,7 @@ from tests.function_model_prefix import TOOLS_CHANGE_MID_RUN
 
 from ..conftest import IsDatetime, IsNow, IsStr
 from ..realtime_connections import InferredConnection
+from ..schema_too_complex_utils import CompilingModel
 from .override_rebind_cases import REBIND_CASES, RebindCase
 from .parallel_step_scenarios import VARIANTS, StepState, Variant, parallel_calls_agent
 from .span_utils import drop_fastmcp_client_spans
@@ -7475,6 +7478,54 @@ def test_dbos_records_what_a_stream_produced_before_failing(error: ModelAPIError
     replayed = deserialize_exception(recorded, serialization, DBOSDefaultSerializer)
     assert type(replayed) is type(error)
     assert streamed_before_failing(replayed) == partial
+
+
+class _Survey(BaseModel):
+    answer: int
+
+
+@pytest.mark.moves_cache_prefix(
+    reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
+)
+async def test_dbos_too_complex_inferred_native_output_is_attempted_in_tool_output(dbos: DBOS) -> None:
+    """The rejected attempt fails its step, and workflow code attempts the request again in Tool Output in another.
+
+    Each workflow's first request infers Native Output again, as the run, not the process, keeps the switch.
+    """
+    modes: list[str] = []
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        mode = info.model_request_parameters.output_mode
+        modes.append(mode)
+        if mode == 'native':
+            raise ModelHTTPError.for_category(ModelSchemaTooComplexError, status_code=400, model_name='compiler')
+        if not any(isinstance(part, ToolReturnPart) for message in messages for part in message.parts):
+            return ModelResponse(parts=[ToolCallPart('look_up', {})])
+        return ModelResponse(parts=[ToolCallPart('final_result', {'answer': 1})])
+
+    def look_up() -> str:
+        return 'found'
+
+    model = CompilingModel(
+        respond,
+        model_name='compiler',
+        profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),
+    )
+    agent = Agent(
+        model,
+        name='dbos_schema_too_complex',
+        output_type=_Survey,
+        tools=[look_up],
+        capabilities=[DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def run_workflow() -> _Survey:
+        return (await agent.run('Answer the survey.')).output
+
+    assert await run_workflow() == _Survey(answer=1)
+    assert await run_workflow() == _Survey(answer=1)
+    assert modes == ['native', 'tool', 'tool'] * 2
 
 
 # --- `FunctionToolset` defaults on `Tool` instances, across the upgrade that applied them ---
