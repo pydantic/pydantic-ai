@@ -90,17 +90,12 @@ def unsaved_start(
         return None
     # The unsaved messages the run was given come just before the ones it added, unless the run changed
     # them, in which case the store compares the whole history instead. Filling in what a request it sends
-    # lacks doesn't count as a change, and nor does merging unsaved requests in a row into one to send them,
-    # unless the run also merged a stored request into the first of them, which `_split_merged_tail` takes apart.
-    candidates = [unsaved]
-    if state.conversation_merged_tail is None:
-        candidates.append(_messages._merge_consecutive_messages(list(unsaved)))  # pyright: ignore[reportPrivateUsage]
-    for carried_unsaved in candidates:
-        start = new_message_index - len(carried_unsaved)
-        carried = messages[start:new_message_index] if start >= 0 else []
-        if len(carried) == len(carried_unsaved) and not any(map(rewritten, carried, carried_unsaved)):
-            return start
-    return None
+    # lacks doesn't count as a change.
+    start = new_message_index - len(unsaved)
+    carried = messages[start:new_message_index] if start >= 0 else []
+    if len(carried) != len(unsaved) or any(map(rewritten, carried, unsaved)):
+        return None
+    return start
 
 
 def failed_run_conversation(

@@ -973,8 +973,6 @@ class GraphAgentState:
     [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index]. The result's
     `conversation` finds them in the history to tell its store where the unsaved messages start.
     """
-    conversation_loaded: _messages.ModelMessage | None = None
-    """Internal: the last message of the history this run was given, before a `before_run` hook changed it, or `None` if it was empty."""
     conversation_deferred_tool_requests: DeferredToolRequests | None = None
     """The [`deferred_tool_requests`][pydantic_ai.conversation.Conversation.deferred_tool_requests] of the conversation this run was given, if any.
 
@@ -1343,7 +1341,6 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx_messages.used = True
 
         given = ctx.state.message_history
-        _mark_added_before_run_unsaved(ctx.state)
         cleaned, answered_at_pause = self._history_to_run(given)
         ctx.state.conversation_merged_tail = _merged_stored_tail(given, cleaned, ctx.state.conversation_unsaved)
         # Replace the `capture_run_messages` list with the message history
@@ -3708,7 +3705,6 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Content enqueued during a tool call replaces the request it went into with a copy. Keep this node on the
         # copy, so what's recorded on its request below, like the instructions sent, lands in history.
         self.request = _enqueue.run_queue(run_context).request_in_history(self.request)
-        _record_appended_after(ctx.state, self.request)
 
         # Preserve the object identity already held by outer wrappers while exposing the final
         # request produced by the before-chain. The lifecycle also continues with this original
@@ -6218,34 +6214,6 @@ def _set_resumed_history(
         resumed_request=ctx.deps.resumed_request,
         resumed_request_index=ctx.deps.resumed_request_index,
     )
-
-
-def _mark_added_before_run_unsaved(state: GraphAgentState) -> None:
-    """Count the messages a `before_run` hook added after a loaded conversation's last message as unsaved, since the store doesn't have them either.
-
-    If the hook removed that message or replaced it with a copy, nothing is counted: what it added can't be told
-    apart from what's stored, so it isn't saved.
-    """
-    unsaved, history, last = state.conversation_unsaved, state.message_history, state.conversation_loaded
-    found = (index + 1 for index in range(len(history) - 1, -1, -1) if history[index] is last)
-    start = 0 if last is None else next(found, None)
-    if unsaved is not None and start is not None and start < len(history):
-        state.conversation_unsaved = [*unsaved, *history[start:]]
-
-
-def _record_appended_after(state: GraphAgentState, request: _messages.ModelRequest) -> None:
-    """Record the messages a `before_model_request` hook appended to the history after `request` with `ctx.messages.append(...)`.
-
-    The run's record keeps them, so its conversation does, as a capability that trims the history in a later step
-    may drop them.
-    """
-    history, recorded = state.message_history, state.appended_messages.messages
-    assert recorded is not None, 'The request step starts the record before its hooks run.'
-    index = next((index for index in range(len(history) - 1, -1, -1) if history[index] is request), None)
-    if index is None or index == len(history) - 1:
-        return
-    known = {id(message) for message in recorded}
-    recorded.extend(message for message in history[index + 1 :] if id(message) not in known)
 
 
 def leading_requests(messages: Sequence[_messages.ModelMessage]) -> list[_messages.ModelRequest]:
