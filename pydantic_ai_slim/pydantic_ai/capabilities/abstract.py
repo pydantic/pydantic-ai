@@ -2107,12 +2107,14 @@ def _reject_combining_across_deferred_loading(
     position to the deferred capability it is part of. Capabilities combine only when they
     share that owner: none (always on), or one deferred capability. The combined capability is built once, when the
     agent is, so it can't take one's configuration only once its deferred capability loads: it would apply it from
-    the start, or never.
+    the start, or never. Capabilities that are each deferred themselves count as one owner: they share
+    `capability_id`, and loading that id loads them together.
     """
-    by_owner: dict[int, tuple[AbstractCapability[Any], AbstractCapability[Any] | None]] = {}
+    by_owner: dict[object, tuple[AbstractCapability[Any], AbstractCapability[Any] | None]] = {}
     for occurrence in occurrences:
         owner = deferred_owner.get(occurrence.position)
-        by_owner.setdefault(id(owner), (occurrence.capability, owner))
+        key = 'deferred itself' if owner is occurrence.capability else id(owner)
+        by_owner.setdefault(key, (occurrence.capability, owner))
     if len(by_owner) < 2:
         return
     first, second = (_loading_description(capability, owner) for capability, owner in list(by_owner.values())[:2])

@@ -210,6 +210,18 @@ def test_capabilities_in_one_deferred_group_still_combine() -> None:
     assert [leaf.id for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Thinking)] == ['thinking']
 
 
+def test_capabilities_each_deferred_themselves_under_one_id_still_combine() -> None:
+    """Two `Thinking`s that are each deferred themselves, under the same id, still combine: loading the id loads both.
+
+    Not a VCR test: the combining happens while the `Agent` is built, before any model request a recording could observe.
+    """
+    agent = Agent(
+        TestModel(),
+        capabilities=[Thinking(effort='high', defer_loading=True), Thinking(effort='low', defer_loading=True)],
+    )
+    assert [leaf.id for leaf in leaf_capabilities(agent.root_capability) if isinstance(leaf, Thinking)] == ['thinking']
+
+
 async def test_one_instance_registered_twice_survives_once() -> None:
     """The same object on the agent and passed again for the run keeps exactly one occurrence.
 
