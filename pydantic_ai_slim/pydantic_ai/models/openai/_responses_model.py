@@ -2861,15 +2861,20 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         """Whether the OpenAI conversation holds `response`.
 
         OpenAI adds a response's input and output items to its conversation only once the response completes.
-        A response whose stream dropped or was cancelled before it finished may have completed anyway, or not,
-        so its output items are looked up among the conversation's newest items. One with no item IDs to look
-        up is taken as missing.
+        A response whose stream dropped, was cancelled, or ended before its terminal event may have completed
+        anyway, or not, so its output items are looked up among the conversation's newest items. One with no item
+        IDs to look up is taken as missing.
 
         Only the newest page, of up to 100 items, is read. The caller stops at the first response the
         conversation holds, so a held response is on that page unless something else added 100 or more items to
         the conversation since.
         """
-        if response.state != 'interrupted' or response.finish_reason is not None:
+        cut_off = response.state == 'interrupted' or (
+            # A stream that ended before its terminal event never got the response's status, which a non-streamed
+            # response that's still pending records as its raw finish reason.
+            response.state == 'incomplete' and 'finish_reason' not in (response.provider_details or {})
+        )
+        if not cut_off or response.finish_reason is not None:
             return True
         item_ids = {
             part.id

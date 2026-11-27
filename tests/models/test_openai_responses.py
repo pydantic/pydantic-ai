@@ -16807,6 +16807,117 @@ async def test_openai_conversation_id_resends_prompt_when_stream_drops_before_ou
     )
 
 
+_FINAL_MESSAGE_EVENTS = _sse(
+    {
+        'type': 'response.created',
+        'response': {**_FINAL_MESSAGE_JSON, 'status': 'in_progress', 'output': []},
+        'sequence_number': 0,
+    },
+    {
+        'type': 'response.output_text.delta',
+        'item_id': 'msg_final',
+        'output_index': 0,
+        'content_index': 0,
+        'delta': 'done',
+        'logprobs': [],
+        'sequence_number': 1,
+    },
+    {'type': 'response.completed', 'response': _FINAL_MESSAGE_JSON, 'sequence_number': 2},
+)
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+@pytest.mark.parametrize('committed', [False, True], ids=['missing', 'committed'])
+async def test_openai_conversation_id_looks_up_stream_that_ended_before_completed(
+    allow_model_requests: None, committed: bool
+):
+    """A stream that ends cleanly before `response.completed` leaves an `'incomplete'` response with no finish reason,
+    which OpenAI may or may not have added to the conversation. The run still calls the tool, and the next request
+    looks the response's output items up in the conversation: when they're missing, it sends the turn again,
+    function call included, rather than a tool result OpenAI can't pair with its call; when they're there, only the
+    tool result.
+
+    A mock transport stands in for a cassette: recording reads the whole stream, so OpenAI always completes the
+    response and the conversation holds it, and no real provider ends a stream early on demand.
+    """
+    transport = _ConversationTransport(
+        turns=[
+            httpx2.Response(
+                200,
+                content=_lookup_call_events('resp_001', 'call_1', completed=False),
+                headers={'content-type': 'text/event-stream'},
+            ),
+            httpx2.Response(200, content=_FINAL_MESSAGE_EVENTS, headers={'content-type': 'text/event-stream'}),
+        ],
+        conversation_items=_COMMITTED_LOOKUP_CALL if committed else [],
+    )
+    async with transport.openai_client() as openai_client:
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_1'))
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'known value'
+
+        async with agent.run_stream('Look up a value') as result:
+            assert await result.get_output() == 'done'
+
+    cut_off = message(result.all_messages(), ModelResponse, index=1)
+    assert (cut_off.state, cut_off.finish_reason) == ('incomplete', None)
+    assert transport.item_lookups == snapshot(
+        ['https://api.openai.com/v1/conversations/conv_1/items?limit=100&order=desc']
+    )
+    continuation = transport.bodies[1]
+    assert continuation['conversation'] == 'conv_1'
+    expected_input = {
+        False: snapshot(
+            [
+                {'role': 'user', 'content': 'Look up a value'},
+                {'name': 'lookup', 'arguments': '{}', 'call_id': 'call_1', 'type': 'function_call', 'id': 'fc_call_1'},
+                {'type': 'function_call_output', 'call_id': 'call_1', 'output': 'known value'},
+            ]
+        ),
+        True: snapshot([{'type': 'function_call_output', 'call_id': 'call_1', 'output': 'known value'}]),
+    }
+    assert continuation['input'] == expected_input[committed]
+
+
+@pytest.mark.vcr(ignore_hosts=['api.openai.com'])
+async def test_openai_conversation_id_trims_through_pending_non_streamed_response(allow_model_requests: None):
+    """A non-streamed foreground response that reports a pending status is `'incomplete'` with no finish reason too,
+    but it did report its status, which a stream that ended before its terminal event never got, so the next request
+    takes it as held without a lookup.
+
+    A mock transport stands in for a cassette: OpenAI answers a non-streamed request only once the response finishes.
+    """
+    pending: dict[str, Any] = {
+        **_failed_response_json(None),
+        'status': 'in_progress',
+        'conversation': {'id': 'conv_1'},
+        'output': [_COMMITTED_LOOKUP_CALL[0]],
+    }
+    transport = _ConversationTransport(
+        turns=[httpx2.Response(200, json=pending), httpx2.Response(200, json=_FINAL_MESSAGE_JSON)],
+        conversation_items=[],
+    )
+    async with transport.openai_client() as openai_client:
+        model = OpenAIResponsesModel('gpt-5', provider=OpenAIProvider(openai_client=openai_client))
+        agent = Agent(model, model_settings=OpenAIResponsesModelSettings(openai_conversation_id='conv_1'))
+
+        @agent.tool_plain
+        def lookup() -> str:
+            return 'known value'
+
+        result = await agent.run('Look up a value')
+
+    pending_response = message(result.all_messages(), ModelResponse, index=1)
+    assert (pending_response.state, pending_response.finish_reason) == ('incomplete', None)
+    assert transport.item_lookups == []
+    assert transport.bodies[1]['input'] == snapshot(
+        [{'type': 'function_call_output', 'call_id': 'call_1', 'output': 'known value'}]
+    )
+
+
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
 @pytest.mark.parametrize(
     ('stream', 'content', 'status_code', 'message'),
