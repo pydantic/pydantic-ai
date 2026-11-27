@@ -304,6 +304,8 @@ jobs:
           LABEL_NAME: ${{ github.event.label.name }}
           EVENT_PR_NUMBER: ${{ github.event.pull_request.number }}
           EVENT_HEAD_REPO: ${{ github.event.pull_request.head.repo.full_name }}
+          EVENT_BASE_REF: ${{ github.event.pull_request.base.ref }}
+          DEFAULT_BRANCH: ${{ github.event.repository.default_branch }}
           AW_CONTEXT: ${{ github.event.inputs.aw_context }}
           # Must match gh-aw's GH_AW_CALLER_WORKFLOW_ID for this workflow.
           REVIEW_CALL_ID: "${{ github.repository }}/pydantic-ai-pr-review"
@@ -432,6 +434,13 @@ jobs:
           # about the PR's current head — set only past the fork gate, so a request
           # on a fork PR skips as silently as the `workflow_run` path does.
           [ -n "$MARKER_SHA" ] || MARKER_SHA="$HEAD_SHA"
+
+          # --- Default-branch base ---------------------------------------------
+          # An approval or label requests a review only on a PR into the default branch.
+          if [ "$EVENT_NAME" = 'pull_request_review' ] || [ "$EVENT_NAME" = 'pull_request' ]; then
+            [ -n "$EVENT_BASE_REF" ] && [ "$EVENT_BASE_REF" = "$DEFAULT_BRANCH" ] \
+              || skip "PR #${PR_NUMBER} is based on ${EVENT_BASE_REF}, not ${DEFAULT_BRANCH}"
+          fi
 
           # --- Current-head authority ----------------------------------------
           # The PR moved on while CI was running: reviewing the CI run's head would
