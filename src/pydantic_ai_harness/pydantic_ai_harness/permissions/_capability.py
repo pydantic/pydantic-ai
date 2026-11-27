@@ -614,8 +614,14 @@ def marks_reviewer_approvals(ctx: RunContext[Any]) -> bool:
 
 
 def _holds_for_a_person(permissions: Permissions[Any]) -> bool:
-    """Whether `permissions` can hold a call that only a person may approve."""
-    return bool(permissions.protected_paths or permissions.protected_commands)
+    """Whether `permissions` can hold a call that only a person may approve.
+
+    Protected paths and commands, managed rules, and a `max_mode` other than `'full'` can; a `max_mode` function
+    counts too, since what it returns isn't known until a call.
+    """
+    return bool(permissions.protected_paths or permissions.protected_commands or permissions.managed_rules) or (
+        permissions.max_mode != 'full'
+    )
 
 
 def reviewed_approval_metadata() -> dict[str, Any]:
