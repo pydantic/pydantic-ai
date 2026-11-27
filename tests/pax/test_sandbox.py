@@ -1236,7 +1236,7 @@ def fake_e2b(monkeypatch: pytest.MonkeyPatch) -> Iterator['FakeE2B']:
 class TestE2B:
     """E2B, through the SDK fake the harness's own E2B tests use: a live run needs a billed account."""
 
-    def test_missing(self, fake_e2b: 'FakeE2B', monkeypatch: pytest.MonkeyPatch) -> None:
+    def test_missing(self, fake_e2b: 'FakeE2B', monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
         e2b = E2BProvider()
         assert e2b.missing() == (
             'Add your E2B API key in /keys as E2B_API_KEY. Get one at https://e2b.dev/dashboard?tab=keys.'
@@ -1250,6 +1250,16 @@ class TestE2B:
         monkeypatch.setattr(e2b_provider, 'find_spec', not_installed)
         assert e2b.missing() == (
             "E2B support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[e2b]'."
+        )
+        # Following the hint keeps the extras the `uv tool` install has, which its receipt records.
+        environment = tmp_path / 'pydantic-ai-pax'
+        environment.mkdir()
+        (environment / 'uv-receipt.toml').write_text(
+            '[tool]\nrequirements = [{ name = "pydantic-ai-pax", extras = ["groq"] }]\n', encoding='utf-8'
+        )
+        monkeypatch.setattr(sys, 'prefix', str(environment))
+        assert e2b.missing() == (
+            "E2B support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[e2b,groq]'."
         )
 
     async def test_create_reopen_delete(self, fake_e2b: 'FakeE2B', monkeypatch: pytest.MonkeyPatch) -> None:

@@ -51,6 +51,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     ref_provider,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
+from pydantic_ai_pax.cli.install import install_hint
 
 _T = TypeVar('_T')
 
@@ -61,7 +62,9 @@ _SYNC_TIMEOUT = 60.0
 
 logger = logging.getLogger(__name__)
 
-_INSTALL = "Install Pax with it: uv tool install 'pydantic-ai-pax[local]'."
+
+def _install() -> str:
+    return f'Install Pax with it: {install_hint("local")}.'
 
 
 def _not_on_intel_mac(title: str) -> str | None:
@@ -103,7 +106,7 @@ class SmolProvider:
         if desktop:
             if sys.platform == 'win32':
                 return 'SmolVM desktop mode needs smolmachines, which has no Windows build.'
-            return _not_on_intel_mac(self.title) or f'SmolVM desktop support needs smolmachines. {_INSTALL}'
+            return _not_on_intel_mac(self.title) or f'SmolVM desktop support needs smolmachines. {_install()}'
         if find_cli() is not None:
             return None
         if sys.platform == 'win32':
@@ -112,7 +115,7 @@ class SmolProvider:
                 'into a folder on PATH. It needs the Windows Hypervisor Platform. '
                 '/sandbox local smol on Windows has not been tested on a Windows host yet.'
             )
-        return _not_on_intel_mac(self.title) or f'SmolVM support is not installed. {_INSTALL}'
+        return _not_on_intel_mac(self.title) or f'SmolVM support is not installed. {_install()}'
 
     def _backend(self, ref: WorkspaceRef | None, *, desktop: bool = False) -> SandboxBackend:
         ref = None if ref is None else WorkspaceRef(provider='smol', id=ref.id)
@@ -195,7 +198,7 @@ class BoxLiteProvider:
             return 'BoxLite does not run on Windows: use /sandbox local smol.'
         return (
             _not_on_intel_mac(self.title)
-            or f'BoxLite support is not installed. {_INSTALL} It needs Python 3.14 or older.'
+            or f'BoxLite support is not installed. {_install()} It needs Python 3.14 or older.'
         )
 
     def _backend(self, ref: WorkspaceRef | None, *, desktop: bool = False) -> SandboxBackend:

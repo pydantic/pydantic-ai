@@ -23,6 +23,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
+from pydantic_ai_pax.cli.install import install_hint
 
 if TYPE_CHECKING:
     import e2b
@@ -44,7 +45,7 @@ class E2BProvider:
     def missing(self, *, desktop: bool = False) -> str | None:
         del desktop
         if find_spec('e2b') is None:
-            return "E2B support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[e2b]'."
+            return f'E2B support is not installed. Install Pax with it: {install_hint("e2b")}.'
         if saved_key(KEY_NAME) is None:
             return f'Add your E2B API key in /keys as {KEY_NAME}. Get one at https://e2b.dev/dashboard?tab=keys.'
         return None

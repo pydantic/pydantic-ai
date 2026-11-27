@@ -29,6 +29,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
+from pydantic_ai_pax.cli.install import install_hint
 
 if TYPE_CHECKING:
     from opensandbox.config import ConnectionConfig
@@ -60,7 +61,7 @@ class OpenSandboxProvider:
             # Its desktop installs its programs with apt, which the GitHub-only network policy blocks.
             return 'OpenSandbox has no desktop for /computer-use. Use another provider, such as e2b or daytona.'
         if find_spec('opensandbox') is None:
-            return "OpenSandbox support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[opensandbox]'."
+            return f'OpenSandbox support is not installed. Install Pax with it: {install_hint("opensandbox")}.'
         if saved_key(DOMAIN_NAME) is None:
             return (
                 f"Add your OpenSandbox server's address in /keys as {DOMAIN_NAME}, such as localhost:8080 or "

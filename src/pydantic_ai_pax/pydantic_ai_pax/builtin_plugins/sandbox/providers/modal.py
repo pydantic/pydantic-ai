@@ -17,6 +17,7 @@ from pathlib import Path
 from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import SANDBOX_ENV, GitHubCredential
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
+from pydantic_ai_pax.cli.install import install_hint
 
 
 @dataclass(frozen=True)
@@ -32,7 +33,7 @@ class ModalProvider:
     def missing(self, *, desktop: bool = False) -> str | None:
         del desktop
         if find_spec('modal') is None:
-            return "Modal support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[modal]'."
+            return f'Modal support is not installed. Install Pax with it: {install_hint("modal")}.'
         # Checked without importing Modal, which reads its config file as it loads; a file without a token
         # fails at create with Modal's own message.
         config = os.environ.get('MODAL_CONFIG_PATH') or '~/.modal.toml'

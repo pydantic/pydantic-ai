@@ -600,6 +600,21 @@ async def test_select_model_whose_provider_sdk_is_missing_fails_before_saving(
     assert SettingsSource(context).apply(model_row, model) == f'model: {message}'
 
 
+def test_missing_sdk_hint_keeps_installed_extras(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The install command names the extras the `uv tool` install has, so following it does not remove them."""
+    monkeypatch.setitem(sys.modules, 'groq', None)
+    monkeypatch.delitem(sys.modules, 'pydantic_ai.providers.groq', raising=False)
+    environment = tmp_path / 'pydantic-ai-pax'
+    environment.mkdir()
+    (environment / 'uv-receipt.toml').write_text(
+        '[tool]\nrequirements = [{ name = "pydantic-ai-pax", extras = ["e2b", "mistral"] }]\n', encoding='utf-8'
+    )
+    monkeypatch.setattr(sys, 'prefix', str(environment))
+    with pytest.raises(ValueError) as exc_info:
+        model_catalog.check_installed('groq:llama-3.3-70b-versatile')
+    assert "Install Pax with it: `uv tool install 'pydantic-ai-pax[e2b,groq,mistral]'`" in str(exc_info.value)
+
+
 @pytest.mark.parametrize(
     'error',
     ['Please install the SDK for groq.', 'Please install `groq` to use it: `pip install "pydantic-ai-slim[cli]"`.'],

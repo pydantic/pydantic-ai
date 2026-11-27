@@ -23,6 +23,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
+from pydantic_ai_pax.cli.install import install_hint
 
 if TYPE_CHECKING:
     from sprites import AsyncSpritesClient
@@ -49,7 +50,7 @@ class SpritesProvider:
     def missing(self, *, desktop: bool = False) -> str | None:
         del desktop
         if find_spec('sprites') is None:
-            return "Sprites support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[sprites]'."
+            return f'Sprites support is not installed. Install Pax with it: {install_hint("sprites")}.'
         if saved_key(KEY_NAME) is None:
             return f'Add your Sprites token in /keys as {KEY_NAME}. Make one at https://sprites.dev/account.'
         return None

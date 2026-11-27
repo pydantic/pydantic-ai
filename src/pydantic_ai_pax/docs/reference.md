@@ -367,7 +367,8 @@ Windows does not let a program replace files it is running from, so there
 an install exits Pax first and installs in a new PowerShell window; start `pax`
 again when that window reports success.
 
-The reinstall keeps only Pax's own packages, so add any extra `--with` packages
+The reinstall keeps the extras Pax was installed with, such as `pydantic-ai-pax[groq]`,
+which uv records in the tool environment. It does not keep `--with` packages, so add those
 again afterwards. Without uv on `PATH`, an install prints the complete command to
 run yourself, in PowerShell syntax on Windows. For `main` installs, it also
 writes the overrides file and includes its path in the printed command.
@@ -742,7 +743,8 @@ Pax installs the SDKs for OpenAI, Anthropic, and Google. Every other model provi
 has a Pax extra of the same name as its `pydantic-ai-slim` extra, such as `bedrock`,
 `groq`, `mistral`, or `typesafe` (TypeSafe's Jev), and `all` installs every provider
 and every `/sandbox` provider but `local`. Selecting a model whose provider SDK is
-missing from the Python Pax runs on fails right away, naming the extra to install,
+missing from the Python Pax runs on fails right away, naming the extra to install
+(with the extras a `uv tool` install already has, so the command keeps them),
 instead of on the next prompt:
 
 ```bash

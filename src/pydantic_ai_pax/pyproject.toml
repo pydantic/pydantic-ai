@@ -47,6 +47,8 @@ dependencies = [
     # `pydantic-ai-harness[code-mode]`, which also pulls a web-search client Pax does not use. 1.7.0 matches that
     # extra's floor: the first Monty to import every module the `run_code` description lists.
     "pydantic-monty>=1.7.0,<2",
+    # `/update` reads which extras of Pax, harness, and core the install's own extras require, from their metadata.
+    "packaging>=24",
     # Built-in MCP client: https://github.com/pydantic/pydantic-ai/issues/9267.
     "pydantic-ai-slim[anthropic,google,mcp,openai]=={{ major }}.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}",
     # Above the `[mcp]` extra's 3.3.0: browser sign-in passes `OAuth(callback_host=...)`, new in FastMCP 3.4.0.

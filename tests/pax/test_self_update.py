@@ -51,6 +51,7 @@ from pydantic_ai_pax.cli.self_update import (
     installed,
     latest,
     powershell,
+    required_extras,
     tool_executable,
 )
 from pydantic_ai_pax.commands import set_completions
@@ -139,6 +140,85 @@ def test_installed_reads_metadata_and_receipt(
     assert installed() == Installed(version='0.52.0', commit=commit, tool=False)
     (tmp_path / 'uv-receipt.toml').write_text('[tool]\n')
     assert installed().tool
+
+
+@pytest.mark.parametrize(
+    ('environment', 'receipt', 'extras'),
+    [
+        pytest.param(
+            'pydantic-ai-pax',
+            '[tool]\nrequirements = [{ name = "pydantic-ai-pax", extras = ["groq", "e2b"] }, '
+            '{ name = "pydantic-ai-harness", extras = ["exa"] }]\n',
+            ('e2b', 'groq'),
+            id='extras',
+        ),
+        pytest.param(
+            'pydantic-clai2',
+            '[tool]\nrequirements = [{ name = "pydantic-clai2", extras = ["modal"] }]\n',
+            ('modal',),
+            id='legacy',
+        ),
+        pytest.param('pydantic-ai-pax', '[tool]\nrequirements = [{ name = "pydantic-ai-pax" }]\n', (), id='none'),
+        pytest.param('pydantic-ai-pax', '[tool\n', (), id='unreadable'),
+        pytest.param('pydantic-ai-pax', '[tool]\nrequirements = "pydantic-ai-pax"\n', (), id='unexpected'),
+        pytest.param('pydantic-ai-pax', None, (), id='no-receipt'),
+    ],
+)
+def test_installed_reads_extras_from_receipt(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, environment: str, receipt: str | None, extras: tuple[str, ...]
+) -> None:
+    """The receipt records the requirement `uv tool install` was given, with its extras, which `/update` keeps."""
+    prefix = tmp_path / environment
+    prefix.mkdir()
+    if receipt is not None:
+        (prefix / 'uv-receipt.toml').write_text(receipt, encoding='utf-8')
+    monkeypatch.setattr(sys, 'prefix', str(prefix))
+    assert installed().extras == extras
+    assert find_update('stable', installed(), '99.0.0') == Update(channel='stable', target='99.0.0', extras=extras)
+
+
+def test_install_commands_keep_extras(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """An install with extras is reinstalled with them, and on `main` the overrides keep what they require."""
+    assert Update(channel='stable', target='0.53.0', extras=('e2b', 'groq')).command(uv='uv', overrides=None) == [
+        'uv',
+        'tool',
+        'install',
+        '--force',
+        '--compile-bytecode',
+        'pydantic-ai-pax[e2b,groq]==0.53.0',
+    ]
+    monkeypatch.delenv('CLAI_BLEEDING_URL', raising=False)
+    release = 'https://github.com/pydantic/pydantic-ai/releases/download/clai2-bleeding'
+    update = Update(channel='main', target=NEWER, extras=('e2b', 'groq', 'local'))
+    overrides = tmp_path / 'overrides.txt'
+    assert update.command(uv='uv', overrides=overrides)[-1] == 'pydantic-ai-pax[e2b,groq,local]'
+    # An override replaces every requirement on its package, extras included, so each names what the extras need.
+    assert update.overrides() == (
+        f'pydantic-ai-pax[e2b,groq,local] @ {release}/pydantic_ai_pax-{NEWER}.tar.gz\n'
+        f'pydantic-clai2 @ {release}/pydantic_clai2-{NEWER}.tar.gz\n'
+        f'pydantic-ai-harness[boxlite,coder,e2b,skills,smol] @ {release}/pydantic_ai_harness-{NEWER}.tar.gz\n'
+        f'pydantic-ai-slim[anthropic,google,groq,mcp,openai] @ {release}/pydantic_ai_slim-{NEWER}.tar.gz\n'
+        f'pydantic-graph @ {release}/pydantic_graph-{NEWER}.tar.gz\n'
+    )
+
+
+def test_overrides_skip_packages_not_installed(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Outside its own environment the `pydantic-clai2` shim is not installed, so its requirements add nothing."""
+    requires = metadata.requires
+
+    def installed_only(name: str) -> list[str] | None:
+        if name == 'pydantic-clai2':
+            raise metadata.PackageNotFoundError(name)
+        return requires(name)
+
+    monkeypatch.setattr(self_update.metadata, 'requires', installed_only)
+    assert required_extras({'pydantic-ai-pax': {'groq'}})['pydantic-ai-slim'] == {
+        'anthropic',
+        'google',
+        'groq',
+        'mcp',
+        'openai',
+    }
 
 
 def test_labels() -> None:
@@ -643,7 +723,9 @@ async def test_windows_hands_the_install_off_and_exits() -> None:
     assert "& '/bin/uv' 'tool' 'install' '--force' '--compile-bytecode' '--overrides' " in script
     # The overrides file outlives Pax; the script removes it after uv reads it.
     overrides = Path(script.split("Remove-Item -LiteralPath '")[1].split("'")[0])
-    assert overrides.read_text(encoding='utf-8') == Update(channel='main', target=NEWER).overrides()
+    assert overrides.read_text(encoding='utf-8') == await anyio.to_thread.run_sync(
+        Update(channel='main', target=NEWER).overrides
+    )
     assert script.splitlines()[2].endswith(" 'pydantic-ai-pax'")
     overrides.unlink()
 
@@ -659,7 +741,9 @@ async def test_windows_manual_command_is_powershell(channel: UpdateChannel) -> N
         assert printed.startswith("& 'uv' 'tool' 'install' '--force' '--compile-bytecode' '--overrides' ")
         assert printed.endswith(" 'pydantic-ai-pax'")
         overrides = Path(printed.split("'--overrides' '")[1].split("'")[0])
-        assert overrides.read_text(encoding='utf-8') == Update(channel='main', target=NEWER).overrides()
+        assert overrides.read_text(encoding='utf-8') == await anyio.to_thread.run_sync(
+            Update(channel='main', target=NEWER).overrides
+        )
         overrides.unlink()
 
 

@@ -23,6 +23,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.providers.base import (
     saved_key,
 )
 from pydantic_ai_pax.builtin_plugins.sandbox.seed import SandboxBackend
+from pydantic_ai_pax.cli.install import install_hint
 
 if TYPE_CHECKING:
     from pydantic_ai_harness.kubernetes_sandbox import KubernetesSandboxBackend
@@ -45,7 +46,7 @@ class KubernetesProvider:
     def missing(self, *, desktop: bool = False) -> str | None:
         del desktop
         if find_spec('k8s_agent_sandbox') is None or find_spec('grpc') is None:
-            return "Kubernetes support is not installed. Install Pax with it: uv tool install 'pydantic-ai-pax[kubernetes]'."
+            return f'Kubernetes support is not installed. Install Pax with it: {install_hint("kubernetes")}.'
         if shutil.which('kubectl') is None:
             return 'Install kubectl: Pax reaches the sandbox pods through kubectl port-forward.'
         if saved_key(WARM_POOL_NAME) is None:
