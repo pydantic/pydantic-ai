@@ -3488,6 +3488,12 @@ default, and opens its settings menu (`/plugins configure linear` reopens it). T
 key is picked from `/keys` by name (a new one is saved there as `LINEAR_API_KEY`),
 or choose browser sign-in. See [PLUGINS.md](../PLUGINS.md#linear-issues-and-projects).
 
+`/plugins enable pydantic_ai_docs` gives the agent a `read_pyai_docs` tool that returns
+a Pydantic AI docs page on demand, for writing Pydantic AI code. In a Pydantic AI
+checkout, a repository whose root `docs/` has every page the tool serves, it reads
+that `docs/`; elsewhere it fetches the page from GitHub at the installed release's
+tag. See [PLUGINS.md](../PLUGINS.md#pydantic_ai_docs-pydantic-ai-docs-on-demand).
+
 ### Built-in plugins at a glance
 
 The coding tools,
@@ -3525,8 +3531,8 @@ Logfire, tools, and a key picked from `/keys`, never stored in plugin settings;
 otherwise browser sign-in, which also signs new users up and works over SSH:
 `/logfire login`). Reopen it with `/plugins configure logfire_mcp`; see
 [Logfire](../PLUGINS.md#logfire-query-your-telemetry).
-Hosted integrations such as `github`, `slack`, `linear`, and `logfire_mcp` load on
-demand: the model sees one catalog line for each enabled one and loads its tools
+Hosted integrations such as `github`, `slack`, `linear`, and `logfire_mcp`, and the
+`pydantic_ai_docs` plugin, load on demand: the model sees one catalog line for each enabled one and loads its tools
 with `load_capability` when a task needs them; see
 [the built-in plugins](../PLUGINS.md#the-built-in-plugins).
 

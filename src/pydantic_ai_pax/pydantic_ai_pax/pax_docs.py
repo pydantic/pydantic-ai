@@ -63,6 +63,7 @@ _HARNESS_DOCS = (
     'ordinal',
     'permissions',
     'posthog',
+    'pydantic_ai_docs',
     'pylon',
     'refine_output',
     'render_sandbox',

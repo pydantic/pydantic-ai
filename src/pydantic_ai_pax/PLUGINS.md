@@ -1181,6 +1181,7 @@ settings using the former import paths are redirected to the new modules.
 | `hooks` | `pydantic_ai_pax.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
 | `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; `/computer-use` lets the model use its desktop; see [Sandboxes](docs/reference.md#sandboxes-sandbox) and [Computer use](docs/reference.md#computer-use-computer-use) |
 | `slack` (off until enabled) | `pydantic_ai_pax.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
+| `pydantic_ai_docs` (off until enabled) | `pydantic_ai_pax.builtin_plugins.pydantic_ai_docs` | `{}` | the `read_pyai_docs` tool: a Pydantic AI docs page on demand, from the repository's own `docs/` in a Pydantic AI checkout; see [below](#pydantic_ai_docs-pydantic-ai-docs-on-demand) |
 
 [`day_ai`](#day_ai-day-ai-crm-tools) and [`grain`](#grain-meetings-with-a-saved-sign-in)
 are built in too, but start disabled because they need your Day AI or Grain
@@ -1193,6 +1194,8 @@ deferred-capability catalog instead of its tools and instructions. The model
 loads one with `load_capability` when a task needs it, and its tools and the
 server's instructions arrive then. Each still connects at the start of every
 run, so a missing key or sign-in is reported as before.
+[`pydantic_ai_docs`](#pydantic_ai_docs-pydantic-ai-docs-on-demand) is deferred
+the same way.
 
 ### Other harness capabilities
 
@@ -2489,6 +2492,45 @@ The settings can also be given up front:
 ```text
 /plugins add grain pydantic_ai_pax.builtin_plugins.grain '{"read_only": false, "include_instructions": true}'
 ```
+
+### `pydantic_ai_docs`: Pydantic AI docs on demand
+
+`pydantic_ai_docs` (`pydantic_ai_pax.builtin_plugins.pydantic_ai_docs`) gives the agent harness's
+[`PydanticAIDocs`](../pydantic_ai_harness/pydantic_ai_harness/pydantic_ai_docs/README.md)
+capability: a `read_pyai_docs` tool that returns one Pydantic AI docs page
+(capabilities, hooks, tools, advanced tools, toolsets, or the agent) as markdown,
+for writing or changing Pydantic AI code without relying on what the model
+remembers. It starts disabled; `/plugins enable pydantic_ai_docs` turns it on for
+the next prompt. Once enabled, the model sees one catalog line and loads the tool
+with `load_capability` when it needs it.
+
+Where the pages come from is decided at the start of each run:
+
+- When the repository the session works in has a `docs/` folder at its root (the
+  folder with `.git`, or the session's folder outside a repository) holding every
+  page the tool serves, as a Pydantic AI checkout does, the pages are read from
+  it, so they match the code you are working on. A `docs/` with only some of
+  them, such as a project's own `docs/agent.md`, does not count.
+- Otherwise the capability's defaults apply: the checkout the
+  `PYDANTIC_AI_HARNESS_DOCS_PATH` environment variable names, else the page on
+  GitHub at the tag of the installed `pydantic_ai` release, which needs network
+  access.
+
+A page the local `docs/` lacks, or that a [sandbox](docs/reference.md#sandboxes-sandbox)
+conversation cannot see, is fetched from GitHub the same way. Pages reach the
+model as tool output, the same as a file `read_file` returns, whether or not you
+[trust the folder](docs/reference.md#folder-trust); the tool's instructions are
+fixed text, and nothing from the repository goes into them.
+
+The plugin has no settings. To read another Git ref of the GitHub docs, such as
+`main`, declare `PydanticAIDocs` under the same id, which takes the built-in's place:
+
+```text
+/plugins add pydantic_ai_docs pydantic_ai_harness.pydantic_ai_docs:PydanticAIDocs '{"remote_ref": "main"}'
+```
+
+That declaration is not deferred: its tool is in every request.
+`/plugins remove pydantic_ai_docs` brings the built-in back.
 
 ## Managing plugins
 
