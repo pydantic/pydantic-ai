@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import keyword
 import re
 import warnings
 from collections.abc import Awaitable, Callable, Coroutine, Mapping, Sequence
@@ -610,7 +611,7 @@ def _module_stubs(modules: Mapping[str, ExternalModule]) -> dict[str, str | None
 def check_external_modules(modules: Mapping[str, ExternalModule]) -> None:
     """Reject module names the sandbox can't import, and modules without the stubs the model and type checker read."""
     for name in modules:
-        if not name.isidentifier():
+        if not name.isidentifier() or keyword.iskeyword(name):
             raise UserError(
                 f'`external_modules` key {name!r} is not a module name. '
                 'Use a top-level name and nest submodules as `ExternalModule` attributes.'

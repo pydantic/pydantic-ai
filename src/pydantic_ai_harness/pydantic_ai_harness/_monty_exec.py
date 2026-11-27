@@ -654,13 +654,16 @@ class MontyExecutor:
             return await call_monty(self.portal, snapshot.resume, await _await_external(PendingCall(call, context)))
         token = otel_context.attach(context)
         try:
+            # Arguments the function can't take raise here, before there is a coroutine to defer.
             call = function(*snapshot.args, **snapshot.kwargs)
-            assert inspect.iscoroutine(call), 'an async callable returns a coroutine'
-            self._pending[snapshot.call_id] = PendingCall(
-                call if self.global_sequential else asyncio.ensure_future(call), context
-            )
+        except Exception as exc:
+            return await self._raise_in_sandbox(snapshot, exc)
         finally:
             otel_context.detach(token)
+        assert inspect.iscoroutine(call), 'an async callable returns a coroutine'
+        self._pending[snapshot.call_id] = PendingCall(
+            call if self.global_sequential else asyncio.ensure_future(call), context
+        )
         return await call_monty(self.portal, snapshot.resume, ExternalFuture(future=...))
 
     async def _sleep(self, snapshot: FunctionSnapshot) -> Snapshot:
