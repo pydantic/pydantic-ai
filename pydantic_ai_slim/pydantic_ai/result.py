@@ -45,7 +45,6 @@ from .workspaces import Workspace, WorkspaceRef
 
 if TYPE_CHECKING:
     from ._agent_graph import GraphAgentState
-    from ._conversation_log import ConversationLog
     from .capabilities.abstract import AbstractCapability
     from .run import AgentRunResult
 
@@ -639,8 +638,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
 
     _run_result: AgentRunResult[OutputDataT] | None = None
 
-    _settled_from: tuple[GraphAgentState, int] | None = None
-    """The run's state, and where the messages this result adds to its copy of the history start.
+    _settled_from: tuple[GraphAgentState, int, int] | None = None
+    """The run's state, where the messages this result adds to its copy of the history start, and how long the run's
+    conversation was then.
 
     Set when the stream's own response ends the run, so the settled result keeps what the run's would: what saving the
     conversation it was given needs, and the full history when a capability dropped or rewrote messages.
@@ -718,7 +718,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             UserError: If the stream hasn't finished, was cancelled before producing an output, or the run
                 stopped before it finished, so the run has no settled output to settle on.
         """
-        from ._agent_graph import GraphAgentState
         from .run import AgentRunResult
 
         if (run_result := self._run_result or self._settled) is not None:
@@ -735,7 +734,9 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     'until it stopped are still available from `all_messages()`.'
                 )
             output, output_tool_name = self._stream_response._settled_output()  # pyright: ignore[reportPrivateUsage]
-            state, start = self._settled_from or (GraphAgentState(), 0)
+            # The agent sets it on every streamed result it makes.
+            assert self._settled_from is not None
+            state, start, logged_from = self._settled_from
             result = AgentRunResult(
                 output=output,
                 _output_tool_name=output_tool_name,
@@ -746,7 +747,7 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
                     run_id=self.run_id,
                     conversation_id=self.conversation_id,
                     metadata=self.metadata,
-                    conversation_log=self._settled_full_history(state.conversation_log, start),
+                    conversation_log=state.conversation_log.settled(self._all_messages, start, logged_from),
                 ),
                 _new_message_index=self._new_message_index,
                 _traceparent_value=self._traceparent_value,
@@ -757,20 +758,6 @@ class StreamedRunResult(Generic[AgentDepsT, OutputDataT]):
             return result
         else:
             raise ValueError('No stream response or run result provided')  # pragma: no cover
-
-    def _settled_full_history(self, record: ConversationLog, start: int) -> ConversationLog:
-        """The full history for the settled result of a run whose history a capability rewrote, or an empty record."""
-        from ._conversation_log import ConversationLog
-
-        if not record.full or record.messages is None:
-            return ConversationLog()
-        # The run kept its full history when it ended, with the streamed response, which the run commits itself, but
-        # not the request with the tool returns the stream added to its copy after it. Content queued at a deferred
-        # pause is in both, recorded before the run committed the response, so the copy's order is kept for it.
-        added = [message for message in self._all_messages[start:] if isinstance(message, _messages.ModelRequest)]
-        in_copy = {id(message) for message in added}
-        kept = [message for message in record.messages if id(message) not in in_copy]
-        return ConversationLog([*kept, *added], record.new_message_index, full=True)
 
     def all_messages(self, *, output_tool_return_content: str | None = None) -> list[_messages.ModelMessage]:
         """Return the history of _messages.

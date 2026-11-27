@@ -95,10 +95,10 @@ from . import (
     result,
     usage as _usage,
 )
-from ._conversation_log import ConversationLog
 from ._cancel import RunCancellation
 from ._capability_parts import has_capability_parts
 from ._context_size import context_input_tokens
+from ._conversation_log import ConversationLog
 from ._conversation_marks import stored_boundary
 from ._deferred_capabilities import (
     _parse_loaded_capabilities,  # pyright: ignore[reportPrivateUsage]
@@ -402,13 +402,13 @@ def resolve_conversation(
     _usage.RunUsage | None,
     str | None,
     str | None,
-    list[_messages.ModelMessage] | None,
+    int | None,
     bool,
 ]:
-    """Resolve a `conversation` argument into the three arguments it stands in for, plus its revision and unsaved messages.
+    """Resolve a `conversation` argument into the three arguments it stands in for, plus its revision and stored messages.
 
-    The last item is whether the messages before the unsaved ones may have changed since they were
-    stored, so the store has to check them.
+    The last two items are how many of its messages the store has, if that's known, and whether those may
+    have changed since they were stored, so the store has to check them.
 
     The usage is copied on the way out. A run accumulates into the `RunUsage` it is handed, so
     passing the conversation's own object would make running from a conversation change it —
@@ -434,13 +434,12 @@ def resolve_conversation(
         )
 
     index = conversation.new_message_index
-    unsaved = None if index is None else conversation.messages[index:]
     return (
         conversation.messages,
         copy(conversation.usage),
         conversation.conversation_id,
         conversation.revision,
-        unsaved,
+        index,
         index is not None and stored_boundary(conversation) is None,
     )
 
@@ -964,35 +963,14 @@ class GraphAgentState:
     Carried to the result's `conversation` unchanged, so a store can tell whether the conversation
     was saved by someone else while this run was going.
     """
-    conversation_unsaved: list[_messages.ModelMessage] | None = None
-    """The messages at the end of the conversation this run was given that its store doesn't have yet.
-
-    `None` when the run wasn't given a conversation that knows its
-    [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index]. The result's
-    `conversation` finds them in the history to tell its store where the unsaved messages start.
-    """
     conversation_deferred_tool_requests: DeferredToolRequests | None = None
     """The [`deferred_tool_requests`][pydantic_ai.conversation.Conversation.deferred_tool_requests] of the conversation this run was given, if any.
 
     A run that fails before it adds a message leaves them waiting, so its failed conversation keeps them.
     """
-    conversation_unchecked: bool = False
-    """Whether the messages before `conversation_unsaved` may have changed since they were stored, say after the conversation was serialized.
-
-    The result's `conversation` then has its store compare them with the stored ones before appending.
-    """
-    conversation_saved: bool = False
-    """Whether a store saved this run's whole history, through its result, so none of it is unsaved."""
-    conversation_merged_tail: _messages.ModelRequest | None = None
-    """The last stored request of the conversation this run was given, when the run merged the unsaved requests after it into it.
-
-    Cleaning the history merges consecutive requests, like an output tool's result and the user prompt appended after
-    it. The result's `conversation` puts this request and the unsaved ones back in place of the merged request, so its
-    store doesn't get this one's parts again.
-    """
     conversation_log: ConversationLog = dataclasses.field(default_factory=ConversationLog)
-    """Internal: the history this run was given and every message it appended, which the result's `conversation` holds
-    when a capability dropped or replaced some of them in `message_history`."""
+    """Internal: the conversation this run records, which its result's `conversation` holds. `message_history` is
+    what the model sees."""
     metadata: dict[str, Any] | None = None
     last_max_tokens: int | None = None
     """Last-resolved `max_tokens` from model settings, used only in error messages."""
@@ -1306,6 +1284,15 @@ def _ensure_model_supports_streaming(model: models.Model) -> None:
         )
 
 
+def _shaped(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]], node: T) -> T:
+    """`node`, once the conversation noted the history `UserPromptNode` tidied for the model.
+
+    Tidying may have replaced the conversation's last message in that history.
+    """
+    ctx.state.conversation_log.shaped(ctx.state.message_history)
+    return node
+
+
 @dataclasses.dataclass
 class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     """The node that handles the user prompt and instructions."""
@@ -1332,6 +1319,10 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
     async def run(  # noqa: C901
         self, ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, NodeRunEndT]]
     ) -> ModelRequestNode[DepsT, NodeRunEndT] | CallToolsNode[DepsT, NodeRunEndT]:
+        """Tidy the history the run was given for the model, add the request to send, and pick the next node.
+
+        Every return goes through `_shaped`.
+        """
         try:
             ctx_messages = get_captured_run_messages()
         except LookupError:
@@ -1344,8 +1335,9 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 ctx_messages.used = True
 
         given = ctx.state.message_history
+        # What a `before_run` hook appended to the history is the conversation's.
+        ctx.state.conversation_log.adopt(given)
         cleaned, answered_at_pause = self._history_to_run(given)
-        ctx.state.conversation_merged_tail = _merged_stored_tail(given, cleaned, ctx.state.conversation_unsaved)
         # Replace the `capture_run_messages` list with the message history
         messages[:] = cleaned
         # Use the `capture_run_messages` list as the message history so that new messages are added to it
@@ -1353,7 +1345,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         ctx.deps.new_message_index = len(messages)
 
         if self.deferred_tool_results is not None:
-            return await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx)
+            return _shaped(ctx, await self._handle_deferred_tool_results(self.deferred_tool_results, messages, ctx))
 
         messages[:] = _repair_interrupted_tail(messages, has_new_prompt=self.user_prompt is not None)
 
@@ -1370,7 +1362,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                 index = _last_response_index(messages)
                 assert index is not None  # `_answered_at_pause` found it.
                 response, _ = await self._adopt_resumed_response(ctx, messages, index)
-                return CallToolsNode[DepsT, NodeRunEndT](response, _answered_calls=answered_at_pause)
+                return _shaped(ctx, CallToolsNode[DepsT, NodeRunEndT](response, _answered_calls=answered_at_pause))
             if isinstance(last_message, _messages.ModelRequest) and self.user_prompt is None:
                 # Drop last message from history and reuse its parts
                 messages.pop()
@@ -1389,8 +1381,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                     # it is intentionally NOT appended to history (the suspended response is the real
                     # tail that gets echoed back), and nothing is sent for it. `_resume_suspended`
                     # drives `_prepare_resume_request` instead of the normal `_prepare_request` path.
-                    return ModelRequestNode[DepsT, NodeRunEndT](
-                        request=_messages.ModelRequest(parts=[]), _resume_suspended=last_message
+                    return _shaped(
+                        ctx,
+                        ModelRequestNode[DepsT, NodeRunEndT](
+                            request=_messages.ModelRequest(parts=[]), _resume_suspended=last_message
+                        ),
                     )
                 if self.user_prompt is None:
                     last_message, run_context = await self._adopt_resumed_response(ctx, messages, len(messages) - 1)
@@ -1398,11 +1393,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
                         # Pending tool calls must be processed before any new ModelRequest, regardless
                         # of instructions.  Instructions will be applied by ModelRequestNode.run() on
                         # the subsequent request after tool results are collected.
-                        return CallToolsNode[DepsT, NodeRunEndT](last_message)
+                        return _shaped(ctx, CallToolsNode[DepsT, NodeRunEndT](last_message))
                     instruction_parts = await _get_instructions(ctx, run_context)
                     if not instruction_parts:
                         # No pending tool calls and no instructions — nothing new to send to the model.
-                        return CallToolsNode[DepsT, NodeRunEndT](last_message)
+                        return _shaped(ctx, CallToolsNode[DepsT, NodeRunEndT](last_message))
                 elif last_message.state == 'suspended':
                     # A new prompt on top of a suspended turn would abandon it, leaking the provider's
                     # server-side job (e.g. an OpenAI background run). Resume it first (run with this
@@ -1437,8 +1432,11 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
 
             next_message = _messages.ModelRequest(parts=parts)
 
-        return ModelRequestNode[DepsT, NodeRunEndT](
-            request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
+        return _shaped(
+            ctx,
+            ModelRequestNode[DepsT, NodeRunEndT](
+                request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
+            ),
         )
 
     def _history_to_run(
@@ -3428,10 +3426,11 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # A request resumed from `message_history` keeps a `run_id` it already has; one without gets this run's,
         # before `before_model_request` sees it.
         fill_run_metadata(self.request, run_id=ctx.state.run_id, conversation_id=ctx.state.conversation_id)
-        # A run resuming without a new prompt sends the request it was given again.
-        ctx.state.conversation_log.append(
-            ctx.state.message_history, self.request, given=self.is_resuming_without_prompt
-        )
+        if self.is_resuming_without_prompt:
+            # The request the run was given, sent again: the log records it on the unsaved requests it was made from.
+            ctx.state.conversation_log.resend(ctx.state.message_history, self.request)
+        else:
+            ctx.state.conversation_log.append(ctx.state.message_history, self.request)
         self._capability_load_records = _deliver_capability_loads(ctx, self.request)
 
         ctx.state.run_step += 1
@@ -3612,9 +3611,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # on the (possibly hook-modified) messages; with unmodified messages it's idempotent.
         # The request messages keep the suspended response as the continuation seed.
         _set_resumed_history(ctx, request_context.messages[:-1])
-        # Nothing is appended for the suspended response, which the continuation completes, so the history the
-        # run was given is the one without it.
-        ctx.state.conversation_log.start(ctx.state.message_history)
+        # The response that completes the suspended one takes its place in the conversation.
+        ctx.state.conversation_log.continued = self._resume_suspended
         # At the start of the step, before `wrap_model_request`, as in `_prepare_request`.
         ctx.deps.usage_limits.check_before_request(ctx.state.usage)
         return request_context, run_context
@@ -5065,8 +5063,8 @@ def _drop_unanswered_request_scoped_prompts(state: GraphAgentState) -> None:
     Edits the list in place, since it's the run's history, but replaces the affected requests rather
     than mutating them: instrumentation caches each message's serialized form. A request left empty
     is removed, unless every trailing request was, in which case one empty request is kept so the
-    history still ends on a `ModelRequest`, as `_drop_orphaned_tool_results` does. The run's record of
-    the messages it appended follows, so they aren't taken for a capability's rewrite.
+    history still ends on a `ModelRequest`, as `_drop_orphaned_tool_results` does. The conversation the run
+    logs follows.
     """
     is_request_scoped = _messages._is_request_scoped  # pyright: ignore[reportPrivateUsage]
     messages = state.message_history
@@ -5542,17 +5540,20 @@ def _history_recording_targets(
     end the request in a message that exists only in the request (`request_context.messages = [*messages,
     reminder]`), though, or swap the persisted tail for a copy. State recorded only on that tail would never
     reach history and would be recorded again on every step, so it goes on the persisted tail instead when
-    the request still carries it, and on both when it doesn't.
+    the request still carries it, and on both when it doesn't. The conversation's own request for the step is
+    recorded on too, when a capability replaced it in the history with a copy.
     """
     outgoing = messages[-1]
     assert isinstance(outgoing, _messages.ModelRequest)
     history = ctx.state.message_history
     persisted = history[-1] if history else None
     if not isinstance(persisted, _messages.ModelRequest) or persisted is outgoing:
-        return [outgoing]
-    if any(message is persisted for message in messages):
-        return [persisted]
-    return [outgoing, persisted]
+        targets = [outgoing]
+    elif any(message is persisted for message in messages):
+        targets = [persisted]
+    else:
+        targets = [outgoing, persisted]
+    return ctx.state.conversation_log.recording_targets(targets, history)
 
 
 def build_validation_context(
@@ -6120,49 +6121,13 @@ def _set_resumed_history(
             break
 
     ctx.state.message_history[:] = base_messages
+    ctx.state.conversation_log.shaped(base_messages)
     ctx.deps.new_message_index = _first_new_message_index(
         base_messages,
         ctx.state.run_id,
         resumed_request=ctx.deps.resumed_request,
         resumed_request_index=ctx.deps.resumed_request_index,
     )
-
-
-def leading_requests(messages: Sequence[_messages.ModelMessage]) -> list[_messages.ModelRequest]:
-    """The requests `messages` starts with, before its first response."""
-    requests: list[_messages.ModelRequest] = []
-    for message in messages:
-        if not isinstance(message, _messages.ModelRequest):
-            break
-        requests.append(message)
-    return requests
-
-
-def _merged_stored_tail(
-    given: list[_messages.ModelMessage],
-    cleaned: list[_messages.ModelMessage],
-    unsaved: list[_messages.ModelMessage] | None,
-) -> _messages.ModelRequest | None:
-    """The last stored request of `given` as cleaning merges it, if cleaning `given` into `cleaned` merged the requests `unsaved` starts with into it.
-
-    See `GraphAgentState.conversation_merged_tail`.
-    """
-    boundary = len(given) - len(unsaved or ())
-    appended = leading_requests(unsaved or ())
-    first = boundary
-    while first > 0 and isinstance(given[first - 1], _messages.ModelRequest):
-        first -= 1
-    if not appended or first == boundary:
-        return None
-    stored = _merge_consecutive_messages(given[first:boundary])
-    merged = _merge_consecutive_messages([*stored, *appended])
-    if len(merged) != len(stored):
-        return None
-    parts = merged[-1].parts
-    if not any(isinstance(message, _messages.ModelRequest) and message.parts == parts for message in cleaned):
-        return None
-    # The stored request itself, with all its fields, unless cleaning merged it with others the store has.
-    return cast(_messages.ModelRequest, given[boundary - 1] if boundary - first == 1 else stored[-1])
 
 
 def _first_new_message_index(
