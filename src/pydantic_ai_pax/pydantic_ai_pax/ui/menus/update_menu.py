@@ -7,7 +7,7 @@ from collections.abc import Callable, Sequence
 from dataclasses import replace
 
 from pydantic_ai_pax.cli.command_context import CommandContext
-from pydantic_ai_pax.cli.install import command_name
+from pydantic_ai_pax.cli.install import COMMAND, command_name
 from pydantic_ai_pax.cli.self_update import Updates
 from pydantic_ai_pax.plugins.menus import CloseMenu, Dialogs, FieldRow, SettingsMenu
 from pydantic_ai_pax.ui.menus.set_menu import SettingsSource
@@ -47,6 +47,11 @@ class AboutSource:
             return (
                 f'{command_name()} is already on the latest version {self._updates.current.label} '
                 f'on the {found.channel} channel (checked {checked}).'
+            )
+        if found.update.move:
+            return (
+                f'{command_name()} is now {COMMAND}: Update installs {found.update.label}, the latest on the '
+                f'{found.channel} channel, as {COMMAND} (checked {checked}).'
             )
         return f'a new version {found.update.label} of {command_name()} is available on the {found.channel} channel (checked {checked}).'
 
