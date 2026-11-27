@@ -145,6 +145,12 @@ _mime_types.add_type('application/toml', '.toml')
 _mime_types.add_type('application/xml', '.xml')
 
 
+def _media_type_from_file_name(file_name: str | PathLike[str]) -> str:
+    """The media type for a file name's extension, or `application/octet-stream` when the table has none."""
+    media_type, _ = _mime_types.guess_type(file_name)
+    return media_type or 'application/octet-stream'
+
+
 AudioMediaType: TypeAlias = Literal['audio/wav', 'audio/mpeg', 'audio/ogg', 'audio/flac', 'audio/aiff', 'audio/aac']
 ImageMediaType: TypeAlias = Literal['image/jpeg', 'image/png', 'image/gif', 'image/webp']
 DocumentMediaType: TypeAlias = Literal[
@@ -879,11 +885,7 @@ class BinaryContent:
         path = Path(path)
         if not path.exists():
             raise FileNotFoundError(f'File not found: {path}')
-        media_type, _ = _mime_types.guess_type(path)
-        if media_type is None:
-            media_type = 'application/octet-stream'
-
-        return cls.narrow_type(cls(data=path.read_bytes(), media_type=media_type))
+        return cls.narrow_type(cls(data=path.read_bytes(), media_type=_media_type_from_file_name(path)))
 
     @pydantic.computed_field
     @property

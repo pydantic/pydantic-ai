@@ -61,6 +61,16 @@ workspace access for a run on purpose, pass `workspace=UnavailableWorkspace(reas
 `run(..., cwd=path)` starts one command in another existing directory (relative to the working directory)
 on any backend, by changing into it through `sh`; a missing one raises `FileNotFoundError`.
 
+`await workspace.read_file(path)` returns a file as `BinaryContent` (a `BinaryImage` for images), with the media type
+taken from the extension as in `BinaryContent.from_path` (`application/octet-stream` when unknown). It reads the whole
+file with no size limit; check `stat(path).size` first to refuse large ones. To get a file the agent made out after the
+run, call it on `result.workspace`. With only a stored ref, for example in a download endpoint, wrap `backend(ref)` of the
+capability that created the sandbox (`DockerContainer`, `E2BSandbox` and the other harness sandboxes that create their
+own environment; wrappers such as `BubblewrappedWorkspace` have none), configured the same way (its `working_dir` and
+`env` carry over), in `Workspace(...)`: the backend attaches on first use, without starting a run. Serve only paths the app chose: `read_file` doesn't confine a path to the working
+directory (absolute paths and `..` reach any file the environment can read), so check a path from the client or the
+model with `realpath` against `working_dir()` first.
+
 Pydantic AI Harness's `ComputerUse` gives the model a `computer` tool that drives the screen of the run's workspace.
 The workspace's backend must have a screen, as the harness's sandbox desktops do. The protocols a screen implements
 are in `pydantic_ai_harness.computer_use`. `LocalWorkspace` has no screen.
