@@ -37,6 +37,7 @@ rules:
       # the corresponding .md sources are the editable surface.
       - pydantic-ai-bug-hunter.lock.yml
       - pydantic-ai-community-demand.lock.yml
+      - pydantic-ai-comparison-drift.lock.yml
       - pydantic-ai-docs-drift.lock.yml
       - pydantic-ai-feature-digest.lock.yml
       - pydantic-ai-pr-review.lock.yml
@@ -71,6 +72,7 @@ rules:
       # untrusted-input path the audit exists to catch does not apply here.
       - pydantic-ai-bug-hunter.lock.yml
       - pydantic-ai-community-demand.lock.yml
+      - pydantic-ai-comparison-drift.lock.yml
       - pydantic-ai-docs-drift.lock.yml
       - pydantic-ai-feature-digest.lock.yml
       - pydantic-ai-pr-review.lock.yml
