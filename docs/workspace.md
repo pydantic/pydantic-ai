@@ -109,6 +109,11 @@ up](#cleaning-up) shows how to handle that.
 Docker socket for you, and in-memory documents you keep in your own database. To list a package here,
 open a pull request.
 
+[`pydantic-ai-plimsoll`](https://pypi.org/project/pydantic-ai-plimsoll/) provides a workspace for
+`FileSystem` in a self-hosted Plimsoll sandbox. Its `plimsoll_shell` tool runs commands in the same
+sandbox. With a shared checkpoint store, a replacement worker can reattach while the sandbox is
+still running.
+
 <span id="writing-a-backend"></span><span id="resolving-symlinks"></span><span id="checking-a-backend"></span>For anything else, [write a backend](workspace-custom.md#writing-a-backend): one class that runs a
 command, plus a test suite that checks it behaves like the others.
 
