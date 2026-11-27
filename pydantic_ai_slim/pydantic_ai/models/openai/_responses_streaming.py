@@ -90,7 +90,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _timestamp: datetime = field(default_factory=_now_utc)
     _usage_received: bool | None = field(default=False, init=False)
     _has_refusal: bool = field(default=False, init=False)
-    _refusal_text: str = field(default='', init=False)
+    # Refusal text deltas, joined once the stream ends: appending each to a string would copy it every time.
+    _refusal_deltas: list[str] = field(default_factory=list[str], init=False)
     _last_sequence_number: int | None = field(default=None, init=False)
     # Text annotations by item ID and content index, collected until `output_text.done` maps them.
     _annotations_by_item: dict[tuple[str, int], list[object]] = field(
@@ -106,7 +107,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     _phase_started_content: set[tuple[str, int]] = field(default_factory=set[tuple[str, int]], init=False)
     _mcp_list_tools_return_ids: set[str] = field(default_factory=set[str], init=False)
     _pending_tool_search_call_ids: deque[str] = field(default_factory=deque[str], init=False)
-    _function_call_args: dict[str, str] = field(default_factory=dict[str, str], init=False)
+    # The argument deltas each function call item has received, joined when the call is finalized.
+    _function_call_arg_deltas: dict[str, list[str]] = field(default_factory=dict[str, list[str]], init=False)
     # Raw CoT deltas by reasoning item, one list per `raw_content` entry. A thinking part gets them, joined, only when
     # it's read: rebuilding `raw_content` for each delta would take time quadratic in the reasoning's length.
     _raw_content_deltas: dict[str, list[list[str]]] = field(default_factory=dict[str, list[list[str]]], init=False)
@@ -204,8 +206,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
                     yield event
             self._write_raw_content()
 
-            if self._refusal_text:
-                self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+            if refusal := ''.join(self._refusal_deltas):
+                self.provider_details = {**(self.provider_details or {}), 'refusal': refusal}
 
         # This is used to resume suspended background streams with `starting_after`.
         if self.state == 'suspended' and self._last_sequence_number is not None:
@@ -412,8 +414,8 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     ) -> Iterator[ModelResponseStreamEvent]:
         # Without `output_item.added` (a resumed stream) the part has no tool name yet, so
         # skip its deltas and let `output_item.done` create it; never mutate finalized args.
-        if chunk.item_id in self._function_call_args and chunk.item_id not in self._finalized_function_calls:
-            self._function_call_args[chunk.item_id] += chunk.delta
+        if chunk.item_id in self._function_call_arg_deltas and chunk.item_id not in self._finalized_function_calls:
+            self._function_call_arg_deltas[chunk.item_id].append(chunk.delta)
             yield from self._parts_manager.handle_tool_call_delta_events(
                 vendor_part_id=chunk.item_id,
                 args=chunk.delta,
@@ -422,7 +424,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
     def _handle_function_call_part(self, item: responses.ResponseFunctionToolCall) -> ModelResponseStreamEvent:
         item_id = item.id
         if item_id is not None:  # pragma: no branch
-            self._function_call_args[item_id] = item.arguments
+            self._function_call_arg_deltas[item_id] = [item.arguments]
         # Preserve any namespace attached to a discovered deferred tool for replay.
         provider_details: dict[str, Any] | None = None
         if item.namespace:
@@ -454,7 +456,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             # `output_item.done` creates it from the full item.
             return
 
-        received_args = self._function_call_args.get(item_id, '')
+        received_args = ''.join(self._function_call_arg_deltas.get(item_id, []))
         if received_args == final_args:
             self._finalized_function_calls.add(item_id)
             return
@@ -478,7 +480,7 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
             )
             return
 
-        self._function_call_args[item_id] = final_args
+        self._function_call_arg_deltas[item_id] = [final_args]
         self._finalized_function_calls.add(item_id)
 
     def _map_output_item_added(
@@ -775,13 +777,13 @@ class OpenAIResponsesStreamedResponse(StreamedResponse):
         # Accumulate refusal text from deltas as a fallback in case the done event is missing.
         self._has_refusal = True
         self.finish_reason = 'content_filter'
-        self._refusal_text += chunk.delta
+        self._refusal_deltas.append(chunk.delta)
 
     def _map_refusal_done(self, chunk: responses.ResponseRefusalDoneEvent) -> None:
         # The done event contains the full refusal text, replacing any accumulated deltas.
         self._has_refusal = True
         self.finish_reason = 'content_filter'
-        self._refusal_text = chunk.refusal
+        self._refusal_deltas = [chunk.refusal]
 
     def _map_code_interpreter_code_delta(
         self, chunk: responses.ResponseCodeInterpreterCallCodeDeltaEvent

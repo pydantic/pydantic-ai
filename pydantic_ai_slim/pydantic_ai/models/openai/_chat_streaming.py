@@ -58,13 +58,15 @@ class OpenAIStreamedResponse(StreamedResponse):
     # Content segments are anonymous; reasoning segments also carry their field identity.
     _content_generation: int = field(default=0, init=False)
     _reasoning_generation: int = field(default=0, init=False)
-    _held_text_whitespace: str = field(default='', init=False)
+    # Text kept across deltas, here and in `_refusal_deltas` and `_raw_text_deltas`, is collected as a list and joined
+    # when it's read: appending each delta to a string would copy the whole string every time.
+    _held_text_whitespace: list[str] = field(default_factory=list[str], init=False)
     _awaiting_text_after_reasoning: bool = field(default=False, init=False)
     _has_refusal: bool = field(default=False, init=False)
-    _refusal_text: str = field(default='', init=False)
+    _refusal_deltas: list[str] = field(default_factory=list[str], init=False)
     _has_finish_reason: bool = field(default=False, init=False)
     _logprobs: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
-    _raw_text_content: str = field(default='', init=False)
+    _raw_text_deltas: list[str] = field(default_factory=list[str], init=False)
     _pending_raw_annotations: list[object] = field(default_factory=list[object], init=False)
     _unmapped_chunks: list[dict[str, Any]] = field(default_factory=list[dict[str, Any]], init=False)
 
@@ -77,8 +79,8 @@ class OpenAIStreamedResponse(StreamedResponse):
                 for event in self._map_chunk(chunk):
                     yield event
 
-            if self._refusal_text:
-                self.provider_details = {**(self.provider_details or {}), 'refusal': self._refusal_text}
+            if refusal := ''.join(self._refusal_deltas):
+                self.provider_details = {**(self.provider_details or {}), 'refusal': refusal}
             if self._logprobs:
                 self.provider_details = {**(self.provider_details or {}), 'logprobs': self._logprobs}
             self._publish_unmapped_chunks()
@@ -118,7 +120,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         if choice.delta.refusal:
             self._has_refusal = True
             self.finish_reason = 'content_filter'
-            self._refusal_text += choice.delta.refusal
+            self._refusal_deltas.append(choice.delta.refusal)
             return
 
         if raw_finish_reason and not self._has_refusal:
@@ -199,7 +201,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         # still equals it: not split by reasoning, and not changed by removing thinking tags or whitespace.
         citations = (
             map_chat_citations(annotations, part.content)
-            if len(text_part_ids) == 1 and part.content == self._raw_text_content
+            if len(text_part_ids) == 1 and part.content == ''.join(self._raw_text_deltas)
             else None
         )
         provider_details: dict[str, Any] = {}
@@ -296,7 +298,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         # Handle the text part of the response. Some OpenAI-compatible servers stream it as a list of parts.
         content, _ = split_content_parts(choice.delta.content)
         if isinstance(content, str) and content:
-            self._raw_text_content += content
+            self._raw_text_deltas.append(content)
             emitted = False
             for event in self._parts_manager.handle_text_delta(
                 vendor_part_id=('content', self._content_generation),
@@ -313,7 +315,7 @@ class OpenAIStreamedResponse(StreamedResponse):
                 # that interrupted a text part. Hold it for the next text part, even across a tool call or `<think>`
                 # part, so the joined text keeps the separator; if no text follows, it stays dropped. Leading
                 # whitespace anywhere else is dropped as usual.
-                self._held_text_whitespace += content
+                self._held_text_whitespace.append(content)
 
         # Chat chunk deltas don't declare annotations, so they arrive as an extra field.
         raw_annotations = getattr(choice.delta, 'annotations', None)
@@ -327,8 +329,8 @@ class OpenAIStreamedResponse(StreamedResponse):
             event.part.id = 'content'
             event.part.provider_name = self.provider_name
         elif isinstance(event.part, TextPart) and self._held_text_whitespace:
-            event.part.content = self._held_text_whitespace + event.part.content
-            self._held_text_whitespace = ''
+            event.part.content = ''.join(self._held_text_whitespace) + event.part.content
+            self._held_text_whitespace.clear()
 
     def _map_tool_call_delta(self, choice: chat_completion_chunk.Choice) -> Iterable[ModelResponseStreamEvent]:
         """Hook that maps tool call delta content to events.
