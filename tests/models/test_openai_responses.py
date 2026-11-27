@@ -16827,9 +16827,35 @@ _FINAL_MESSAGE_EVENTS = _sse(
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
-@pytest.mark.parametrize('committed', [False, True], ids=['missing', 'committed'])
+@pytest.mark.parametrize(
+    ('committed', 'expected_input'),
+    [
+        pytest.param(
+            False,
+            snapshot(
+                [
+                    {'role': 'user', 'content': 'Look up a value'},
+                    {
+                        'name': 'lookup',
+                        'arguments': '{}',
+                        'call_id': 'call_1',
+                        'type': 'function_call',
+                        'id': 'fc_call_1',
+                    },
+                    {'type': 'function_call_output', 'call_id': 'call_1', 'output': 'known value'},
+                ]
+            ),
+            id='missing',
+        ),
+        pytest.param(
+            True,
+            snapshot([{'type': 'function_call_output', 'call_id': 'call_1', 'output': 'known value'}]),
+            id='committed',
+        ),
+    ],
+)
 async def test_openai_conversation_id_looks_up_stream_that_ended_before_completed(
-    allow_model_requests: None, committed: bool
+    allow_model_requests: None, committed: bool, expected_input: list[dict[str, str]]
 ):
     """A stream that ends cleanly before `response.completed` leaves an `'incomplete'` response with no finish reason,
     which OpenAI may or may not have added to the conversation. The run still calls the tool, and the next request
@@ -16869,17 +16895,7 @@ async def test_openai_conversation_id_looks_up_stream_that_ended_before_complete
     )
     continuation = transport.bodies[1]
     assert continuation['conversation'] == 'conv_1'
-    expected_input = {
-        False: snapshot(
-            [
-                {'role': 'user', 'content': 'Look up a value'},
-                {'name': 'lookup', 'arguments': '{}', 'call_id': 'call_1', 'type': 'function_call', 'id': 'fc_call_1'},
-                {'type': 'function_call_output', 'call_id': 'call_1', 'output': 'known value'},
-            ]
-        ),
-        True: snapshot([{'type': 'function_call_output', 'call_id': 'call_1', 'output': 'known value'}]),
-    }
-    assert continuation['input'] == expected_input[committed]
+    assert continuation['input'] == expected_input
 
 
 @pytest.mark.vcr(ignore_hosts=['api.openai.com'])
@@ -16890,7 +16906,7 @@ async def test_openai_conversation_id_trims_through_pending_non_streamed_respons
 
     A mock transport stands in for a cassette: OpenAI answers a non-streamed request only once the response finishes.
     """
-    pending: dict[str, Any] = {
+    pending: dict[str, object] = {
         **_failed_response_json(None),
         'status': 'in_progress',
         'conversation': {'id': 'conv_1'},
