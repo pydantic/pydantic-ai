@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import warnings
 from collections.abc import AsyncIterator, Awaitable, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
@@ -406,6 +407,239 @@ async def test_event_stream_error_closes_open_text():
             '</stream>',
         ]
     )
+
+
+async def test_event_stream_restarted_part_ends_open_text():
+    """A `PartStartEvent` can arrive while the previous part is still open. #11734
+
+    A retried durable activity republishes the model events it already published
+    (`durable_exec/temporal/_event_stream.py` documents this), so a subscriber reads the first
+    attempt's `PartStartEvent` and deltas, then the retry's `PartStartEvent` for the same index
+    with no `PartEndEvent` between them. The open part is ended before the new start is emitted —
+    the same cleanup the error path does — so the run never finishes with a message part still
+    streaming (`Cannot send 'RUN_FINISHED' while text messages are still active`).
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo'))
+        # The activity retry republishes its part start without a `PartEndEvent` first.
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo, world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello, world'))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hel',
+            'lo',
+            # the first attempt's part, closed with its recorded deltas applied
+            '</text followed_by_text=False>',
+            '<text follows_text=False>Hel',
+            'lo, world',
+            '</text followed_by_text=False>',
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
+# Expected encoder output for the republished-part-start stream, one entry per
+# (protocol, part_kind). Exact event lists make the end-before-restart semantics explicit:
+# every `*_START` is closed before the next one opens, and before the run finishes.
+# Volatile fields (wall-clock timestamps, generated UUIDs) are normalized away by
+# `_normalize_encoder_events` below, so each snapshot pins structure, not a run's ids.
+_RESTARTED_PART_EVENTS: dict[tuple[str, str], Any] = {
+    ('ag-ui', 'thinking'): snapshot(
+        [
+            {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1', 'protocolVersion': '1.0'},
+            {'type': 'REASONING_START', 'messageId': 'generated-0'},
+            {'type': 'REASONING_MESSAGE_START', 'messageId': 'generated-0', 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'messageId': 'generated-0', 'delta': 'Hel'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'messageId': 'generated-0', 'delta': 'lo'},
+            {'type': 'REASONING_MESSAGE_END', 'messageId': 'generated-0'},
+            {'type': 'REASONING_END', 'messageId': 'generated-0'},
+            {'type': 'REASONING_START', 'messageId': 'generated-1'},
+            {'type': 'REASONING_MESSAGE_START', 'messageId': 'generated-1', 'role': 'reasoning'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'messageId': 'generated-1', 'delta': 'Hel'},
+            {'type': 'REASONING_MESSAGE_CONTENT', 'messageId': 'generated-1', 'delta': ', world'},
+            {'type': 'REASONING_MESSAGE_END', 'messageId': 'generated-1'},
+            {'type': 'REASONING_END', 'messageId': 'generated-1'},
+            {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1', 'outcome': {'type': 'success'}},
+        ]
+    ),
+    ('ag-ui', 'tool-call'): snapshot(
+        [
+            {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1', 'protocolVersion': '1.0'},
+            {'type': 'TEXT_MESSAGE_START', 'messageId': 'generated-0', 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_END', 'messageId': 'generated-0'},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'generated-1',
+                'toolCallName': 'get_time',
+                'parentMessageId': 'generated-0',
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'generated-1', 'delta': '{"tz": '},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'generated-1', 'delta': '"UTC"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'generated-1'},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'generated-1',
+                'toolCallName': 'get_time',
+                'parentMessageId': 'generated-0',
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'generated-1', 'delta': '{"tz": '},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'generated-1', 'delta': '"UTC"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'generated-1'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': 'generated-2',
+                'toolCallId': 'generated-1',
+                'content': '12:00',
+                'role': 'tool',
+            },
+            {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1', 'outcome': {'type': 'success'}},
+        ]
+    ),
+    ('vercel-ai', 'thinking'): snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'reasoning-start', 'id': 'generated-0'},
+            {'type': 'reasoning-delta', 'id': 'generated-0', 'delta': 'Hel'},
+            {'type': 'reasoning-delta', 'id': 'generated-0', 'delta': 'lo'},
+            {'type': 'reasoning-end', 'id': 'generated-0'},
+            {'type': 'reasoning-start', 'id': 'generated-1'},
+            {'type': 'reasoning-delta', 'id': 'generated-1', 'delta': 'Hel'},
+            {'type': 'reasoning-delta', 'id': 'generated-1', 'delta': ', world'},
+            {'type': 'reasoning-end', 'id': 'generated-1'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    ),
+    ('vercel-ai', 'tool-call'): snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'generated-0', 'toolName': 'get_time'},
+            {'type': 'tool-input-delta', 'toolCallId': 'generated-0', 'inputTextDelta': '{"tz": '},
+            {'type': 'tool-input-delta', 'toolCallId': 'generated-0', 'inputTextDelta': '"UTC"}'},
+            {'type': 'tool-input-start', 'toolCallId': 'generated-0', 'toolName': 'get_time'},
+            {'type': 'tool-input-delta', 'toolCallId': 'generated-0', 'inputTextDelta': '{"tz": '},
+            {'type': 'tool-input-delta', 'toolCallId': 'generated-0', 'inputTextDelta': '"UTC"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'generated-0',
+                'toolName': 'get_time',
+                'input': {'tz': 'UTC'},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'generated-0', 'output': '12:00'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    ),
+}
+
+
+def _normalize_encoder_events(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """Drop wall-clock timestamps and relabel generated ids so runs compare stably.
+
+    Timestamps are epoch milliseconds and message/part ids are UUIDs minted per run; both
+    would defeat exact snapshots. Relabeling preserves the identity semantics the test
+    cares about: the same id keeps the same label, so a restarted part visibly mints a
+    new one.
+    """
+    normalized: list[dict[str, Any]] = []
+    labels: dict[str, str] = {}
+    for event in events:
+        cleaned = {key: value for key, value in event.items() if key != 'timestamp'}
+        for id_key in ('messageId', 'id', 'toolCallId', 'parentMessageId'):
+            if id_key in cleaned:
+                cleaned[id_key] = labels.setdefault(str(cleaned[id_key]), f'generated-{len(labels)}')
+        normalized.append(cleaned)
+    return normalized
+
+
+@pytest.mark.parametrize('part_kind', ['thinking', 'tool-call'])
+@pytest.mark.parametrize('protocol', ['ag-ui', 'vercel-ai'])
+async def test_event_stream_restarted_part_ends_open_part_in_real_encoders(protocol: str, part_kind: str) -> None:
+    """A republished `PartStartEvent` ends the still-open part under the real encoders. #11734
+
+    Beyond the dummy-stream text case above, the issue names a thinking part and a tool call
+    part: their end events differ per protocol, so this feeds the republished-start stream
+    through the AG-UI and Vercel AI encoders and asserts the output is verifier-valid — every
+    start has an end before the run finishes.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        if part_kind == 'thinking':
+            yield PartStartEvent(index=0, part=ThinkingPart(content='Hel'))
+            yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo'))
+            # The activity retry republishes its part start with no `PartEndEvent` before it.
+            yield PartStartEvent(index=0, part=ThinkingPart(content='Hel'))
+            yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=', world'))
+            yield PartEndEvent(index=0, part=ThinkingPart(content='Hello, world'))
+        else:
+
+            def call_part(args: str) -> ToolCallPart:
+                return ToolCallPart(tool_name='get_time', args=args, tool_call_id='call_0')
+
+            yield PartStartEvent(index=0, part=call_part('{"tz": '))
+            yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}'))
+            # The activity retry republishes its part start with no `PartEndEvent` before it.
+            yield PartStartEvent(index=0, part=call_part('{"tz": '))
+            yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}'))
+            yield PartEndEvent(index=0, part=call_part('{"tz": "UTC"}'))
+            yield FunctionToolCallEvent(part=call_part('{"tz": "UTC"}'), args_valid=True)
+            yield FunctionToolResultEvent(
+                part=ToolReturnPart(tool_name='get_time', tool_call_id='call_0', content='12:00')
+            )
+
+    if protocol == 'ag-ui':
+        pytest.importorskip('ag_ui')
+        from ag_ui.core import RunAgentInput, UserMessage
+
+        from pydantic_ai.ui.ag_ui import AGUIEventStream
+
+        run_input = RunAgentInput(
+            thread_id='thread_1',
+            run_id='run_1',
+            messages=[UserMessage(id='msg_1', content='Hello')],
+            state={},
+            context=[],
+            tools=[],
+            forwarded_props={},
+            resume=None,
+        )
+        event_stream = AGUIEventStream(run_input=run_input)
+        # The stream is consumed inside each protocol branch so the receiver stays a concrete
+        # type; a union-typed receiver makes `encode_stream`'s parameter unsolvable for pyright.
+        events = [
+            json.loads(event.removeprefix('data: '))
+            async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+            if '[DONE]' not in event
+        ]
+    else:
+        from pydantic_ai.ui.vercel_ai import VercelAIEventStream
+        from pydantic_ai.ui.vercel_ai.request_types import SubmitMessage, TextUIPart, UIMessage
+
+        run_input = SubmitMessage(
+            id='foo',
+            messages=[UIMessage(id='bar', role='user', parts=[TextUIPart(text='go')])],
+        )
+        event_stream = VercelAIEventStream(run_input=run_input)
+        events = [
+            json.loads(event.removeprefix('data: '))
+            async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+            if '[DONE]' not in event
+        ]
+
+    assert _normalize_encoder_events(events) == _RESTARTED_PART_EVENTS[(protocol, part_kind)]
 
 
 async def test_event_stream_error_closes_open_thinking():
