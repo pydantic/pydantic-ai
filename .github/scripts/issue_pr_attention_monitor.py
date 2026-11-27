@@ -55,6 +55,13 @@ _PRIORITY_SLA_WINDOWS = {
     'p:2-high': dt.timedelta(days=7),
 }
 _PrioritySlaOutcome = Literal['due', 'active', 'commented', 'owner_skipped', 'unknown']
+_PRIORITY_SLA_MARKER = '<!-- pydantic-ai-priority-sla:v1 '
+# A comment this mode posted is its mentions and one line of text, then its marker, and nothing
+# else. Other workflows post as the same bot and can quote issue text, so a marker inside other
+# text never counts as a comment.
+_PRIORITY_SLA_COMMENT = re.compile(
+    rf'(?:@[\w-]+ )+this `[^`\r\n]+` issue [^\r\n]+\r?\n\r?\n{re.escape(_PRIORITY_SLA_MARKER)}label=\S+ since=\S+ -->'
+)
 _RESURFACE_AFTER = dt.timedelta(days=7)
 _RECENT_ACTIVITY_WINDOW = dt.timedelta(days=45)
 _CANDIDATE_LIMIT = 10
@@ -2182,8 +2189,7 @@ def _priority_sla_decision(
     It is also `unknown` when the timeline holds no such moment, or the maintainer lookups ran
     out before ruling an actor out.
     """
-    marker = '<!-- pydantic-ai-priority-sla:v1 '
-    # Only this author's markers count, so pasting the marker cannot suppress a comment.
+    # Only this author's comments count, so pasting one cannot suppress a comment.
     author = 'github-actions[bot]'
     # Never mentioned: an issue only they own is counted and skipped, because a comment
     # without a mention still notifies every assignee. Casefolded.
@@ -2228,7 +2234,7 @@ def _priority_sla_decision(
     if any(
         event.get('event') == 'commented'
         and _actor(event) == author
-        and marker in str(event.get('body') or '')
+        and _PRIORITY_SLA_COMMENT.fullmatch(str(event.get('body') or ''))
         and (when := _event_time(event)) is not None
         and when > since
         for event in timeline
@@ -2242,7 +2248,7 @@ def _priority_sla_decision(
         f'{" ".join(f"@{login}" for login in mentions)} this `{label}` issue has had no maintainer or linked-PR '
         f'activity for {(now - since).days} days; the window for its priority is {window.days}. '
         'Could you post a next step, or change its priority?\n\n'
-        f'{marker}label={label} since={since.strftime("%Y-%m-%dT%H:%M:%SZ")} -->'
+        f'{_PRIORITY_SLA_MARKER}label={label} since={since.strftime("%Y-%m-%dT%H:%M:%SZ")} -->'
     )
     return 'due', body
 

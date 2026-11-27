@@ -3183,6 +3183,12 @@ def test_priority_sla_comments_once_per_window_and_again_after_maintainer_activi
     assert decide(client)[0] == 'due'
     client.timelines[1][-2]['actor'] = SLA_BOT
 
+    # Other workflows post as the same bot; their quote of the comment never covers a window.
+    for quoted in (f'An issue quoted:\n\n{payload["body"]}', f'{payload["body"]}\n\nmore text'):
+        client.timelines[1][-2]['body'] = quoted
+        assert decide(client)[0] == 'due'
+    client.timelines[1][-2]['body'] = payload['body']
+
     # A maintainer reply opens a new window, which comments again once it runs out.
     client.timelines[1].append(sla_event('commented', 'DouweM', ago(dt.timedelta(seconds=-1))))
     later = SLA_NOW + dt.timedelta(days=7, seconds=2)
