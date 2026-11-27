@@ -61,7 +61,7 @@ This installation also includes [migration skills](framework-migration.md) for m
 
 The `advising-pydantic-ai-repos` skill has your coding agent review an application that already uses Pydantic AI. It's bundled with the package, so install it with [Library Skills](#library-skills) (`uvx library-skills --all`); the Claude Code plugin and `npx skills add pydantic/skills` don't include it. It reports:
 
-- code the application writes by hand that your installed Pydantic AI already provides, such as a model fallback loop instead of the [`ModelFallback`](capabilities/model-fallback.md) capability, or approval flags instead of [deferred tools](deferred-tools.md);
+- code the application writes by hand that your installed Pydantic AI already provides, such as a model fallback loop instead of the [`ModelFallback`](capabilities/model-fallback.md) capability, or approval flags instead of [deferred tools](deferred-tools.md), and what [Pydantic AI Harness](harness/index.md) could replace, as an optional addition if you don't use it yet;
 - what upgrading to the latest release would add that replaces code you have;
 - which notes in the [upgrade guide](changelog.md#catching-up-across-v2-minor-releases) affect your code;
 - bugs it finds in your own code along the way;
