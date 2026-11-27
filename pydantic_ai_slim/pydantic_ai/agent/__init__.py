@@ -1845,7 +1845,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             ),
             conversation_revision=conversation_revision,
             conversation_unsaved=conversation_unsaved,
-            conversation_loaded=len(message_history) if message_history else 0,
+            conversation_loaded=list(message_history or ()),
             conversation_unchecked=conversation_unchecked,
             conversation_deferred_tool_requests=conversation_deferred_tool_requests,
         )

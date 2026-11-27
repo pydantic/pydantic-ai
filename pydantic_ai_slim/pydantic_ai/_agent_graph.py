@@ -974,8 +974,8 @@ class GraphAgentState:
     [`new_message_index`][pydantic_ai.conversation.Conversation.new_message_index]. The result's
     `conversation` finds them in the history to tell its store where the unsaved messages start.
     """
-    conversation_loaded: int | None = None
-    """Internal: how many messages the conversation this run was given held, before a `before_run` hook added any."""
+    conversation_loaded: list[_messages.ModelMessage] | None = None
+    """Internal: the messages of the conversation this run was given, before a `before_run` hook changed them."""
     conversation_deferred_tool_requests: DeferredToolRequests | None = None
     """The [`deferred_tool_requests`][pydantic_ai.conversation.Conversation.deferred_tool_requests] of the conversation this run was given, if any.
 
@@ -6224,10 +6224,15 @@ def _set_resumed_history(
 
 
 def _mark_added_before_run_unsaved(state: GraphAgentState) -> None:
-    """Count the messages a `before_run` hook added to a loaded conversation as unsaved, since the store doesn't have them either."""
-    unsaved, loaded, given = state.conversation_unsaved, state.conversation_loaded, state.message_history
-    if unsaved is not None and loaded is not None and len(given) > loaded:
-        state.conversation_unsaved = [*unsaved, *given[loaded:]]
+    """Count the messages a `before_run` hook added after a loaded conversation's messages as unsaved, since the store doesn't have them either.
+
+    A message it inserted before one of them can't be appended to what's stored, so it isn't saved.
+    """
+    unsaved, history = state.conversation_unsaved, state.message_history
+    known = {id(message) for message in state.conversation_loaded or ()}
+    start = next((index + 1 for index in range(len(history) - 1, -1, -1) if id(history[index]) in known), 0)
+    if unsaved is not None and start < len(history):
+        state.conversation_unsaved = [*unsaved, *history[start:]]
 
 
 def _record_appended_after(state: GraphAgentState, request: _messages.ModelRequest) -> None:
