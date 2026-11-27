@@ -1706,7 +1706,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         Mutates `openai_messages`.
         """
         if chained_instructions and continues_chain:
-            # A continued chain's stored input already starts with the stable ones, as its history digest confirmed.
+            # A continued chain's stored input already starts with the stable ones, or with all of them on a model whose
+            # profile sets `honors_only_first_system_message`, as its history digest confirmed.
+            if profile.get('honors_only_first_system_message', False):
+                return OMIT
             _, rest = split_stable_instructions(self._get_instruction_parts(messages, model_request_parameters) or [])
             return InstructionPart.join(rest) or OMIT
         if chained_instructions or self._should_relocate_instructions(
@@ -1799,21 +1802,28 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     ) -> list[str]:
         """The instructions an `openai_previous_response_id='auto'` chain keeps at the start of its stored input.
 
-        On a model whose profile sends the instructions that keep the prefix stable as leading input messages, a request
-        that starts the chain or resends the history sends them there, and a request that continues it leaves them out.
+        On a model whose profile sends the instructions that keep the prefix stable as leading input messages, or all
+        of them in its one leading system message (`honors_only_first_system_message`), a request that starts the
+        chain or resends the history sends them there, and a request that continues it leaves them out.
         Each response's history digest records them, so a request only continues while it would send the same ones.
         Empty where they stay in the top-level field: see `_instructions_stay_top_level`, and a compacted history,
         whose compaction item keeps the window's leading system items.
         """
         profile = self.profile
-        if (
-            model_settings.get('openai_previous_response_id') != 'auto'
-            or not profile.get('openai_responses_stable_instructions_as_input', False)
-            or self._instructions_stay_top_level(profile.get('openai_system_prompt_role', None) or 'system', messages)
-            or any(isinstance(part, CompactionPart) for message in messages for part in message.parts)
+        system_prompt_role = profile.get('openai_system_prompt_role', None) or 'system'
+        if model_settings.get('openai_previous_response_id') != 'auto' or any(
+            isinstance(part, CompactionPart) for message in messages for part in message.parts
         ):
             return []
-        stable, _ = split_stable_instructions(self._get_instruction_parts(messages, model_request_parameters) or [])
+        instruction_parts = self._get_instruction_parts(messages, model_request_parameters) or []
+        if profile.get('honors_only_first_system_message', False):
+            # They move even next to a dynamic system prompt: see `_should_relocate_instructions`.
+            return [] if system_prompt_role == 'user' else [part.content for part in instruction_parts]
+        if not profile.get('openai_responses_stable_instructions_as_input', False) or self._instructions_stay_top_level(
+            system_prompt_role, messages
+        ):
+            return []
+        stable, _ = split_stable_instructions(instruction_parts)
         return [part.content for part in stable]
 
     @staticmethod
@@ -1855,8 +1865,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # The host follows only the first leading system message and may ignore the top-level field (Bedrock
             # Mantle's Responses endpoint does for gpt-oss), so they move even next to a dynamic system prompt, and on
             # the request that starts an `openai_previous_response_id` chain: its stored input then starts with them.
-            # A request continuing a response, or adding to a conversation, which may already hold items, doesn't
-            # resend them.
+            # A request continuing a given response, or adding to a conversation, which may already hold items,
+            # doesn't resend them. One continuing an `'auto'` chain leaves them out: see `_chained_instructions`.
             return not continues_chain and model_settings.get('openai_conversation_id') is None
         # Instructions relocated into a stored response's input would be replayed to any request
         # that continues it, next to that request's own instructions.

@@ -348,11 +348,11 @@ class OpenAIModelProfile(ModelProfile, total=False):
     exactly one initial system message; consecutive system messages at the start will be merged into one
     (joined with two newlines) before being sent. Supported by `OpenAIChatModel` only.
 
-    Use this key when the backend's Chat Completions endpoint rejects more than one leading system message,
-    whatever the model, as `VLLMProvider` sets it for every model. When the model itself follows only its first
-    system message, on either API, set
+    Use this key when only Chat Completions requests need the merge, as `VLLMProvider` sets it for every model and
+    the gpt-oss family profile does. When the host's Responses endpoint also follows only the first system message,
+    or ignores the top-level `instructions` field, set
     [`honors_only_first_system_message`][pydantic_ai.profiles.ModelProfile.honors_only_first_system_message]
-    instead, which also sends the instructions in that one message on the Responses API."""
+    instead, which merges on both APIs and also sends the instructions in that one message on the Responses API."""
 
     openai_chat_streaming_requires_finish_reason: bool
     """Whether a streamed Chat Completions response must include a non-null `finish_reason`. Default: `False`.
@@ -791,11 +791,9 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         profile['default_framing_announcement'] = 'always'
         # The announcement is a system message of its own ahead of the instructions, and OpenAI's reference gpt-oss
         # chat template keeps only the first system message as the developer message and drops any other, so the
-        # instructions would be lost: send one leading system message holding them all.
-        # Bedrock Mantle's Responses endpoint also ignores the top-level `instructions` for `gpt-oss-120b` and
-        # follows them as that one leading system message (#14451).
+        # instructions would be lost: merge the leading system messages into one, as `VLLMProvider` does.
         # https://huggingface.co/openai/gpt-oss-120b/raw/main/chat_template.jinja
-        profile['honors_only_first_system_message'] = True
+        profile['openai_chat_supports_multiple_system_messages'] = False
         # With plain `<system>` blocks, gpt-oss-120b often followed a `<system>` tag the user typed over the
         # application's mid-conversation change, on two hosts. Sealed, it followed the application's change as
         # reliably as with the rule in its system prompt from the start.
