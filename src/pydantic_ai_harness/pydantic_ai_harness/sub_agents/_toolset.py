@@ -1974,6 +1974,6 @@ async def _with_parent_authority(parent: Workspace, workspace: Workspace, direct
         return workspace
     levels = {await lowest_authority_under(parent, directory), parent.authority}
     # Both are needed: a `path_authority` entry can give `directory` more than the workspace's own level. The order
-    # is core's (`'none'` < `'user'` < `'operator'`, as `lowest_authority` in `pydantic_ai.workspaces` keeps it).
+    # is core's (`'none'` < `'user'` < `'operator'`, as `lowest_authority` in `pydantic_ai.workspaces._authority_paths` keeps it).
     lowest: Authority = 'none' if 'none' in levels else 'user' if 'user' in levels else 'operator'
     return workspace if lowest == 'operator' else AuthorityWorkspace(workspace, authority=lowest)
