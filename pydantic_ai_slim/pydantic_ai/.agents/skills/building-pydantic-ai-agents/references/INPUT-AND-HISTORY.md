@@ -136,7 +136,7 @@ Rules of thumb:
 
 ## Manage Context Size
 
-Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` is a thin wrapper around the `before_model_request` lifecycle hook — for richer control (access to `RunContext`/`ModelRequestContext`, ability to short-circuit the model call), hook the event directly via `capabilities=[Hooks(before_model_request=fn)]`.
+Use `capabilities=[ProcessHistory(...)]` to trim or rewrite message history before each model request. `ProcessHistory` runs its processor as the `process_history(ctx, messages) -> messages` capability hook: once per request step, right before that capability's `before_model_request`, with the result sent and written back to the run's history. Implement `process_history` on your own capability, or use `Hooks(process_history=fn)`, to combine it with other behavior. For request-only changes or to short-circuit the model call, use `before_model_request` instead. Compaction (`compact_history`) runs per attempt after it, so it compacts the processed history, and `ctx.request_compaction()` from a processor is served by the same step. Keep the standing system prompt first: compaction must keep the processed history's leading system prompt ahead of its summary, or the run raises `UserError`.
 
 In `before_model_request` and `wrap_model_request`, use the two message views deliberately:
 
