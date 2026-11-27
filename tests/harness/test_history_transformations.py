@@ -279,16 +279,8 @@ _TRANSFORMS: dict[Transformation, Transform] = {
 
 
 def _run_level_transforms() -> dict[Transformation, Transform]:
-    """The run-level transforms in `c4_transforms_runlevel.py`, which imports `Transform` from here, once it exists."""
-    module = f'{__package__}.c4_transforms_runlevel'
-    try:
-        return importlib.import_module(module).RUN_LEVEL_TRANSFORMS
-    except ModuleNotFoundError as error:  # pragma: no cover
-        # The module is optional, so a checkout without it still runs the registry. Only the module missing is
-        # tolerated: an import error inside it fails the suite.
-        if error.name != module:  # pragma: no cover
-            raise
-        return {}
+    """The run-level transforms in `c4_transforms_runlevel.py`, imported lazily since it imports `Transform` from here."""
+    return importlib.import_module(f'{__package__}.c4_transforms_runlevel').RUN_LEVEL_TRANSFORMS
 
 
 @functools.cache
