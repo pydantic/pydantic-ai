@@ -1130,14 +1130,13 @@ A tool's [`allowed_callers`][pydantic_ai.tools.ToolDefinition.allowed_callers] s
 - `'direct'`: the model, in its response.
 - `'programmatic'`: code the model wrote, whether it runs in a local sandbox like [Code Mode](harness/code-mode.md) or in a provider's code execution.
 
-Set it with the `allowed_callers` argument of [`Tool`][pydantic_ai.tools.Tool], the tool decorators and [`FunctionToolset.add_function`][pydantic_ai.toolsets.FunctionToolset.add_function], or on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], for example from a [`prepare`](#tool-prepare) function to change it per run. Restrict a tool to `{'direct'}` when the model itself has to see its result, such as a screenshot, and to `{'programmatic'}` when it only makes sense inside code, such as a paginated listing code can loop over:
+Set it with the `allowed_callers` argument of [`Tool`][pydantic_ai.tools.Tool], the tool decorators and [`FunctionToolset.add_function`][pydantic_ai.toolsets.FunctionToolset.add_function], or on the [`ToolDefinition`][pydantic_ai.tools.ToolDefinition], for example with `replace(tool_def, allowed_callers=...)` in a [`prepare`](#tool-prepare) function to change it per run, which validates it like the constructor does. Restrict a tool to `{'direct'}` when the model itself has to see its result, such as a screenshot, and to `{'programmatic'}` when it only makes sense inside code, such as a paginated listing code can loop over:
 
 ```python {title="tool_callers.py"}
-from pydantic_ai_harness import CodeMode
-
 from pydantic_ai import Agent, BinaryImage
 
-agent = Agent('{{ anthropic:medium }}', capabilities=[CodeMode()])
+# Add a capability that calls tools from code, like the harness's `CodeMode`, for the `{'programmatic'}` tool.
+agent = Agent('{{ anthropic:medium }}')
 
 
 @agent.tool_plain(allowed_callers={'direct'})

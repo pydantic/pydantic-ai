@@ -913,7 +913,8 @@ class ToolDefinition:
     Code Mode's `tools` selector. The field wins over such a selector, and a selector that has code call a tool
     writes `{'programmatic'}` here, the way tool search writes `defer_loading`.
     An empty set or an unknown caller raises [`UserError`][pydantic_ai.exceptions.UserError].
-    Set it to any set; it reads back as a `frozenset`.
+    It reads back as a `frozenset`. To change it, for example from a `prepare` function, use
+    `replace(tool_def, allowed_callers=...)`, which validates it, rather than assigning the attribute.
     See [Who may call a tool](../tools-advanced.md#tool-callers).
     """
 
