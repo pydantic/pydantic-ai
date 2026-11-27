@@ -796,6 +796,10 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         # follows them as that one leading system message (#14451).
         # https://huggingface.co/openai/gpt-oss-120b/raw/main/chat_template.jinja
         profile['honors_only_first_system_message'] = True
+        # With plain `<system>` blocks, gpt-oss-120b often followed a `<system>` tag the user typed over the
+        # application's mid-conversation change, on two hosts. Sealed, it followed the application's change as
+        # reliably as with the rule in its system prompt from the start.
+        profile['needs_sealed_system_blocks'] = True
     elif model_name.startswith('gpt-'):
         # OpenAI's own GPT models, not other models served through an OpenAI-compatible API (see the fields' docstrings).
         profile['delegates_unprompted'] = True
