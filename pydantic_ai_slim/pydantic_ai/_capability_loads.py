@@ -23,7 +23,6 @@ from dataclasses import dataclass
 
 from pydantic_ai._deferred_capabilities import LoadExchanges
 from pydantic_ai._utils import is_str_dict
-from pydantic_ai.durable_exec import DurableRunContext
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
     CompactionPart,
@@ -109,6 +108,8 @@ def deferred_capability_ids(ctx: RunContext[AgentDepsT]) -> set[str] | None:
     Inside a durable unit the registry doesn't cross the boundary, so the ids serialized with the context
     at dispatch answer instead, as they do for `RunContext.is_tool_available`.
     """
+    from pydantic_ai.durable_exec import DurableRunContext  # noqa: PLC0415
+
     if isinstance(ctx, DurableRunContext):
         return ctx._deferred_capability_ids  # pyright: ignore[reportPrivateUsage]
     capabilities = getattr(ctx, 'capabilities', None)
