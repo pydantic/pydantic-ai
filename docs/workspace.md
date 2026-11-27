@@ -297,8 +297,11 @@ async def download(ref: WorkspaceRef, path: str) -> BinaryContent:
   [`stat`][pydantic_ai.workspaces.Workspace.stat]`(path).size` first.
 - Use the capability that created the sandbox. If the sandbox is gone, reading raises
   [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
-- Take the path from your own records, such as a model response you stored. A path sent by the client
-  could name any file in the workspace, secrets included.
+- Serve only paths your app chose, such as the file name you asked the agent to write. `read_file` doesn't
+  keep a path inside the working directory: an absolute path or `..` can name any file the environment can
+  read, and with [`LocalWorkspace`][pydantic_ai.capabilities.LocalWorkspace] that is the host. A path from the
+  client or from a model response (which the prompt or fetched content can steer) needs a check that
+  `await workspace.realpath(path)` is under `await workspace.working_dir()` before you read it.
 
 ## Cleaning up
 

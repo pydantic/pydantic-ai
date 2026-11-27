@@ -67,7 +67,9 @@ file with no size limit; check `stat(path).size` first to refuse large ones. To 
 run, call it on `result.workspace`. With only a stored ref, for example in a download endpoint, wrap `backend(ref)` of the
 capability that created the sandbox (`DockerContainer`, `E2BSandbox` and the other harness sandboxes that create their
 own environment; wrappers such as `BubblewrappedWorkspace` have none) in `Workspace(...)`: the backend attaches on first
-use, without starting a run. Take the path from your own records, not from the client.
+use, without starting a run. Serve only paths the app chose: `read_file` doesn't confine a path to the working
+directory (absolute paths and `..` reach any file the environment can read), so check a path from the client or the
+model with `realpath` against `working_dir()` first.
 
 Pydantic AI Harness's `ComputerUse` gives the model a `computer` tool that drives the screen of the run's workspace.
 The workspace's backend must have a screen, as the harness's sandbox desktops do. The protocols a screen implements

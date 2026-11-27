@@ -119,6 +119,7 @@ async def test_wrapper_overrides_apply_to_text_writes():
 
 
 async def test_read_file_types_the_content_by_extension() -> None:
+    """In-memory fake workspace: no provider request, so nothing to record."""
     workspace = Workspace(
         FakeWorkspace(
             'read-file',
@@ -134,6 +135,8 @@ async def test_read_file_types_the_content_by_extension() -> None:
 
 
 async def test_read_file_reads_through_wrapper_overrides() -> None:
+    """In-memory fake workspace: no provider request, so nothing to record."""
+
     class ReadingWrapper(WrapperWorkspace):
         async def read_bytes(self, path: str) -> bytes:
             return b'outer'
@@ -143,6 +146,8 @@ async def test_read_file_reads_through_wrapper_overrides() -> None:
 
 
 async def test_read_file_gets_a_file_out_after_the_run() -> None:
+    """`FunctionModel` run on a fake workspace: no provider request, so nothing to record."""
+
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         if len(messages) == 1:
             return ModelResponse(parts=[ToolCallPart('plot', {})])
