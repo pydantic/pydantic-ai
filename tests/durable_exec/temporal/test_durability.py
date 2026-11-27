@@ -375,6 +375,16 @@ class SubmitOutputInWorkflowWorkflow:
         return (await submit_output_in_workflow_agent.run(prompt)).output
 
 
+def test_durability_engine_spec_declares_how_workflow_code_runs():
+    """Workflow code replays, runs on a loop other threads can't wake, and is stopped by the deadlock detector."""
+    spec = TemporalDurability.engine_spec
+    assert (spec.replays_orchestrator_code, spec.thread_wakeable_loop, spec.bounds_blocking_orchestrator_code) == (
+        True,
+        False,
+        True,
+    )
+
+
 async def test_durability_submit_output_needs_the_tool_in_the_workflow(client: Client):
     """`submit_output()` can't reach the run from a tool's activity, but works from a tool opted out of one."""
     async with Worker(
