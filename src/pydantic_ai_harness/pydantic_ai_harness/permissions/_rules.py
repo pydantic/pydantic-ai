@@ -433,7 +433,8 @@ def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str 
     - `'web_fetch(url=https://example.com/*)'`: calls whose `url` argument matches the glob.
 
     A pattern ending in `:*` on any other name, such as a lowercase `'shell(rm -rf:*)'`, raises `UserError`, and so
-    does a wildcard in a tool name, such as `'mcp__github__*'`: a rule names tools exactly.
+    does a wildcard in a tool name, such as `'mcp__github__*'`, or Claude Code's rule for a whole MCP server, such as
+    `'mcp__github'`: a rule names tools exactly.
 
     The text between the first `(` and the last `)` is the pattern, so a command may hold parentheses. Claude Code's
     own tool names, such as `Read` or `Edit`, raise `UserError` naming the tool to use: no tool here has them, so
@@ -444,6 +445,12 @@ def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str 
         raise UserError(f'Permission rule {rule!r} uses the Claude Code tool name {name!r}: name {instead} instead.')
     if any(char in name for char in '*?['):
         raise UserError(f'Permission rule {rule!r} has a wildcard in its tool name: name each tool in full.')
+    if name.startswith('mcp__') and '__' not in name.removeprefix('mcp__'):
+        # Claude Code's rule for every tool of one MCP server; tool names here carry no server by convention.
+        raise UserError(
+            f'Permission rule {rule!r} names an MCP server the way Claude Code does, which matches no tool here: '
+            'name each tool as the agent sees it.'
+        )
     inner = None if inner is None else inner.strip()
     if name in _SHELL_NAMES:
         return _shell_rule(rule, name, inner, verdict, reason=reason)

@@ -155,7 +155,7 @@ permissions = Permissions(
 - `Bash(git push:*)` (or `Shell(...)`) is `command='git push'`, and so is Claude Code's `Bash(git push *)`. `Bash` alone, or `Bash(*)`, matches every shell command. A `*` anywhere else in a command raises `UserError`, since a command rule matches words, not wildcards.
 - `Bash(git push)`, without `:*`, is the same rule in `'ask'` and `'deny'`. In `'allow'` it raises `UserError`: Claude Code reads it as that exact command, while a command rule allows every command starting with its words, so the string must say `:*`.
 - `write_file` is every call to that tool, `write_file(docs/*)` globs its `path` argument, and `deploy(env=prod*)` globs a named one. A leading `./` on a `path` glob is dropped. A `path` glob starting with `/` or `~` raises `UserError`: Claude Code reads those against the project or home folder, while a relative glob here already matches the end of a longer path.
-- A wildcard in a tool name, such as `mcp__github__*`, raises `UserError`: a rule names each tool in full.
+- A wildcard in a tool name, such as `mcp__github__*`, raises `UserError`, and so does Claude Code's rule for a whole MCP server, such as `mcp__github`: a rule names each tool in full, as the agent sees it.
 - Claude Code's own tool names (`Read`, `Edit`, `MultiEdit`, `Write`, `Glob`, `Grep`, `WebFetch`) raise `UserError` naming the tool to use instead, such as `edit_file`, since a rule naming them would match nothing.
 - A pattern ending in `:*` on any name but `Bash` or `Shell`, such as `shell(rm -rf:*)`, raises `UserError` too: as a `path` glob it would match nothing.
 

@@ -156,6 +156,16 @@ class TestParsePermissionRule:
         with pytest.raises(UserError, match='has a wildcard in its tool name'):
             parse_permission_rule(rule, 'deny')
 
+    @pytest.mark.parametrize('rule', ['mcp__github', 'mcp__github(x)'])
+    def test_a_claude_code_mcp_server_rule_raises(self, rule: str) -> None:
+        with pytest.raises(UserError, match='names an MCP server the way Claude Code does'):
+            parse_permission_rule(rule, 'deny')
+
+    def test_a_full_mcp_tool_name_stays_literal(self) -> None:
+        assert parse_permission_rule('mcp__github__create_issue', 'deny') == PermissionRule(
+            'deny', tools=['mcp__github__create_issue']
+        )
+
     def test_an_empty_command_raises(self) -> None:
         with pytest.raises(UserError, match='must be a shell command'):
             parse_permission_rule('Bash(:*)', 'allow')
