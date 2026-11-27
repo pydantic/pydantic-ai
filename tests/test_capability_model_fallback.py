@@ -59,6 +59,7 @@ from pydantic_ai.capabilities import (
     ModelFallback,
     NativeTool,
     ResolveModelId,
+    RetryOnModelErrors,
     SelectModel,
     WrapModelRequestHandler,
     WrapperCapability,
@@ -2866,6 +2867,36 @@ async def test_falls_back_on_an_empty_error_response_by_default(parts: list[Mode
     assert [(a.model_name, a.outcome) for a in result.response.failed_attempts or []] == [('primary', 'rejected')]
     # The rejected response was billed.
     assert result.usage.input_tokens == 10 + 51
+
+
+async def test_a_chain_of_empty_error_responses_raises_instead_of_the_retry_prompt():
+    """When every model returns an empty error response, the run raises, where without the fallback it re-prompts.
+
+    `RetryOnModelErrors` retries each model before falling back, so with it the retry recovers again.
+    """
+    calls: list[str] = []
+    agent = Agent(_ends_with_error('primary', calls), capabilities=[ModelFallback(_ends_with_error('backup', calls))])
+    with pytest.raises(FallbackExceptionGroup) as exc_info:
+        await agent.run('x')
+    assert [repr(error) for error in exc_info.value.exceptions] == snapshot(
+        ["ResponseRejected('2 model response(s) rejected by fallback_on handler')"]
+    )
+    assert calls == ['primary', 'backup']
+
+    calls.clear()
+    slept: list[float] = []
+
+    async def record_sleep(delay: float) -> None:
+        slept.append(delay)
+
+    agent = Agent(
+        _ends_with_error('primary', calls),
+        capabilities=[ModelFallback(_ends_with_error('backup', calls)), RetryOnModelErrors()],
+    )
+    with Agent.using_sleep(record_sleep):
+        result = await agent.run('x')
+    assert result.output == 'primary answered'
+    assert calls == ['primary', 'primary']
 
 
 async def test_an_error_response_with_text_is_the_output():
