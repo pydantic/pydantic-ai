@@ -10,7 +10,6 @@ from .models import (
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
-    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
 )
 
 try:
@@ -153,8 +152,6 @@ def _map_request_history(
     system_prompts: list[str] = []
     tool_results: list[mcp_types.SamplingMessageContentBlock] = []
     for part in _sendable_request_parts(request.parts):
-        if isinstance(part, (messages.InstructionBaselinePart, messages.InstructionDeltaPart)):
-            raise _unprojected_instruction_delta_error()
         if isinstance(part, messages.SystemPromptPart):
             system_prompts.append(part.content)
         elif isinstance(part, messages.UserPromptPart):
@@ -173,7 +170,7 @@ def _map_request_history(
         ):
             # These parts are not currently sent to MCP sampling.
             continue
-        elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+        elif isinstance(part, _UnpreparedPart):
             raise _unprepared_part_error(part)
         else:
             assert_never(part)

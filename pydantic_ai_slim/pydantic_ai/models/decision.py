@@ -35,7 +35,6 @@ from ..messages import (
     CompactionPart,
     FilePart,
     ImageUrl,
-    InstructionBaselinePart,
     InstructionDeltaPart,
     InstructionId,
     InstructionPart,
@@ -74,10 +73,8 @@ from . import (
     Model,
     ModelRequestParameters,
     StreamedResponse,
-    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
-    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
 )
@@ -2705,16 +2702,11 @@ def _request_entry(part: ModelRequestPart, images: list[BinaryContent | ImageUrl
     elif isinstance(part, RetryPromptPart):  # pyright: ignore[reportDeprecated]
         # A direct `request()` skips `prepare_messages`; judge the deprecated part as what it always meant.
         return _request_entry(_translate_legacy_retry_part(part), images)
-    elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):  # pragma: no cover
-        raise _unprojected_instruction_delta_error()
     elif isinstance(part, CompactionPart):
         # A summary standing in for earlier turns: the same entry a response-side summary gets.
         return {'summary': part.content or ''}
     elif isinstance(part, _UnpreparedPart):  # pragma: no cover
         raise _unprepared_part_error(part)
-    elif isinstance(part, SpeechPart):  # pragma: no cover
-        # `Model.prepare_messages` turns realtime speech into `UserPromptPart`s before this runs.
-        raise _unconverted_speech_part_error()
     else:
         assert_never(part)
 
@@ -2742,7 +2734,7 @@ def _response_entries(message: ModelResponse, images: list[BinaryContent | Image
             case FilePart():
                 entries.append(_file_part_entry(part, images))
             case SpeechPart():  # pragma: no cover
-                raise _unconverted_speech_part_error()
+                raise _unprepared_part_error(part)
             case _:
                 assert_never(part)
     return entries

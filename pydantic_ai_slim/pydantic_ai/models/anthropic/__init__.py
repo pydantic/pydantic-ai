@@ -31,8 +31,6 @@ from ...messages import (
     DocumentUrl,
     FilePart,
     ImageUrl,
-    InstructionBaselinePart,
-    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
@@ -100,10 +98,8 @@ from .. import (
     _request_scoped_tail_texts,  # pyright: ignore[reportPrivateUsage]
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
     _standing_system_prompt_count,  # pyright: ignore[reportPrivateUsage]
-    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
-    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _with_default_user_agent,  # pyright: ignore[reportPrivateUsage]
     _without_model_settings_deltas,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
@@ -3241,8 +3237,6 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
             elif isinstance(request_part, UserPromptPart):
                 await self._map_user_prompt_part(request_part, request_context, map_context)
-            elif isinstance(request_part, (InstructionBaselinePart, InstructionDeltaPart)):
-                raise _unprojected_instruction_delta_error()
             elif isinstance(request_part, ModelSettingsDeltaPart):
                 # Only the mid-conversation changes render: a window's opening effort went out as the request-level
                 # `output_config.effort`. `_effort_delta_request` has already removed every part when this request
@@ -3259,10 +3253,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                 )
             elif isinstance(request_part, ToolReturnPart):
                 request_context.user_content_params.append(await self._map_tool_result(request_part, map_context))
-            elif isinstance(request_part, SpeechPart):
-                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s.
-                raise _unconverted_speech_part_error()
-            elif isinstance(request_part, _UnpreparedPart):  # pragma: no cover
+            elif isinstance(request_part, _UnpreparedPart):
                 raise _unprepared_part_error(request_part)
             else:
                 assert_never(request_part)
@@ -3501,7 +3492,7 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
                     pass
                 case SpeechPart():  # pragma: no cover
                     # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
-                    raise _unconverted_speech_part_error()
+                    raise _unprepared_part_error(response_part)
                 case _:
                     assert_never(response_part)
         self._append_model_response_turns(

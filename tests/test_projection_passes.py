@@ -9,18 +9,19 @@ every target `tests/test_history_properties.py` renders them for. That file chec
 from __future__ import annotations as _annotations
 
 from dataclasses import replace
-from typing import Any
+from typing import Any, get_args
 
 import pytest
 from pydantic import JsonValue
 
-from pydantic_ai.messages import ModelMessage, repair_messages
+from pydantic_ai.messages import ModelMessage, ModelRequestPart, SystemPromptPart, repair_messages
 from pydantic_ai.models import (
     Model,
     ModelRequestParameters,
     _PartKind,  # pyright: ignore[reportPrivateUsage]
     _Projection,  # pyright: ignore[reportPrivateUsage]
     _ProjectionPass,  # pyright: ignore[reportPrivateUsage]
+    _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
 )
 
 from .history_cases import HistoryCase, message_json
@@ -51,6 +52,22 @@ def test_no_pass_drops_a_kind_a_later_pass_reads():
 def test_pass_names_are_unique():
     names = [projection_pass.name for projection_pass in PROJECTION_PASSES]
     assert len(names) == len(set(names))
+
+
+def test_unprepared_part_covers_every_request_kind_a_pass_removes():
+    """Every request part kind a pass consumes or drops is in `_UnpreparedPart`, the type the adapters' one guard
+    branch checks, except `SystemPromptPart`: every adapter maps one, and the `system_voice` pass consumes it only
+    for a model without mid-conversation system messages.
+
+    This checks the declaration, not each adapter's behavior. Being in `_UnpreparedPart` doesn't mean every path
+    raises: adapters still send a deprecated `RetryPromptPart` through `_sendable_request_parts`, and `FunctionModel`
+    estimates a `SpeechPart`'s tokens from its transcript."""
+    # `ModelRequestPart` is `Annotated[Union, Discriminator]`, and each union member is `Annotated[Part, Tag]`.
+    (request_part_union, *_) = get_args(ModelRequestPart)
+    request_kinds = {get_args(member)[0] for member in get_args(request_part_union)}
+    assert {kind for kind in REMOVED_KINDS if kind in request_kinds} - {SystemPromptPart} <= set(
+        get_args(_UnpreparedPart)
+    )
 
 
 def _part_kinds(messages: list[ModelMessage]) -> set[type]:

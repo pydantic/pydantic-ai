@@ -5807,7 +5807,7 @@ def _has_instruction_state(messages: Iterable[ModelMessage]) -> bool:
     )
 
 
-def _unprojected_instruction_delta_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
+def _unprojected_instruction_delta_error() -> UserError:
     """Explain how direct model callers can project canonical instruction state."""
     return UserError(
         '`InstructionDeltaPart` and `InstructionBaselinePart` must be projected before calling this model. '
@@ -5926,7 +5926,10 @@ def _fit_tool_call_ids(messages: list[ModelMessage], length: int) -> list[ModelM
 
 # TODO(v3): remove `RetryPromptPart`
 _UnpreparedPart: TypeAlias = (
-    ToolAvailabilityDeltaPart
+    InstructionDeltaPart
+    | InstructionBaselinePart
+    | SpeechPart
+    | ToolAvailabilityDeltaPart
     | CapabilityLoadDeltaPart
     | ModelSettingsDeltaPart
     | RetryFeedbackPart
@@ -5936,14 +5939,18 @@ _UnpreparedPart: TypeAlias = (
 )
 """The request parts `prepare_messages` translates away before any adapter sees them.
 
-Each of these carries something no provider API has a field for — a mid-conversation change to the tool list or the
-thinking effort, a capability load from code, a retry that isn't a plain turn, or a capability's record — and `prepare_messages` turns it into
-the parts every adapter already knows how to map, or drops it. So an adapter meeting one has been handed a history that
-step never ran on, which is one branch to check rather than one per part. The one exception is a `RetryFeedbackPart` on
+Each of these carries something no provider API has a field for — an instruction change, realtime speech, a
+mid-conversation change to the tool list or the thinking effort, a capability load from code, a retry that isn't a plain
+turn, or a capability's record — and one of `Model._PROJECTION_PASSES` turns it into the parts every adapter already
+knows how to map, or drops it. So an adapter meeting one has been handed a history that step never ran on, which is one
+branch to check rather than one per part. The one exception is a `RetryFeedbackPart` on
 a model that sets `Model._renders_retry_feedback`: `prepare_messages` leaves it for that model to render.
 A deprecated `RetryPromptPart` or a request-side `CompactionPart` never reaches this branch either:
 adapters map their parts through `_sendable_request_parts`, which renders each into user-facing parts. An adapter
 that maps its parts without it, as `OpenAIDecisionsModel` does, needs an arm of its own for each.
+
+`SpeechPart` is also a response part, which `prepare_messages` converts the same way, so adapters send a
+response-side one to `_unprepared_part_error` as well.
 """
 
 
@@ -5985,7 +5992,9 @@ def _sendable_request_parts(  # pyright: ignore[reportUnusedFunction]
 
 
 def _unprepared_part_error(part: _UnpreparedPart) -> UserError:  # pyright: ignore[reportUnusedFunction]
-    """The error for a request part that reached an adapter with no way to render it.
+    """The error for a part that reached an adapter with no way to render it.
+
+    That's an `_UnpreparedPart` request part, or a response-side `SpeechPart`.
 
     Running a model through an agent always runs `prepare_messages`, but
     [`Model.request`][pydantic_ai.models.Model.request] and
@@ -5999,6 +6008,10 @@ def _unprepared_part_error(part: _UnpreparedPart) -> UserError:  # pyright: igno
     [`RetryFeedbackPart`][pydantic_ai.messages.RetryFeedbackPart] was introduced to end
     (https://github.com/pydantic/pydantic-ai/issues/6404).
     """
+    if isinstance(part, InstructionDeltaPart | InstructionBaselinePart):
+        return _unprojected_instruction_delta_error()
+    if isinstance(part, SpeechPart):
+        return _unconverted_speech_part_error()
     return UserError(
         f'`{type(part).__name__}` cannot be rendered by this model. '
         'Call `model.prepare_messages(messages)` first and pass the result — that translates the part '
@@ -6007,7 +6020,7 @@ def _unprepared_part_error(part: _UnpreparedPart) -> UserError:  # pyright: igno
     )
 
 
-def _unconverted_speech_part_error() -> UserError:  # pyright: ignore[reportUnusedFunction]
+def _unconverted_speech_part_error() -> UserError:
     """The error for a realtime `SpeechPart` that reached an adapter unconverted.
 
     `prepare_messages` turns every `SpeechPart` from realtime session history into the

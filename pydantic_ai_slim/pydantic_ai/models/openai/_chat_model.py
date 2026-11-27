@@ -61,8 +61,6 @@ from ...messages import (
     FilePart,
     FinishReason,
     ImageUrl,
-    InstructionBaselinePart,
-    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -95,10 +93,8 @@ from .. import (
     OpenAIChatCompatibleProvider,
     StreamedResponse,
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
-    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
-    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     _with_default_user_agent,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
     download_item,
@@ -1118,7 +1114,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     pass
                 elif isinstance(item, SpeechPart):  # pragma: no cover
                     # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
-                    raise _unconverted_speech_part_error()
+                    raise _unprepared_part_error(item)
                 else:
                     assert_never(item)
             return self._into_message_param()
@@ -1434,16 +1430,11 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                     tool_call_id=_guard_tool_call_id(t=part),
                     content=tool_text,
                 )
-            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
-                raise _unprojected_instruction_delta_error()
             elif isinstance(part, ModelSettingsDeltaPart):
                 if (update := self._map_model_settings_delta(part)) is not None:
                     yield update
-            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+            elif isinstance(part, _UnpreparedPart):
                 raise _unprepared_part_error(part)
-            elif isinstance(part, SpeechPart):
-                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
-                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
         if file_content:

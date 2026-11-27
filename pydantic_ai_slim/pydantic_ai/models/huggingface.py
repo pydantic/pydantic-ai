@@ -23,8 +23,6 @@ from ..messages import (
     FilePart,
     FinishReason,
     ImageUrl,
-    InstructionBaselinePart,
-    InstructionDeltaPart,
     ModelMessage,
     ModelRequest,
     ModelResponse,
@@ -53,10 +51,8 @@ from . import (
     ModelRequestParameters,
     StreamedResponse,
     _sendable_request_parts,  # pyright: ignore[reportPrivateUsage]
-    _unconverted_speech_part_error,  # pyright: ignore[reportPrivateUsage]
     _unprepared_part_error,  # pyright: ignore[reportPrivateUsage]
     _UnpreparedPart,  # pyright: ignore[reportPrivateUsage]
-    _unprojected_instruction_delta_error,  # pyright: ignore[reportPrivateUsage]
     check_allow_model_requests,
 )
 from ._decode_errors import MapStreamDecodeErrors, map_decode_errors
@@ -497,7 +493,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     pass
                 case SpeechPart():  # pragma: no cover
                     # Unconverted realtime speech; `prepare_messages` turns these into `TextPart`s in `Model.prepare_messages`.
-                    raise _unconverted_speech_part_error()
+                    raise _unprepared_part_error(item)
                 case _:
                     assert_never(item)
         message_param = ChatCompletionInputMessage(role='assistant')
@@ -560,13 +556,8 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                         'content': tool_text,
                     }
                 )
-            elif isinstance(part, (InstructionBaselinePart, InstructionDeltaPart)):
-                raise _unprojected_instruction_delta_error()
-            elif isinstance(part, _UnpreparedPart):  # pragma: no cover
+            elif isinstance(part, _UnpreparedPart):
                 raise _unprepared_part_error(part)
-            elif isinstance(part, SpeechPart):  # pragma: no cover
-                # Unconverted realtime speech; `prepare_messages` turns these into `UserPromptPart`s in `Model.prepare_messages`.
-                raise _unconverted_speech_part_error()
             else:
                 assert_never(part)
         if file_content:
