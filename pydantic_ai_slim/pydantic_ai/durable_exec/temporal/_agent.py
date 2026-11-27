@@ -52,6 +52,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from .._runtime_toolsets import reject_run_timeout, reject_unsupported_runtime_toolsets
+from .._utils import without_response_boundaries
 from .._workspace import RejectWorkspaceInContainer
 from ._activity_execution import execute_activity
 from ._durability import serialization_user_error
@@ -321,7 +322,7 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
         self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[_messages.AgentStreamEvent]
     ) -> None:
         serialized_run_context = self.run_context_type.serialize_run_context(ctx)
-        async for event in stream:
+        async for event in without_response_boundaries(stream):
             activity_config: ActivityConfig = {'summary': f'handle event: {event.event_kind}', **self.activity_config}
             await execute_activity(
                 activity=self.event_stream_handler_activity,
@@ -997,11 +998,26 @@ class TemporalAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             print(collected)
             '''
             [
+                ModelResponseStartEvent(model_name='gpt-5.2', provider_name=None),
                 PartStartEvent(index=0, part=TextPart(content='The capital of ')),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='France is Paris. ')),
                 PartEndEvent(
                     index=0, part=TextPart(content='The capital of France is Paris. ')
+                ),
+                ModelResponseEndEvent(
+                    status='complete',
+                    response=ModelResponse(
+                        parts=[TextPart(content='The capital of France is Paris. ')],
+                        usage=RequestUsage(
+                            cost=Decimal('0.0001855'), input_tokens=50, output_tokens=7
+                        ),
+                        model_name='gpt-5.2',
+                        model_id='openai:gpt-5.2',
+                        timestamp=datetime.datetime(...),
+                        run_id='...',
+                        conversation_id='...',
+                    ),
                 ),
                 AgentRunResultEvent(
                     result=AgentRunResult(output='The capital of France is Paris. ')

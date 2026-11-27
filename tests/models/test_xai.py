@@ -21,6 +21,7 @@ from dataclasses import dataclass
 from datetime import UTC
 from decimal import Decimal
 from typing import Any, Literal
+from unittest.mock import ANY
 
 import httpx2
 import pytest
@@ -43,6 +44,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     ModelRetry,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -2774,6 +2777,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
     # Verify we got the expected builtin tool call events with snapshot.
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='grok-4-fast-reasoning', provider_name='xai'),
             PartStartEvent(
                 index=0,
                 part=ThinkingPart(
@@ -2939,6 +2943,7 @@ async def test_xai_builtin_web_search_tool_stream(allow_model_requests: None, xa
                     content='Today in San Francisco, the current temperature is 7°C. Expect a high of 16°C and a low of 7°C, with partly cloudy conditions.'
                 ),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -3100,6 +3105,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
     )
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='grok-4-fast-non-reasoning', provider_name='xai'),
             PartStartEvent(
                 index=0,
                 part=NativeToolCallPart(
@@ -3135,6 +3141,7 @@ async def test_xai_builtin_code_execution_tool_stream(allow_model_requests: None
             PartStartEvent(index=2, part=TextPart(content='4'), previous_part_kind='builtin-tool-return'),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartEndEvent(index=2, part=TextPart(content='4')),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -3674,6 +3681,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
     )
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='grok-4-fast-reasoning', provider_name='xai'),
             PartStartEvent(index=0, part=ThinkingPart(content='', signature=IsStr(), provider_name='xai')),
             PartEndEvent(
                 index=0,
@@ -3864,6 +3872,7 @@ View this search on DeepWiki: https://deepwiki.com/search/provide-a-short-summar
                     content="Pydantic/pydantic-ai is a GenAI Agent Framework built on Pydantic for creating type-safe Generative AI applications. It unifies interactions with LLMs from providers like OpenAI, Anthropic, Google, and others; supports agent orchestration, graph-based execution, tools, durable workflows, and multi-agent patterns. It's a monorepo with core packages for slim framework, graphs, and evals."
                 ),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -4161,6 +4170,7 @@ The first 10 prime numbers are: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29.\
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='grok-4-fast-reasoning', provider_name='xai'),
             PartStartEvent(index=0, part=ThinkingPart(content='', signature=IsStr(), provider_name='xai')),
             PartEndEvent(
                 index=0,
@@ -4230,6 +4240,7 @@ The first 10 prime numbers are: 2, 3, 5, 7, 11, 13, 17, 19, 23, 29.\
 """
                 ),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 

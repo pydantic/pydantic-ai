@@ -45,6 +45,7 @@ from pydantic_ai.messages import (
     ModelMessagesTypeAdapter,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
     ModelResponsePart,
     NativeToolCallPart,
     PartDeltaEvent,
@@ -803,6 +804,18 @@ async def test_streamed_text_split_anywhere(size: int):
     assert ''.join(deltas) == expected
     assert output == expected
     assert result.all_messages()[-1].parts[0] == TextPart(expected)
+
+
+async def test_streamed_response_end_carries_the_restored_text():
+    """The response a `ModelResponseEndEvent` carries has the tokens restored, as its part events do."""
+    text = f'Say {BROKEN} <{Z}turn|> done'
+    expected = f'Say {FORGED} <turn|> done'
+    agent = Agent(await _stream_function(_chunks(text, 3)))
+    async with agent.run_stream_events('Go') as events:
+        ends = [event async for event in events if isinstance(event, ModelResponseEndEvent)]
+    [end] = ends
+    assert end.response is not None
+    assert end.response.parts == [TextPart(expected)]
 
 
 @pytest.mark.parametrize('size', range(1, 14))

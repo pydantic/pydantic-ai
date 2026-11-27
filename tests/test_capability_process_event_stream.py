@@ -711,13 +711,17 @@ class TestProcessEventStream:
 
         assert [type(event).__name__ for event in handler_events] == snapshot(
             [
+                'ModelResponseStartEvent',
                 'PartStartEvent',
                 'PartEndEvent',
+                'ModelResponseEndEvent',
                 'FunctionToolCallEvent',
                 'FunctionToolResultEvent',
+                'ModelResponseStartEvent',
                 'PartStartEvent',
                 'FinalResultEvent',
                 'PartEndEvent',
+                'ModelResponseEndEvent',
             ]
         )
 
@@ -767,7 +771,7 @@ class TestProcessEventStream:
 
         # One entry per streamed node: two model requests and the two response-handling nodes
         # between and after them. No trailing zero-event entries from a re-entered stream.
-        assert invocations == snapshot([2, 2, 3, 0])
+        assert invocations == snapshot([4, 2, 5, 0])
 
     async def test_streamed_result_can_be_consumed_in_another_task(self):
         """A `run_stream()` result stays usable when consumed from a different task.

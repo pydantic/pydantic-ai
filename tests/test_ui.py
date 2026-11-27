@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import asyncio
 import inspect
+import json
 import warnings
-from collections.abc import AsyncIterator, Awaitable, MutableMapping, Sequence
+from collections.abc import AsyncIterator, Awaitable, Callable, MutableMapping, Sequence
 from dataclasses import dataclass, field, replace
 from functools import cached_property
 from typing import Any, Literal
@@ -99,6 +100,10 @@ from pydantic_ai.ui._adapter import (
     resolve_allow_uploaded_files,
 )
 from pydantic_ai.ui._utils import set_ui_message_id
+from pydantic_ai.ui.vercel_ai import VercelAIEventStream
+
+with try_import() as ag_ui_imports_successful:
+    from pydantic_ai.ui.ag_ui import AGUIEventStream
 
 pytestmark = [
     pytest.mark.vcr,
@@ -406,6 +411,281 @@ async def test_event_stream_error_closes_open_text():
             '</stream>',
         ]
     )
+
+
+async def test_event_stream_restarted_part_ends_open_text():
+    """A republished `PartStartEvent` ends the still-open part before the new start is emitted. #11734
+
+    A retried durable activity republishes the model events it already published, so the retry's
+    `PartStartEvent` arrives with no `PartEndEvent` for the first attempt's part before it.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo'))
+        # The retry republishes its part start without a `PartEndEvent` first.
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo, world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello, world'))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hel',
+            'lo',
+            # the first attempt's part, closed with its recorded deltas applied
+            '</text followed_by_text=False>',
+            '<text follows_text=False>Hel',
+            'lo, world',
+            '</text followed_by_text=False>',
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
+def _restarted_text() -> list[NativeEvent]:
+    return [
+        PartStartEvent(index=0, part=TextPart(content='Hel')),
+        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo')),
+        PartStartEvent(index=0, part=TextPart(content='Hel')),
+        PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo, world')),
+        PartEndEvent(index=0, part=TextPart(content='Hello, world')),
+    ]
+
+
+def _restarted_thinking() -> list[NativeEvent]:
+    return [
+        PartStartEvent(index=0, part=ThinkingPart(content='Hel')),
+        PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo')),
+        PartStartEvent(index=0, part=ThinkingPart(content='Hel')),
+        PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo, world')),
+        PartEndEvent(index=0, part=ThinkingPart(content='Hello, world')),
+    ]
+
+
+def _restarted_tool_call() -> list[NativeEvent]:
+    def call_part(args: str) -> ToolCallPart:
+        return ToolCallPart(tool_name='get_time', args=args, tool_call_id='call_0')
+
+    return [
+        PartStartEvent(index=0, part=call_part('{"tz": ')),
+        PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"U')),
+        PartStartEvent(index=0, part=call_part('{"tz": ')),
+        PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}')),
+        PartEndEvent(index=0, part=call_part('{"tz": "UTC"}')),
+        FunctionToolCallEvent(part=call_part('{"tz": "UTC"}'), args_valid=True),
+        FunctionToolResultEvent(part=ToolReturnPart(tool_name='get_time', tool_call_id='call_0', content='12:00')),
+    ]
+
+
+def _encode_ag_ui(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str]:
+    # Pinned to the declared floor, so the thinking envelope is the same on every installed SDK.
+    event_stream = AGUIEventStream[None, str](thread_id='thread_1', run_id='run_1', ag_ui_version='0.1.10')
+    return event_stream.encode_stream(event_stream.transform_stream(events))
+
+
+def _encode_vercel_ai(events: AsyncIterator[NativeEvent]) -> AsyncIterator[str]:
+    event_stream = VercelAIEventStream[None, str]()
+    return event_stream.encode_stream(event_stream.transform_stream(events))
+
+
+def _with_numbered_ids(events: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """`events` without timestamps, with generated message and part IDs numbered in order of appearance."""
+    ids: dict[str, str] = {}
+    for event in events:
+        event.pop('timestamp', None)
+        for key in ('id', 'messageId', 'parentMessageId'):
+            if key in event:
+                event[key] = ids.setdefault(event[key], f'id-{len(ids) + 1}')
+    return events
+
+
+@dataclass(frozen=True)
+class RestartedPartCase:
+    id: str
+    encode: Callable[[AsyncIterator[NativeEvent]], AsyncIterator[str]]
+    native_events: Callable[[], list[NativeEvent]]
+    """A part's start and deltas, then its start republished with no `PartEndEvent` in between."""
+    expected: list[dict[str, Any]]
+    marks: tuple[pytest.MarkDecorator, ...] = ()
+
+
+_needs_ag_ui = pytest.mark.skipif(not ag_ui_imports_successful(), reason='ag-ui-protocol not installed')
+
+RESTARTED_PART_CASES = [
+    RestartedPartCase(
+        id='ag-ui-text',
+        encode=_encode_ag_ui,
+        native_events=_restarted_text,
+        expected=snapshot(
+            [
+                {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1'},
+                {'type': 'TEXT_MESSAGE_START', 'messageId': 'id-1', 'role': 'assistant'},
+                {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': 'id-1', 'delta': 'Hel'},
+                {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': 'id-1', 'delta': 'lo'},
+                {'type': 'TEXT_MESSAGE_END', 'messageId': 'id-1'},
+                {'type': 'TEXT_MESSAGE_START', 'messageId': 'id-2', 'role': 'assistant'},
+                {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': 'id-2', 'delta': 'Hel'},
+                {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': 'id-2', 'delta': 'lo, world'},
+                {'type': 'TEXT_MESSAGE_END', 'messageId': 'id-2'},
+                {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1'},
+            ]
+        ),
+        marks=(_needs_ag_ui,),
+    ),
+    RestartedPartCase(
+        id='ag-ui-thinking',
+        encode=_encode_ag_ui,
+        native_events=_restarted_thinking,
+        expected=snapshot(
+            [
+                {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1'},
+                {'type': 'THINKING_START'},
+                {'type': 'THINKING_TEXT_MESSAGE_START'},
+                {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Hel'},
+                {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'lo'},
+                {'type': 'THINKING_TEXT_MESSAGE_END'},
+                {'type': 'THINKING_END'},
+                {'type': 'THINKING_START'},
+                {'type': 'THINKING_TEXT_MESSAGE_START'},
+                {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Hel'},
+                {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'lo, world'},
+                {'type': 'THINKING_TEXT_MESSAGE_END'},
+                {'type': 'THINKING_END'},
+                {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1'},
+            ]
+        ),
+        marks=(_needs_ag_ui,),
+    ),
+    RestartedPartCase(
+        id='ag-ui-tool-call',
+        encode=_encode_ag_ui,
+        native_events=_restarted_tool_call,
+        expected=snapshot(
+            [
+                {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1'},
+                {'type': 'TEXT_MESSAGE_START', 'messageId': 'id-1', 'role': 'assistant'},
+                {'type': 'TEXT_MESSAGE_END', 'messageId': 'id-1'},
+                {
+                    'type': 'TOOL_CALL_START',
+                    'toolCallId': 'call_0',
+                    'toolCallName': 'get_time',
+                    'parentMessageId': 'id-1',
+                },
+                {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"tz": '},
+                {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '"U'},
+                {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+                {
+                    'type': 'TOOL_CALL_START',
+                    'toolCallId': 'call_0',
+                    'toolCallName': 'get_time',
+                    'parentMessageId': 'id-1',
+                },
+                {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"tz": '},
+                {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '"UTC"}'},
+                {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+                {
+                    'type': 'TOOL_CALL_RESULT',
+                    'messageId': 'id-2',
+                    'toolCallId': 'call_0',
+                    'content': '12:00',
+                    'role': 'tool',
+                },
+                {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1'},
+            ]
+        ),
+        marks=(_needs_ag_ui,),
+    ),
+    RestartedPartCase(
+        id='vercel-ai-text',
+        encode=_encode_vercel_ai,
+        native_events=_restarted_text,
+        expected=snapshot(
+            [
+                {'type': 'start'},
+                {'type': 'start-step'},
+                {'type': 'text-start', 'id': 'id-1'},
+                {'type': 'text-delta', 'delta': 'Hel', 'id': 'id-1'},
+                {'type': 'text-delta', 'delta': 'lo', 'id': 'id-1'},
+                {'type': 'text-end', 'id': 'id-1'},
+                {'type': 'text-start', 'id': 'id-2'},
+                {'type': 'text-delta', 'delta': 'Hel', 'id': 'id-2'},
+                {'type': 'text-delta', 'delta': 'lo, world', 'id': 'id-2'},
+                {'type': 'text-end', 'id': 'id-2'},
+                {'type': 'finish-step'},
+                {'type': 'finish'},
+            ]
+        ),
+    ),
+    RestartedPartCase(
+        id='vercel-ai-thinking',
+        encode=_encode_vercel_ai,
+        native_events=_restarted_thinking,
+        expected=snapshot(
+            [
+                {'type': 'start'},
+                {'type': 'start-step'},
+                {'type': 'reasoning-start', 'id': 'id-1'},
+                {'type': 'reasoning-delta', 'id': 'id-1', 'delta': 'Hel'},
+                {'type': 'reasoning-delta', 'id': 'id-1', 'delta': 'lo'},
+                {'type': 'reasoning-end', 'id': 'id-1'},
+                {'type': 'reasoning-start', 'id': 'id-2'},
+                {'type': 'reasoning-delta', 'id': 'id-2', 'delta': 'Hel'},
+                {'type': 'reasoning-delta', 'id': 'id-2', 'delta': 'lo, world'},
+                {'type': 'reasoning-end', 'id': 'id-2'},
+                {'type': 'finish-step'},
+                {'type': 'finish'},
+            ]
+        ),
+    ),
+    RestartedPartCase(
+        id='vercel-ai-tool-call',
+        encode=_encode_vercel_ai,
+        native_events=_restarted_tool_call,
+        expected=snapshot(
+            [
+                {'type': 'start'},
+                {'type': 'start-step'},
+                {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'get_time'},
+                {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"tz": '},
+                {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '"U'},
+                {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'get_time'},
+                {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"tz": '},
+                {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '"UTC"}'},
+                {
+                    'type': 'tool-input-available',
+                    'toolCallId': 'call_0',
+                    'toolName': 'get_time',
+                    'input': {'tz': 'UTC'},
+                },
+                {'type': 'tool-output-available', 'toolCallId': 'call_0', 'output': '12:00'},
+                {'type': 'finish-step'},
+                {'type': 'finish'},
+            ]
+        ),
+    ),
+]
+
+
+@pytest.mark.parametrize('case', [pytest.param(c, id=c.id, marks=c.marks) for c in RESTARTED_PART_CASES])
+async def test_event_stream_restarted_part_in_encoders(case: RestartedPartCase) -> None:
+    """A republished `PartStartEvent` ends the still-open part before the new start, in each real encoder. #11734
+
+    The client sees the first attempt's partial part as its own, ended part, followed by the retry's full part.
+    """
+
+    async def native_events() -> AsyncIterator[NativeEvent]:
+        for event in case.native_events():
+            yield event
+
+    events = [json.loads(e.removeprefix('data: ')) async for e in case.encode(native_events()) if '[DONE]' not in e]
+    assert _with_numbered_ids(events) == case.expected
 
 
 async def test_event_stream_error_closes_open_thinking():

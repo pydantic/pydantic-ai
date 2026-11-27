@@ -52,6 +52,8 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     RetryFeedbackPart,
@@ -72,7 +74,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.usage import RequestUsage, RunUsage
 
 from . import cassette_hooks, cost_guards, gc_isolation, span_schema
-from ._inline_snapshot import Builder, Custom, customize
+from ._inline_snapshot import Builder, Custom, ImportFrom, customize
 from ._ports import reserve_loopback_port
 from ._timeouts import READINESS_WAIT_TIMEOUT
 from .cassette_utils import check_cache_prefix_stability
@@ -327,6 +329,36 @@ def usage_handler(value: Any, builder: Builder) -> Custom | None:  # pragma: no 
             elif field.default_factory is not dataclasses.MISSING:
                 kwargs[field.name] = builder.with_default(kwargs[field.name], field.default_factory())
         return builder.create_call(type(value), [], kwargs)
+
+
+@customize
+def response_boundary_handler(value: Any, builder: Builder) -> Custom | None:  # pragma: no cover
+    # `origin` is a required field that `repr()` leaves out, and its `run_id` differs on every run: equality ignores it.
+    origin = builder.create_code('ANY', imports=[ImportFrom('unittest.mock', 'ANY')])
+    if isinstance(value, ModelResponseStartEvent):
+        return builder.create_call(
+            ModelResponseStartEvent,
+            [],
+            {
+                'origin': origin,
+                'model_name': value.model_name,
+                'provider_name': value.provider_name,
+                'replaces': builder.with_default(value.replaces, None),
+            },
+        )
+    if isinstance(value, ModelResponseEndEvent):
+        return builder.create_call(
+            ModelResponseEndEvent,
+            [],
+            {
+                'origin': origin,
+                'status': value.status,
+                # A response's parts can be long, like a provider's encrypted reasoning or an image, and are
+                # snapshotted where the test asserts the run's messages.
+                'response': origin if value.response is not None else None,
+                'error': builder.with_default(value.error, None),
+            },
+        )
 
 
 @customize

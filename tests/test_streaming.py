@@ -17,7 +17,7 @@ from dataclasses import dataclass, field, replace
 from datetime import datetime as _datetime
 from types import AsyncGeneratorType, NoneType, TracebackType
 from typing import Any, Literal, cast
-from unittest.mock import MagicMock
+from unittest.mock import ANY, MagicMock
 
 import anyio
 import httpx2
@@ -42,13 +42,16 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestContext,
     ModelResponse,
+    ModelResponseEndEvent,
     ModelResponsePart,
+    ModelResponseStartEvent,
     ModelResponseStreamEvent,
     OutputToolCallEvent,
     OutputToolResultEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RetryFeedbackPart,
     RetryInfo,
     RunContext,
@@ -96,7 +99,7 @@ from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOut
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
-from pydantic_ai.usage import RequestUsage, UsageLimits
+from pydantic_ai.usage import UsageLimits
 from pydantic_graph import End
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
@@ -5510,6 +5513,7 @@ async def test_deferred_tool_iter():
     )
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
@@ -5531,6 +5535,25 @@ async def test_deferred_tool_iter():
                 index=1,
                 part=ToolCallPart(
                     tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                ),
+            ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool'),
+                        ToolCallPart(
+                            tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=8),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ),
             FunctionToolCallEvent(
@@ -5632,6 +5655,7 @@ async def test_tool_raises_call_deferred_approval_required_iter():
 
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id=IsStr()),
@@ -5652,6 +5676,25 @@ async def test_tool_raises_call_deferred_approval_required_iter():
                 index=1,
                 part=ToolCallPart(
                     tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                ),
+            ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(tool_name='my_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_tool'),
+                        ToolCallPart(
+                            tool_name='my_other_tool', args={'x': 0}, tool_call_id='pyd_ai_tool_call_id__my_other_tool'
+                        ),
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=8),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ),
             FunctionToolCallEvent(
@@ -5709,6 +5752,7 @@ async def test_run_event_stream_handler():
     assert result.output == snapshot('{"ret_a":"a-apple"}')
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
@@ -5716,6 +5760,20 @@ async def test_run_event_stream_handler():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
+            ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
@@ -5728,11 +5786,26 @@ async def test_run_event_stream_handler():
                     timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
             PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=9),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
         ]
     )
 
@@ -5843,6 +5916,7 @@ def test_run_sync_event_stream_handler():
     assert result.output == snapshot('{"ret_a":"a-apple"}')
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
@@ -5850,6 +5924,20 @@ def test_run_sync_event_stream_handler():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
+            ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
@@ -5862,11 +5950,26 @@ def test_run_sync_event_stream_handler():
                     timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
             PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=9),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
         ]
     )
 
@@ -5894,6 +5997,7 @@ async def test_run_stream_event_stream_handler():
 
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
@@ -5901,6 +6005,20 @@ async def test_run_stream_event_stream_handler():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
+            ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
@@ -5913,6 +6031,7 @@ async def test_run_stream_event_stream_handler():
                     timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
         ]
@@ -6034,6 +6153,7 @@ async def test_stream_tool_returning_user_content():
 
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()),
@@ -6041,6 +6161,20 @@ async def test_stream_tool_returning_user_content():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id='pyd_ai_tool_call_id__get_image'),
+            ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='get_image', args={}, tool_call_id='pyd_ai_tool_call_id__get_image')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=2),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='get_image', args={}, tool_call_id=IsStr()), args_valid=True
@@ -6055,6 +6189,7 @@ async def test_stream_tool_returning_user_content():
                     timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
@@ -6073,6 +6208,24 @@ async def test_stream_tool_returning_user_content():
                 index=0,
                 part=TextPart(
                     content='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"bd38f5"}}'
+                ),
+            ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[
+                        TextPart(
+                            content='{"get_image":{"url":"https://t3.ftcdn.net/jpg/00/85/79/92/360_F_85799278_0BBGV9OAdQDTLnKwAPBCcg1J7QtiieJY.jpg","force_download":false,"vendor_metadata":null,"kind":"image-url","media_type":"image/jpeg","identifier":"bd38f5"}}'
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=51, output_tokens=22),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ),
         ]
@@ -6095,6 +6248,7 @@ async def test_run_stream_events():
 
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()),
@@ -6102,6 +6256,20 @@ async def test_run_stream_events():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a'),
+            ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id='pyd_ai_tool_call_id__ret_a')],
+                    usage=RequestUsage(input_tokens=51, output_tokens=5),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='ret_a', args={'x': 'a'}, tool_call_id=IsStr()), args_valid=True
@@ -6114,11 +6282,26 @@ async def test_run_stream_events():
                     timestamp=IsNow(tz=datetime.UTC),
                 )
             ),
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"ret_a":')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='"a-apple"}')),
             PartEndEvent(index=0, part=TextPart(content='{"ret_a":"a-apple"}')),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[TextPart(content='{"ret_a":"a-apple"}')],
+                    usage=RequestUsage(input_tokens=52, output_tokens=9),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
             AgentRunResultEvent(result=AgentRunResult(output='{"ret_a":"a-apple"}')),
         ]
     )
@@ -6451,6 +6634,7 @@ async def test_args_validator_failure_events():
 
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
@@ -6458,6 +6642,26 @@ async def test_args_validator_failure_events():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+            ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='add_numbers',
+                            args={'x': 0, 'y': 0},
+                            tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=56, output_tokens=6),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
@@ -6473,6 +6677,7 @@ async def test_args_validator_failure_events():
                     retry=RetryInfo(cause='model_retry', attempt=1, max_retries=2),
                 ),
             ),
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
@@ -6480,6 +6685,26 @@ async def test_args_validator_failure_events():
             PartEndEvent(
                 index=0,
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
+            ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='add_numbers',
+                            args={'x': 0, 'y': 0},
+                            tool_call_id=IsStr(),
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=65, output_tokens=12),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
             ),
             FunctionToolCallEvent(
                 part=ToolCallPart(tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id=IsStr()),
@@ -6493,11 +6718,26 @@ async def test_args_validator_failure_events():
                     timestamp=IsNow(tz=datetime.UTC),
                 ),
             ),
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"add_nu')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='mbers":0}')),
             PartEndEvent(index=0, part=TextPart(content='{"add_numbers":0}')),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[TextPart(content='{"add_numbers":0}')],
+                    usage=RequestUsage(input_tokens=66, output_tokens=15),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
             AgentRunResultEvent(result=AgentRunResult(output='{"add_numbers":0}')),
         ]
     )
@@ -6526,6 +6766,7 @@ async def test_args_validator_event_args_valid_field():
 
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(
@@ -6536,6 +6777,26 @@ async def test_args_validator_event_args_valid_field():
                 index=0,
                 part=ToolCallPart(
                     tool_name='add_numbers', args={'x': 0, 'y': 0}, tool_call_id='pyd_ai_tool_call_id__add_numbers'
+                ),
+            ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[
+                        ToolCallPart(
+                            tool_name='add_numbers',
+                            args={'x': 0, 'y': 0},
+                            tool_call_id='pyd_ai_tool_call_id__add_numbers',
+                        )
+                    ],
+                    usage=RequestUsage(input_tokens=56, output_tokens=6),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ),
             FunctionToolCallEvent(
@@ -6552,11 +6813,26 @@ async def test_args_validator_event_args_valid_field():
                     timestamp=IsDatetime(),
                 )
             ),
+            ModelResponseStartEvent(origin=ANY, model_name='test', provider_name='test'),
             PartStartEvent(index=0, part=TextPart(content='')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='{"add_nu')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='mbers":0}')),
             PartEndEvent(index=0, part=TextPart(content='{"add_numbers":0}')),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[TextPart(content='{"add_numbers":0}')],
+                    usage=RequestUsage(input_tokens=57, output_tokens=9),
+                    model_name='test',
+                    model_id='test:test',
+                    timestamp=IsDatetime(),
+                    provider_name='test',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ),
             AgentRunResultEvent(result=AgentRunResult(output='{"add_numbers":0}')),
         ]
     )
@@ -6598,6 +6874,7 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
     assert validator_calls == snapshot([(1, 2, False)])
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='function::stream_args', provider_name=None),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='add_numbers', tool_call_id=IsStr()),
@@ -6616,6 +6893,19 @@ async def test_args_validator_deferral_not_triggered_by_partial_args():
                     tool_name='add_numbers',
                     args='{"x": 1, "y": 2}',
                     tool_call_id=IsStr(),
+                ),
+            ),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[ToolCallPart(tool_name='add_numbers', args='{"x": 1, "y": 2}', tool_call_id='add_numbers')],
+                    usage=RequestUsage(output_tokens=7, input_tokens=50),
+                    model_name='function::stream_args',
+                    model_id='function:function::stream_args',
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
                 ),
             ),
             FunctionToolCallEvent(
@@ -7606,7 +7896,15 @@ async def test_stream_response_state_incomplete_after_early_break():
     [
         pytest.param(
             None,
-            snapshot(['AgentStream._events_iter', 'AgentStream._model_events', 'dispatch_event_stream']),
+            snapshot(
+                [
+                    'AgentStream._events_iter',
+                    'AgentStream._live_model_events',
+                    'AgentStream._model_events',
+                    'AgentStream._with_boundaries',
+                    'dispatch_event_stream',
+                ]
+            ),
             id='no-limits',
         ),
         pytest.param(
@@ -7614,7 +7912,9 @@ async def test_stream_response_state_incomplete_after_early_break():
             snapshot(
                 [
                     'AgentStream._events_iter',
+                    'AgentStream._live_model_events',
                     'AgentStream._model_events',
+                    'AgentStream._with_boundaries',
                     '_get_usage_checking_stream_response.<locals>._usage_checking_iterator',
                     'dispatch_event_stream',
                 ]

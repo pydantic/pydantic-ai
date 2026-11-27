@@ -13,6 +13,7 @@ from datetime import date
 from decimal import Decimal
 from enum import Enum
 from typing import Any, cast
+from unittest.mock import ANY
 
 import pytest
 from cassetter import Cassette
@@ -48,6 +49,8 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -702,6 +705,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='gemini-2.0-flash', provider_name='google'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr()),
@@ -710,6 +714,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                 index=0,
                 part=ToolCallPart(tool_name='get_capital', args={'country': 'France'}, tool_call_id=IsStr()),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='get_capital',
@@ -726,6 +731,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                     timestamp=IsDatetime(),
                 )
             ),
+            ModelResponseStartEvent(origin=ANY, model_name='gemini-2.0-flash', provider_name='google'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(tool_name='get_temperature', args={'city': 'Paris'}, tool_call_id=IsStr()),
@@ -738,6 +744,7 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                     tool_call_id=IsStr(),
                 ),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='get_temperature',
@@ -751,10 +758,12 @@ async def test_google_model_iter_stream(allow_model_requests: None, google_provi
                     tool_name='get_temperature', content='30°C', tool_call_id=IsStr(), timestamp=IsDatetime()
                 )
             ),
+            ModelResponseStartEvent(origin=ANY, model_name='gemini-2.0-flash', provider_name='google'),
             PartStartEvent(index=0, part=TextPart(content='The temperature in Paris')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' is 30°C.\n')),
             PartEndEvent(index=0, part=TextPart(content='The temperature in Paris is 30°C.\n')),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -1584,6 +1593,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='gemini-2.5-pro', provider_name='google'),
             PartStartEvent(
                 index=0,
                 part=TextPart(
@@ -1749,6 +1759,7 @@ Hourly forecasts show temperatures remaining in the low 70s during the afternoon
                 previous_part_kind='builtin-tool-call',
                 canonical_system='google',
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -2031,6 +2042,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
     # Check that streaming events include NativeToolCallPart and NativeToolReturnPart
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='gemini-2.5-flash', provider_name='google'),
             PartStartEvent(
                 index=0,
                 part=NativeToolCallPart(
@@ -2095,6 +2107,7 @@ async def test_google_model_web_fetch_tool_stream(allow_model_requests: None, go
                 ),
                 canonical_system='google',
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -2536,6 +2549,7 @@ async def test_google_model_thinking_part_iter(allow_model_requests: None, googl
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='gemini-2.5-pro', provider_name='google'),
             PartStartEvent(index=0, part=ThinkingPart(content=IsStr())),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=IsStr())),
@@ -2639,6 +2653,7 @@ The most important rule is to **stay alert and be predictable**. Always assume a
                 ),
                 canonical_system='google',
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -5123,6 +5138,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
 
         assert event_parts == snapshot(
             [
+                ModelResponseStartEvent(origin=ANY, model_name='gemini-2.5-pro', provider_name='google'),
                 PartStartEvent(
                     index=0,
                     part=NativeToolCallPart(
@@ -5195,6 +5211,7 @@ async def test_google_model_file_search_tool_stream(allow_model_requests: None, 
                     previous_part_kind='text',
                     canonical_system='google',
                 ),
+                ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
             ]
         )
 
@@ -6536,6 +6553,7 @@ async def test_google_streaming_tool_call_thought_signature(
     )
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='gemini-3-pro-preview', provider_name='google'),
             PartStartEvent(
                 index=0,
                 part=ToolCallPart(
@@ -6558,6 +6576,7 @@ async def test_google_streaming_tool_call_thought_signature(
                 ),
                 canonical_system='google',
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
             FunctionToolCallEvent(
                 part=ToolCallPart(
                     tool_name='get_country',
@@ -6576,6 +6595,7 @@ async def test_google_streaming_tool_call_thought_signature(
                     timestamp=IsDatetime(),
                 )
             ),
+            ModelResponseStartEvent(origin=ANY, model_name='gemini-3-pro-preview', provider_name='google'),
             PartStartEvent(index=0, part=TextPart(content='The capital of Mexico')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(
@@ -6586,6 +6606,7 @@ async def test_google_streaming_tool_call_thought_signature(
                 index=0,
                 part=TextPart(content='The capital of Mexico is Mexico City.'),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 

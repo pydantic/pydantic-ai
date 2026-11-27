@@ -33,6 +33,7 @@ from pydantic_core import PydanticSerializationError
 
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai._instrumentation import ContentPolicy, open_request_policy, request_policy_scope
+from pydantic_ai._model_request_attempts import describe_error, ended_response, replaced_response_id
 from pydantic_ai._run_context import set_current_run_context
 from pydantic_ai._utils import aclose_if_supported, get_union_args, is_str_dict
 from pydantic_ai.agent import Agent, EventStreamHandler
@@ -59,7 +60,10 @@ from pydantic_ai.messages import (
     AgentStreamEvent,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseEndStatus,
     ModelResponseOrigin,
+    ModelResponseStartEvent,
     ModelResponseStreamEvent,
 )
 from pydantic_ai.models import (
@@ -251,6 +255,59 @@ def _framework_metadata(request: ModelRequest) -> dict[str, Any]:
     """The `__pydantic_ai__` metadata on `request`, which only the framework writes."""
     namespace = (request.metadata or {}).get(_PYDANTIC_AI_METADATA_KEY)
     return namespace if is_str_dict(namespace) else {}
+
+
+async def _response_boundary_events(
+    stream: StreamedResponse, origin: ModelResponseOrigin | None, run_context: RunContext[Any]
+) -> AsyncIterator[ModelResponseStreamEvent]:
+    """A model unit's stream events stamped with `origin`, opened and closed by its response's start and end events.
+
+    Without an `origin`, as outside an agent run, the stream's events pass through as they are.
+
+    The start comes before the first event, so it carries the model and provider names the stream knows by then, as
+    the agent stream's does. An engine's re-execution of the same attempt first closes the previous execution's
+    response as `'superseded'`, as only the new execution knows the previous one won't send its own end.
+    """
+    if origin is None:
+        async for event in stream:
+            yield event
+        return
+    if origin.execution_attempt > 1:
+        yield ModelResponseEndEvent(
+            origin=replace(origin, execution_attempt=origin.execution_attempt - 1), status='superseded', response=None
+        )
+
+    def end(status: ModelResponseEndStatus, error: Exception | None = None) -> ModelResponseEndEvent:
+        return ModelResponseEndEvent(
+            origin=origin,
+            status=status,
+            response=ended_response(stream.get(), status, run_context),
+            error=None if error is None else describe_error(error),
+        )
+
+    started = False
+    events = aiter(stream)
+    while True:
+        try:
+            event = await anext(events)
+        except StopAsyncIteration:
+            break
+        except Exception as error:
+            if started:
+                yield end('failed', error)
+            raise
+        if not started:
+            started = True
+            response = stream.get()
+            yield ModelResponseStartEvent(
+                origin=origin,
+                model_name=response.model_name,
+                provider_name=response.provider_name,
+                replaces=replaced_response_id(origin),
+            )
+        yield replace(event, origin=origin)
+    if started:
+        yield end('interrupted' if stream.get().state == 'interrupted' else 'complete')
 
 
 class _ResolvedRequestModel(NamedTuple):
@@ -1999,9 +2056,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
 
         async def events(stream: StreamedResponse) -> AsyncIterator[ModelResponseStreamEvent]:
             nonlocal produced_output
-            async for event in stream:
-                produced_output = True
-                yield event if origin is None else replace(event, origin=origin)
+            async for event in _response_boundary_events(stream, origin, params.run_context):
+                # Only a superseded predecessor's end comes before the stream's first event.
+                produced_output = produced_output or not isinstance(event, ModelResponseEndEvent)
+                yield event
 
         try:
             async with self._durable_model_scope(params.model_id, params.run_context, serving=True) as (

@@ -7,6 +7,7 @@ from collections.abc import AsyncIterable, AsyncIterator
 from dataclasses import replace
 from datetime import timedelta
 from typing import Any, cast
+from unittest.mock import ANY
 
 import anyio
 import pytest
@@ -19,10 +20,13 @@ from pydantic_ai import (
     FunctionToolResultEvent,
     ModelMessage,
     ModelResponse,
+    ModelResponseEndEvent,
     ModelResponseOrigin,
+    ModelResponseStartEvent,
     PartDeltaEvent,
     PartEndEvent,
     PartStartEvent,
+    RequestUsage,
     RunContext,
     RunUsage,
     TextPart,
@@ -32,6 +36,8 @@ from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
+
+from ...conftest import IsDatetime, IsStr
 
 try:
     from temporalio import activity, workflow
@@ -71,6 +77,7 @@ if sys.version_info >= (3, 14):  # pragma: lax no cover
     )
 
 with workflow.unsafe.imports_passed_through():
+    from ..._inline_snapshot import snapshot
     from ._shared import BASE_ACTIVITY_CONFIG, TASK_QUEUE
 
 pytestmark = [pytest.mark.xdist_group(name='temporal-workflow-streams')]
@@ -1171,3 +1178,183 @@ async def test_a_reattached_ui_replays_the_whole_run(client: Client) -> None:
     assert 'TextDeltaChunk' in _kinds(reattached)
     assert 'ToolOutputAvailableChunk' in _kinds(reattached)
     assert completed == [output]
+
+
+# --- Response boundaries on the topic -----------------------------------------------------------
+
+
+_boundaries_durability = TemporalDurability(
+    activity_config=BASE_ACTIVITY_CONFIG,
+    model_activity_config=ActivityConfig(
+        start_to_close_timeout=timedelta(seconds=60),
+        retry_policy=RetryPolicy(maximum_attempts=2, initial_interval=timedelta(milliseconds=10)),
+    ),
+    event_stream_topic=WorkflowStreamTopic(TOPIC, response_boundaries=True),
+)
+_boundaries_agent = Agent(
+    FunctionModel(_tool_calling_model, stream_function=_stream_failing_on_the_first_activity_attempt),
+    name='boundaries_stream_agent',
+    capabilities=[_boundaries_durability],
+)
+
+
+@workflow.defn
+class BoundariesStreamWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.events = AgentEventStream()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with self.events:
+            result = await _boundaries_agent.run(prompt)
+        return result.output
+
+
+async def test_a_retried_activity_closes_the_previous_execution_as_superseded(client: Client) -> None:
+    """With `response_boundaries=True`, each execution's response is opened and closed on the topic.
+
+    The first execution sends its own `'failed'` end before Temporal retries it, and the retry closes it again as
+    `'superseded'` before it starts: a consumer applies the first end of each origin. Replaying the run's history
+    shows the boundaries, which the activity publishes, add no workflow commands.
+    """
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[BoundariesStreamWorkflow],
+        plugins=[AgentPlugin(_boundaries_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            BoundariesStreamWorkflow.run,
+            args=['Hello'],
+            id=f'{BoundariesStreamWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        received = await _collect(
+            _boundaries_durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50))
+        )
+        assert await handle.result() == 'Hello'
+        history = await handle.fetch_history()
+
+    run_id = cast(AgentRunResultEvent[str], received.pop()).result.run_id
+    first = ModelResponseOrigin(run_id=run_id, run_step=1)
+    second = ModelResponseOrigin(run_id=run_id, run_step=1, execution_attempt=2)
+    assert received == snapshot(
+        [
+            ModelResponseStartEvent(
+                origin=ANY,
+                model_name='function:_tool_calling_model:_stream_failing_on_the_first_activity_attempt',
+                provider_name=None,
+            ),
+            PartStartEvent(index=0, part=TextPart(content='Hel')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='failed',
+                response=ModelResponse(
+                    parts=[TextPart(content='Hel')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function:_tool_calling_model:_stream_failing_on_the_first_activity_attempt',
+                    timestamp=IsDatetime(),
+                    run_id=run_id,
+                    conversation_id=IsStr(),
+                    state='interrupted',
+                ),
+                error='RuntimeError: connection lost',
+            ),
+            ModelResponseEndEvent(origin=ANY, status='superseded', response=None),
+            ModelResponseStartEvent(
+                origin=ANY,
+                model_name='function:_tool_calling_model:_stream_failing_on_the_first_activity_attempt',
+                provider_name=None,
+            ),
+            PartStartEvent(index=0, part=TextPart(content='Hello')),
+            FinalResultEvent(tool_name=None, tool_call_id=None),
+            PartEndEvent(index=0, part=TextPart(content='Hello')),
+            ModelResponseEndEvent(
+                origin=ANY,
+                status='complete',
+                response=ModelResponse(
+                    parts=[TextPart(content='Hello')],
+                    usage=RequestUsage(input_tokens=50, output_tokens=1),
+                    model_name='function:_tool_calling_model:_stream_failing_on_the_first_activity_attempt',
+                    timestamp=IsDatetime(),
+                    run_id=run_id,
+                    conversation_id=IsStr(),
+                ),
+            ),
+        ]
+    )
+    assert [event.origin for event in received] == [first] * 5 + [second] * 5
+
+    await Replayer(
+        workflows=[BoundariesStreamWorkflow],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+        data_converter=pydantic_data_converter,
+    ).replay_workflow(history)
+
+
+_in_activity_events: list[AgentStreamEvent] = []
+
+
+async def _record_in_activity(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+    async for event in stream:
+        _in_activity_events.append(event)
+
+
+_unbounded_durability = TemporalDurability(
+    activity_config=BASE_ACTIVITY_CONFIG, event_stream_topic=TOPIC, event_stream_handler=_record_in_activity
+)
+_unbounded_agent = Agent(
+    _model,
+    name='unbounded_stream_agent',
+    deps_type=type(None),
+    tools=[get_answer],
+    capabilities=[_unbounded_durability],
+)
+
+
+@workflow.defn
+class UnboundedStreamWorkflow:
+    @workflow.init
+    def __init__(self, prompt: str) -> None:
+        self.events = AgentEventStream()
+
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        async with self.events:
+            result = await _unbounded_agent.run(prompt)
+        return result.output
+
+
+async def test_a_topic_publishes_no_response_boundaries_unless_asked(client: Client) -> None:
+    """Without `response_boundaries=True`, a subscriber on a version that can't decode the boundaries never gets one.
+
+    The activity's own event stream handler still gets them.
+    """
+    _in_activity_events.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[UnboundedStreamWorkflow],
+        plugins=[AgentPlugin(_unbounded_agent)],
+        workflow_runner=UnsandboxedWorkflowRunner(),
+    ):
+        handle = await client.start_workflow(
+            UnboundedStreamWorkflow.run,
+            args=['Hello'],
+            id=f'{UnboundedStreamWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+        )
+        received = await _collect(
+            _unbounded_durability.stream_agent_events(client, handle, poll_cooldown=timedelta(milliseconds=50))
+        )
+        await handle.result()
+
+    assert not any(isinstance(event, ModelResponseStartEvent | ModelResponseEndEvent) for event in received)
+    assert [
+        type(event).__name__
+        for event in _in_activity_events
+        if isinstance(event, ModelResponseStartEvent | ModelResponseEndEvent)
+    ] == ['ModelResponseStartEvent', 'ModelResponseEndEvent', 'ModelResponseStartEvent', 'ModelResponseEndEvent']

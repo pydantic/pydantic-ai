@@ -46,6 +46,7 @@ from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ExternalToolse
 from pydantic_ai_harness.pgtask import CheckpointDecodeError, PGTaskDurability
 from pydantic_ai_harness.pgtask._context import _occurrences  # pyright: ignore[reportPrivateUsage]
 from tests.durable_exec.counting_mcp import counting_mcp_server
+from tests.harness._durable_replay import without_run_identity
 from tests.harness._rate_limited_model import rate_limited_once
 
 from ...conftest import try_import
@@ -566,7 +567,7 @@ class TestStreaming:
 
         first, replayed = runs
         assert any(isinstance(e, PartStartEvent) for e in first)
-        assert replayed == first
+        assert without_run_identity(replayed) == without_run_identity(first)
         assert counter['calls'] == 1
 
     async def test_run_stream_replays_buffered_stream(self, pgtask_db: PGTaskDatabase) -> None:

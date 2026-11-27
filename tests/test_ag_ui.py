@@ -10,7 +10,7 @@ import json
 import uuid
 import warnings
 from collections.abc import AsyncIterator, Callable, MutableMapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Annotated, Any, Literal, cast
@@ -21,6 +21,7 @@ from pydantic import BaseModel, Field, Json, TypeAdapter, ValidationError
 
 from pydantic_ai import (
     AgentRunResultEvent,
+    AgentStreamEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -40,7 +41,10 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseOrigin,
     ModelResponsePart,
+    ModelResponseStartEvent,
     ModelSettingsDeltaEvent,
     ModelSettingsDeltaPart,
     NativeToolCallPart,
@@ -76,7 +80,7 @@ from pydantic_ai import (
 from pydantic_ai._deferred_capabilities import parse_loaded_capabilities
 from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai.agent import Agent, AgentRunResult
-from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
+from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools, WrapModelRequestHandler
 from pydantic_ai.exceptions import ApprovalRequired, CallDeferred, ToolFailed, UserError
 from pydantic_ai.messages import (
     InstructionCapabilityPart,
@@ -778,8 +782,9 @@ async def test_run_stream_error_closes_open_native_tool_call() -> None:
     )
 
 
+@requires_ag_ui('0.1.11')  # the failed tool result's `REASONING_ENCRYPTED_VALUE` claim
 async def test_run_stream_error_closes_open_tool_call() -> None:
-    """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must emit `TOOL_CALL_END` before `RUN_ERROR`.
+    """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must end and answer it before `RUN_ERROR`.
 
     A `ToolCallPart` — the streamed form of both function and output tool calls — is tracked in neither the
     open text/thinking slot nor `_pending_tool_calls` (which only holds already-dispatched calls), so without
@@ -809,7 +814,10 @@ async def test_run_stream_error_closes_open_tool_call() -> None:
     ]
 
     event_types = [e['type'] for e in events]
-    assert event_types[event_types.index('RUN_ERROR') - 1] == 'TOOL_CALL_END'
+    # The response ends as failed, so its streamed call gets the same synthetic result the error path gives a
+    # pending one, and both land before `RUN_ERROR`.
+    error_at = event_types.index('RUN_ERROR')
+    assert event_types[error_at - 3 : error_at] == ['TOOL_CALL_END', 'TOOL_CALL_RESULT', 'REASONING_ENCRYPTED_VALUE']
     # The `TOOL_CALL_END` must carry the same `toolCallId` as its `TOOL_CALL_START`, or the client can't close the call.
     tool_start = next(e for e in events if e['type'] == 'TOOL_CALL_START')
     tool_end = next(e for e in events if e['type'] == 'TOOL_CALL_END')
@@ -822,6 +830,8 @@ async def test_run_stream_error_closes_open_tool_call() -> None:
             'TOOL_CALL_START',
             'TOOL_CALL_ARGS',
             'TOOL_CALL_END',
+            'TOOL_CALL_RESULT',
+            'REASONING_ENCRYPTED_VALUE',
             'RUN_ERROR',
         ]
     )
@@ -7202,6 +7212,8 @@ async def test_stream_failed_builtin_tool_return_outcome_roundtrip(
                 outcome='failed',
             )
         }
+        # Text output ends the run with this one response, rather than an output retry streaming a second one.
+        yield 'Done'
 
     agent = Agent(model=FunctionModel(stream_function=stream_function))
     events = await run_and_collect_events(
@@ -12577,3 +12589,191 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
     assert 'tag' in dumped
     # The caller's own objects are not mutated.
     assert marked.metadata == reserved
+
+
+@dataclass
+class _ReplaceStreamedResponse(AbstractCapability[None]):
+    """Stops the model's stream once its first chunk arrived, and answers with a response of its own instead."""
+
+    first_chunk_sent: asyncio.Event
+
+    async def wrap_model_request(
+        self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        handler_task = asyncio.ensure_future(handler(request_context))
+        await self.first_chunk_sent.wait()
+        handler_task.cancel()
+        await asyncio.gather(handler_task, return_exceptions=True)
+        return ModelResponse(parts=[TextPart(content='Replaced')])
+
+
+async def test_replaced_response_answers_its_tool_calls_and_gets_a_new_message():
+    """A response a hook stops mid-stream ends as interrupted: its tool call is ended and answered.
+
+    Without the result, a client like CopilotKit would run the frontend tool call once the run ends, although the
+    run never executes it. The replacement streams under a new message ID.
+    https://github.com/pydantic/pydantic-ai/issues/13260
+    """
+    first_chunk_sent = asyncio.Event()
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='show_map', json_args='{"city": "Paris"}', tool_call_id='call-1')}
+        first_chunk_sent.set()
+        await asyncio.Event().wait()
+        yield 'never'  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_function),
+        deps_type=type(None),
+        capabilities=[_ReplaceStreamedResponse(first_chunk_sent)],
+    )
+    events = await run_and_collect_events(agent, create_input(UserMessage(id='msg-1', content='Show me Paris')))
+
+    assert events == snapshot(
+        [
+            {
+                'type': 'RUN_STARTED',
+                'timestamp': IsInt(),
+                'threadId': IsStr(),
+                'runId': IsStr(),
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (tool_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_END',
+                'timestamp': IsInt(),
+                'messageId': tool_message_id,
+            },
+            {
+                'type': 'TOOL_CALL_START',
+                'timestamp': IsInt(),
+                'toolCallId': 'call-1',
+                'toolCallName': 'show_map',
+                'parentMessageId': tool_message_id,
+            },
+            {
+                'type': 'TOOL_CALL_ARGS',
+                'timestamp': IsInt(),
+                'toolCallId': 'call-1',
+                'delta': '{"city": "Paris"}',
+            },
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call-1'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': IsStr(),
+                'toolCallId': 'call-1',
+                'content': 'The tool call was interrupted before a result was produced.',
+                'role': 'tool',
+            },
+            {
+                'type': 'TEXT_MESSAGE_START',
+                'timestamp': IsInt(),
+                'messageId': (text_message_id := IsSameStr()),
+                'role': 'assistant',
+            },
+            {
+                'type': 'TEXT_MESSAGE_CONTENT',
+                'timestamp': IsInt(),
+                'messageId': text_message_id,
+                'delta': 'Replaced',
+            },
+            {
+                'type': 'TEXT_MESSAGE_END',
+                'timestamp': IsInt(),
+                'messageId': text_message_id,
+            },
+            {
+                'type': 'RUN_FINISHED',
+                'timestamp': IsInt(),
+                'threadId': IsStr(),
+                'runId': IsStr(),
+            },
+        ]
+    )
+    # The replacement is a response of its own, under a message ID other than the replaced response's.
+    assert events[7]['messageId'] != events[1]['messageId']
+
+
+def _boundary_events(status: Literal['failed', 'superseded']) -> list[AgentStreamEvent]:
+    """A response that streams a tool call and then ends without completing, followed for `superseded` by its successor."""
+    first = ModelResponseOrigin(run_id='run', run_step=1)
+    call = ToolCallPart(tool_name='show_map', args='{"city": "Paris"}', tool_call_id='call-1')
+    events: list[AgentStreamEvent] = [
+        ModelResponseStartEvent(origin=first, model_name='m', provider_name=None),
+        PartStartEvent(index=0, part=call),
+    ]
+    if status == 'failed':
+        events.append(
+            ModelResponseEndEvent(
+                origin=first, status='failed', response=ModelResponse(parts=[call]), error='RuntimeError: lost'
+            )
+        )
+    else:
+        # The durable engine ran the attempt again: the successor closes the previous execution's response, whose
+        # call it streams again, so the call is left for the successor to answer.
+        second = replace(first, execution_attempt=2)
+        events += [
+            ModelResponseEndEvent(origin=first, status='superseded', response=None),
+            ModelResponseStartEvent(origin=second, model_name='m', provider_name=None),
+            PartStartEvent(index=0, part=call),
+            PartEndEvent(index=0, part=call),
+            ModelResponseEndEvent(origin=second, status='complete', response=ModelResponse(parts=[call])),
+        ]
+    return events
+
+
+@requires_ag_ui('0.1.11')  # the failed tool result's `REASONING_ENCRYPTED_VALUE` claim
+@pytest.mark.parametrize('status', ['failed', 'superseded'])
+async def test_a_response_that_does_not_complete_closes_its_tool_call(status: Literal['failed', 'superseded']):
+    """A failed response's streamed tool call is ended and answered; a superseded one's is ended but left unanswered.
+
+    The successor of a superseded response streams the same call again, so answering it would duplicate its result.
+    """
+    events = _boundary_events(status)
+
+    async def event_generator():
+        for event in events:
+            yield event
+
+    event_stream = AGUIEventStream(run_input=create_input(UserMessage(id='msg_1', content='Hello')))
+    chunks = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+    ]
+    actual = [(chunk['type'], chunk.get('toolCallId'), chunk.get('content')) for chunk in chunks]
+    expected = {
+        'failed': snapshot(
+            [
+                ('RUN_STARTED', None, None),
+                ('TEXT_MESSAGE_START', None, None),
+                ('TEXT_MESSAGE_END', None, None),
+                ('TOOL_CALL_START', 'call-1', None),
+                ('TOOL_CALL_ARGS', 'call-1', None),
+                ('TOOL_CALL_END', 'call-1', None),
+                ('TOOL_CALL_RESULT', 'call-1', 'Tool execution was interrupted by an error.'),
+                ('REASONING_ENCRYPTED_VALUE', None, None),
+                ('RUN_FINISHED', None, None),
+            ]
+        ),
+        'superseded': snapshot(
+            [
+                ('RUN_STARTED', None, None),
+                ('TEXT_MESSAGE_START', None, None),
+                ('TEXT_MESSAGE_END', None, None),
+                ('TOOL_CALL_START', 'call-1', None),
+                ('TOOL_CALL_ARGS', 'call-1', None),
+                ('TOOL_CALL_END', 'call-1', None),
+                ('TEXT_MESSAGE_START', None, None),
+                ('TEXT_MESSAGE_END', None, None),
+                ('TOOL_CALL_START', 'call-1', None),
+                ('TOOL_CALL_ARGS', 'call-1', None),
+                ('TOOL_CALL_END', 'call-1', None),
+                ('RUN_FINISHED', None, None),
+            ]
+        ),
+    }
+    assert actual == expected[status]

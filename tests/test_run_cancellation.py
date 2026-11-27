@@ -56,7 +56,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
-    PartStartEvent,
+    ModelResponseStartEvent,
     TextPart,
     ToolCallPart,
     ToolReturn,
@@ -1721,7 +1721,9 @@ async def test_cancel_under_run_stream_events():
                 events.append(type(event).__name__)
 
     # events streamed before the cancellation are delivered
-    assert events == snapshot(['PartStartEvent', 'PartEndEvent', 'FunctionToolCallEvent'])
+    assert events == snapshot(
+        ['ModelResponseStartEvent', 'PartStartEvent', 'PartEndEvent', 'ModelResponseEndEvent', 'FunctionToolCallEvent']
+    )
 
 
 async def test_run_stream_events_cancel_mid_iteration():
@@ -2893,7 +2895,7 @@ async def test_closing_generator_that_owns_iter_run_drains_wrap_run():
                 yield await anext(aiter(stream))
 
     generator = first_stream_event()
-    assert isinstance(await anext(generator), PartStartEvent)
+    assert isinstance(await anext(generator), ModelResponseStartEvent)
     await generator.aclose()
     events.append('closed')
 

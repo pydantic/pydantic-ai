@@ -23,12 +23,13 @@ from pydantic_ai._output import build_retried_tool_return
 from pydantic_ai._run_context import RunContext, get_current_run_context
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool, ProcessHistory
+from pydantic_ai.capabilities import AbstractCapability, Capability, NativeTool, ProcessHistory, WrapModelRequestHandler
 from pydantic_ai.conversation import Conversation
 from pydantic_ai.conversation_store import ConversationEntry, ConversationRecord, InMemoryConversationStore
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     AgentInstructionSource,
+    AgentStreamEvent,
     AudioUrl,
     BinaryContent,
     BinaryImage,
@@ -56,7 +57,10 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseOrigin,
     ModelResponsePart,
+    ModelResponseStartEvent,
     ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -3864,7 +3868,7 @@ async def test_run_stream_error_closes_open_native_tool_call():
 
 
 async def test_run_stream_error_closes_open_tool_call():
-    """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must emit `tool-input-available` before `error`.
+    """A mid-stream `UsageLimitExceeded` while a tool call is streaming its args must close and answer it before `error`.
 
     A `ToolCallPart` — the streamed form of both function and output tool calls — is tracked in neither the
     open text/thinking slot nor `_pending_tool_calls` (which only holds already-dispatched calls), so without
@@ -3899,8 +3903,10 @@ async def test_run_stream_error_closes_open_tool_call():
     ]
 
     event_types = [e if isinstance(e, str) else e['type'] for e in events]
-    # `tool-input-available` must land immediately before `error`; anything after `error` is dropped by the client.
-    assert event_types[event_types.index('error') - 1] == 'tool-input-available'
+    # The call must be closed and answered before `error`; anything after `error` is dropped by the client. The
+    # response ends as failed, so its streamed call gets the same synthetic result the error path gives a pending one.
+    error_at = event_types.index('error')
+    assert event_types[error_at - 2 : error_at] == ['tool-input-available', 'tool-output-error']
     # ...and it must carry the same `toolCallId` as its `tool-input-start`, or the client can't mark the call done.
     tool_start = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-start')
     tool_available = next(e for e in events if not isinstance(e, str) and e['type'] == 'tool-input-available')
@@ -3912,6 +3918,7 @@ async def test_run_stream_error_closes_open_tool_call():
             'tool-input-start',
             'tool-input-delta',
             'tool-input-available',
+            'tool-output-error',
             'error',
             'finish-step',
             'finish',
@@ -15251,3 +15258,199 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
     assert 'tag' in dumped
     # The caller's own objects are not mutated.
     assert marked.metadata == reserved
+
+
+@dataclass
+class _ReplaceStreamedResponse(AbstractCapability[None]):
+    """Stops the model's stream once its first chunk arrived, and answers with a response of its own instead."""
+
+    first_chunk_sent: asyncio.Event
+
+    async def wrap_model_request(
+        self, ctx: RunContext[None], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
+    ) -> ModelResponse:
+        handler_task = asyncio.ensure_future(handler(request_context))
+        await self.first_chunk_sent.wait()
+        handler_task.cancel()
+        await asyncio.gather(handler_task, return_exceptions=True)
+        return ModelResponse(parts=[TextPart(content='Replaced')])
+
+
+async def test_replaced_response_answers_its_tool_calls_and_streams_its_replacement_as_a_step():
+    """A response a hook stops mid-stream ends as interrupted: its tool call is answered, as the run never executes it.
+
+    The replacement then streams as a step of its own. https://github.com/pydantic/pydantic-ai/issues/13260
+    """
+    first_chunk_sent = asyncio.Event()
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='show_map', json_args='{"city": "Paris"}', tool_call_id='call-1')}
+        first_chunk_sent.set()
+        await asyncio.Event().wait()
+        yield 'never'  # pragma: no cover
+
+    agent = Agent(
+        FunctionModel(stream_function=stream_function),
+        deps_type=type(None),
+        capabilities=[_ReplaceStreamedResponse(first_chunk_sent)],
+    )
+    event_stream = VercelAIEventStream()
+    async with agent.run_stream_events('Show me Paris') as events:
+        chunks = [
+            json.loads(event.removeprefix('data: '))
+            async for event in event_stream.encode_stream(event_stream.transform_stream(events))
+            if '[DONE]' not in event
+        ]
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'call-1', 'toolName': 'show_map'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call-1', 'inputTextDelta': '{"city": "Paris"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call-1',
+                'toolName': 'show_map',
+                'input': {'city': 'Paris'},
+            },
+            {
+                'type': 'tool-output-available',
+                'toolCallId': 'call-1',
+                'output': 'The tool call was interrupted before a result was produced.',
+            },
+            {'type': 'finish-step'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (text_id := IsSameStr())},
+            {'type': 'text-delta', 'delta': 'Replaced', 'id': text_id},
+            {'type': 'text-end', 'id': text_id},
+            {
+                'type': 'message-metadata',
+                'messageMetadata': {'pydantic_ai': {'timestamp': IsStr()}},
+            },
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    )
+
+
+async def test_output_retry_streams_each_response_as_its_own_step():
+    """A response an output validator rejects and the one that follows are separate steps, not one shared step.
+
+    Before response start events, both responses streamed inside a single `start-step`/`finish-step` pair, as no
+    tool turn separated them. https://github.com/pydantic/pydantic-ai/issues/12829
+    """
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        yield 'first' if len(messages) == 1 else 'second'
+
+    agent = Agent(FunctionModel(stream_function=stream_function))
+
+    @agent.output_validator
+    def check(output: str) -> str:
+        if output == 'first':
+            raise ModelRetry('try again')
+        return output
+
+    event_stream = VercelAIEventStream()
+    async with agent.run_stream_events('Hello') as events:
+        chunk_types = [chunk.model_dump()['type'] async for chunk in event_stream.transform_stream(events)]
+
+    assert chunk_types == snapshot(
+        [
+            'start',
+            'start-step',
+            'text-start',
+            'text-delta',
+            'text-end',
+            'finish-step',
+            'start-step',
+            'text-start',
+            'text-delta',
+            'text-end',
+            'message-metadata',
+            'finish-step',
+            'finish',
+            'done',
+        ]
+    )
+
+
+def _boundary_events(status: Literal['failed', 'superseded']) -> list[AgentStreamEvent]:
+    """A response that streams a tool call and then ends without completing, followed for `superseded` by its successor."""
+    first = ModelResponseOrigin(run_id='run', run_step=1)
+    call = ToolCallPart(tool_name='show_map', args='{"city": "Paris"}', tool_call_id='call-1')
+    events: list[AgentStreamEvent] = [
+        ModelResponseStartEvent(origin=first, model_name='m', provider_name=None),
+        PartStartEvent(index=0, part=call),
+    ]
+    if status == 'failed':
+        events.append(
+            ModelResponseEndEvent(
+                origin=first, status='failed', response=ModelResponse(parts=[call]), error='RuntimeError: lost'
+            )
+        )
+    else:
+        # The durable engine ran the attempt again: the successor closes the previous execution's response, whose
+        # call it streams again, so the call is left for the successor to answer.
+        second = replace(first, execution_attempt=2)
+        events += [
+            ModelResponseEndEvent(origin=first, status='superseded', response=None),
+            ModelResponseStartEvent(origin=second, model_name='m', provider_name=None),
+            PartStartEvent(index=0, part=call),
+            PartEndEvent(index=0, part=call),
+            ModelResponseEndEvent(origin=second, status='complete', response=ModelResponse(parts=[call])),
+        ]
+    return events
+
+
+@pytest.mark.parametrize('status', ['failed', 'superseded'])
+async def test_a_response_that_does_not_complete_closes_its_tool_call(status: Literal['failed', 'superseded']):
+    """A failed response's streamed tool call is closed and answered; a superseded one's is closed but left unanswered.
+
+    The successor of a superseded response streams the same call again, so answering it would duplicate its result.
+    """
+    events = _boundary_events(status)
+
+    async def event_generator():
+        for event in events:
+            yield event
+
+    event_stream = VercelAIEventStream()
+    chunks = [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(event_generator()))
+        if '[DONE]' not in event
+    ]
+    actual = [
+        (chunk['type'], chunk.get('toolCallId'), chunk.get('output') or chunk.get('errorText')) for chunk in chunks
+    ]
+    expected = {
+        'failed': snapshot(
+            [
+                ('start', None, None),
+                ('start-step', None, None),
+                ('tool-input-start', 'call-1', None),
+                ('tool-input-delta', 'call-1', None),
+                ('tool-input-available', 'call-1', None),
+                ('tool-output-error', 'call-1', 'Tool execution was interrupted by an error.'),
+                ('finish-step', None, None),
+                ('finish', None, None),
+            ]
+        ),
+        'superseded': snapshot(
+            [
+                ('start', None, None),
+                ('start-step', None, None),
+                ('tool-input-start', 'call-1', None),
+                ('tool-input-delta', 'call-1', None),
+                ('finish-step', None, None),
+                ('start-step', None, None),
+                ('tool-input-start', 'call-1', None),
+                ('tool-input-delta', 'call-1', None),
+                ('finish-step', None, None),
+                ('finish', None, None),
+            ]
+        ),
+    }
+    assert actual == expected[status]

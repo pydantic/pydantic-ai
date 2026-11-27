@@ -13,6 +13,7 @@ from threading import Barrier, Lock
 from time import sleep
 from types import SimpleNamespace
 from typing import Any, Literal, cast
+from unittest.mock import ANY
 
 import anyio
 import anyio.from_thread
@@ -37,6 +38,8 @@ from pydantic_ai import (
     ModelRequest,
     ModelRequestAttempt,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
@@ -2079,6 +2082,7 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='us.amazon.nova-micro-v1:0', provider_name='bedrock'),
             PartStartEvent(index=0, part=TextPart(content='<thinking')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='> To find')),
@@ -2119,6 +2123,7 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
                 index=1,
                 part=ToolCallPart(tool_name='get_temperature', args='{"city":"Paris"}', tool_call_id=IsStr()),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
             IsInstance(FunctionToolCallEvent),
             FunctionToolResultEvent(
                 part=ToolReturnPart(
@@ -2128,6 +2133,7 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
                     timestamp=IsDatetime(),
                 )
             ),
+            ModelResponseStartEvent(origin=ANY, model_name='us.amazon.nova-micro-v1:0', provider_name='bedrock'),
             PartStartEvent(index=0, part=TextPart(content='The')),
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' current temperature in Paris, the')),
@@ -2137,6 +2143,7 @@ async def test_bedrock_model_iter_stream(allow_model_requests: None, bedrock_pro
             PartEndEvent(
                 index=0, part=TextPart(content='The current temperature in Paris, the capital of France, is 30°C.')
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -3501,6 +3508,9 @@ async def test_bedrock_model_thinking_part_redacted_stream(
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(
+                origin=ANY, model_name='us.anthropic.claude-3-7-sonnet-20250219-v1:0', provider_name='bedrock'
+            ),
             PartStartEvent(
                 index=0,
                 part=ThinkingPart(
@@ -3582,6 +3592,7 @@ If you have a question you'd like to discuss or need assistance with something, 
 """
                 ),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -3968,6 +3979,9 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
 
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(
+                origin=ANY, model_name='us.anthropic.claude-sonnet-4-20250514-v1:0', provider_name='bedrock'
+            ),
             PartStartEvent(index=0, part=ThinkingPart(content='The')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' user has')),
             PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta=' greeted me with')),
@@ -4000,6 +4014,7 @@ async def test_bedrock_model_thinking_part_stream(allow_model_requests: None, be
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' How can I help')),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you today?')),
             PartEndEvent(index=1, part=TextPart(content="Hello! It's nice to meet you. How can I help you today?")),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
     assert agent_run.result is not None
@@ -5012,6 +5027,7 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
     assert not any(part.content == '' for part in result.response.parts if isinstance(part, TextPart))
     assert events == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='openai.gpt-oss-120b-1:0', provider_name='bedrock'),
             PartStartEvent(
                 index=0,
                 part=ThinkingPart(
@@ -5029,6 +5045,7 @@ async def test_bedrock_model_stream_empty_text_delta(allow_model_requests: None,
             FinalResultEvent(tool_name=None, tool_call_id=None),
             PartDeltaEvent(index=1, delta=TextPartDelta(content_delta=' you today?')),
             PartEndEvent(index=1, part=TextPart(content='Hello! How can I help you today?')),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 
@@ -7825,6 +7842,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
     )
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='us.amazon.nova-2-lite-v1:0', provider_name='bedrock'),
             PartStartEvent(
                 index=0,
                 part=NativeToolCallPart(
@@ -7879,6 +7897,7 @@ async def test_bedrock_model_code_execution_tool_stream(allow_model_requests: No
                     tool_name='final_result', args='{"result":7006652.0}', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'
                 ),
             ),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
             OutputToolCallEvent(
                 part=ToolCallPart(
                     tool_name='final_result', args='{"result":7006652.0}', tool_call_id='tooluse_ptgCcZ0uQu-UUMz0abqoWw'

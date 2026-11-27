@@ -389,6 +389,41 @@
       ]
     }
   },
+  "pydantic_ai_slim/pydantic_ai/_model_request_attempts.py": {
+    "describe_error": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
+      ]
+    },
+    "ended_response": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
+      ]
+    },
+    "replaced_response_id": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
+      ]
+    }
+  },
   "pydantic_ai_slim/pydantic_ai/_run_context.py": {
     "AgentDepsT": {
       "engines": [
@@ -4126,6 +4161,7 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_operation.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent._call_event_stream_handler_in_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent._call_event_stream_handler_in_workflow.streamed_response",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>",
@@ -4529,14 +4565,27 @@
         "src/pydantic_ai_harness/pydantic_ai_harness/render/_transports.py::<module>"
       ]
     },
+    "ModelResponse.model_name": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events"
+      ]
+    },
     "ModelResponse.provider_name": {
       "engines": [
+        "durable_exec",
         "temporal"
       ],
       "kinds": [
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.accepts_server_state"
       ]
     },
@@ -4548,7 +4597,91 @@
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._withdraw_unreturned_response"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._withdraw_unreturned_response",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events"
+      ]
+    },
+    "ModelResponseEndEvent": {
+      "engines": [
+        "durable_exec",
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_event_stream.py::<module>"
+      ]
+    },
+    "ModelResponseEndEvent.error": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events.end"
+      ]
+    },
+    "ModelResponseEndEvent.event_kind": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._call_event_stream_handler_activity"
+      ]
+    },
+    "ModelResponseEndEvent.origin": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events.end"
+      ]
+    },
+    "ModelResponseEndEvent.response": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events.end"
+      ]
+    },
+    "ModelResponseEndEvent.status": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events.end"
+      ]
+    },
+    "ModelResponseEndStatus": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "annotation_only"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>"
       ]
     },
     "ModelResponseOrigin": {
@@ -4581,7 +4714,8 @@
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_request_stream_operation"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_request_stream_operation",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events"
       ]
     },
     "ModelResponseOrigin.run_id": {
@@ -4615,6 +4749,75 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::<module>"
+      ]
+    },
+    "ModelResponseStartEvent": {
+      "engines": [
+        "durable_exec",
+        "temporal"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_event_stream.py::<module>"
+      ]
+    },
+    "ModelResponseStartEvent.event_kind": {
+      "engines": [
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._call_event_stream_handler_activity"
+      ]
+    },
+    "ModelResponseStartEvent.model_name": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events"
+      ]
+    },
+    "ModelResponseStartEvent.origin": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events"
+      ]
+    },
+    "ModelResponseStartEvent.provider_name": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events"
+      ]
+    },
+    "ModelResponseStartEvent.replaces": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events"
       ]
     },
     "ModelResponseStreamEvent": {
@@ -5773,7 +5976,9 @@
         "attribute_read"
       ],
       "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_request_stream_operation"
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_request_stream_operation",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_response_boundary_events.end"
       ]
     },
     "StreamedResponse.model_request_parameters": {

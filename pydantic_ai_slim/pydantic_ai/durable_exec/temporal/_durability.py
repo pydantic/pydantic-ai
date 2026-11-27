@@ -59,6 +59,7 @@ from ._event_stream import (
     publish_agent_event,
     publish_agent_result,
     stream_agent_events,
+    topic_publishes,
     workflow_stream_event_handler,
 )
 from ._external_events import TemporalExternalEventWaiter, ask_activity
@@ -715,9 +716,7 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
         # free (no activity, no signal) and replay-safe, as replay rebuilds the log identically.
         try:
             async for event in events:
-                if not isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES) and (
-                    topic.events is None or topic.events(event)
-                ):
+                if not isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES) and topic_publishes(topic, event):
                     publish_agent_event(topic.name, event)
                 yield event
         finally:

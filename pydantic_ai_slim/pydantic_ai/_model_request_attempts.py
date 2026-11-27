@@ -9,10 +9,10 @@ that makes more than one attempt at a request records them the same way.
 from __future__ import annotations as _annotations
 
 from contextlib import suppress
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import UTC, datetime, timedelta
 from time import perf_counter_ns
-from typing import TYPE_CHECKING, Literal
+from typing import TYPE_CHECKING, Any, Literal
 
 from opentelemetry.trace import Span, Status, StatusCode, Tracer, set_span_in_context
 from opentelemetry.util.types import AttributeValue
@@ -27,12 +27,22 @@ from ._instrumentation import (
     span_include_content,
 )
 from .exceptions import FallbackExceptionGroup, ModelAPIError
-from .messages import ModelRequestAttempt, ModelResponse
+from .messages import ModelRequestAttempt, ModelResponse, ModelResponseEndStatus, ModelResponseOrigin
 
 if TYPE_CHECKING:
+    from ._run_context import RunContext
     from .models import Model
 
-__all__ = ('AttemptStart', 'carried_attempts', 'carry_attempts', 'failed_attempt', 'record_attempt_span')
+__all__ = (
+    'AttemptStart',
+    'carried_attempts',
+    'carry_attempts',
+    'describe_error',
+    'ended_response',
+    'failed_attempt',
+    'record_attempt_span',
+    'replaced_response_id',
+)
 
 ATTEMPT_ATTRIBUTE = 'pydantic_ai.model_request.attempt'
 """The zero-based position of an attempt among the attempts at its request."""
@@ -97,7 +107,7 @@ def failed_attempt(
             model_name=model.model_name,
             provider_name=model.system,
             outcome='error',
-            error=_describe_error(failure),
+            error=describe_error(failure),
             timestamp=timestamp,
             duration=duration,
             kind=kind,
@@ -113,6 +123,27 @@ def failed_attempt(
         usage=failure.usage,
         kind=kind,
     )
+
+
+def replaced_response_id(origin: ModelResponseOrigin) -> str | None:
+    """The `response_id` of the attempt at the request step that `origin`'s response replaces, if it's not the first."""
+    if origin.attempt == 1:
+        return None
+    return replace(origin, attempt=origin.attempt - 1).response_id
+
+
+def ended_response(
+    response: ModelResponse, status: ModelResponseEndStatus, run_context: RunContext[Any]
+) -> ModelResponse:
+    """`response` as a `ModelResponseEndEvent` with `status` carries it, stamped with the run it belongs to.
+
+    A stream that stopped before it finished leaves its response `'incomplete'`, which is recorded as `'interrupted'`,
+    as the run records a partial response it stopped.
+    """
+    state = response.state
+    if status in ('failed', 'interrupted') and state == 'incomplete':
+        state = 'interrupted'
+    return replace(response, state=state, run_id=run_context.run_id, conversation_id=run_context.conversation_id)
 
 
 def record_attempt_span(
@@ -168,7 +199,7 @@ def _to_ns(value: datetime) -> int:
     return int(value.timestamp() * 1e9)
 
 
-def _describe_error(error: Exception) -> str:
+def describe_error(error: Exception) -> str:
     """Describe an error as `'ExceptionType: message'`, the way an OTel span's ERROR status does."""
     name = type(error).__name__
     try:

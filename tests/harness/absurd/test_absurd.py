@@ -53,6 +53,7 @@ from pydantic_ai_harness.absurd._operation_backend import (
     _CONTROL_FLOW_KINDS,  # pyright: ignore[reportPrivateUsage]
     _RAW_RESULT_KINDS,  # pyright: ignore[reportPrivateUsage]
 )
+from tests.harness._durable_replay import without_run_identity
 from tests.harness._rate_limited_model import rate_limited_once
 
 from ._task import checkpoints, reenter_running_task, running_task_context
@@ -403,7 +404,7 @@ class TestDurability:
             async with agent.run_stream_events('hi') as stream:
                 replayed = [event async for event in stream]
         assert any(isinstance(e, PartStartEvent) for e in events)
-        assert replayed == events
+        assert without_run_identity(replayed) == without_run_identity(events)
         assert counter['calls'] == 1
 
     async def test_run_stream_inside_task_replays_buffered_stream(self, absurd: AsyncAbsurd) -> None:

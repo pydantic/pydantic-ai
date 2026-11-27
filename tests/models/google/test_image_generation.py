@@ -12,6 +12,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC
 from decimal import Decimal
 from typing import Any
+from unittest.mock import ANY
 
 import pytest
 from cassetter import Cassette
@@ -25,6 +26,8 @@ from pydantic_ai import (
     FinalResultEvent,
     ModelRequest,
     ModelResponse,
+    ModelResponseEndEvent,
+    ModelResponseStartEvent,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -311,6 +314,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, gemini
     )
     assert event_parts == snapshot(
         [
+            ModelResponseStartEvent(origin=ANY, model_name='gemini-2.5-flash-image', provider_name='google'),
             PartStartEvent(index=0, part=TextPart(content='Here you go!')),
             PartDeltaEvent(index=0, delta=TextPartDelta(content_delta=' ')),
             PartEndEvent(index=0, part=TextPart(content='Here you go! '), next_part_kind='file'),
@@ -320,6 +324,7 @@ async def test_google_image_generation_stream(allow_model_requests: None, gemini
                 previous_part_kind='text',
             ),
             FinalResultEvent(tool_name=None, tool_call_id=None),
+            ModelResponseEndEvent(origin=ANY, status='complete', response=ANY),
         ]
     )
 

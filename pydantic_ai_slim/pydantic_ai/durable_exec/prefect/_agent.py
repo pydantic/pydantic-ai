@@ -46,6 +46,7 @@ from pydantic_ai.tools import (
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
 from .._runtime_toolsets import reject_cancellation_token, reject_run_timeout, reject_unsupported_runtime_toolsets
+from .._utils import without_response_boundaries
 from .._workspace import RejectWorkspaceInContainer
 from ._model import PrefectModel
 from ._toolset import prefectify_toolset
@@ -209,7 +210,7 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
 
             await handler(ctx, streamed_response())
 
-        async for event in stream:
+        async for event in without_response_boundaries(stream):
             await event_stream_handler_task(event)
 
     @property
@@ -884,11 +885,26 @@ class PrefectAgent(WrapperAgent[AgentDepsT, OutputDataT]):
             print(collected)
             '''
             [
+                ModelResponseStartEvent(model_name='gpt-5.2', provider_name=None),
                 PartStartEvent(index=0, part=TextPart(content='The capital of ')),
                 FinalResultEvent(tool_name=None, tool_call_id=None),
                 PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='France is Paris. ')),
                 PartEndEvent(
                     index=0, part=TextPart(content='The capital of France is Paris. ')
+                ),
+                ModelResponseEndEvent(
+                    status='complete',
+                    response=ModelResponse(
+                        parts=[TextPart(content='The capital of France is Paris. ')],
+                        usage=RequestUsage(
+                            cost=Decimal('0.0001855'), input_tokens=50, output_tokens=7
+                        ),
+                        model_name='gpt-5.2',
+                        model_id='openai:gpt-5.2',
+                        timestamp=datetime.datetime(...),
+                        run_id='...',
+                        conversation_id='...',
+                    ),
                 ),
                 AgentRunResultEvent(
                     result=AgentRunResult(output='The capital of France is Paris. ')

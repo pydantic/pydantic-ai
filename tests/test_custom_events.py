@@ -840,14 +840,18 @@ async def test_event_stream_position_relative_to_framework_events():
     events = await _collect_events(agent)
     assert [event.event_kind for event in events] == snapshot(
         [
+            'model_response_start',
             'part_start',
             'part_end',
+            'model_response_end',
             'function_tool_call',
             'custom',
             'function_tool_result',
+            'model_response_start',
             'part_start',
             'final_result',
             'part_end',
+            'model_response_end',
         ]
     )
 
