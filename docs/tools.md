@@ -99,7 +99,7 @@ print(dice_result.all_messages())
                 tool_name='roll_dice', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.0000480'), input_tokens=54, output_tokens=2),
+        usage=RequestUsage(cost=Decimal('0.000096'), input_tokens=54, output_tokens=2),
         model_name='{{ google:medium.name }}',
         model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
@@ -126,9 +126,7 @@ print(dice_result.all_messages())
                 tool_name='get_player_name', args={}, tool_call_id='pyd_ai_tool_call_id'
             )
         ],
-        usage=RequestUsage(
-            cost=Decimal('0.00005625'), input_tokens=55, output_tokens=4
-        ),
+        usage=RequestUsage(cost=Decimal('0.0001125'), input_tokens=55, output_tokens=4),
         model_name='{{ google:medium.name }}',
         model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
@@ -155,7 +153,7 @@ print(dice_result.all_messages())
                 content="Congratulations Anne, you guessed correctly! You're a winner!"
             )
         ],
-        usage=RequestUsage(cost=Decimal('0.000087'), input_tokens=56, output_tokens=12),
+        usage=RequestUsage(cost=Decimal('0.000174'), input_tokens=56, output_tokens=12),
         model_name='{{ google:medium.name }}',
         model_id='{{ google:medium }}',
         timestamp=datetime.datetime(...),
