@@ -26,6 +26,18 @@ _QUOTES = re.compile(r'[\'"]')
 _SHORT_OPTIONS = re.compile(r'-[A-Za-z]+')
 """A word's leading short options, as `-vt` in `-vt.git/hooks`, after any of whose letters a value may follow."""
 
+_SHORT_OPTION_LIMIT = 16
+"""More short options in one word than any program takes: such a word counts as protected."""
+
+_CODE_PARTS = re.compile(r'[\'"(),;]+')
+"""Where a word that may be code, such as an interpreter's one-liner, splits further into words that may be paths."""
+
+_DOT_OPTIONS = ('dotglob', 'globignore', 'globdots')
+"""Shell options and variables that let a pattern match a name's leading `.`, without case or `_`, as zsh ignores."""
+
+_GROUPED_PATTERN = re.compile(r'[*?+@!\]]\(')
+"""A pattern with a group, as bash's `@(...)` or zsh's `*(D)`, which may match a name's leading `.`."""
+
 _READING_PROGRAMS = frozenset(
     {
         'cat',
@@ -70,6 +82,8 @@ class _Char(NamedTuple):
     slash: bool = True
     """Whether a wildcard matches `/`, as an `fnmatch` one does and a shell's, which matches within a name, doesn't."""
     star: bool = False
+    dot: bool = True
+    """Whether this part may stand for a `.` that starts a name, which a shell's pattern matches only explicitly."""
 
 
 def matches(location: str, globs: Sequence[str], *, posix: bool, pattern: bool = False) -> bool:
@@ -78,39 +92,38 @@ def matches(location: str, globs: Sequence[str], *, posix: bool, pattern: bool =
     Paths are compared case-insensitively, as macOS and Windows file systems do by default, and on Windows with
     `/` for separators. This only adds asks: on a case-sensitive file system, `.PAX/x` asks like `.pax/x`.
 
-    With `pattern`, as for a command's word, `location`'s `*`, `?` and bracket expressions are wildcards the shell
-    expands within a name: it matches when a path it could expand to does, as `.git/hook?/x` does `.git/hooks/*`.
+    With `pattern`, as for a command's word, `location` is a pattern the shell expands, read by `_shell_pattern`: it
+    matches when a path it could expand to does, as `.git/hook?/x` does `.git/hooks/*`.
     """
     if len(location) > _LENGTH_LIMIT:
         return True
     location = (location if posix else location.replace('\\', '/')).lower()
-    wildcards = _pattern(location, slash=False) if pattern else []
-    if all(part.char is not None for part in wildcards):
-        wildcards = []
-    for glob in globs:
-        glob = (glob if posix else glob.replace('\\', '/')).lower()
-        for candidate in (glob, f'*/{glob}'):
-            if wildcards and _overlaps(wildcards, _pattern(candidate, slash=True)):
-                return True
-            if not wildcards and fnmatchcase(location, candidate):
-                return True
-    return False
+    shell = _shell_pattern(location) if pattern else []
+    if shell is None:
+        return True
+    wildcards = shell if any(part.char is None for part in shell) else []
+    folded = [(glob if posix else glob.replace('\\', '/')).lower() for glob in globs]
+    return any(
+        _matches_glob(location, wildcards, glob) or _matches_glob(location, wildcards, f'*/{glob}') for glob in folded
+    )
 
 
-def _pattern(text: str, *, slash: bool) -> list[_Char]:
-    """`text`'s parts as a pattern, its bracket expressions as wildcards for any one character, which only asks more.
+def _matches_glob(location: str, wildcards: list[_Char], glob: str) -> bool:
+    """Whether `location`, or with `wildcards` a path that pattern could expand to, matches `glob`."""
+    return _overlaps(wildcards, _glob_pattern(glob)) if wildcards else fnmatchcase(location, glob)
 
-    A `[` without a closing `]`, or with a `/` before it where the shell matches within a name, is a character.
-    """
+
+def _glob_pattern(glob: str) -> list[_Char]:
+    """`glob`'s parts as `fnmatch` reads it, its bracket expressions as wildcards for any one character."""
     parts: list[_Char] = []
     i = 0
-    while i < len(text):
-        char = text[i]
-        end = _bracket_end(text, i) if char == '[' else None
+    while i < len(glob):
+        char = glob[i]
+        end = _bracket_end(glob, i, classes=False) if char == '[' else None
         if char in '*?':
-            parts.append(_Char(None, slash=slash, star=char == '*'))
-        elif end is not None and (slash or '/' not in text[i:end]):
-            parts.append(_Char(None, slash=slash))
+            parts.append(_Char(None, star=char == '*'))
+        elif end is not None:
+            parts.append(_Char(None))
             i = end
         else:
             parts.append(_Char(char))
@@ -118,52 +131,109 @@ def _pattern(text: str, *, slash: bool) -> list[_Char]:
     return parts
 
 
-def _bracket_end(text: str, start: int) -> int | None:
-    """Where the bracket expression opening at `start` closes, as in `[!]a]`, if it does."""
+def _shell_pattern(text: str) -> list[_Char] | None:
+    """`text`'s parts as a shell's pattern, which only asks more where the shells differ; `None` if it can't be read.
+
+    Wildcards match within a name, and a bracket expression stands for any one character. A name's leading `.` is
+    matched only by a pattern for the name that starts with one, as without bash's `dotglob` or zsh's `globdots`;
+    `command_locations` counts a command that may turn those on, or use a pattern that may match one otherwise, as
+    protected.
+    """
+    parts: list[_Char] = []
+    for n, name in enumerate(text.split('/')):
+        if n:
+            parts.append(_Char('/'))
+        name_parts = _name_pattern(name)
+        if name_parts is None:
+            return None
+        parts += name_parts
+    return parts
+
+
+def _name_pattern(name: str) -> list[_Char] | None:
+    """One name's parts for `_shell_pattern`."""
+    dot = name.startswith('.')
+    parts: list[_Char] = []
+    i = 0
+    while i < len(name):
+        char = name[i]
+        end = _bracket_end(name, i, classes=True) if char == '[' else None
+        if char in '*?':
+            parts.append(_Char(None, slash=False, star=char == '*', dot=dot))
+        elif end == -1:
+            return None
+        elif end is not None:
+            parts.append(_Char(None, slash=False, dot=dot))
+            i = end
+        else:
+            parts.append(_Char(char, dot=dot))
+        i += 1
+    return parts
+
+
+def _bracket_end(text: str, start: int, *, classes: bool) -> int | None:
+    """Where the bracket expression opening at `start` closes, as in `[!]a]`, if it does.
+
+    With `classes`, as in a shell, a `[:lower:]`, `[=a=]` or `[.a.]` inside it is skipped, and `-1` says one doesn't
+    close, which shells read differently.
+    """
     i = start + 1
     if text[i : i + 1] in ('!', '^'):
         i += 1
     if text[i : i + 1] == ']':
         i += 1
-    end = text.find(']', i)
-    return None if end == -1 else end
+    while i < len(text):
+        if text[i] == ']':
+            return i
+        if classes and text[i] == '[' and text[i + 1 : i + 2] in (':', '=', '.'):
+            close = text.find(text[i + 1] + ']', i + 2)
+            if close == -1:
+                return -1
+            i = close + 2
+        else:
+            i += 1
+    return None
 
 
-def _same_char(a: _Char, b: _Char) -> bool:
-    """Whether one character matches both `a` and `b`."""
+def _same_char(a: _Char, b: _Char, *, leading: bool) -> bool:
+    """Whether one character matches both `a` and `b`, one other than `.` where `leading` says it starts `a`'s name."""
+    no_dot = leading and not a.dot
     if a.char is not None and b.char is not None:
-        return a.char == b.char
+        return a.char == b.char and not (no_dot and a.char == '.')
     if a.char is not None:
-        return a.char != '/' or b.slash
+        return (a.char != '/' or b.slash) and not (no_dot and a.char == '.')
     if b.char is not None:
-        return b.char != '/' or a.slash
+        return (b.char != '/' or a.slash) and not (no_dot and b.char == '.')
     return True
 
 
 def _overlaps(a: list[_Char], b: list[_Char]) -> bool:
-    """Whether some text matches both patterns, found by walking them side by side."""
-    seen: set[tuple[int, int]] = set()
-    todo = [(0, 0)]
+    """Whether some text matches both patterns, found by walking them side by side; `a` starts a name."""
+    seen: set[tuple[int, int, bool]] = set()
+    todo = [(0, 0, True)]
     while todo:
         state = todo.pop()
         if state in seen:
             continue
         seen.add(state)
-        if state == (len(a), len(b)):
+        if state[:2] == (len(a), len(b)):
             return True
         todo += _steps(a, b, *state)
     return False
 
 
-def _steps(a: list[_Char], b: list[_Char], i: int, j: int) -> list[tuple[int, int]]:
-    """Where walking `a` from `i` and `b` from `j` side by side goes next: past a star, or past a character both match."""
-    steps: list[tuple[int, int]] = []
+def _steps(a: list[_Char], b: list[_Char], i: int, j: int, leading: bool) -> list[tuple[int, int, bool]]:
+    """Where walking `a` from `i` and `b` from `j` side by side goes next: past a star, or past a character both match.
+
+    `leading` says the next character starts a name in `a`, as at its start or after a `/`.
+    """
+    steps: list[tuple[int, int, bool]] = []
     if i < len(a) and a[i].star:
-        steps.append((i + 1, j))
+        steps.append((i + 1, j, leading))
     if j < len(b) and b[j].star:
-        steps.append((i, j + 1))
-    if i < len(a) and j < len(b) and _same_char(a[i], b[j]):
-        steps.append((i if a[i].star else i + 1, j if b[j].star else j + 1))
+        steps.append((i, j + 1, leading))
+    if i < len(a) and j < len(b) and _same_char(a[i], b[j], leading=leading):
+        steps.append((i if a[i].star else i + 1, j if b[j].star else j + 1, a[i].char == '/'))
     return steps
 
 
@@ -192,12 +262,15 @@ async def command_locations(
     as `cat` or `grep`, run by name rather than path and without redirection, names none.
 
     `None` when the paths can't be known, which counts as protected: with a word whose braces expand to more than
-    `_BRACE_LIMIT` words, or a pattern that could name `.` or `..`, as `.*` can, which moves where the rest of it
-    leads. With `expand=False`, as inside a durable run, where this process's environment may differ on replay and
+    `_BRACE_LIMIT` words, a pattern that could name `.` or `..`, as `.*` can, which moves where the rest of it
+    leads, or a mention of an option that lets patterns match a leading `.`, such as `dotglob`, or a pattern with a
+    group, such as `*(D)`, which may match one. With `expand=False`, as inside a durable run, where this process's environment may differ on replay and
     is not the workspace's, nothing is expanded, and `None` too when a word would need it.
     """
     if posix and _only_reads(command):
         return []
+    if _matches_dots(command):
+        return None
     try:
         cwd: str | None = await workspace.working_dir()
     except WorkspaceError:
@@ -214,15 +287,23 @@ def _locations(words: list[str], paths: WorkspacePaths, cwd: str | None, *, posi
     """Where `words` lead from `cwd`, their braces expanded on POSIX; `None` when that can't be known."""
     locations: list[str] = []
     for word in words:
-        braced = _braces(word) if posix else [word]
-        if braced is None:
+        found = _word_locations(word, paths, cwd, posix=posix)
+        if found is None:
             return None
-        for location in braced:
-            location = location if cwd is None else paths.join(cwd, location)
-            if _names_a_dot(location, posix=posix):
-                return None
-            locations.append(paths.normpath(location))
+        locations += found
     return locations
+
+
+def _word_locations(word: str, paths: WorkspacePaths, cwd: str | None, *, posix: bool) -> list[str] | None:
+    """Where `word` leads from `cwd`, its braces expanded on POSIX; `None` when that can't be known."""
+    # A longer word is too long to glob in reasonable time.
+    braced = None if len(word) > _LENGTH_LIMIT else _braces(word) if posix else [word]
+    if braced is None:
+        return None
+    locations = [location if cwd is None else paths.join(cwd, location) for location in braced]
+    if any(_names_a_dot(location if posix else location.replace('\\', '/')) for location in locations):
+        return None
+    return [paths.normpath(location) for location in locations]
 
 
 def _braces(word: str) -> list[str] | None:
@@ -230,9 +311,6 @@ def _braces(word: str) -> list[str] | None:
 
     A sequence such as `{1..3}` becomes `*`, a pattern that matches its values.
     """
-    if len(word) > _LENGTH_LIMIT:
-        # `matches` counts it as protected as it is.
-        return [word]
     pending = [word]
     done: list[str] = []
     while pending:
@@ -293,20 +371,36 @@ def _is_integer(text: str) -> bool:
     return digits.isascii() and digits.isdecimal()
 
 
-def _names_a_dot(location: str, *, posix: bool) -> bool:
+def _names_a_dot(location: str) -> bool:
     """Whether a name in `location` is a pattern that could expand to `.` or `..`, as `.*` can in some shells.
 
-    Shells match a leading `.` only explicitly, and a bracket expression may count, so only such patterns can.
+    It moves where the rest of `location` leads, so where it leads isn't known.
     """
-    for name in location.split('/') if posix else re.split(r'[/\\]', location):
-        parts = _pattern(name, slash=False)
-        if (
-            name.startswith(('.', '['))
-            and any(part.char is None for part in parts)
-            and (_overlaps(parts, _pattern('.', slash=False)) or _overlaps(parts, _pattern('..', slash=False)))
-        ):
-            return True
-    return False
+    parts = _shell_pattern(location)
+    if parts is None:
+        # A pattern that can't be read: `matches` counts it as protected.
+        return False
+    names: list[list[_Char]] = [[]]
+    for part in parts:
+        if part.char == '/':
+            names.append([])
+        else:
+            names[-1].append(part)
+    return any(
+        any(part.char is None for part in name)
+        and (_overlaps(name, _glob_pattern('.')) or _overlaps(name, _glob_pattern('..')))
+        for name in names
+    )
+
+
+def _matches_dots(command: str) -> bool:
+    """Whether `command` may let a pattern match a name's leading `.`, as `shopt -s dotglob` or `setopt GLOB_DOTS` does.
+
+    A persistent shell keeps such an option for the commands after, whose patterns are read as if it were off. A
+    pattern with a group, as bash's `@(...)` or zsh's `*(D)`, may match one too.
+    """
+    folded = command.lower().translate(str.maketrans('', '', '_\\\'"'))
+    return any(option in folded for option in _DOT_OPTIONS) or _GROUPED_PATTERN.search(command) is not None
 
 
 def _expanded(words: list[str], *, posix: bool, expand: bool) -> list[str] | None:
@@ -322,10 +416,16 @@ def _words(command: str, *, posix: bool, depth: int = 0) -> list[str] | None:
     """`command`'s words, their parts around a backtick or `=`, and what follows a short option's letters.
 
     The words of a script a shell runs with `-c`, or `eval` runs, count too, as the command runs them; `None` when
-    such scripts nest deeper than `_SCRIPT_DEPTH_LIMIT`, as the paths they name aren't looked for.
+    such scripts nest deeper than `_SCRIPT_DEPTH_LIMIT`, or a word holds more short options than
+    `_SHORT_OPTION_LIMIT`, as the paths they name aren't looked for.
     """
     tokens = [token for token in _tokens(command, posix=posix) if token and not set(token) <= set(_OPERATORS)]
-    words = [word for token in tokens for word in _word_parts(token)]
+    words: list[str] = []
+    for token in tokens:
+        parts = _word_parts(token)
+        if parts is None:
+            return None
+        words += parts
     for script in _scripts(tokens):
         inner = None if depth >= _SCRIPT_DEPTH_LIMIT else _words(script, posix=posix, depth=depth + 1)
         if inner is None:
@@ -334,10 +434,21 @@ def _words(command: str, *, posix: bool, depth: int = 0) -> list[str] | None:
     return list(dict.fromkeys(word for word in words if word))
 
 
-def _word_parts(token: str) -> list[str]:
-    """`token`, its parts around a backtick or `=`, and, for a short option, what follows each of its letters."""
+def _word_parts(token: str) -> list[str] | None:
+    """`token`, its parts around a backtick or `=`, and, for a short option, what follows each of its letters.
+
+    A word with quotes, parentheses, commas or `;`, as an interpreter's one-liner such as
+    `python -c "open('.pax/x', 'w')"` has, splits at them and at whitespace too. `None` for more short options than
+    `_SHORT_OPTION_LIMIT`; a word longer than `_LENGTH_LIMIT` is kept whole, as it counts as protected.
+    """
+    if len(token) > _LENGTH_LIMIT:
+        return [token]
     parts = [token, *_WORD_PARTS.split(token)] if _WORD_PARTS.search(token) else [token]
+    if _CODE_PARTS.search(token):
+        parts += [piece for part in _CODE_PARTS.split(token) for piece in (part, *part.split())]
     if options := _SHORT_OPTIONS.match(token):
+        if options.end() - 1 > _SHORT_OPTION_LIMIT:
+            return None
         # A short option's value may follow it in the same word, as in `-o.pax/x`, after any of its letters.
         parts += [token[i:] for i in range(2, options.end() + 1)]
     return parts
