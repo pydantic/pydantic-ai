@@ -26,6 +26,20 @@ Pydantic AI demonstrates the retrieval pattern in the [RAG example](../examples/
 
 * [`haiku.rag`](https://github.com/ggozad/haiku.rag) - Local-first document RAG for Pydantic AI agents, backed by embedded [LanceDB](https://lancedb.com/) with no database server required. `RAGCapability` provides hybrid vector and full-text search, optional reranking, structure-aware context expansion, citations to page numbers and section headings, and model-written Python executed in a [Monty](https://github.com/pydantic/monty) sandbox over a virtual document filesystem, so a question that needs counting, aggregation or traversal across the corpus is answered by code the model writes, with search available from inside it. Each document's [`DoclingDocument`](https://docling-project.github.io/docling/concepts/docling_document/) structure is preserved, which is what the context expansion, the page and section citations and the sandbox's document filesystem resolve against. Retrieved figures are passed to vision-capable models as images, and with a multimodal embedder they share the text vector space, so a text query can retrieve a figure and an image can be the query. `EvidenceCompactionCapability` keeps multi-turn requests smaller by retaining previously cited evidence while replacing uncited earlier search results, and `CitationPolicyCapability` requires answers to explicitly declare whether, and by what, they are grounded. `RAGCapability` supports deferred loading and [agent specs](../agent-spec.md), so it can be loaded via [`from_spec`][pydantic_ai.capabilities.AbstractCapability.from_spec] / [`Agent.from_spec`][pydantic_ai.agent.Agent.from_spec]. The package also exposes lower-level [toolsets](../toolsets.md) through `create_search_toolset()` and `create_document_toolset()`.
 
+## Agent payments
+
+* [`screwtape-pay-safely`](https://github.com/screwtapeai/pay-safely) (`seller_check_capability`) — a [capability](overview.md) that registers a `check_seller_before_paying` tool so an agent can check whether a seller is safe to pay before it pays, and receive a signed receipt (`allow`, `review`, or `block`). Install with `pip install "screwtape-pay-safely[pydantic-ai]"`:
+
+```python
+from pydantic_ai import Agent
+from pay_safely import PaySafely
+from pay_safely.pydantic_ai import seller_check_capability
+
+agent = Agent('openai:gpt-4o', capabilities=[seller_check_capability(PaySafely(agent_id='buyer'))])
+```
+
+3 calls per UTC day with no key, or 10 with a free key from [https://screwtape.ai/signup/](https://screwtape.ai/signup/). Then $0.005 per call.
+
 To add your package to this page, open a pull request.
 
 To publish your own capability package, see [Publishing capabilities](custom.md#publishing-capabilities) and [Extensibility](../extensibility.md).
