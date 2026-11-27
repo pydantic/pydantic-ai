@@ -1224,6 +1224,7 @@ def _rename_shared_defs_with_renamed_refs(
 
 
 _MARKDOWN_FENCES_PATTERN = re.compile(r'```(?:\w+)?\r?\n(\{.*?\})\s*(?:\r?\n?```|\Z)', flags=re.DOTALL)
+_MARKDOWN_FENCES_PARTIAL_PATTERN = re.compile(r'```(?:\w+)?\r?\n(\{.*)', flags=re.DOTALL)
 _MARKDOWN_FENCE_OPENING_PATTERN = re.compile(r'```(?:\w+)?\r?\n\{')
 
 
@@ -1239,6 +1240,13 @@ def strip_markdown_fences(text: str) -> str:
         match = _MARKDOWN_FENCES_PATTERN.match(text, opening.start())
         if match:
             return match.group(1)
+        # While a still-open fenced response is streaming there is no closing fence yet, so return the partial JSON
+        # so consumers can validate it incrementally. Only a single opening counts as a stream in progress: with
+        # more than one, the partial pattern would also capture text after the JSON, so leave such text alone.
+        if not _MARKDOWN_FENCE_OPENING_PATTERN.search(text, opening.end()):
+            match = _MARKDOWN_FENCES_PARTIAL_PATTERN.match(text, opening.start())
+            if match:
+                return match.group(1)
 
     return text
 

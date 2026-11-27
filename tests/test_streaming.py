@@ -93,6 +93,7 @@ from pydantic_ai.models import CompletedStreamedResponse
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel, TestStreamedResponse as ModelTestStreamedResponse
 from pydantic_ai.output import NativeOutput, PromptedOutput, TextOutput, ToolOutput
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.result import AgentStream, FinalResult, RunUsage, StreamedRunResult, StreamedRunResultSync
 from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import DeferredToolResults, ToolApproved, ToolDefinition, ToolDenied
@@ -5240,6 +5241,55 @@ async def test_stream_structured_output():
     async with agent.run_stream('') as result:
         assert not result.is_complete
         assert [c async for c in result.stream_output(debounce_by=None)] == snapshot(
+            [
+                CityLocation(city='Mexico '),
+                CityLocation(city='Mexico City'),
+                CityLocation(city='Mexico City'),
+                CityLocation(city='Mexico City', country='Mexico'),
+                CityLocation(city='Mexico City', country='Mexico'),
+            ]
+        )
+        assert result.is_complete
+
+
+async def test_stream_output_fenced_partial_prompted_output():
+    class CityLocation(BaseModel):
+        city: str
+        country: str | None = None
+
+    model = TestModel(custom_output_text='```json\n{"city": "Mexico City", "country": "Mexico"}\n```')
+    agent = Agent(model, output_type=PromptedOutput(CityLocation))
+
+    async with agent.run_stream('') as result:
+        outputs = [output async for output in result.stream_output(debounce_by=None)]
+        assert outputs == snapshot(
+            [
+                CityLocation(city='Mexico '),
+                CityLocation(city='Mexico City'),
+                CityLocation(city='Mexico City'),
+                CityLocation(city='Mexico City', country='Mexico'),
+                CityLocation(city='Mexico City', country='Mexico'),
+            ]
+        )
+        assert result.is_complete
+
+
+async def test_stream_output_fenced_partial_native_output():
+    class CityLocation(BaseModel):
+        city: str
+        country: str | None = None
+
+    model = TestModel(
+        # NativeOutput requires a profile that supports JSON schema output; `FunctionModel` ships
+        # one by default (`models/function.py`), and this gives `TestModel` the same.
+        profile=ModelProfile(supports_json_schema_output=True),
+        custom_output_text='```json\n{"city": "Mexico City", "country": "Mexico"}\n```',
+    )
+    agent = Agent(model, output_type=NativeOutput(CityLocation))
+
+    async with agent.run_stream('') as result:
+        outputs = [output async for output in result.stream_output(debounce_by=None)]
+        assert outputs == snapshot(
             [
                 CityLocation(city='Mexico '),
                 CityLocation(city='Mexico City'),

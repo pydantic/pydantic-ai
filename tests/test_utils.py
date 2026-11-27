@@ -1405,6 +1405,8 @@ def test_strip_markdown_fences():
     assert strip_markdown_fences('```json\n{"foo": "bar"}\n```') == '{"foo": "bar"}'
     assert strip_markdown_fences('```json\r\n{"foo": "bar"}\r\n```') == '{"foo": "bar"}'
     assert strip_markdown_fences('```json\n{\n  "foo": "bar"\n}') == '{\n  "foo": "bar"\n}'
+    assert strip_markdown_fences('```json\n{"foo": "ba') == '{"foo": "ba'
+    assert strip_markdown_fences('```json\r\n{"foo": "ba') == '{"foo": "ba'
     assert (
         strip_markdown_fences('{"foo": "```json\\n{"foo": "bar"}\\n```"}')
         == '{"foo": "```json\\n{"foo": "bar"}\\n```"}'
