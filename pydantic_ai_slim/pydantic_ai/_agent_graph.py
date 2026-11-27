@@ -1878,14 +1878,14 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
         tool_call_results: dict[str, DeferredToolResult | Literal['skip']] = {}
         tool_call_results.update(deferred_tool_results.to_tool_call_results())
 
-        for request in requests_after_response:
-            for part in request.parts:
-                if _is_tool_result_part(part):
-                    if part.tool_call_id in tool_call_results:
-                        raise exceptions.UserError(
-                            f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
-                        )
-                    tool_call_results[part.tool_call_id] = 'skip'
+        answered = _skip_answered_tool_calls(requests_after_response, tool_call_results)
+        unresolved = [call for call in last_model_response.tool_calls if call.tool_call_id not in answered]
+        if not unresolved:
+            # The last request already answered every call, so these results resolve nothing.
+            # Continuing would run a step with no parts of its own and record an empty `ModelRequest` in the history.
+            raise exceptions.UserError(
+                'Tool call results were provided, but the message history does not contain any unprocessed tool calls.'
+            )
 
         # Skip ModelRequestNode and go directly to CallToolsNode
         return CallToolsNode[DepsT, NodeRunEndT](
@@ -2019,6 +2019,25 @@ def _new_prompt_on_unprocessed_calls_error() -> exceptions.UserError:
         '`deferred_tool_results` if they were deferred, or call '
         '`pydantic_ai.messages.repair_messages()` on the history first to close them out.'
     )
+
+
+def _skip_answered_tool_calls(
+    requests: Sequence[_messages.ModelRequest],
+    tool_call_results: dict[str, DeferredToolResult | Literal['skip']],
+) -> set[str]:
+    """Record a `skip` for every call these requests already answered, and return those calls' IDs."""
+    answered: set[str] = set()
+    for request in requests:
+        for part in request.parts:
+            if not _is_tool_result_part(part):
+                continue
+            if part.tool_call_id in tool_call_results:
+                raise exceptions.UserError(
+                    f'Tool call {part.tool_call_id!r} was already executed and its result cannot be overridden.'
+                )
+            tool_call_results[part.tool_call_id] = 'skip'
+            answered.add(part.tool_call_id)
+    return answered
 
 
 def _answered_at_pause(history: Sequence[_messages.ModelMessage]) -> tuple[_ToolCallKey, ...] | None:
