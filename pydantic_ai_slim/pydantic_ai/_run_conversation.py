@@ -185,16 +185,6 @@ def keep_full_history(state: _agent_graph.GraphAgentState) -> None:
         appended.full = True
 
 
-def keep_step_history(state: _agent_graph.GraphAgentState) -> None:
-    """Merge into the run's record the messages a capability put in its history for the step that just ended, like a summary.
-
-    So a later step that summarizes the history again, or trims it, doesn't drop one the model was sent.
-    """
-    full = _merged_history(state)
-    if full is not None:
-        state.appended_messages.messages, state.appended_messages.new_message_index = full
-
-
 def _merged_history(state: _agent_graph.GraphAgentState) -> tuple[list[_messages.ModelMessage], int] | None:
     """The history the run was given and every message it added, and where those start, if its history lost any of them.
 

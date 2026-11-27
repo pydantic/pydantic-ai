@@ -795,6 +795,18 @@ KNOWN_FINDINGS = [
         'before them. The persistence docs describe this placement: after the messages the run was given.',
     ),
     KnownFinding(
+        'superseded-summary-is-lost',
+        frozenset({'S6'}),
+        # Only a run that makes more than one request can summarize its own summary.
+        lambda turn, earlier: (
+            dataclasses.replace(turn, mode='plain')
+            if turn.capability == 'summarize' and turn.mode in ('tool', 'tools')
+            else turn
+        ),
+        ((Turn(), Turn(mode='tool', capability='summarize')),),
+        'A summary the model was sent is not stored when a later request in the same run summarizes it away.',
+    ),
+    KnownFinding(
         'message-inserted-before-stored-ones-is-not-saved',
         frozenset({'S1', 'S2', 'S3', 'S4', 'S5'}),
         # A paused turn's second run resumes from the stored messages too.
@@ -922,8 +934,6 @@ FIXED_FINDINGS: dict[str, tuple[tuple[Turn, ...], ...]] = {
     'message-appended-in-a-trimmed-run-is-lost': (
         (Turn(mode='tool', capability='trim', keep=1, hook='append_before_model_request'),),
     ),
-    # A summary the model was sent wasn't stored when a later request in the same run summarized it away.
-    'superseded-summary-is-lost': ((Turn(), Turn(mode='tool', capability='summarize')),),
 }
 """Minimal lists of turns that broke a property on main before a fix, kept as regression tests."""
 
