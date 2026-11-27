@@ -68,6 +68,7 @@ from pydantic_ai.models import (
     StreamedResponse,
 )
 from pydantic_ai.models._batch_model import BatchedModel
+from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
@@ -84,6 +85,7 @@ from .preamble_text import (
     StructuredOutput,
     plain_run_and_stream,
     preamble_text_agents,
+    preamble_text_before_output_tool,
     run_and_stream,
 )
 
@@ -801,6 +803,116 @@ async def test_durable_stream_replay_classifies_parts_as_the_unit_prepared_them(
             ),
         ]
     )
+
+
+class _JournalingBackend(_RecordingBackend):
+    """Keeps what each durable unit returned, as the engine's journal would hold it."""
+
+    def __init__(self, durability: JournalingDurability) -> None:
+        super().__init__(durability)
+        self._journal = durability.journal
+
+    async def execute(
+        self,
+        *,
+        operation_id: DurableOperationId,
+        name: str,
+        body: Callable[[], Awaitable[object]],
+        cache_key: tuple[object, ...],
+        config: object,
+    ) -> object:
+        payload = await super().execute(
+            operation_id=operation_id, name=name, body=body, cache_key=cache_key, config=config
+        )
+        self._journal.append((name, payload))
+        return payload
+
+
+class JournalingDurability(RecordingDurability):
+    def __init__(self) -> None:
+        super().__init__()
+        self.journal: list[tuple[str, Any]] = []
+
+    def get_durable_operation_backend(self) -> CallableOperationBackend[ToolConfig]:
+        return _JournalingBackend(self)
+
+
+async def test_durable_stream_replay_classifies_parts_as_the_fallback_candidate_prepared_them() -> None:
+    """Behind a `FallbackModel`, text streamed before a tool call isn't the final result either.
+
+    `FallbackModel.prepare_request` leaves the output mode to the candidate that answers, so preparing the request again
+    keeps `'auto'`, which allows text output. The unit returns the mode the candidate resolved `'auto'` to with the
+    response, and the replay prepares its parameters with it, finding the same final result as a plain run. Both run
+    methods replay the response's parts as the model streamed them.
+    """
+    durable = [await run_and_stream(agent) for agent in preamble_text_agents(RecordingDurability, fallback=True)]
+    assert durable == await plain_run_and_stream()
+
+
+async def _prompted_output(_messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[str]:
+    yield '{"response": "Paris"}'
+
+
+async def test_durable_stream_replay_prepares_a_fallback_candidates_prompted_output() -> None:
+    """Behind a `FallbackModel` whose candidate resolves `'auto'` to Prompted Output, the replay takes its text as output.
+
+    The unit returns the candidate's mode, and the replay, prepared with it, finds the same final result as a plain run.
+    `test_durable_model_replays_a_resolved_output_mode_as_the_answering_model_sent_it` checks the parameters it gets.
+    """
+
+    async def output_and_final_result_tool_names(
+        capabilities: list[AbstractCapability[object]],
+    ) -> tuple[StructuredOutput, list[str | None]]:
+        tool_names: list[str | None] = []
+
+        async def handler(ctx: RunContext[object], stream: AsyncIterable[AgentStreamEvent]) -> None:
+            async for event in stream:
+                if isinstance(event, FinalResultEvent):
+                    tool_names.append(event.tool_name)
+
+        agent = Agent(
+            FallbackModel(
+                FunctionModel(
+                    stream_function=_prompted_output, profile=ModelProfile(default_structured_output_mode='prompted')
+                )
+            ),
+            name='durability_fallback_prompted_output',
+            output_type=StructuredOutput,
+            capabilities=capabilities,
+        )
+        result = await agent.run('hello', event_stream_handler=handler)
+        return result.output, tool_names
+
+    durable = await output_and_final_result_tool_names([RecordingDurability()])
+    assert durable == await output_and_final_result_tool_names([])
+    assert durable == snapshot((StructuredOutput(response='Paris'), [None]))
+
+
+async def test_durable_stream_unit_returns_the_output_mode_only_for_a_model_answering_through_others() -> None:
+    """A streamed request's unit returns the output mode `'auto'` resolved to only when its model answers through others.
+
+    A model that resolves `'auto'` itself records the bare response, as before. A `FallbackModel` records the mode its
+    candidate resolved `'auto'` to, tool output, alongside the response.
+    """
+
+    async def stream_unit_result(model: Model) -> Any:
+        durability = JournalingDurability()
+        agent = Agent(
+            model, name='durability_served_parameters', output_type=StructuredOutput, capabilities=[durability]
+        )
+        async with agent.run_stream('hello') as result:
+            assert await result.get_output() == StructuredOutput(response='Paris')
+        [payload] = [payload for name, payload in durability.journal if '__model.request_stream' in name]
+        return payload
+
+    bare = await stream_unit_result(FunctionModel(stream_function=preamble_text_before_output_tool))
+    assert 'parts' in bare
+    assert 'output_mode' not in bare
+
+    resolved = await stream_unit_result(FallbackModel(FunctionModel(stream_function=preamble_text_before_output_tool)))
+    assert resolved.keys() == {'response', 'output_mode'}
+    assert resolved['response']['parts'] == bare['parts']
+    assert resolved['output_mode'] == 'tool'
 
 
 async def _preamble_text_before_output_tool_then_failure(

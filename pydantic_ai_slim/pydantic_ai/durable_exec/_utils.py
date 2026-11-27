@@ -14,7 +14,7 @@ integrations.
 import sys
 from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Awaitable, Callable
 from contextlib import asynccontextmanager
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from typing import Any, Literal, TypeAlias, TypeVar
 
 from pydantic_ai._run_context import get_current_request_attempt
@@ -31,6 +31,7 @@ from pydantic_ai.models._request_timeout import RequestDeadline
 from pydantic_ai.models._unwrap import unwrap_model
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.wrapper import WrapperModel
+from pydantic_ai.output import StructuredOutputMode
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RequestUsage
@@ -38,6 +39,7 @@ from pydantic_ai.usage import RequestUsage
 __all__ = [
     'CountTokensResult',
     'DurableModel',
+    'ResolvedOutputModeResult',
     'SegmentExecutor',
     'StreamedActivityResult',
     'StreamedModelRequestResult',
@@ -102,17 +104,32 @@ class StreamedActivityResult:
     """The streamed model request result recorded by durability capabilities before 2.60.
 
     Carries both the final `ModelResponse` and the raw events captured from the live
-    model stream inside the boundary. New results are the bare `ModelResponse`; this
-    shape is only decoded from histories, steps, and task results recorded earlier, whose
-    events are replayed exactly as recorded.
+    model stream inside the boundary. New results are the bare `ModelResponse`, or a
+    `ResolvedOutputModeResult`; this shape is only decoded from histories, steps, and task
+    results recorded earlier, whose events are replayed exactly as recorded.
     """
 
     response: ModelResponse
     events: list[ModelResponseStreamEvent]
 
 
-StreamedModelRequestResult: TypeAlias = ModelResponse | StreamedActivityResult
-"""What a streamed model request's durable unit returns: the final response, or a recorded `StreamedActivityResult`."""
+@dataclass(kw_only=True)
+class ResolvedOutputModeResult:
+    """A streamed model request's final response, with the output mode the model that answered resolved `'auto'` to.
+
+    The run replays the response against the parameters it prepares again, in which the model resolves `'auto'`. A
+    model that answers through others, like a [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel], leaves
+    `'auto'` to the one that answers, so for such a model a durable unit returns this instead of the bare
+    `ModelResponse`, and the run prepares the replay's parameters with that mode.
+    """
+
+    response: ModelResponse
+    output_mode: StructuredOutputMode
+
+
+StreamedModelRequestResult: TypeAlias = ModelResponse | ResolvedOutputModeResult | StreamedActivityResult
+"""What a streamed model request's durable unit returns: the final response, alone or with the output mode it resolved
+`'auto'` to, or a recorded `StreamedActivityResult`."""
 
 
 @dataclass(kw_only=True)
@@ -155,18 +172,23 @@ def streamed_before_failing(error: BaseException) -> ModelResponse | None:
 
 
 def _completed_stream(
-    result: StreamedModelRequestResult, model_request_parameters: ModelRequestParameters
+    result: StreamedModelRequestResult,
+    replay_request_parameters: Callable[[StructuredOutputMode | None], ModelRequestParameters],
 ) -> CompletedStreamedResponse:
     """The stream the run consumes for what a durable unit's streamed model request returned."""
+    output_mode: StructuredOutputMode | None = None
+    replay_events: bool | list[ModelResponseStreamEvent] = True
     if isinstance(result, StreamedActivityResult):
         response, replay_events = result.response, result.events
+    elif isinstance(result, ResolvedOutputModeResult):
+        response, output_mode = result.response, result.output_mode
     else:
         # The durable unit consumed the live stream, delivering it to any in-boundary handler;
         # workflow-side, each part replays as one event carrying its full content.
-        response, replay_events = result, True
+        response = result
     return CompletedStreamedResponse(
         response,
-        model_request_parameters=model_request_parameters,
+        model_request_parameters=replay_request_parameters(output_mode),
         replay_events=replay_events,
     )
 
@@ -258,12 +280,20 @@ class DurableModel(WrapperModel):
             attempt=get_current_request_attempt(),
         )
 
-        def replay_request_parameters() -> ModelRequestParameters:
+        def replay_request_parameters(output_mode: StructuredOutputMode | None = None) -> ModelRequestParameters:
             # The replay classifies each part against the parameters the unit's model sent, such as the output mode
             # `'auto'` resolves to. They're prepared once the unit returns, so a request the model rejects still fails
-            # inside the unit; the unit's model already warned about the settings it ignores.
+            # inside the unit; the unit's model already warned about the settings it ignores. A completed stream from
+            # a model that answers through others, like a `FallbackModel`, comes with the mode the answering model
+            # resolved `'auto'` to, as preparing the request again here wouldn't resolve it.
+            parameters = model_request_parameters
+            if output_mode is not None:
+                parameters = parameters.with_default_output_mode(output_mode)
+                if output_mode != 'tool':
+                    # As the answering model sent them: Native and Prompted Output don't offer the output tools.
+                    parameters = replace(parameters, output_tools=[])
             with suppress_unsupported_setting_warnings():
-                return self.wrapped.prepare_request(model_settings, model_request_parameters)[1]
+                return self.wrapped.prepare_request(model_settings, parameters)[1]
 
         try:
             result = await self._request_stream_segment(segment_context)
@@ -276,7 +306,7 @@ class DurableModel(WrapperModel):
                 partial, model_request_parameters=replay_request_parameters(), error=error
             )
         else:
-            stream = _completed_stream(result, replay_request_parameters())
+            stream = _completed_stream(result, replay_request_parameters)
         yield stream
 
     async def cancel_suspended_response(self, response: ModelResponse) -> None:

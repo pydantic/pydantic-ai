@@ -132,7 +132,11 @@ try:
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
-    from pydantic_ai.durable_exec._utils import StreamedActivityResult, StreamedModelRequestResult
+    from pydantic_ai.durable_exec._utils import (
+        ResolvedOutputModeResult,
+        StreamedActivityResult,
+        StreamedModelRequestResult,
+    )
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
         PydanticAIPlugin,
@@ -4700,25 +4704,32 @@ def test_temporal_durability_without_handler_does_not_wrap_event_stream() -> Non
     assert durability.has_wrap_run_event_stream is False
 
 
-async def test_stream_activity_payload_decodes_both_recorded_shapes() -> None:
-    """The stream-activity result union decodes both recorded wire shapes unambiguously.
+async def test_stream_activity_payload_decodes_every_recorded_shape() -> None:
+    """The stream-activity result union decodes every recorded wire shape unambiguously.
 
     `TemporalDurability` histories from v2.14 to v2.59 record a `StreamedActivityResult`; newer
-    ones, like legacy `TemporalAgent` histories, record the bare `ModelResponse`. Replay of any
-    in-flight workflow decodes the recorded payload through `StreamedModelRequestResult`.
+    ones, like legacy `TemporalAgent` histories, record the bare `ModelResponse`, or a
+    `ResolvedOutputModeResult` when the activity's model answers through others, like a
+    `FallbackModel`. Replay of any in-flight workflow decodes the recorded payload through
+    `StreamedModelRequestResult`.
     """
     response = {'parts': [{'content': 'streamed', 'part_kind': 'text'}], 'kind': 'response'}
     event = {'index': 0, 'part': {'content': 'streamed', 'part_kind': 'text'}, 'event_kind': 'part_start'}
-    payloads = await pydantic_data_converter.encode([{'response': response, 'events': [event]}, response])
+    payloads = await pydantic_data_converter.encode(
+        [{'response': response, 'events': [event]}, response, {'response': response, 'output_mode': 'tool'}]
+    )
 
-    hints = [StreamedModelRequestResult, StreamedModelRequestResult]
-    current_shape, legacy_shape = await pydantic_data_converter.decode(payloads, hints)  # pyright: ignore[reportArgumentType]
+    hints = [StreamedModelRequestResult, StreamedModelRequestResult, StreamedModelRequestResult]
+    events_shape, bare_shape, resolved_shape = await pydantic_data_converter.decode(payloads, hints)  # pyright: ignore[reportArgumentType]
 
-    assert isinstance(current_shape, StreamedActivityResult)
-    assert current_shape.response.parts == [TextPart(content='streamed')]
-    assert current_shape.events == [PartStartEvent(index=0, part=TextPart(content='streamed'))]
-    assert isinstance(legacy_shape, ModelResponse)
-    assert legacy_shape.parts == [TextPart(content='streamed')]
+    assert isinstance(events_shape, StreamedActivityResult)
+    assert events_shape.response.parts == [TextPart(content='streamed')]
+    assert events_shape.events == [PartStartEvent(index=0, part=TextPart(content='streamed'))]
+    assert isinstance(bare_shape, ModelResponse)
+    assert bare_shape.parts == [TextPart(content='streamed')]
+    assert isinstance(resolved_shape, ResolvedOutputModeResult)
+    assert resolved_shape.response.parts == [TextPart(content='streamed')]
+    assert resolved_shape.output_mode == 'tool'
 
 
 _buffered_stream_agent = Agent(

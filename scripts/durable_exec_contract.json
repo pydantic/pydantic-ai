@@ -5388,6 +5388,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_model.py::TemporalModel.__init__"
       ]
     },
+    "Model._answers_requests_itself": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_request_stream_operation"
+      ]
+    },
     "Model._model_for_response": {
       "engines": [
         "temporal"
@@ -5927,6 +5938,39 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_transports.py::_unclaimed_native_url_ids"
       ]
     },
+    "ModelRequestParameters.output_mode": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_request_stream_operation"
+      ]
+    },
+    "ModelRequestParameters.output_tools": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream.replay_request_parameters"
+      ]
+    },
+    "ModelRequestParameters.with_default_output_mode": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream.replay_request_parameters"
+      ]
+    },
     "ModelResolutionContext": {
       "engines": [
         "durable_exec"
@@ -6010,6 +6054,7 @@
         "attribute_read"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::BaseDurabilityCapability._model_request_stream_operation",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::DurableModel.request_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::_completed_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::DBOSModel.request_stream",
@@ -6760,6 +6805,17 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::<module>"
+      ]
+    },
+    "StructuredOutputMode": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "annotation_only"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>"
       ]
     }
   },
