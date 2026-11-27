@@ -23,6 +23,7 @@ from pydantic_ai.capabilities import (
     NodeResult,
     RawToolArgs,
     SetToolMetadata,
+    open_span,
 )
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -36,7 +37,6 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import ModelResponse, ToolCallPart, ToolReturn, ToolReturnPart, UserContent
 from pydantic_ai.output import PendingModelResponse
-from pydantic_ai.telemetry import open_span
 from pydantic_ai.tools import (
     AgentDepsT,
     DeferredToolRequests,
