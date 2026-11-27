@@ -3513,6 +3513,12 @@ again, revised, as a turn of its own. Add words to say what to look at, such as
 [Refine Output](../../../docs/harness/refine-output.md):
 `/plugins add refine_output pydantic_ai_harness.refine_output:RefineOutput`. Each turn then shows
 the first answer followed by the revised one.
+The disabled built-in `advisor` gives the model an `advisor` tool to consult a second model you
+choose, usually a stronger one. `/plugins enable advisor` opens its settings menu, where you name the
+model as in `/model`; Pax builds it each prompt from your saved keys, sign-ins, accounts, and chains.
+The advisor usually sees only the question the model writes for it, which goes to the advisor
+model's provider. Its requests count toward `run.request_limit` but not toward `/cost`; see
+[`advisor`](../PLUGINS.md#advisor-consult-a-second-model).
 Other harness capabilities are not listed in `/plugins`; add one on purpose with
 `/plugins add`, see [other harness capabilities](../PLUGINS.md#other-harness-capabilities).
 The disabled built-in `google_workspace` connects Gmail, Calendar, and Drive with a

@@ -1178,6 +1178,7 @@ settings using the former import paths are redirected to the new modules.
 | `persistence` | `pydantic_ai_pax.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_ai_pax.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `refinement` | `pydantic_ai_pax.builtin_plugins.refinement` | `{}` | `/refine`: the model reviews and revises its last answer |
+| `advisor` (off until enabled) | `pydantic_ai_pax.builtin_plugins.advisor` | `{}` | an `advisor` tool the model calls to consult a second model you choose, built from your saved keys and sign-ins; see [below](#advisor-consult-a-second-model) |
 | `hooks` | `pydantic_ai_pax.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
 | `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; `/computer-use` lets the model use its desktop; see [Sandboxes](docs/reference.md#sandboxes-sandbox) and [Computer use](docs/reference.md#computer-use-computer-use) |
 | `slack` (off until enabled) | `pydantic_ai_pax.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |
@@ -2488,6 +2489,51 @@ The settings can also be given up front:
 
 ```text
 /plugins add grain pydantic_ai_pax.builtin_plugins.grain '{"read_only": false, "include_instructions": true}'
+```
+
+### `advisor`: consult a second model
+
+`advisor` (`pydantic_ai_pax.builtin_plugins.advisor`) gives the model harness's
+[`Advisor`](../pydantic_ai_harness/pydantic_ai_harness/advisor/README.md): an `advisor` tool it
+calls to ask a second model, usually a stronger one, about a hard or high-impact decision. The
+model decides when to call it; ask for a consultation in your prompt when you want one. It starts
+disabled. Turning it on (Space in `/plugins`, or `/plugins enable advisor`) opens its settings menu,
+and `/plugins configure advisor` (or `c` in `/plugins`) opens it again later.
+
+| Row | Setting | Default | Does |
+|---|---|---|---|
+| Advisor model | `model` | not set | the model to consult, named as in `/model`: `PROVIDER[@ACCOUNT]:MODEL` or `chain:NAME` |
+
+Until a model is set, the plugin adds no tool and loading it prints a line naming
+`/plugins configure advisor`.
+
+Pax builds the advisor model at the start of every prompt the way `/model` builds a model, so
+a `/keys` entry saved for it in `/model settings`, a `/login` sign-in, an account (`@work`), a
+plugin's model prefix, or a saved chain all work, and a change to any of them applies to the next
+prompt. A name Pax cannot build, such as a chain that no longer exists, fails the prompt with an
+error that names the model and `/plugins configure advisor`. `/plugins add` with
+`pydantic_ai_harness.advisor:Advisor` would instead build the model from environment variables
+alone.
+
+What the advisor sees, and where it goes:
+
+- Usually the model writes a consultation prompt, and Pax sends only that prompt to the advisor
+  model's provider, with the advisor's own instructions and none of the agent's tools. That prompt
+  can carry anything from the conversation the model chooses to include, so choosing an advisor on
+  another provider sends that text to that provider too.
+- When the advisor is named as `anthropic:MODEL` with no key, endpoint, or account saved for it,
+  and the conversation's model runs on Anthropic and supports it, Anthropic's own advisor tool runs
+  inside the model's request instead. It sees the whole transcript, and nothing leaves Anthropic.
+
+A consultation's requests and tokens count toward the run's usage and its `run.request_limit`, as
+the agent's own requests do. `/cost`, `/usage`, and the status row's cost are read from the
+conversation's saved responses, and a consultation's response is not one of them, so they leave
+out what consultations cost.
+
+The setting can also be given up front:
+
+```text
+/plugins add advisor pydantic_ai_pax.builtin_plugins.advisor '{"model": "anthropic:claude-opus-4-8"}'
 ```
 
 ## Managing plugins
