@@ -154,7 +154,7 @@ class Update:
     def by_hand(self, command: str) -> str:
         """Why this Pax cannot install it without uv on `PATH`, and the `command` to run instead."""
         if self.move:
-            return f'Pax moves itself to {COMMAND} only when uv is on PATH. To move it by hand, run:\n{command}'
+            return f'clai2 moves itself to {COMMAND} only when uv is on PATH. To move it by hand, run:\n{command}'
         return (
             f'Pax {self.label} is available on the {self.channel} channel. Pax updates itself only when uv is '
             f'on PATH. To update by hand, run:\n{command}'
@@ -163,7 +163,7 @@ class Update:
     def done(self) -> str:
         """What a successful install did."""
         if self.move:
-            return f'Moved Pax {self.label} ({self.channel}) to {COMMAND}.'
+            return f'Moved clai2 to {COMMAND} {self.label} ({self.channel}).'
         return f'Updated Pax to {self.label} ({self.channel}).'
 
     def requirement(self, name: str) -> str:

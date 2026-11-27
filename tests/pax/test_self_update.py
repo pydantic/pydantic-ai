@@ -847,11 +847,11 @@ async def test_a_pydantic_clai2_environment_on_the_newest_version_moves_to_pax(
     assert AboutSource(context, moving).rows()[0].note == (
         'clai2 is now pax: Update installs 0.53.0, the latest on the stable channel, as pax (checked just now).'
     )
-    assert await moving.command([]) == 'Moved Pax 0.53.0 (stable) to pax. Restarting...'
+    assert await moving.command([]) == 'Moved clai2 to pax 0.53.0 (stable). Restarting...'
     assert [command[-1] for command in ran] == ['pydantic-ai-pax==0.53.0']
     # `main` installs the running commit's sdists, through the same overrides.
     main, ran = newest('main')
-    assert await main.command([]) == 'Moved Pax 4bd401a55 (main) to pax. Restarting...'
+    assert await main.command([]) == 'Moved clai2 to pax 4bd401a55 (main). Restarting...'
     [command] = ran
     assert command[-1] == 'pydantic-ai-pax'
     refused, ran = newest('stable')
@@ -862,7 +862,7 @@ async def test_a_pydantic_clai2_environment_on_the_newest_version_moves_to_pax(
     )
     by_hand, _ = _updates(['stable'], current=stable, fetch=lambda _: '0.53.0', uv=None)
     assert await by_hand.command([]) == (
-        'Pax moves itself to pax only when uv is on PATH. To move it by hand, run:\n'
+        'clai2 moves itself to pax only when uv is on PATH. To move it by hand, run:\n'
         'uv tool install --force --compile-bytecode pydantic-ai-pax==0.53.0'
     )
 
