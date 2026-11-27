@@ -104,8 +104,9 @@ The PID file outlives the command: background children that hold its output open
 `docker exec`, going, so a timeout still has a group to stop. Each wrapper first removes the files whose process
 and group are both gone. An empty file is one another wrapper is still writing.
 
-The command shares the wrapper's process group, so the wrapper catches the signals a command sends its own group,
-such as with `kill 0`, to still report the command's status. The command gets the default handlers back.
+The command shares the wrapper's process group, so the wrapper catches SIGHUP, SIGINT and SIGTERM, which a
+command may send its own group (`kill 0`), to still report the command's status. A caught signal is reset to its
+default in the subshell, so the command gets the default handlers.
 
 A subshell `exec` runs the program itself, never a builtin, and exits 127 when it's missing.
 """
