@@ -24,7 +24,6 @@ from pydantic_ai.messages import (
     ModelResponse,
     SystemPromptPart,
     TextPart,
-    UserPromptPart,
 )
 from pydantic_ai.models.anthropic import AnthropicModel
 from pydantic_ai.models.fallback import FallbackModel
@@ -37,11 +36,11 @@ from pydantic_ai.models.function import (
 )
 from pydantic_ai.providers.anthropic import AnthropicProvider
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness.compaction import SlidingWindowCompaction, SummarizingCompaction
+from pydantic_ai_harness.compaction import CompactionReceiptPart, SlidingWindowCompaction, SummarizingCompaction
 
 from ..append_only import OneCallPerResponse, drain_events
 from .test_capability_routes import RouteRun, _built  # pyright: ignore[reportPrivateUsage]
-from .test_history_transformations import Check, Exempt, NativeRun, Transform, Transformation
+from .test_history_transformations import NativeRun, Transform, Transformation
 
 
 def _context() -> RunContext[None]:
@@ -54,11 +53,8 @@ def _not_standing_prompt(part: ModelRequestPart) -> bool:
 
 
 def is_receipt(part: ModelRequestPart) -> bool:
-    """A compaction receipt, by its documented shape: a `UserPromptPart` with structured content.
-
-    The runs here only ever prompt with a string, so no kept prompt matches.
-    """
-    return isinstance(part, UserPromptPart) and not isinstance(part.content, str)
+    """A compaction receipt: the application's note, in a part of its own type, about the history it replaced."""
+    return isinstance(part, CompactionReceiptPart)
 
 
 # --- model_fallback_switch -----------------------------------------------------------------------------------------
@@ -159,16 +155,6 @@ async def _history_processor(native: RouteRun, directory: Path) -> list[ModelMes
     return await run_with_processor(native, directory, rebuilt)
 
 
-_RECEIPT_IN_USER_VOICE: dict[Check, Exempt] = {
-    'no_authority_gain': Exempt(
-        'https://github.com/pydantic/pydantic-ai/pull/14597: a compaction receipt is a `UserPromptPart`, so the '
-        "harness's note about the history it replaced reaches the model in the user's voice with 'user' authority, "
-        'above the tool output it stands in for'
-    )
-}
-"""The receipt finding, on every case and probe: only the no-authority-gain check fails."""
-
-
 RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
     'model_fallback_switch': Transform(
         'model_fallback_switch',
@@ -178,9 +164,8 @@ RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
         'summarizing',
         _summarizing,
         drops=_not_standing_prompt,
-        # The summary, and the receipt naming what it replaced: a `UserPromptPart` told apart from kept prompts.
+        # The summary, and the receipt naming what it replaced.
         creates_part=lambda part: isinstance(part, CompactionPart) or is_receipt(part),
-        known=_RECEIPT_IN_USER_VOICE,
         functions=(
             'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction.compact',
             'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._insert_receipt',
@@ -191,7 +176,6 @@ RUN_LEVEL_TRANSFORMS: dict[Transformation, Transform] = {
         _sliding_window,
         drops=_not_standing_prompt,
         creates_part=is_receipt,
-        known=_RECEIPT_IN_USER_VOICE,
         functions=(
             'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction.compact',
             'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction._prepend_receipt',
