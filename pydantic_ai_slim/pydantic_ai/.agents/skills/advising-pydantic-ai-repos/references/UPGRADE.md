@@ -40,7 +40,7 @@ Each release's notes on [GitHub Releases](https://github.com/pydantic/pydantic-a
 
 1. **Compatibility Notes:** check every one, as above.
 2. **Features and Bug Fixes:** a jump across many releases holds hundreds of lines, most about providers, integrations or packages the repository doesn't use. Keep only the lines that name something on the surface from the inventory (a provider it calls, a module it imports, an integration it has) or that fix a symptom its code works around. Then search the code for what each kept line would replace or change, and confirm at the call site. Each line links its pull request: when the pull request's description has a line starting `Replaces:`, it names the hand-written workaround the change replaces, so search the code for that.
-3. Report each finding under "After upgrading to X", grouped by the release that brings it. A bug fix that removes a failure the code hits today is a correctness finding and ranks first.
+3. Report each finding under "After upgrading to X", grouped by the release that brings it. A bug fix that removes a failure the code hits today is a correctness finding and ranks first. Decide whether it hits today from the repository's locked versions (of Pydantic AI and of the provider SDK the fix is about), not from whether it could: say "fails today with the locked `<sdk>` <version>", or say why it doesn't.
 
 ## Find the release that first has an API
 
