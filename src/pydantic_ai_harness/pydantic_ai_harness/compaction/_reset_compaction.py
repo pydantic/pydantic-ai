@@ -113,10 +113,10 @@ class ResetNotice:
 def default_reset_notice(notice: ResetNotice) -> str:
     """The default text of the notice a reset leaves: that the conversation was cleared, and where the earlier work is.
 
-    The wording was measured on the first request after a reset whose next step needs a result the reset cleared.
-    Against a draft that told the model to search first, it raised how often the model looked the result up in the
-    log rather than acting without it from 77 to 88 of 96 runs across four providers, with no run crediting the
-    notice to the user. What each part is for: the first paragraph keeps the model on the task and says what is
+    The wording was measured on the first request after a reset whose next step needs a result the reset cleared,
+    on the newest model from five providers. The model looked the result up in the log in 107 of 120 runs, against
+    96 of 120 for a draft that told it to search first, and no run credited the notice to the user. What each part
+    is for: the first paragraph keeps the model on the task and says what is
     still in front of it, so it doesn't search for that; "before you repeat an earlier call, look it up" is the rule
     against running a call again, with its trigger; "read only what your next step needs" keeps the log from being
     paged back in; the last paragraph keeps the model from editing a file from a stale copy.
