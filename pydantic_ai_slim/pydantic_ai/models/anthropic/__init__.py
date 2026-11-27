@@ -1505,12 +1505,10 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
     ) -> ModelSettings | None:
         """Drop the sampling settings the model rejects alone or with the rest of the request."""
         profile = self.profile
-        if profile.get('anthropic_disallows_sampling_settings', False):
+        model_rejects = profile.get('anthropic_disallows_sampling_settings', False)
+        api_version = None if model_rejects else self._sampling_rejecting_api_version(model_settings)
+        if model_rejects or api_version:
             filtered: ModelSettings = {**model_settings}
-            self._drop_unsupported_sampling_settings(filtered)
-            return filtered or None
-        if api_version := self._sampling_rejecting_api_version(model_settings):
-            filtered = {**model_settings}
             self._drop_unsupported_sampling_settings(filtered, api_version=api_version)
             return filtered or None
         thinking = request_thinking_type(profile, model_settings, model_request_parameters) is not None
