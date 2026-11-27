@@ -585,9 +585,14 @@ def test_compact_at_row_steps_through_shares_or_takes_a_token_count() -> None:
         "Saved Compact at (at or above this model's 200k window, so it will not trigger here)."
     ), 'saved all the same, for a larger model the user may switch to'
     assert saved[-1] == {'threshold_tokens': 200_000}
+    for entered, shown in [('2m', '2m'), ('1.5m', '1.5m'), ('1,250,000', '1250k'), ('1,000,500', '1000500')]:
+        source.apply(row(), entered)
+        assert source.current(row()) == shown, entered
+        assert source.problem(row(), shown) is None, 'what the row shows can be typed back'
     assert source.apply(row(), '75%') == 'Saved Compact at.'
     assert saved[-1] == {'threshold': 0.75}, 'a share clears the token count'
-    assert row().choices[-1] == '75%'
+    assert row().choices == ('50%', '60%', '70%', '75%', '80%', '85%', '90%'), 'a saved share sits in order'
+    assert row().display('75%') == '75% - about 150k tokens'
     assert source.apply(row(), '85%') == 'Saved Compact at.'
     assert saved[-1] == {}, 'the default share is saved as no choice, so a later default still applies'
     assert source.reset(row()) == 'Reset Compact at.'

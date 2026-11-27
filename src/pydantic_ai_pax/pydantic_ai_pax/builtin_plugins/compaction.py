@@ -148,8 +148,11 @@ class CompactionSource:
 
     def _compact_at(self) -> FieldRow:
         """`threshold` and `threshold_tokens` as one row: shares of the window to step through, or a token count."""
-        current = _trigger_text(self.host.settings(CompactionSettings))
-        shares = [_share(fraction) for fraction in _PRESETS]
+        settings = self.host.settings(CompactionSettings)
+        # A saved share the presets lack sits among them, in order; a saved token count follows them.
+        fractions = sorted({*_PRESETS, *(() if settings.threshold_tokens is not None else (settings.threshold,))})
+        shares = [_share(fraction) for fraction in fractions]
+        current = _trigger_text(settings)
         window = self.host.status.window
         return FieldRow(
             key=COMPACT_AT,
@@ -160,7 +163,7 @@ class CompactionSource:
             choices=(*shares, *(() if current in shares else (current,))),
             choice_labels={
                 share: f'{share} - about {_thousands(round(window * fraction))} tokens'
-                for share, fraction in zip(shares, _PRESETS, strict=True)
+                for share, fraction in zip(shares, fractions, strict=True)
             }
             if window
             else {},
@@ -272,9 +275,11 @@ def _thousands(tokens: int) -> str:
 
 
 def _trigger_text(settings: CompactionSettings) -> str:
-    """The trigger as the Compact at row and `/auto-compact` take it typed: `70%` or `150k`."""
+    """The trigger as the Compact at row and `/auto-compact` take it typed: `70%`, `150k` or `1.5m`."""
     if (tokens := settings.threshold_tokens) is None:
         return _share(settings.threshold)
+    if tokens >= 1_000_000 and tokens % 100_000 == 0:
+        return f'{tokens / 1_000_000:g}m'
     return f'{tokens // 1000}k' if tokens % 1000 == 0 else str(tokens)
 
 
