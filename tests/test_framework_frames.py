@@ -1065,7 +1065,7 @@ def test_a_tool_attachment_note_names_the_call_id_mistral_sends():
 
     prepared = model.prepare_messages(messages, ModelRequestParameters())
 
-    [tool_return] = [p for p in cast(ModelRequest, prepared[-1]).parts if isinstance(p, ToolReturnPart)]
+    [tool_return] = [p for p in prepared[-1].parts if isinstance(p, ToolReturnPart)]
     assert tool_return.tool_call_id != 'call_1' and len(tool_return.tool_call_id) == 9
     texts = request_texts(prepared[-1:])
     [own] = [t for t in texts if 'tool result from `fetch_page`' in t]
