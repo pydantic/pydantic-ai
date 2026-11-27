@@ -10,11 +10,12 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal
 
 import anyio
+from opentelemetry import context as otel_context
 
 from pydantic_ai._instructions import SourcedInstruction, append_on_change_by_default
 from pydantic_ai._utils import replace_no_init
 from pydantic_ai.agent import Agent, AgentRunResult, EventStreamHandler
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, WrapRunHandler, durable_operation, open_span
 from pydantic_ai.durable_exec import BaseDurabilityCapability, DurabilityEngineSpec
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import KnownModelName, Model
@@ -27,6 +28,7 @@ from pydantic_ai_harness._warn import HarnessDeprecationWarning
 from pydantic_ai_harness._workspace import require_workspace, secondary_workspace, workspace_path
 from pydantic_ai_harness.sub_agents._control import (
     RUN_OWNER,
+    RUN_TRACE_CONTEXT,
     DynamicAgents,
     DynamicAgentSpec,
     RemoteSubAgent,
@@ -570,6 +572,8 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         """
         if self.include_self:
             self._require_bound_to(ctx.agent)
+        # Inside `Instrumentation`'s run span, which stays open while the run waits for its tasks.
+        trace_token = RUN_TRACE_CONTEXT.set((ctx.run_id, otel_context.get_current()))
         try:
             owner = DelegationTasks.current()
             if ctx.in_durable_context:
@@ -589,6 +593,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
             # Any other run, including one that a tool starts, gets an owner of its own.
             return await self._run_owned(ctx, handler)
         finally:
+            RUN_TRACE_CONTEXT.reset(trace_token)
             self._call_counts.pop(ctx.run_id or '', None)
             self._created.pop(ctx.run_id or '', None)
 
@@ -690,9 +695,7 @@ class SubAgents(AbstractCapability[AgentDepsT]):
         owner = entry[1]
         # The run's own owner, so its top-level tasks are this run's.
         if running := sum(record.parent_id is None and record.status == 'running' for record in owner.records.values()):
-            with ctx.tracer.start_as_current_span(
-                'sub_agents wait for tasks', attributes={'sub_agents.running_tasks': running}
-            ):
+            with open_span(ctx, 'sub_agents wait for tasks', attributes={'sub_agents.running_tasks': running}):
                 await owner.wait_children(None)
         owner.queue_reports(conversation_id=ctx.conversation_id or ctx.run_id or '', parent_id=None)
         return output

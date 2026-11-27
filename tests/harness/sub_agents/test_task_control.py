@@ -342,6 +342,14 @@ class TestSubAgentsTaskControl:
             'sub_agents task backgrounded',
             {'sub_agents.agent_name': 'researcher', 'sub_agents.reason': 'auto'},
         ) in (decisions(exporter))
+        # The task settled after its tool call returned the receipt, so its outcome is a decision, not on that span.
+        [tool_span] = [span for span in exporter.get_finished_spans() if span.name == 'execute_tool delegate_task']
+        assert 'sub_agents.outcome' not in (tool_span.attributes or {})
+        # A durable unit doesn't return the model that served the task.
+        served = {} if durable else {'sub_agents.model': 'function:function:respond:stream'}
+        assert [attributes for name, attributes in decisions(exporter) if name == 'sub_agents task settled'] == [
+            {'sub_agents.agent_name': 'researcher', 'sub_agents.outcome': 'ok', **served}
+        ]
 
     async def test_a_listener_failing_on_auto_backgrounding_aborts_the_run(self) -> None:
         gate = Gate()
@@ -2119,9 +2127,10 @@ def traced(include_content: bool, *processors: SpanProcessor) -> tuple[Instrumen
 
 
 def decisions(exporter: InMemorySpanExporter) -> list[tuple[str, dict[str, object]]]:
-    """Task control's spans, with their attributes but the task ID, which every test makes anew."""
+    """Task control's spans, with their attributes but the task and tool call IDs, which every test makes anew."""
+    fresh = {'sub_agents.task_id', 'gen_ai.tool.call.id'}
     return [
-        (span.name, {key: value for key, value in (span.attributes or {}).items() if key != 'sub_agents.task_id'})
+        (span.name, {key: value for key, value in (span.attributes or {}).items() if key not in fresh})
         for span in exporter.get_finished_spans()
         if span.name.startswith('sub_agents ')
     ]
@@ -2136,6 +2145,29 @@ class OpensOnWait(SpanProcessor):
     def on_start(self, span: Span, parent_context: Context | None = None) -> None:
         if span.name == 'sub_agents wait for tasks':
             self.gate.opened.set()
+
+
+def backgrounding_agent_without_sub_agents() -> Agent[None, str]:
+    """An agent with a directly registered `SubAgentToolset`, so no `SubAgents.wrap_run`, that backgrounds one task."""
+    toolset = SubAgentToolset[None](
+        agents={'researcher': researcher()},
+        forward_usage=True,
+        inherit_tools=False,
+        shared_capabilities=[],
+        event_stream_handler=None,
+        tool_name='delegate_task',
+        tool_retries=2,
+        contain_errors=False,
+        call_counts={},
+        task_control=TaskControl(),
+        dynamic_agents=DynamicAgents(),
+        created={},
+    )
+    return Agent(
+        scripted(call('delegate_task', agent_name='researcher', task='Find x.', background=True), text('Bye.')),
+        deps_type=type(None),
+        toolsets=[toolset],
+    )
 
 
 class TestTaskControlTelemetry:
@@ -2171,8 +2203,93 @@ class TestTaskControlTelemetry:
                 {'sub_agents.agent_name': 'researcher', 'sub_agents.event': 'sub_agents.task_assigned', **reason},
             ),
             ('sub_agents task backgrounded', {'sub_agents.agent_name': 'researcher', 'sub_agents.reason': 'requested'}),
+            (
+                'sub_agents task settled',
+                {
+                    'sub_agents.agent_name': 'researcher',
+                    'sub_agents.outcome': 'ok',
+                    'sub_agents.model': 'function:function:respond:stream',
+                },
+            ),
             ('sub_agents wait for tasks', {'sub_agents.running_tasks': 1}),
         ]
+
+    async def test_a_settled_task_is_recorded_under_the_run_that_waits_for_it(self) -> None:
+        """The task settles after its `execute_tool` span ended, so the decision goes under the still-open run span."""
+        gate = Gate()
+        slow = Agent(scripted(call('pause'), text('slow result')), tools=[gate.pause])
+        settings, exporter = traced(False, OpensOnWait(gate))
+        parent = Agent(
+            scripted(
+                call('delegate_task', agent_name='researcher', task='Slow.', background=True),
+                text('Waiting.'),
+                text('Done.'),
+            ),
+            capabilities=[controlled(researcher(slow))],
+        )
+        parent.instrument = settings
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await parent.run('Go.')
+        spans = exporter.get_finished_spans()
+        [settled] = [span for span in spans if span.name == 'sub_agents task settled']
+        [delegate] = [span for span in spans if span.name == 'execute_tool delegate_task']
+        parent_span = settled.parent
+        assert parent_span is not None
+        [run] = [span for span in spans if span.context is not None and span.context.span_id == parent_span.span_id]
+        assert run.parent is None
+        assert (run.attributes or {})['gen_ai.operation.name'] == 'invoke_agent'
+        assert run.start_time is not None and run.end_time is not None and settled.start_time is not None
+        assert delegate.end_time is not None
+        assert delegate.end_time < settled.start_time
+        assert run.start_time <= settled.start_time <= run.end_time
+        attributes = settled.attributes or {}
+        assert attributes['gen_ai.tool.call.id'] == (delegate.attributes or {})['gen_ai.tool.call.id']
+        assert isinstance(attributes['sub_agents.task_id'], str)
+
+    async def test_a_directly_registered_toolsets_background_task_settles_and_is_recorded(self) -> None:
+        """Without `SubAgents.wrap_run` no run trace context is stored, so the settled span goes under the task's current span."""
+        settings, exporter = traced(False)
+        parent = backgrounding_agent_without_sub_agents()
+        parent.instrument = settings
+        owner = DelegationTasks()
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with owner.opened():
+                with owner.bind():
+                    await parent.run('Go.')
+                await owner.wait_children(None)
+        spans = exporter.get_finished_spans()
+        [settled] = [span for span in spans if span.name == 'sub_agents task settled']
+        [delegate] = [span for span in spans if span.name == 'execute_tool delegate_task']
+        # The task's copied context still has the call that started it as its current span.
+        assert settled.parent is not None and delegate.context is not None
+        assert settled.parent.span_id == delegate.context.span_id
+        assert (settled.attributes or {})['sub_agents.outcome'] == 'ok'
+
+    async def test_a_nested_toolsets_settled_span_does_not_go_under_the_enclosing_run(self) -> None:
+        """The enclosing run's stored context is inherited by the child, but belongs to another run."""
+        settings, exporter = traced(False)
+        middle = backgrounding_agent_without_sub_agents()
+        middle.instrument = settings
+        outer = Agent(
+            scripted(call('delegate_task', agent_name='middle', task='Go.'), echo_last_return),
+            capabilities=[controlled(SubAgent(middle, name='middle'))],
+        )
+        outer.instrument = settings
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await outer.run('Go.')
+        spans = exporter.get_finished_spans()
+        [settled] = [span for span in spans if span.name == 'sub_agents task settled']
+        [outer_run] = [span for span in spans if span.name.startswith('invoke_agent') and span.parent is None]
+        assert outer_run.context is not None
+        [middle_call] = [
+            span
+            for span in spans
+            if span.name == 'execute_tool delegate_task'
+            and span.parent is not None
+            and span.parent.span_id != outer_run.context.span_id
+        ]
+        assert settled.parent is not None and middle_call.context is not None
+        assert settled.parent.span_id == middle_call.context.span_id
 
     @pytest.mark.parametrize('include_content', [False, True])
     async def test_a_listener_answer_is_a_span(self, include_content: bool) -> None:
@@ -2236,6 +2353,14 @@ class TestTaskControlTelemetry:
                 {'sub_agents.agent_name': 'researcher', 'sub_agents.event': 'sub_agents.task_answer'},
             ),
             ('sub_agents task backgrounded', {'sub_agents.agent_name': 'researcher', 'sub_agents.reason': 'question'}),
+            (
+                'sub_agents task settled',
+                {
+                    'sub_agents.agent_name': 'researcher',
+                    'sub_agents.outcome': 'ok',
+                    'sub_agents.model': 'function:function:respond:stream',
+                },
+            ),
         ]
 
     async def test_a_refused_task_is_a_span(self) -> None:
@@ -2319,6 +2444,63 @@ class TestTaskControlTelemetry:
                 for text_ in (span.name, *map(str, (span.attributes or {}).values()))
             ]
             assert not [text_ for text_ in recorded if 'poet' in text_ or 'private text' in text_]
+
+    async def test_a_created_agents_name_stays_content_when_its_task_settles_after_the_run(self) -> None:
+        """A bound owner lets the run return before its task settles, after the run dropped its created agents."""
+        gate = Gate()
+
+        async def streamed(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+            await gate.opened.wait()
+            yield 'A poem.'
+
+        settings, exporter = traced(False)
+        parent = Agent(
+            scripted(
+                call('create_agent', name='poet', description='Poems.', instructions='Write.'),
+                call('delegate_task', agent_name='poet', task='One.', background=True),
+                text('Bye.'),
+            ),
+            capabilities=[
+                SubAgents(
+                    models={'slow': FunctionModel(stream_function=streamed)},
+                    task_control=TaskControl(),
+                    dynamic_agents=DynamicAgents(models=['slow']),
+                )
+            ],
+        )
+        parent.instrument = settings
+        owner = DelegationTasks()
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with owner.opened():
+                with owner.bind():
+                    await parent.run('Go.')
+                gate.opened.set()
+                await owner.wait_children(None)
+
+        assert decisions(exporter) == [
+            ('sub_agents task backgrounded', {'sub_agents.reason': 'requested'}),
+            (
+                'sub_agents task settled',
+                {'sub_agents.outcome': 'ok', 'sub_agents.model': 'function:function::streamed'},
+            ),
+        ]
+
+    async def test_an_agent_on_the_bound_owners_roster_is_named_plainly(self) -> None:
+        # The application configured it on the owner, not on `SubAgents`, and the model did not choose its name.
+        settings, exporter = traced(False)
+        parent = Agent(
+            scripted(call('delegate_task', agent_name='alpha', task='Find x.'), echo_last_return),
+            capabilities=[controlled()],
+        )
+        parent.instrument = settings
+        owner = DelegationTasks(agents={'alpha': researcher()})
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with owner.opened():
+                with owner.bind():
+                    await parent.run('Go.')
+
+        [span] = [span for span in exporter.get_finished_spans() if span.name == 'execute_tool delegate_task']
+        assert (span.attributes or {}).get('sub_agents.agent_name') == 'alpha'
 
     async def test_a_remote_task_nobody_picks_up_is_a_span(self) -> None:
         parent, _ = remote_parent(

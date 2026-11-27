@@ -12,8 +12,8 @@ import asyncio
 import logging
 import re
 from abc import ABC, abstractmethod
-from collections.abc import AsyncGenerator, Callable, Mapping, Sequence
-from contextlib import asynccontextmanager
+from collections.abc import AsyncGenerator, Callable, Generator, Mapping, Sequence
+from contextlib import asynccontextmanager, contextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Any, Generic, TypeAlias
@@ -21,12 +21,12 @@ from uuid import uuid4
 
 import anyio
 import anyio.abc
-from opentelemetry import propagate
-from opentelemetry.trace import Tracer
+from opentelemetry import context as otel_context, propagate
+from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.agent import AbstractAgent
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, record_decision
 from pydantic_ai.exceptions import RunCancelled
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.tools import AgentDepsT
@@ -75,68 +75,93 @@ RUN_OWNER: ContextVar[tuple[str, DelegationTasks] | None] = ContextVar(
 )
 """The run ID and owner of the run that opened a `DelegationTasks` of its own, for its task-control `SubAgents`."""
 
+RUN_TRACE_CONTEXT: ContextVar[tuple[str | None, otel_context.Context] | None] = ContextVar(
+    'pydantic_ai_harness.sub_agents.run_trace_context', default=None
+)
+"""The run ID and OpenTelemetry context of the delegating run's body, inside its run span, set by `SubAgents.wrap_run`.
+
+A task in the background inherits it from the tool call that started it, and so does every run that run starts:
+the run ID says which run it belongs to.
+"""
+
+
+@contextmanager
+def in_run_trace_context(run_id: str | None) -> Generator[None]:
+    """Make the delegating run's span current, for a decision made after the tool call that led to it ended.
+
+    A task in the background settles after its `execute_tool` span ended, while the run that started it, which
+    waits for its tasks, still has its span open. A `SubAgentToolset` registered without `SubAgents` stores no
+    run context of its own, so the decision goes under whatever span is current, even when an enclosing run
+    stored one.
+    """
+    stored = RUN_TRACE_CONTEXT.get()
+    if stored is None or stored[0] != run_id:
+        yield
+        return
+    token = otel_context.attach(stored[1])
+    try:
+        yield
+    finally:
+        otel_context.detach(token)
+
 
 @dataclass(frozen=True, kw_only=True)
 class TaskTelemetry:
-    """Records task control's own decisions as zero-duration spans on the delegating run's tracer.
+    """What `SubAgents` needs to record its decisions on the delegating run's tracer.
 
-    Core's spans show the tool calls; these show what a listener or a limit decided about them. Text
-    that can quote a prompt, such as a veto reason, a question, or an answer, is attached only when the
-    run's instrumentation includes content.
+    Text that can quote a prompt, such as a veto reason, a question, an answer, or an agent name the model
+    chose, is recorded only as content.
     """
 
-    tracer: Tracer
-    include_content: bool
-    model_named: frozenset[str] = frozenset()
-    """Agent names the model chose, by creating those agents, which are recorded only as content."""
+    ctx: RunContext[object]
+    """The delegating run, whose tracer and content setting the decisions are recorded with."""
+    configured_names: frozenset[str] = frozenset()
+    """Agent names the application configured. Any other name was chosen by the model, by creating that agent,
+    so it is recorded only as content."""
 
-    @classmethod
-    def of(cls, ctx: RunContext[AgentDepsT], *, model_named: frozenset[str] = frozenset()) -> TaskTelemetry:
-        return cls(tracer=ctx.tracer, include_content=ctx.trace_include_content, model_named=model_named)
+    def agent_name_attributes(self, agent_name: str) -> tuple[dict[str, str], dict[str, str]]:
+        """`sub_agents.agent_name` as `(attributes, content)`: an attribute only for an agent the app configured."""
+        attribute = {'sub_agents.agent_name': agent_name}
+        return (attribute, {}) if agent_name in self.configured_names else ({}, attribute)
 
     def decision(
         self,
         name: str,
         *,
-        agent_name: str | None,
+        agent_name: str,
         task_id: str | None = None,
-        attributes: Mapping[str, str | float] | None = None,
-        content: Mapping[str, str] | None = None,
+        attributes: Mapping[str, AttributeValue] | None = None,
+        content: Mapping[str, AttributeValue] | None = None,
     ) -> None:
-        """Record the span `sub_agents {name}`, with `sub_agents.`-prefixed attributes."""
-        span = self.tracer.start_span(f'sub_agents {name}')
-        if span.is_recording():
-            if agent_name is not None and (self.include_content or agent_name not in self.model_named):
-                span.set_attribute('sub_agents.agent_name', agent_name)
-            if task_id is not None:
-                span.set_attribute('sub_agents.task_id', task_id)
-            for key, value in (attributes or {}).items():
-                span.set_attribute(f'sub_agents.{key}', value)
-            if self.include_content:
-                for key, value in (content or {}).items():
-                    span.set_attribute(f'sub_agents.{key}', value)
-        span.end()
+        """Record a `SubAgents` decision with its agent name and optional task id."""
+        name_attributes, name_content = self.agent_name_attributes(agent_name)
+        decision_attributes = {**name_attributes, **(attributes or {})}
+        if task_id is not None:
+            decision_attributes['sub_agents.task_id'] = task_id
+        record_decision(
+            self.ctx,
+            f'sub_agents {name}',
+            attributes=decision_attributes,
+            content={**name_content, **(content or {})},
+        )
 
     def vetoed(self, event: ParentMessageEvent | AgentCreatedEvent) -> None:
-        """Record that a listener vetoed `event`."""
-        reason = {'veto_reason': event.veto_reason} if event.veto_reason is not None else None
-        if isinstance(event, AgentCreatedEvent):
-            # The model chose this name, so it is content.
-            content = {'agent_name': event.agent_name, **(reason or {})}
-            self.decision('vetoed', agent_name=None, attributes={'event': event.kind}, content=content)
-        else:
-            self.decision(
-                'vetoed',
-                agent_name=event.agent_name,
-                task_id=event.task_id,
-                attributes={'event': event.kind},
-                content=reason,
-            )
+        """Record that a listener vetoed `event`, with its reason as content: it can quote what was vetoed."""
+        self.decision(
+            'vetoed',
+            agent_name=event.agent_name,
+            task_id=event.task_id if isinstance(event, ParentMessageEvent) else None,
+            attributes={'sub_agents.event': event.kind},
+            content={} if event.veto_reason is None else {'sub_agents.veto_reason': event.veto_reason},
+        )
 
     def backgrounded(self, event: TaskBackgroundedEvent) -> None:
         """Record that a task moved to the background, and why."""
         self.decision(
-            'task backgrounded', agent_name=event.agent_name, task_id=event.task_id, attributes={'reason': event.reason}
+            'task backgrounded',
+            agent_name=event.agent_name,
+            task_id=event.task_id,
+            attributes={'sub_agents.reason': event.reason},
         )
 
 
@@ -384,7 +409,7 @@ async def put_question(
                 'question answered',
                 agent_name=record.agent_name,
                 task_id=record.id,
-                content={'question': event.question, 'answer': answer.answer},
+                content={'sub_agents.question': event.question, 'sub_agents.answer': answer.answer},
             )
             return answer
         telemetry.vetoed(answer)
@@ -443,7 +468,7 @@ async def run_remote(
                 'task not accepted',
                 agent_name=record.agent_name,
                 task_id=record.id,
-                attributes={'accept_timeout': accept_timeout},
+                attributes={'sub_agents.accept_timeout': accept_timeout},
             )
             error = (
                 f'No worker picked up the task within {accept_timeout}s, so sub-agent {record.agent_name!r} '

@@ -18,7 +18,7 @@ import anyio
 
 from pydantic_ai import AgentStreamEvent, CapabilityEvent, capture_run_messages
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
-from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
+from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError, tool_call_span
 from pydantic_ai.durable_exec import BaseDurabilityCapability, DurableRunContext
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -77,6 +77,7 @@ from pydantic_ai_harness.sub_agents._control import (
     TaskControl,
     TaskTelemetry,
     default_factory,
+    in_run_trace_context,
     reporting_settlement,
     run_owned,
     run_remote,
@@ -109,7 +110,7 @@ from pydantic_ai_harness.sub_agents._events import (
     TaskSteeredEvent,
     bounded_text,
 )
-from pydantic_ai_harness.sub_agents._models import ModelOption, validate_restriction
+from pydantic_ai_harness.sub_agents._models import ModelOption, model_label, validate_restriction
 from pydantic_ai_harness.sub_agents._tasks import (
     NOT_BACKGROUNDABLE,
     RESUME_DIRECTORY_MISMATCH,
@@ -735,6 +736,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         counts[agent_name] = counts.get(agent_name, 0) + 1
         if counts[agent_name] <= sub_agent.max_calls:
             return None
+        _record_delegation_ended(
+            self._telemetry(ctx), agent_name=agent_name, record=None, outcome='max_calls', model=None
+        )
         return self._steer(
             sub_agent.on_failure,
             f'Delegate budget for {agent_name!r} is exhausted for this run '
@@ -852,7 +856,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 working_directory=directory,
             )
         ended = await self._delegate_recorded(ctx, agent_name, task, key)
-        if ended is None:
+        if ended is not None:
+            # The durable unit's context may carry no tracer, so the outcome goes on this call's span from here,
+            # without the model, which the unit doesn't return.
+            _record_delegation_ended(
+                self._telemetry(ctx), agent_name=agent_name, record=None, outcome=ended.outcome, model=None
+            )
+        else:
             ended = await self._run_foreground(ctx, agent_name, sub_agent, task=task, key=key, workspace=workspace)
         return ended.result()
 
@@ -1111,7 +1121,12 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         limit = self._max_running_tasks
         if limit is not None and (running := owner.running_count(conversation_id)) >= limit:
             self._telemetry(ctx).decision(
-                'task refused', agent_name=agent_name, attributes={'running_tasks': running, 'max_running_tasks': limit}
+                'task refused',
+                agent_name=agent_name,
+                attributes={
+                    'sub_agents.running_tasks': running,
+                    'sub_agents.max_running_tasks': limit,
+                },
             )
             raise ModelRetry(
                 f'{running} tasks are already running, the most allowed at once. Wait for a report, or cancel a '
@@ -1176,7 +1191,13 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         task_id, agent_name = record.id, record.agent_name
         async with reporting_settlement(owner, record):
             ended = await self._delegate_recorded(ctx, agent_name, record.prompt, key, managed=True)
-            if ended is None:
+            if ended is not None:
+                # The durable unit has no task record, so this settled task's outcome is recorded here, without the
+                # model, which the unit doesn't return.
+                _record_delegation_ended(
+                    link.telemetry, agent_name=agent_name, record=record, outcome=ended.outcome, model=None
+                )
+            else:
                 ended = await self._run_delegation(
                     ctx,
                     agent_name,
@@ -1217,7 +1238,12 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         return {name: sub_agent for name, (_, sub_agent) in self._created.get(ctx.run_id or '', {}).items()}
 
     def _telemetry(self, ctx: RunContext[AgentDepsT]) -> TaskTelemetry:
-        return TaskTelemetry.of(ctx, model_named=frozenset(self._created_agents(ctx)))
+        # Decided by name, not by this run's created agents: a task outlives the run that created its agent.
+        configured = {*self._agents, *self._remote, *([SELF_AGENT_NAME] if self._include_self else [])}
+        if (owner := DelegationTasks.current()) is not None:
+            # The application gave a bound owner its agents, which resolve before this toolset's.
+            configured.update(owner.agents)
+        return TaskTelemetry(ctx=ctx, configured_names=frozenset(configured))
 
     def _owner(self) -> DelegationTasks:
         owner = DelegationTasks.current()
@@ -1432,7 +1458,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             if _emits_events(ctx):
                 await ctx.emit(event)
             if event.vetoed:
-                self._telemetry(ctx).vetoed(event)
+                # No configured names: the model chose this one, so it is content.
+                TaskTelemetry(ctx=ctx).vetoed(event)
                 return _vetoed_reply('The sub-agent was not created', event)
             spec = DynamicAgentSpec(
                 name=name, description=event.description, instructions=event.instructions, model=model
@@ -1478,6 +1505,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # again would register every tool twice.
         is_self = self._is_self(agent_name)
         inherit_tools = self._inherit_tools and not is_self
+        telemetry = self._telemetry(ctx)
         # Announced before the child coroutine exists, so an emit that does not return
         # (a cancellation landing on the await) leaves no never-awaited coroutine behind.
         owner = DelegationTasks.current() if record is not None else None
@@ -1531,6 +1559,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             outcome: DelegationOutcome = (
                 'cancelled' if isinstance(exc, (asyncio.CancelledError, RunCancelled)) else 'error'
             )
+            model = _served_model_label(serving_model, run_model, sub_agent.agent.model)
+            _record_delegation_ended(telemetry, agent_name=agent_name, record=record, outcome=outcome, model=model)
             if owner is not None:
                 with anyio.move_on_after(5, shield=True):
                     await emit(
@@ -1548,6 +1578,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             _depth.reset(token)
             if child_usage is not None and self._forward_usage:
                 ctx.usage.incr(child_usage)
+        model = _served_model_label(serving_model, run_model, sub_agent.agent.model)
+        _record_delegation_ended(telemetry, agent_name=agent_name, record=record, outcome=ended.outcome, model=model)
         if record is not None:
             record.outcome = ended.outcome
         if emits:
@@ -1856,6 +1888,56 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         if on_failure is not None:
             return on_failure
         return default
+
+
+def _served_model_label(
+    serving_model: ServingModelRecorder,
+    run_model: Model | KnownModelName | str | None,
+    configured_model: Model | KnownModelName | str | None,
+) -> str | None:
+    """The model that answered the delegation's last request, else the one it was configured to run on.
+
+    `None` when there's no model to name: no request was answered, and the sub-agent has no model of its own.
+    """
+    if serving_model.answered_by is not None:
+        return serving_model.answered_by
+    model = run_model or configured_model
+    return None if model is None else model_label(model)
+
+
+def _record_delegation_ended(
+    telemetry: TaskTelemetry,
+    *,
+    agent_name: str,
+    record: DelegationTask | None,
+    outcome: DelegationOutcome | Literal['max_calls'],
+    model: str | None,
+) -> None:
+    """Record how a delegation ended, and on which model.
+
+    A task in the background settles after its tool call returned the receipt and its `execute_tool` span
+    ended, so its end is the decision `sub_agents task settled`, recorded under the delegating run's span with
+    the delegating call's `gen_ai.tool.call.id`. Any other delegation ends within its tool call, so its end goes
+    on that call's `execute_tool` span.
+    """
+    attributes: dict[str, str] = {'sub_agents.outcome': outcome}
+    if model is not None:
+        attributes['sub_agents.model'] = model
+    if record is not None and record.background:
+        call_id = telemetry.ctx.tool_call_id
+        with in_run_trace_context(telemetry.ctx.run_id):
+            telemetry.decision(
+                'task settled',
+                agent_name=agent_name,
+                task_id=record.id,
+                attributes={**attributes, **({} if call_id is None else {'gen_ai.tool.call.id': call_id})},
+            )
+        return
+    name_attributes, name_content = telemetry.agent_name_attributes(agent_name)
+    span = tool_call_span(telemetry.ctx)
+    span.set_attributes({**name_attributes, **attributes})
+    if telemetry.ctx.trace_include_content:
+        span.set_attributes(name_content)
 
 
 def _start_child(

@@ -308,16 +308,27 @@ agent = Agent(
 
 For the child run's model streaming, pass an `event_stream_handler`. See [capability events](https://pydantic.dev/docs/ai/capabilities/overview/#capability-events) for how `@on_event` works.
 
-Plain delegation adds no OpenTelemetry spans: the child run's own spans nest under the parent's tool-call span.
+`SubAgents` opens no span for plain delegation: the child run is a core agent run with its own spans nested under the parent's tool-call span. A timeout or a reached budget returns a successful steering message, so that span alone doesn't say the delegation went wrong. `SubAgents` records how it ended on the `execute_tool delegate_task` span, so "which sub-agents time out, and on which model" is one query whether or not the run records content:
+
+| Attribute | Value |
+| --- | --- |
+| `sub_agents.agent_name` | the delegate's name, for an agent the application configured: on `SubAgents`, or on a bound `DelegationTasks(agents=...)`; a created agent's name, which the model chose, is recorded only as content |
+| `sub_agents.outcome` | the `DelegationOutcome`: `ok`, `timeout`, `budget`, `failed`, `contained`, `cancelled` or `error`; or `max_calls` when the delegate's `max_calls` budget refused the call before the child ran |
+| `sub_agents.model` | the model that answered the child's last request, as `<provider name>:<model name>` from its response, so under a `FallbackModel` the model that answered, not the fallback chain; before any answer, the model it was configured to run on, as `<system>:<model name>` for a `Model` instance or the model string as given; absent for `max_calls`, for a task whose durable unit ran outside the delegating run's context (such as a Temporal activity), or when there's no model to name |
+
+When the exception behind an `error` outcome reaches the tool call, the span also records it, as for any tool call that raises; a `sub_agents task settled` span records only the outcome. A task in the background settles after its tool call has returned, so its outcome is recorded as the `sub_agents task settled` decision below, with the same attributes, and the same `sub_agents.outcome` filter finds both. A remote task's outcome is not recorded yet: its run is on its worker. A delegation that runs in a durable unit of its own has its outcome recorded from the delegating side. When the unit runs outside the delegating run's context, such as a Temporal activity on a worker, the span gets no `sub_agents.model`; when it runs in that context, the unit's own run records the model on the same span.
+
+The two forms of `sub_agents.model` can differ for the same model: a response often names a dated snapshot, such as `<provider>:<model>-<date>` for a delegate configured as `'<provider>:<model>'`. A query over timeouts, which often end before any answer, should match both.
 
 A child run has its own `conversation_id`, so adding up cost by `gen_ai.conversation.id` leaves it out of the conversation it was started for. Its spans also carry `pydantic_ai.root_conversation_id`, the `conversation_id` of the top-level run (the run that isn't inside any other run), even for a child started by another child; see [correlating runs](https://pydantic.dev/docs/ai/core-concepts/message-history/#correlating-runs-with-run_id-and-conversation_id) for how to use it and where it's missing.
 
-Task control records its own decisions, which core's spans don't show, as zero-duration spans on the delegating run's tracer. Their attributes have the `sub_agents.` prefix and include `sub_agents.agent_name` (for a created agent, whose name the model chose, only as content) and, for a task, `sub_agents.task_id`:
+Task control records its own decisions, which core's spans don't show, as zero-duration spans on the delegating run's tracer, with `sub_agents.`-prefixed attributes, including `sub_agents.agent_name` (recorded as on the delegate span: a created agent's name only as content) and, for a task, `sub_agents.task_id`:
 
 | Span | When | Attributes |
 | --- | --- | --- |
 | `sub_agents vetoed` | a listener vetoed a task, message, answer, cancellation, or created agent | `sub_agents.event` (the vetoed event's kind), `sub_agents.veto_reason` |
 | `sub_agents task backgrounded` | a task moved to the background | `sub_agents.reason`: `requested`, `auto`, or `question` |
+| `sub_agents task settled` | a task in the background ended | `sub_agents.outcome` and `sub_agents.model`, as on the delegate span, except that a task run in a durable unit records no `sub_agents.model`, and `gen_ai.tool.call.id` of the call that delegated it. It is a child of the delegating run's span, which is still open while the run waits for its tasks, not of that call's span, which ended with the receipt |
 | `sub_agents question answered` | a listener, not the model, answered a task's question | `sub_agents.question`, `sub_agents.answer` |
 | `sub_agents task refused` | `max_running_tasks` refused a delegation | `sub_agents.running_tasks`, `sub_agents.max_running_tasks` |
 | `sub_agents task not accepted` | no worker picked a remote task up within `accept_timeout` | `sub_agents.accept_timeout` |
