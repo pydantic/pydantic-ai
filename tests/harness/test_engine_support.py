@@ -76,9 +76,10 @@ def test_every_cell_is_a_case_with_calls() -> None:
 def test_untested_cells_are_pinned() -> None:
     """How many cases with `calls` each engine runs no suite for.
 
-    Testing a cell lowers its engine's count. A case that gains `calls` raises the count of every engine without a suite,
-    and the PR that adds them updates the pin. It reads test tables, with no provider exchange to record, so it isn't a
-    VCR test.
+    Testing a cell lowers its engine's count. A case that gains `calls` raises the count of every engine without a
+    suite, and the PR that adds them updates the pin.
+
+    It reads test tables, with no provider exchange to record, so it isn't a VCR test.
     """
     untested = Counter(
         engine
