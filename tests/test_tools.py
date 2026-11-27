@@ -6678,6 +6678,10 @@ async def test_an_approved_call_that_asks_a_question_stays_pending_as_one() -> N
     assert result.output.kind('approval') == 'question'
 
 
+# The `allowed_callers` tests below are unit tests: validation, decorator plumbing, and the request-time check all run
+# before any provider request is made, so there is nothing for a cassette to record.
+
+
 def test_allowed_callers_is_validated_and_read_as_a_frozenset() -> None:
     """`allowed_callers` takes any set of callers and reads back as a `frozenset`; nothing or an unknown caller is an error."""
 

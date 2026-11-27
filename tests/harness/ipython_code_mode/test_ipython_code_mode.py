@@ -109,7 +109,7 @@ def _scripted(*codes: str | dict[str, Any], seen: list[AgentInfo] | None = None)
     return FunctionModel(respond)
 
 
-def _select_nothing(ctx: RunContext[Any], tool_def: ToolDefinition) -> bool:
+def _select_nothing(ctx: RunContext[object], tool_def: ToolDefinition) -> bool:
     return False
 
 
@@ -507,11 +507,11 @@ def book(*, trip: Trip, travellers: int) -> str:
     async def test_folded_tools_are_marked_as_called_from_code(self, kernel: IPythonKernel) -> None:
         """A tool the selector puts in the kernel gets `allowed_callers={'programmatic'}` written onto it."""
         seen: dict[str, frozenset[ToolCaller] | None] = {}
-        recorder = Hooks[Any]()
+        recorder = Hooks[object]()
 
         @recorder.on.before_tool_execute
         async def record(
-            ctx: RunContext[Any], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
+            ctx: RunContext[object], /, *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
         ) -> ValidatedToolArgs:
             seen[tool_def.name] = tool_def.allowed_callers
             return args
@@ -528,23 +528,37 @@ def book(*, trip: Trip, travellers: int) -> str:
             'any_caller': frozenset({'direct', 'programmatic'}),
         }
 
+    @pytest.mark.moves_cache_prefix(
+        reason="Revealing the tool adds it to `run_code`'s description, which lists the kernel's functions."
+    )
     async def test_a_code_only_tool_stays_off_the_wire_until_revealed(self, kernel: IPythonKernel) -> None:
-        def forecast() -> str:
-            return 'sunny'  # pragma: no cover
+        """A deferred `{'programmatic'}` tool is never a direct tool, and is callable in the kernel once revealed."""
 
-        seen: list[AgentInfo] = []
+        def forecast() -> str:
+            return 'sunny'
+
+        seen: list[list[str]] = []
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            seen.append([tool.name for tool in info.model_request_parameters.function_tools])
+            turn = sum(isinstance(message, ModelResponse) for message in messages)
+            if turn == 0:
+                return ModelResponse(parts=[ToolCallPart('search_tools', {'queries': ['forecast']})])
+            if turn == 1:
+                return ModelResponse(parts=[ToolCallPart('run_code', {'code': 'forecast()'})])
+            return ModelResponse(parts=[TextPart('done')])
+
         agent = Agent(
-            _scripted(seen=seen),
+            FunctionModel(respond),
             capabilities=[ToolSearch(), IPythonCodeMode(kernel=kernel)],
             tools=[
                 Tool(forecast, defer_loading=True, allowed_callers={'programmatic'}),
                 Tool(forecast, name='both_forecast', defer_loading=True, allowed_callers={'direct', 'programmatic'}),
             ],
         )
-        await agent.run('Hi')
-        names = [tool.name for tool in seen[0].model_request_parameters.function_tools]
-        assert 'forecast' not in names
-        assert 'both_forecast' in names
+        result = await agent.run('Hi')
+        assert all('forecast' not in names and 'both_forecast' in names for names in seen)
+        assert _returns(result.all_messages()) == ['sunny']
 
     async def test_naming_a_direct_only_tool_in_the_list_is_an_error(self, kernel: IPythonKernel) -> None:
         agent = Agent(
@@ -559,7 +573,7 @@ def book(*, trip: Trip, travellers: int) -> str:
         def web_search(query: str) -> str:
             return query  # pragma: no cover
 
-        async def as_fallback(ctx: RunContext[Any], tool_def: ToolDefinition) -> ToolDefinition:
+        async def as_fallback(ctx: RunContext[object], tool_def: ToolDefinition) -> ToolDefinition:
             return replace(tool_def, unless_native='web_search')
 
         agent = Agent(
