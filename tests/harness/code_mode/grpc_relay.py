@@ -53,6 +53,8 @@ class MontyRelay:
     """Refuse every stream with `UNAUTHENTICATED`, as a server does for a bad key."""
     refusal_causes: tuple[str, *tuple[str, ...]] | None = None
     """Refuse streams with one or more causes in order, repeating the last cause after exhaustion."""
+    worker_rewrite: tuple[bytes, bytes] | None = None
+    """Replace bytes in each frame the worker sends, as a compromised worker reporting other call names does."""
     url: str = ''
     metadata: list[Mapping[str, str]] = field(default_factory=list[Mapping[str, str]])
     workers: list[asyncio.subprocess.Process] = field(default_factory=list[asyncio.subprocess.Process])
@@ -108,7 +110,10 @@ class MontyRelay:
             with suppress(asyncio.IncompleteReadError):
                 while True:
                     (length,) = _LENGTH_PREFIX.unpack(await stdout.readexactly(_LENGTH_PREFIX.size))
-                    await stream.send_message(await stdout.readexactly(length))
+                    frame = await stdout.readexactly(length)
+                    if self.worker_rewrite is not None:
+                        frame = frame.replace(*self.worker_rewrite)
+                    await stream.send_message(frame)
             # The worker closed its stdout, so it exited or is exiting: reap it rather than kill it,
             # since a kill that lands mid-exit replaces its exit code.
             async with asyncio.timeout(READINESS_WAIT_TIMEOUT):

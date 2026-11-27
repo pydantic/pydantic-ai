@@ -634,7 +634,27 @@ class UnexpectedModelBehavior(AgentRunError):
 
 
 class ContentFilterError(UnexpectedModelBehavior):
-    """Raised when content filtering is triggered by the model provider."""
+    """Raised when a model provider triggers content filtering or refuses a request.
+
+    During an agent run, the agent loop raises `ContentFilterError` when a response has `finish_reason='content_filter'`
+    and no actionable output (no parts, empty text, or thinking-only). A `content_filter` response that still includes
+    text is returned as output, unless [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] moves on from it or you
+    add [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError].
+
+    When raised by the agent loop or `RaiseContentFilterError`, `message` includes the finish or block reason and,
+    when the provider sends one, its refusal text (`provider_details['refusal']`); `body` holds a one-element JSON
+    list containing the serialized [`ModelResponse`][pydantic_ai.messages.ModelResponse] (loadable via
+    [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter], including `provider_details` such as
+    `refusal` and `refusal_category`). Image generation and decision models may also raise `ContentFilterError` with
+    provider-specific `message` and `body`.
+
+    Because the agent loop raises this only after the model request returns, fallback can't catch it as a normal
+    exception. Instead, naming `ContentFilterError` in `fallback_on` makes fallback reject any `'content_filter'`
+    response and try the next model; if every model refuses, the run raises
+    [`FallbackExceptionGroup`][pydantic_ai.exceptions.FallbackExceptionGroup]. `ModelFallback` names it in its default
+    `fallback_on`; [`FallbackModel`][pydantic_ai.models.fallback.FallbackModel] has to be given it. See
+    [Falling back when a model refuses](../capabilities/model-fallback.md#refusals).
+    """
 
 
 class ModelAPIError(AgentRunError):

@@ -26,7 +26,13 @@ from pydantic_ai.durable_exec._toolset import (
     unwrap_tool_call_result,
     wrap_tool_call_result,
 )
-from pydantic_ai.exceptions import FallbackExceptionGroup, UnexpectedModelBehavior, UsageLimitExceeded, UserError
+from pydantic_ai.exceptions import (
+    FallbackExceptionGroup,
+    SuspendedResponseExpired,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+    UserError,
+)
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.workspaces import (
@@ -171,6 +177,8 @@ NON_RETRYABLE_ERRORS: tuple[type[Exception], ...] = (
     FallbackExceptionGroup,
     # Every attempt of an activity or tool child workflow checks the limit against the usage it was started with.
     UsageLimitExceeded,
+    # Every attempt looks up the same suspended job, which the provider no longer has.
+    SuspendedResponseExpired,
     # A retry cannot fix a workspace timeout, output flood, read-only refusal, or lost environment;
     # restarting a command could repeat its already-completed side effects.
     WorkspaceTimeoutError,
