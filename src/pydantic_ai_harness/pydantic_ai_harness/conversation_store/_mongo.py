@@ -19,9 +19,7 @@ from pydantic_ai.conversation_store import (
     ConversationStore,
 )
 from pydantic_ai_harness._mongo_driver_info import harness_driver_info
-from pydantic_ai_harness.media import MediaStore
-from pydantic_ai_harness.media._mongo import MongoMediaStore
-from pydantic_ai_harness.step_persistence._conversation_codec import (
+from pydantic_ai_harness.conversation_store._codec import (
     detail_columns,
     dump_metadata,
     dump_record,
@@ -30,6 +28,8 @@ from pydantic_ai_harness.step_persistence._conversation_codec import (
     load_record,
     missing_entries_error,
 )
+from pydantic_ai_harness.media import MediaStore
+from pydantic_ai_harness.media._mongo import MongoMediaStore
 from pydantic_ai_harness.step_persistence._mongo import find_message_docs, insert_missing_messages
 from pydantic_ai_harness.step_persistence._store import (
     _DEFAULT_MEDIA_THRESHOLD_BYTES,  # pyright: ignore[reportPrivateUsage]

@@ -17,8 +17,7 @@ from pydantic_ai.conversation_store import (
     ConversationRecord,
     ConversationStore,
 )
-from pydantic_ai_harness.media import MediaStore, SqliteMediaStore
-from pydantic_ai_harness.step_persistence._conversation_codec import (
+from pydantic_ai_harness.conversation_store._codec import (
     detail_columns,
     dump_metadata,
     dump_record,
@@ -27,6 +26,7 @@ from pydantic_ai_harness.step_persistence._conversation_codec import (
     load_record,
     missing_entries_error,
 )
+from pydantic_ai_harness.media import MediaStore, SqliteMediaStore
 from pydantic_ai_harness.step_persistence._store import (
     _BUSY_TIMEOUT_SECONDS,  # pyright: ignore[reportPrivateUsage]
     _DEFAULT_MEDIA_THRESHOLD_BYTES,  # pyright: ignore[reportPrivateUsage]

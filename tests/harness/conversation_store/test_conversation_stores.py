@@ -17,10 +17,10 @@ import pytest
 
 from pydantic_ai import BinaryImage, Conversation, ModelRequest, UserPromptPart
 from pydantic_ai.conversation_store import ConversationConflict, ConversationEntry, ConversationRecord
+from pydantic_ai_harness.conversation_store import PostgresConversationStore, SqliteConversationStore
 from pydantic_ai_harness.media import PostgresConnection
-from pydantic_ai_harness.step_persistence import PostgresConversationStore, SqliteConversationStore
 from tests.harness._postgres_sqlite import SqlitePool
-from tests.harness.step_persistence._conversation_store_contract import Backend, ConversationStoreContract
+from tests.harness.conversation_store._contract import Backend, ConversationStoreContract
 
 
 def _sqlite_backend(store: SqliteConversationStore, db: Callable[[], sqlite3.Connection], *, owned: bool) -> Backend:

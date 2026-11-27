@@ -17,9 +17,9 @@ from pymongo.asynchronous.collection import AsyncCollection
 from pymongo.errors import InvalidOperation
 
 from pydantic_ai import Conversation
-from pydantic_ai_harness.step_persistence import MongoConversationStore
+from pydantic_ai_harness.conversation_store import MongoConversationStore
 from tests.harness._mongo_handshake import HARNESS_DRIVER, handshake_server
-from tests.harness.step_persistence._conversation_store_contract import Backend, ConversationStoreContract
+from tests.harness.conversation_store._contract import Backend, ConversationStoreContract
 
 
 def _mock_client(monkeypatch: pytest.MonkeyPatch) -> AsyncMongoClient[dict[str, object]]:

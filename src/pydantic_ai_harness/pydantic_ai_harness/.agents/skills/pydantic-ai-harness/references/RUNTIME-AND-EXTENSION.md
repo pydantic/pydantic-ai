@@ -13,7 +13,7 @@ Agentic Workflow.
 |---|---|
 | Let another model choose the main agent's model from a named menu | `ModelRouter` |
 | Resume, continue, or fork a run from saved history; audit tool side effects after a crash | `StepPersistence` |
-| Store a whole `Conversation` between runs, each message once, in SQLite, Postgres, or MongoDB | `SqliteConversationStore`, `PostgresConversationStore`, `MongoConversationStore` (see [StepPersistence](#steppersistence)) |
+| Store a whole `Conversation` between runs, each message once, in SQLite, Postgres, or MongoDB | `pydantic_ai_harness.conversation_store`: `SqliteConversationStore`, `PostgresConversationStore`, `MongoConversationStore` (see [StepPersistence](#steppersistence)) |
 | Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
@@ -164,8 +164,8 @@ inline, or `media_store=S3MediaStore(...)` from `pydantic_ai_harness.media`.
 
 Conversation stores:
 
-- `SqliteConversationStore`, `PostgresConversationStore`, and `MongoConversationStore`, in the same module
-  and with the same connection arguments as the matching step store, implement core's
+- `SqliteConversationStore`, `PostgresConversationStore`, and `MongoConversationStore`, in
+  `pydantic_ai_harness.conversation_store` and with the same connection arguments as the matching step store, implement core's
   `pydantic_ai.conversation_store.ConversationStore`. Use them to keep a conversation between runs:
   `conversation = await store.load(id) or Conversation(conversation_id=id)`, run with
   `conversation=conversation`, then `await store.save(result.conversation)`.

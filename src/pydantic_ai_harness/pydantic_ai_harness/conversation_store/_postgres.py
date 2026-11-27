@@ -13,8 +13,7 @@ from pydantic_ai.conversation_store import (
     ConversationRecord,
     ConversationStore,
 )
-from pydantic_ai_harness.media import MediaStore, PostgresConnection, PostgresMediaStore, PostgresPool
-from pydantic_ai_harness.step_persistence._conversation_codec import (
+from pydantic_ai_harness.conversation_store._codec import (
     detail_columns,
     dump_metadata,
     dump_record,
@@ -23,6 +22,7 @@ from pydantic_ai_harness.step_persistence._conversation_codec import (
     load_record,
     missing_entries_error,
 )
+from pydantic_ai_harness.media import MediaStore, PostgresConnection, PostgresMediaStore, PostgresPool
 from pydantic_ai_harness.step_persistence._postgres import (
     _MESSAGES_PER_INSERT,  # pyright: ignore[reportPrivateUsage]
     _TABLE_RE,  # pyright: ignore[reportPrivateUsage]

@@ -860,75 +860,6 @@ async def move_heads(
   [Conversation Search](https://pydantic.dev/docs/ai/harness/conversation-search/),
   which reads its store.
 
-## Storing conversations
-
-`SqliteConversationStore`, `PostgresConversationStore`, and `MongoConversationStore` store a whole
-`Conversation` between runs. They implement Pydantic AI's
-`ConversationStore`, which keeps a conversation as a log of
-messages and stores each one once: continuing a conversation appends only its new messages, and a
-`fork` shares the history it keeps rather than copying it.
-
-```python
-import asyncio
-import sqlite3
-
-from pydantic_ai import Agent, Conversation
-from pydantic_ai_harness.step_persistence import SqliteConversationStore
-
-store = SqliteConversationStore(connection=sqlite3.connect(':memory:', check_same_thread=False))
-agent = Agent('openai:gpt-5')
-
-
-async def chat(conversation_id: str, prompt: str) -> str:
-    conversation = await store.load(conversation_id) or Conversation(conversation_id=conversation_id)
-    result = await agent.run(prompt, conversation=conversation)
-    await store.save(result.conversation)
-    return result.output
-
-
-async def main():
-    await chat('support-42', 'What is the capital of France?')
-    await chat('support-42', 'And of Germany?')
-
-
-asyncio.run(main())
-```
-
-A save is checked against the conversation's `revision`, which
-`load` sets and a run carries through to its result. When someone else saved the conversation in between, or a
-conversation with that ID already exists, `save` raises
-`ConversationConflict` instead of overwriting it. `save` advances
-the revision of the conversation you pass it, so keep that conversation in a variable to save again or continue from.
-
-A conversation's `scope` is kept on its record only. Entries, messages and branches have none, and a message that
-conversations in two scopes hold is stored once. So `scope` filters what the store returns, and isolating tenants
-stays with your application: row-level security on the entries or messages tables would make a second tenant's
-`load` fail.
-
-Each message's JSON is stored once, keyed by its SHA-256, however many conversations hold it. Binary and text parts
-at or above `media_threshold_bytes` (64 KiB by default) are externalized like step snapshots' (see
-[Persisting media](#persisting-media)). The constructors take the same connection arguments as the matching step
-store:
-
-- `SqliteConversationStore(database= or connection=)` -- tables `conversation_records`, `conversation_entries`,
-  `conversation_messages`, and `conversation_branches`. A save writes its new entries and the record in one
-  transaction. Deleting a conversation also deletes the entries and messages no other conversation's history or
-  branches use, including the branches it left.
-- `PostgresConversationStore(pool, table='step_persistence')` -- tables `{table}_conv_records`,
-  `{table}_conv_entries`, `{table}_conv_messages`, and `{table}_conv_branches`, which don't clash with `PostgresStepStore`'s, so the two
-  can share a prefix. Saves and deletes work as for SQLite. A save that continues from an entry a
-  concurrent delete is removing raises `ConversationConflict`; a message the delete is removing is written again.
-- `MongoConversationStore(client= or db_url=, database=...)` -- collections `conversation_records`,
-  `conversation_entries`, and `conversation_messages`. The store uses no transactions, so deleting a conversation
-  deletes only its record: without one, it can't tell an entry no conversation uses from one a concurrent save or
-  fork is about to point at. Its entries and messages stay.
-
-All three support `update`. A conversation's title and
-metadata are stored beside its record, so a save leaves what `update` set even when the save read the conversation
-first.
-
-Externalized media is never deleted, as for step snapshots.
-
 ## Conversation heads and background names
 
 `pydantic_ai_harness.step_persistence.conversations` provides
@@ -936,7 +867,7 @@ Externalized media is never deleted, as for step snapshots.
 local session store behind Pax's resume browser: alongside the messages it
 keeps Pax's workspace, title, naming, and busy-process metadata. It was
 called `SqliteConversationStore` before the [conversation
-stores](#storing-conversations) took that name; the old name still imports from
+stores](../conversation_store/) took that name; the old name still imports from
 this module, with a `HarnessDeprecationWarning`. For conversations in an application, use core's `ConversationStore`; to copy heads
 already saved here, see [Moving sessions to a
 `ConversationStore`](#moving-sessions-to-a-conversationstore). A conversation

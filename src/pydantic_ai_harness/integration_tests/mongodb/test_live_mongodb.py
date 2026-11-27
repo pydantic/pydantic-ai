@@ -58,10 +58,10 @@ from pydantic_ai import Agent, Conversation
 from pydantic_ai.conversation_store import ConversationConflict
 from pydantic_ai.messages import ModelRequest, ModelResponse, TextPart, UserPromptPart
 from pydantic_ai.models.test import TestModel
+from pydantic_ai_harness.conversation_store import MongoConversationStore
 from pydantic_ai_harness.media import MongoMediaStore, parse_media_uri
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
-    MongoConversationStore,
     MongoStepStore,
     RunRecord,
     StepEvent,

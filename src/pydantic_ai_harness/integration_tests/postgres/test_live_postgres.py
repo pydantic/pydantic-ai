@@ -63,6 +63,7 @@ from pydantic_ai.messages import (
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.conversation_search import SnapshotHistorySource
+from pydantic_ai_harness.conversation_store import PostgresConversationStore
 from pydantic_ai_harness.media import (
     MediaContext,
     MediaStore,
@@ -78,7 +79,6 @@ from pydantic_ai_harness.planning import PlanItem, PostgresPlanStore
 from pydantic_ai_harness.spend_limits import PostgresSpendStore, SpendEntry, Spent
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
-    PostgresConversationStore,
     PostgresStepStore,
     RunRecord,
     StepEvent,

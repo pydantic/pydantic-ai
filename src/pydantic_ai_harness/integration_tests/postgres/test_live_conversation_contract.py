@@ -17,9 +17,9 @@ from collections.abc import AsyncIterator
 
 import pytest
 
-from pydantic_ai_harness.step_persistence import PostgresConversationStore
+from pydantic_ai_harness.conversation_store import PostgresConversationStore
 from tests.harness._postgres_live import count_rows, live_tables
-from tests.harness.step_persistence._conversation_store_contract import Backend, ConversationStoreContract
+from tests.harness.conversation_store._contract import Backend, ConversationStoreContract
 
 
 class TestLivePostgresConversationStore(ConversationStoreContract):
