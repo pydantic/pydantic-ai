@@ -5132,8 +5132,8 @@ has its file's [authority][pydantic_ai.workspaces.Workspace.authority_of], and a
 class CapabilityPartRendering:
     """How a [`CapabilityPart`][pydantic_ai.messages.CapabilityPart] is rendered: the facts its class declared, stored on each part.
 
-    A part keeps the facts it was created with, so changing a kind's tag, note or attributes later only changes
-    how new parts render, and a conversation saved before then keeps sending the same bytes, and its prompt cache.
+    A part keeps the facts it was created with, so changing a kind's note or attributes later only changes how new
+    parts render, and a conversation saved before then keeps sending the same bytes, and its prompt cache.
     """
 
     voice: CapabilityPartVoice = 'data'

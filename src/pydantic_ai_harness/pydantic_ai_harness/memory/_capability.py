@@ -136,7 +136,7 @@ class Memory(AbstractCapability[AgentDepsT]):
     heading: str = field(default='', kw_only=True)
     """Markdown heading for rendered guidance and the injected memory block,
     rendered as `## {heading}` when set. The default is empty: the block already
-    sits inside `<memory>` markers, so none is added. Set a distinct value per
+    sits inside its `<pyai:data>` frame, so none is added. Set a distinct value per
     instance when several `Memory` capabilities share one agent (for example
     `heading='Team notes'`) so the model can tell the blocks apart."""
 
