@@ -433,7 +433,8 @@ def _walk(nodes: list[Node], flags: int, prefix: str, walk: _Walk) -> tuple[int,
             # A one-character lookbehind lets an attempt start only after a character it admits, or at the start of
             # the text. `(?<!\S)#` restarts at each `#` of ` # # #`, not of `###`, while `(?<!\S)(?:ab)*(?:ab)*c`
             # backtracks through `abab` from the start. So the rest of the sequence is walked as is, and once more
-            # admitting from here on: one extra walk per lookbehind, not one per combination of them.
+            # admitting at this lookbehind and every later one. That covers none of them admitting and all of them
+            # admitting with one extra walk per lookbehind; walking each mix of k lookbehinds would take 2^k walks.
             behind = character_test(body_nodes[0], flags) if _int(direction) == -1 and len(body_nodes) == 1 else None
             admits = [c for c in _SAMPLE if behind(c) == (node.name == 'ASSERT')] if behind is not None else []
             if admits and walk.admitting:
