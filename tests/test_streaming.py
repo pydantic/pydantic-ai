@@ -5465,7 +5465,11 @@ async def test_tool_raises_approval_required():
 @pytest.mark.parametrize('read', ['get_output', 'stream_output'])
 @pytest.mark.parametrize('deferral', ['call_deferred', 'approval_required'])
 async def test_run_stream_keeps_calls_deferred_while_running_next_to_approval_tool(read: str, deferral: str):
-    """A call a tool defers while running joins the `DeferredToolRequests` `run_stream()` ends on, and resumes."""
+    """A call a tool defers while running joins the `DeferredToolRequests` `run_stream()` ends on, and resumes.
+
+    It needs a scripted model that streams two tool calls with fixed IDs, one of which a tool defers while running
+    next to a `requires_approval` tool, so this is a unit test rather than a recorded one.
+    """
 
     async def llm(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
         if len(messages) > 1:
@@ -5502,6 +5506,7 @@ async def test_run_stream_keeps_calls_deferred_while_running_next_to_approval_to
     else:
         assert (output.calls, output.approvals) == ([], [weather, delete])
     assert output.metadata == {'weather': {'job': 'weather-1'}}
+    assert output.validated_args == {'weather': {'city': 'Paris'}}
 
     # Resuming needs a result for every pending call, so it only works if none was dropped.
     results = DeferredToolResults(approvals={'delete': ToolDenied('No.')})
@@ -5514,7 +5519,10 @@ async def test_run_stream_keeps_calls_deferred_while_running_next_to_approval_to
 
 
 async def test_run_stream_stream_output_adds_no_item_for_unchanged_deferred_requests():
-    """When no tool deferred while running, `stream_output()` yields no extra `DeferredToolRequests` after the run."""
+    """When no tool deferred while running, `stream_output()` yields no extra `DeferredToolRequests` after the run.
+
+    It needs a scripted model that streams a tool call with a fixed ID, so this is a unit test rather than a recorded one.
+    """
 
     async def llm(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
         yield {0: DeltaToolCall(name='delete_file', json_args='{"path": "a.txt"}', tool_call_id='delete')}
