@@ -185,6 +185,13 @@ class GoogleInteractionsModel(Model[Client]):
         {'top_k', 'presence_penalty', 'frequency_penalty', 'logit_bias', 'parallel_tool_calls', 'max_retries'}
     )
 
+    def _unsupported_settings(self) -> frozenset[str]:
+        """Extend the class-level ignores with the sampling params this model ignores (see the profile)."""
+        unsupported = self.unsupported_settings
+        if self.profile.get('google_ignores_sampling_params', False):
+            unsupported = unsupported | {'temperature', 'top_p', 'top_k'}
+        return unsupported
+
     def __init__(
         self,
         model_name: GoogleInteractionsModelName,
@@ -493,8 +500,9 @@ class GoogleInteractionsModel(Model[Client]):
 
     def _generation_config(self, settings: ModelSettings, params: ModelRequestParameters) -> gi.GenerationConfigParam:
         config: gi.GenerationConfigParam = {}
+        ignored = self._unsupported_settings()
         for key in ('temperature', 'top_p', 'max_tokens', 'stop_sequences', 'seed'):
-            if key in settings:
+            if key in settings and key not in ignored:
                 native_key = 'max_output_tokens' if key == 'max_tokens' else key
                 config.update(_GENERATION_CONFIG.validate_python({native_key: settings.get(key)}))
         config.update(self._thinking_config(params.thinking))

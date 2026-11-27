@@ -203,7 +203,8 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Anthropic (not sent with thinking, unless it is `1`)
-    * Google
+    * Google GenerateContent (not sent for Gemini 3.5 Flash-Lite, Gemini 3.6 Flash and newer, or the Gemini 4 families —
+      ignored, per Google's migration guides)
     * Groq
     * Cohere
     * Mistral
@@ -235,7 +236,8 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI
     * Anthropic (not sent below `0.95` with thinking, nor together with a temperature on Claude Haiku 4.5,
       Sonnet 4.5 and 4.6, and Opus 4.5 and 4.6)
-    * Google
+    * Google GenerateContent (not sent for Gemini 3.5 Flash-Lite, Gemini 3.6 Flash and newer, or the Gemini 4 families —
+      ignored, per Google's migration guides)
     * Groq
     * Cohere
     * Mistral
@@ -263,6 +265,8 @@ class ModelSettings(TypedDict, total=False):
 
     * Anthropic (not sent with thinking)
     * Google GenerateContent
+      (not sent for Gemini 3.5 Flash-Lite, Gemini 3.6 Flash and newer, or the Gemini 4 families —
+      ignored, per Google's migration guides)
     * Cohere
     * Bedrock (Anthropic and Amazon Nova models only, and not with thinking on Claude)
     """

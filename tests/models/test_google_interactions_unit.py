@@ -323,8 +323,6 @@ async def test_settings_and_usage(
     body = mock_google.requests[-1]
     assert body['generation_config'] == snapshot(
         {
-            'temperature': 0.1,
-            'top_p': 0.8,
             'seed': 7,
             'max_output_tokens': 32,
             'stop_sequences': ['DONE'],

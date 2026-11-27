@@ -230,6 +230,14 @@ class GoogleModelProfile(ModelProfile, total=False):
     API. On Google Cloud (Vertex AI), Gemini 3.5 Flash-Lite, Gemini 3.6 Flash and newer, and the Gemini 3 image models
     reject them with a 400.
     """
+    google_ignores_sampling_params: bool
+    """Whether the model ignores `temperature`, `top_p` and `top_k` in its generation config.
+
+    Google documents these sampling parameters as ignored (never tuned) for Gemini 3.5 Flash-Lite,
+    Gemini 3.6 Flash, Gemini 3.8 Flash and the newer Gemini generations that follow them, so
+    `GoogleModel` and `GoogleInteractionsModel` omit them from the request instead of sending values
+    the service never applies. Earlier and unknown model names keep sending them. Default: `False`.
+    """
 
     google_supports_batch_api: bool
     """Whether the endpoint serves the Gemini API's [Batch Mode](https://ai.google.dev/gemini-api/docs/batch-api).
@@ -329,6 +337,26 @@ _OFFICE_DOCUMENT_MEDIA_TYPES = frozenset(
 )
 
 
+_SAMPLING_PARAM_IGNORING_MODEL_PREFIXES = (
+    'gemini-3.5-flash-lite',
+    'gemini-3.6',
+    'gemini-3.8',
+    'gemini-4-',
+)
+"""Model name prefixes whose generation config Google documents as ignoring `temperature`, `top_p` and `top_k`.
+
+Sources: the Gemini 3.6 migration guide and the Gemini 3.8 release checklist on
+<https://ai.google.dev/gemini-api/docs>. The list defaults to sending: any model name outside these
+prefixes keeps `temperature`, `top_p` and `top_k` in the request.
+"""
+
+
+def _set_google_ignores_sampling_params(profile: GoogleModelProfile, model_name: str) -> None:
+    """Set `google_ignores_sampling_params` on the profile when the model ignores `temperature`, `top_p`, and `top_k`."""
+    if model_name.startswith(_SAMPLING_PARAM_IGNORING_MODEL_PREFIXES):
+        profile['google_ignores_sampling_params'] = True
+
+
 def google_model_profile(model_name: str) -> ModelProfile | None:
     """Get the model profile for a Google model."""
     is_image_model = 'image' in model_name
@@ -400,6 +428,7 @@ def google_model_profile(model_name: str) -> ModelProfile | None:
     if thinking_levels is not None:
         profile['google_thinking_levels'] = thinking_levels
     _set_gemini_file_input(profile, is_gemma=is_gemma, is_gemini_2_5=is_gemini_2_5)
+    _set_google_ignores_sampling_params(profile, model_name)
     return profile
 
 
@@ -429,6 +458,7 @@ def google_interactions_model_profile(model_name: str) -> GoogleModelProfile:
     """Profile overrides for Google's Interactions API, independent of GenerateContent."""
     profile = GoogleModelProfile(supports_tool_return_schema=False)
     model_name = model_name.rsplit('/', 1)[-1]
+    _set_google_ignores_sampling_params(profile, model_name)
     mime_types = next(
         (types for prefix, types in _INTERACTIONS_TOOL_RETURN_MIME_TYPES if model_name.startswith(prefix)), None
     )

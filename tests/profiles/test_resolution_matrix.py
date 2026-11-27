@@ -2151,6 +2151,7 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
                     'image/webp',
                 }
             ),
+            'google_ignores_sampling_params': True,
             'openrouter_lowest_reasoning_effort': 'minimal',
             'openai_chat_thinking_field': 'reasoning',
             'openrouter_max_cache_points': None,
