@@ -472,6 +472,7 @@ quote-style = "single"
 ".github/scripts/ci_duration.py" = ["D"]
 ".github/scripts/shard_durations.py" = ["D"]
 ".github/scripts/test_shard_durations.py" = ["D"]
+".github/scripts/test_pyright_trend.py" = ["D"]
 ".github/scripts/check_api_compatibility.py" = ["D"]
 ".github/scripts/test_ci_duration.py" = ["D"]
 ".github/scripts/test_check_api_compatibility.py" = ["D"]

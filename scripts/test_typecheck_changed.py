@@ -82,18 +82,6 @@ class _Recorder:
         return command[3:]
 
 
-class _Clock:
-    """A monotonic clock that advances by the same number of seconds every time it is read."""
-
-    def __init__(self, seconds: float) -> None:
-        self.seconds = seconds
-        self.now = 0.0
-
-    def __call__(self) -> float:
-        self.now += self.seconds
-        return self.now
-
-
 @pytest.fixture
 def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     for name, source in _TRACKED.items():
@@ -108,7 +96,6 @@ def project(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     # Both are read from the environment, and both are set while this suite runs in CI.
     monkeypatch.delenv('CI', raising=False)
     monkeypatch.delenv('PYRIGHT_PYTHON', raising=False)
-    monkeypatch.delenv('PYRIGHT_TIME_BUDGET', raising=False)
     return tmp_path
 
 
@@ -136,9 +123,9 @@ def _add_nested_project(project: Path) -> None:
     _stage(project)
 
 
-def _typecheck(*, fails: bool = False, seconds: float = 0.0) -> _Recorder:
+def _typecheck(*, fails: bool = False) -> _Recorder:
     recorder = _Recorder(1 if fails else 0)
-    recorder.exit_code = typecheck_changed.main(recorder, _Clock(seconds))
+    recorder.exit_code = typecheck_changed.main(recorder)
     return recorder
 
 
@@ -539,26 +526,6 @@ def test_a_failing_nested_project_fails_the_run_after_the_root_one(project: Path
     assert _checkpoint(project).read_bytes() == recorded
 
 
-def test_the_time_budget_covers_the_root_and_nested_runs_together(
-    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-):
-    # Each run fits the budget on its own, but the two together do not.
-    _add_nested_project(project)
-    _typecheck()
-    recorded = _checkpoint(project).read_bytes()
-    _edit(project, 'pkg_src/pkg/aside.py')
-    monkeypatch.setenv('PYRIGHT_TIME_BUDGET', '10')
-    clock = _Clock(0.0)
-
-    def run(command: Sequence[str]) -> int:
-        clock.now += 6.0
-        return 0
-
-    assert typecheck_changed.main(run, clock) == 1
-    assert 'Pyright passed in 12.0s, over the 10.0s `PYRIGHT_TIME_BUDGET`.' in capsys.readouterr().out
-    assert _checkpoint(project).read_bytes() == recorded
-
-
 def test_pyright_reports_an_error_in_the_nested_project(project: Path, capfd: pytest.CaptureFixture[str]):
     # A root-project run hands Pyright nothing under `.github/`, so only `-p` reaches this error.
     _add_nested_project(project)
@@ -567,81 +534,3 @@ def test_pyright_reports_an_error_in_the_nested_project(project: Path, capfd: py
 
     assert typecheck_changed.main() == 1
     assert '.github/scripts/tool.py:1:13 - error' in capfd.readouterr().out
-
-
-def test_a_run_inside_the_time_budget_passes(project: Path, monkeypatch: pytest.MonkeyPatch):
-    monkeypatch.setenv('PYRIGHT_TIME_BUDGET', '10')
-
-    recorder = _typecheck(seconds=9.5)
-
-    assert recorder.exit_code == 0
-    assert _checkpoint(project).exists()
-
-
-def test_a_run_over_the_time_budget_fails_and_records_nothing(
-    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-):
-    monkeypatch.setenv('PYRIGHT_TIME_BUDGET', '10')
-
-    recorder = _typecheck(seconds=10.5)
-
-    assert recorder.exit_code == 1
-    assert 'Pyright passed in 10.5s, over the 10.0s `PYRIGHT_TIME_BUDGET`.' in capsys.readouterr().out
-    assert not _checkpoint(project).exists()
-
-
-def test_a_failing_run_over_the_time_budget_reports_the_failure_not_the_time(
-    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-):
-    # Pyright's own exit code is the answer; how long it took to reach it says nothing more.
-    monkeypatch.setenv('PYRIGHT_TIME_BUDGET', '10')
-
-    recorder = _typecheck(fails=True, seconds=10.5)
-
-    assert recorder.exit_code == 1
-    assert 'PYRIGHT_TIME_BUDGET' not in capsys.readouterr().out
-    assert not _checkpoint(project).exists()
-
-
-def test_ci_over_the_time_budget_fails_and_records_nothing(
-    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
-):
-    # The CI step that sets `PYRIGHT_TIME_BUDGET` sets `CI` too, so the full run handed
-    # to the Makefile is the only one production measures.
-    monkeypatch.setenv('CI', 'true')
-    monkeypatch.setenv('PYRIGHT_TIME_BUDGET', '10')
-
-    recorder = _typecheck(seconds=10.5)
-
-    assert recorder.exit_code == 1
-    assert recorder.commands == _FULL_RUN
-    assert 'Pyright passed in 10.5s, over the 10.0s `PYRIGHT_TIME_BUDGET`.' in capsys.readouterr().out
-    assert not _checkpoint(project).exists()
-
-
-@pytest.mark.parametrize('empty', [True, False], ids=['empty', 'unset'])
-def test_a_run_without_a_time_budget_says_nothing_about_time(
-    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], empty: bool
-):
-    # An explicitly empty `PYRIGHT_TIME_BUDGET` means what leaving it unset means.
-    if empty:
-        monkeypatch.setenv('PYRIGHT_TIME_BUDGET', '')
-
-    recorder = _typecheck(seconds=99.0)
-
-    assert recorder.exit_code == 0
-    assert 'PYRIGHT_TIME_BUDGET' not in capsys.readouterr().out
-
-
-@pytest.mark.parametrize('setting', ['soon', '0', '-1', 'nan', 'inf', '-inf'])
-def test_a_time_budget_that_is_not_finite_positive_seconds_runs_nothing(
-    project: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], setting: str
-):
-    monkeypatch.setenv('PYRIGHT_TIME_BUDGET', setting)
-
-    recorder = _typecheck()
-
-    assert recorder.exit_code == 2
-    assert recorder.commands == []
-    message = f'`PYRIGHT_TIME_BUDGET` is `{setting}`, which is not a finite positive number of seconds.'
-    assert message in capsys.readouterr().out

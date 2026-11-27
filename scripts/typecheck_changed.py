@@ -24,9 +24,6 @@ the 3.11 this needs to read `pyproject.toml`, and a Pyright configuration this c
 Pyright never reports on a file under a dot directory from the root project, so `.github/scripts`
 is a project of its own, which runs whole whenever a change reaches a file under it.
 
-`PYRIGHT_TIME_BUDGET` fails a passing run that took longer than that many seconds, so a change
-that makes Pyright itself slow fails its own pull request rather than `main`.
-
 Usage:
     python scripts/typecheck_changed.py
 """
@@ -36,13 +33,11 @@ from __future__ import annotations
 import ast
 import hashlib
 import importlib.metadata
-import math
 import os
 import platform
 import posixpath
 import subprocess
 import sys
-import time
 from collections import defaultdict, deque
 from collections.abc import Callable, Iterable, Iterator, Mapping, Sequence
 from dataclasses import dataclass
@@ -54,9 +49,6 @@ from typing_extensions import TypedDict
 
 Runner = Callable[[Sequence[str]], int]
 """Runs a command, streams its output, and returns its exit code."""
-
-Clock = Callable[[], float]
-"""Reads a monotonic clock, in seconds."""
 
 # The checkpoint lives in the git directory, which is per-worktree and never tracked.
 CHECKPOINT_NAME = 'pyright-checkpoint.json'
@@ -162,61 +154,18 @@ def run_command(command: Sequence[str]) -> int:
     return subprocess.run(command, env={**os.environ, 'PYRIGHT_PYTHON_IGNORE_WARNINGS': '1'}).returncode
 
 
-@dataclass(frozen=True)
-class _BudgetedRunner:
-    """Runs commands, and fails a passing run that took longer than the budget allows."""
-
-    run: Runner
-    clock: Clock
-    budget: float | None
-
-    def __call__(self, *commands: Sequence[str]) -> int:
-        """Run every command, so a failure in one does not hide the errors in another, and time them together."""
-        started = self.clock()
-        code = 0
-        for command in commands:
-            code = self.run(command) or code
-        elapsed = self.clock() - started
-        if code != 0 or self.budget is None or elapsed <= self.budget:
-            return code
-        print(
-            f'Pyright passed in {elapsed:.1f}s, over the {self.budget:.1f}s `PYRIGHT_TIME_BUDGET`.\n'
-            'A jump like this is usually a new generic signature Pyright cannot solve cheaply, as in '
-            'https://github.com/pydantic/pydantic-ai/pull/8177.\n'
-            'https://github.com/pydantic/pydantic-ai/issues/8182 has the profile of where the time goes.'
-        )
-        return 1
-
-
-def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
+def main(run: Runner = run_command) -> int:
     """Type-check the files the working tree's changes can reach, and return an exit code.
 
-    Pyright's own, or `0` when no change reaches a file it reports on; `1` for a run that passed
-    but outlasted `PYRIGHT_TIME_BUDGET`; `2` for a budget that does not read as seconds, which
-    runs nothing.
+    Pyright's own, or `0` when no change reaches a file it reports on.
     """
-    budget: float | None = None
-    setting = os.environ.get('PYRIGHT_TIME_BUDGET', '')
-    if setting:
-        try:
-            budget = float(setting)
-        except ValueError:
-            budget = math.nan
-        # A misconfigured budget has to be loud, so nothing runs until this one reads as seconds.
-        # A value that is not a number at all becomes `nan`, and `nan` and `inf` are both rejected
-        # here because neither is a budget a run can be measured against.
-        if not (math.isfinite(budget) and budget > 0):
-            print(f'`PYRIGHT_TIME_BUDGET` is `{setting}`, which is not a finite positive number of seconds.')
-            return 2
-    runner = _BudgetedRunner(run, clock, budget)
-
     if os.environ.get('CI'):
         # CI keeps no checkpoint between runs, so there is nothing to narrow against.
-        return _check_everything(runner, 'CI is set')
+        return _check_everything(run, 'CI is set')
 
     project = _load_project()
     if project is None:
-        return _check_everything(runner, 'the Pyright file list is not one this script can reproduce')
+        return _check_everything(run, 'the Pyright file list is not one this script can reproduce')
 
     universe = _tracked_files()
     hashes = {path: _file_hash(path) for path in universe}
@@ -274,7 +223,10 @@ def main(run: Runner = run_command, clock: Clock = time.monotonic) -> int:
     # outside `tests/`, but every worker is a full Node process that redoes the shared parse and
     # bind, and on a laptop they swap and come out slower than the single process; see
     # https://github.com/pydantic/pydantic-ai/pull/8075.
-    code = runner(*_pyright_commands(options, paths, nested))
+    code = 0
+    for command in _pyright_commands(options, paths, nested):
+        # Every command runs, so a failure in one does not hide the errors in another.
+        code = run(command) or code
 
     if code != 0:
         # The checkpoint records what Pyright accepted, so a failing run leaves it alone.

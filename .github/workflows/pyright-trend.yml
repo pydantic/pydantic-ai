@@ -1,0 +1,75 @@
+# description: Checks hourly whether Pyright got much slower on main and opens an issue when it did.
+name: Pyright trend
+
+# No CI run fails on how long Pyright took, because one shared runner can take twice as long as another on the
+# same commit. This compares the `Type-check with Pyright` step's median duration over the newest `main` runs with
+# the runs before them instead; `.github/scripts/pyright_trend.py` says how. A manual run reports its result on its
+# own page.
+
+on:
+  schedule:
+    # Hourly keeps a check inside the stretch of `main` runs in which a slowdown has moved the newer median but not
+    # yet the older one. Off the hour, since GitHub delays or drops more scheduled runs at the top of it.
+    - cron: '17 * * * *'
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      actions: read
+      contents: read
+    outputs:
+      slower: ${{ steps.trend.outputs.slower }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Compare Pyright's duration on the newest main runs with the runs before them
+        id: trend
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: python3 .github/scripts/pyright_trend.py
+
+  report:
+    needs: [check]
+    # Only the scheduled run files an issue; a manual run's result is on its own page.
+    if: ${{ needs.check.outputs.slower == 'true' && github.event_name == 'schedule' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      contents: read
+      issues: write
+    steps:
+      - name: Open or update the Pyright slowdown issue
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          title='Pyright got slower on main'
+          # `--search` matches words rather than the phrase, so it narrows the listing and
+          # the exact title is compared here.
+          number="$(gh issue list --state open --search "${title} in:title" \
+            --json number,title --jq ".[] | select(.title == \"${title}\") | .number" | head -n 1)"
+          if [ -n "$number" ]; then
+            gh issue comment "$number" --body "Still slower: ${RUN_URL}"
+            exit 0
+          fi
+
+          cat > "${RUNNER_TEMP}/pyright-trend.md" <<EOF
+          The \`Type-check with Pyright\` step on \`main\` got much slower: ${RUN_URL}
+
+          The run's summary has both medians, the runs each one spans, and the ratio that reports a slowdown. A jump like this usually comes from a new generic signature Pyright cannot solve cheaply, as in #8177; #8182 has the profile of where the time goes.
+
+          Close this issue once the change that slowed Pyright is fixed, or once its new duration is accepted. The check stops reporting on its own once the slower runs fill both of its windows.
+          EOF
+          # The alert goes to the owner of CI. `pydanty:skip` keeps pydanty from triaging it:
+          # finding the change needs the runs the summary names.
+          gh issue create --title "${title}" --body-file "${RUNNER_TEMP}/pyright-trend.md" \
+            --assignee dsfaccini --label pydanty:skip --label performance

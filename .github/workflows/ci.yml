@@ -319,6 +319,7 @@ jobs:
           .github/scripts/test_gh_aw_engine_pin_bump.py
           .github/scripts/test_clai2_web_bundle.py
           .github/scripts/test_shard_durations.py
+          .github/scripts/test_pyright_trend.py
           .github/scripts/test_ci_matrix.py
           scripts/test_gather_pydantic_ai_review_context.py
 
@@ -424,9 +425,9 @@ jobs:
           UV_NO_SYNC: "1"
 
       # The full Pyright check runs here, not in pre-commit. With `CI` set, `make typecheck-changed`
-      # hands the whole project to `make typecheck-pyright`, under the `PYRIGHT_TIME_BUDGET` that only
-      # that script enforces. The check runs whenever the install succeeded, so a failing pre-commit
-      # hook or policy check does not hide type errors.
+      # hands the whole project to `make typecheck-pyright`. The check runs whenever the install
+      # succeeded, so a failing pre-commit hook or policy check does not hide type errors.
+      # `pyright-trend.yml` watches how long Pyright takes on `main`.
       #
       # A pull request checks with pyright-rs first: a Rust port of pyright's command-line check
       # that prints pyright's output and exit code for the same command line and configuration, in
@@ -467,14 +468,6 @@ jobs:
         continue-on-error: true
         env:
           PYRIGHT: ${{ steps.pyright-rs.outputs.path }}
-          # A failure here only hands the check to pyright and its own budget below, so a slowdown
-          # fails the pull request only when pyright shows it too. On 2026-11-12 eight runners each
-          # checked one pull request with both (https://github.com/pydantic/pydantic-ai/actions/runs/43321752660):
-          # pyright-rs took 35.3 to 47.6 s (median 40.0 s), and pyright 6.0 to 6.6 times as long. 55
-          # is pyright's 370 s budget divided by the highest of those ratios, so a pyright-rs run that
-          # points to a pyright run over that budget hands the check to pyright. It is about 1.15x the
-          # slowest of those pyright-rs runs, and a run 1.5x their median exceeds it.
-          PYRIGHT_TIME_BUDGET: "55"
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
@@ -491,38 +484,6 @@ jobs:
           # every one of six paired runs on the same runner (see #8182).
           PYRIGHT_THREADS: "3"
           NODE_OPTIONS: --max-old-space-size=6144
-          # Fail a passing pyright run that outlasts this many seconds, so a change that makes
-          # pyright itself slow fails its own PR instead of `main`. #8077 made pyright slow and
-          # nothing caught it (see #8177): pyright ran 328 to 490 s over the five `main` runs
-          # between those two. The budget was 110 (1.1x the p99 of 60 main runs, derived in
-          # https://github.com/pydantic/pydantic-ai/issues/8182#issuecomment-5575016259), but by
-          # 2026-09-23 pyright ran 66 to 111 s on the same day's main runs (runner variance alone
-          # spans about 30 s); the pyright 1.1.414 bump (#8690) and type-checking docs examples (#8646)
-          # probably lifted the baseline to about 105 to 111 s, and a 110.6 s passing run failed main;
-          # 150 leaves room for that variance while still failing a regression like #8077's 328 to
-          # 490 s. Type-checking `pydantic-ai-harness` and `pydantic-ai-pax` took a passing run to
-          # 156 s, so 200 kept the same headroom. By 2026-10-16 the step ran 117 to 206 s over 98 `main`
-          # runs (median 184 s, p90 197 s) and failed four of them; 260 is about 1.25x that maximum and
-          # still fails a regression like #8077's.
-          # Only pull requests enforce it: that is where a slowdown has to fail, and by 2026-10-26 runner
-          # variance alone spread 18 merge-queue and `main` runs over 149 to 279 s, so enforcing it there
-          # bounced queued PRs and reddened `main` without catching anything their PR had not.
-          # On 2026-10-27 the step ran 127 to 292 s over 375 pull request runs (median 236 s, p90 259 s),
-          # and 23 of them failed only on the budget, with zero type errors, on diffs as small as a
-          # docstring; 320 is about 1.1x that maximum and still fails a regression like #8077's.
-          # After #11806 set the worker count and heap above, 181 passing runs from 2026-10-29 to 30
-          # (146 pull request, 20 merge queue, 15 `main`) ran 145 to 288 s (median 231 s, p95 254 s,
-          # p99 274 s); 280 keeps about 10% above that p95, and 1 of the 146 pull request runs
-          # exceeded it.
-          # From 2026-11-09 to 12 the step ran 169 to 335 s over 100 `main` push runs (median 249 s,
-          # p95 300 s), and three pull request runs failed on the 280 s budget at 291 to 307 s with
-          # zero type errors. No change is known to explain the rise from the 2026-10-29 to 30 median
-          # of 231 s. 370 is about 1.1x the `main` maximum. Passing `main` runs now reach the 328 s of
-          # #8077's fastest regressed run, so the budget no longer fails that absolute range; #8077 took
-          # the median from 88.5 s to at least 3.7x that, and a run 1.5x today's median fails 370.
-          # A pull request reaches this step only when pyright-rs did not run or did not pass. The
-          # budget times this step alone, so a pyright-rs run before it never counts against it.
-          PYRIGHT_TIME_BUDGET: ${{ github.event_name == 'pull_request' && '370' || '' }}
           UV_NO_SYNC: "1"
         run: make typecheck-changed
 
@@ -1082,12 +1043,16 @@ jobs:
       # instrumentation noise. 8s sits above the fresh-interpreter tests (4-6s on these runners) with headroom for runner
       # jitter; the per-test report on the same cells surfaces anything new over 1s. List the tests over a budget from a
       # run's `--durations` with `scripts/list_over_budget_tests.py`.
-      PYTEST_TEST_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '8' || '' }}
+      # Only pull requests enforce it and the collection budget below: a slow test or module has to fail its own pull
+      # request, and in the merge queue or on `main` one slow runner reading would only eject or redden code a pull
+      # request run already passed.
+      PYTEST_TEST_BUDGET_SECONDS: ${{ github.event_name == 'pull_request' && matrix.python-version == '3.13' && '8' || '' }}
       # Per-module collection budget, also enforced by `tests/cost_guards.py`. With it set, the guard imports the
       # dependencies in its `SHARED_DEPENDENCIES` before collection, so each module is charged only for its own
-      # imports, not for being the first in its shard to import a shared one. 8s leaves headroom for runner jitter,
-      # and sits well below the 11-16s a module paid for importing `torch` at collection.
-      PYTEST_COLLECT_BUDGET_SECONDS: ${{ matrix.python-version == '3.13' && '8' || '' }}
+      # imports, not for being the first in its shard to import a shared one. Every pytest-xdist worker collects every
+      # module in its shard, and the guard judges each module by its fastest worker. 8s leaves headroom for runner
+      # jitter, and sits well below the 11-16s a module paid for importing `torch` at collection.
+      PYTEST_COLLECT_BUDGET_SECONDS: ${{ github.event_name == 'pull_request' && matrix.python-version == '3.13' && '8' || '' }}
       # `tests/harness/absurd` runs on Absurd's schema; an unreachable server fails rather than skips.
       ABSURD_REQUIRE_LIVE: "1"
       ABSURD_TEST_DATABASE_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
