@@ -10,23 +10,6 @@ permissions:
   contents: read
 
 jobs:
-  times-out:
-    runs-on: ubuntu-latest
-    timeout-minutes: 1
-    steps:
-      - run: sleep 600
-
-  cancel-after-times-out:
-    needs: times-out
-    if: ${{ !cancelled() && github.event_name == 'push' && (needs.times-out.result == 'failure' || needs.times-out.result == 'cancelled') }}
-    runs-on: ubuntu-latest
-    permissions:
-      actions: write
-    steps:
-      - env:
-          GH_TOKEN: ${{ github.token }}
-        run: echo "times-out result=${{ needs.times-out.result }} at $(date -u +%T)"; gh run cancel "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" || true
-
   matrix:
     runs-on: ubuntu-latest
     strategy:
@@ -65,7 +48,7 @@ jobs:
 
   check:
     if: always()
-    needs: [times-out, matrix, slow]
+    needs: [matrix, slow]
     runs-on: ubuntu-latest
     steps:
       - uses: re-actors/alls-green@b5b5b37504aa4183270bd3d855c52a67f212be35 # release/v1
