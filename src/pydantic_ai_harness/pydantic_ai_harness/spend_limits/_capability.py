@@ -7,7 +7,7 @@ import warnings
 from collections.abc import Awaitable, Callable, Iterator, Mapping, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
 from datetime import datetime, timedelta
-from decimal import Decimal
+from decimal import Decimal, InvalidOperation
 from functools import cache, partial
 from hashlib import sha256
 from typing import TYPE_CHECKING, Any, Literal, TypeGuard
@@ -1000,6 +1000,6 @@ def _budget_from_spec(entry: Any) -> Budget[Any]:
         if name in fields:
             try:
                 fields[name] = convert(str(fields[name]))
-            except (TypeError, ValueError) as error:
+            except (TypeError, ValueError, InvalidOperation) as error:
                 raise UserError(f'SpendLimits budget {name!r} is not a number: {fields[name]!r}.') from error
     return Budget(**fields)
