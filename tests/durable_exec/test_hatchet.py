@@ -173,6 +173,7 @@ class App:
     cancelling: StreamScenario
     parallel: StreamScenario
     unretryable: Scenario
+    retried_run: StreamScenario
 
 
 def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
@@ -277,6 +278,7 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
         cancelling=_build_cancelling(hatchet),
         parallel=_build_parallel(hatchet),
         unretryable=_build_unretryable(hatchet),
+        retried_run=_build_retried_run(hatchet),
     )
     workflows: list[Any] = [
         run_weather,
@@ -295,6 +297,7 @@ def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
         *app.cancelling.workflows,
         *app.parallel.workflows,
         *app.unretryable.workflows,
+        *app.retried_run.workflows,
     ]
     return app, workflows
 
@@ -422,6 +425,27 @@ def _build_unretryable(hatchet: Hatchet) -> Scenario:
         raise AssertionError('the tool error was not raised')  # pragma: no cover
 
     return Scenario(run=run, calls=tool_calls, workflows=[run, *durability.workflows])
+
+
+def _build_retried_run(hatchet: Hatchet) -> StreamScenario:
+    """A durable task Hatchet retries, whose first attempt's run fails in a tool running in the durable task."""
+    attempts: list[int] = []
+    durability = HatchetDurability[Any](hatchet, event_stream=True)
+    agent = Agent(TestModel(), name='retried_run', capabilities=[durability])
+
+    @agent.tool(durable=False)
+    async def fail_once(ctx: RunContext[Any]) -> str:
+        attempts.append(len(attempts))
+        if len(attempts) == 1:
+            raise RuntimeError('the first attempt fails')
+        return 'ok'
+
+    @hatchet.durable_task(name='pydantic_ai_test_retried_run', input_validator=Prompt, retries=1)
+    async def run(input: Prompt, ctx: DurableContext) -> dict[str, Any]:
+        result = await agent.run(input.prompt)
+        return {'output': result.output}
+
+    return StreamScenario(run=run, durability=durability, workflows=[run, *durability.workflows])
 
 
 def _build_cancelling(hatchet: Hatchet) -> StreamScenario:
@@ -669,6 +693,19 @@ async def test_event_stream_of_cancelled_run(app: App):
         async for _event in events:
             pass
     assert events.error == 'RunCancelled'
+
+
+async def test_event_stream_of_retried_run_ends_with_its_result(app: App):
+    """A failed attempt that Hatchet retries publishes no error, so subscribers get the retry's result."""
+    ref = await app.retried_run.run.aio_run(Prompt(prompt='hi'), wait_for_result=False)
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        await ref.aio_result()
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        events = app.retried_run.durability.stream_agent_events(ref.workflow_run_id)
+        async for _event in events:
+            pass
+    assert events.error is None
+    assert events.result is not None
 
 
 async def test_parallel_tool_results_are_published_in_call_order(app: App):

@@ -10,7 +10,7 @@ from typing import TYPE_CHECKING, Any, Literal, cast
 from weakref import WeakKeyDictionary
 
 import anyio
-from hatchet_sdk import DurableContext, Hatchet, Standalone
+from hatchet_sdk import DurableContext, Hatchet, NonRetryableError, Standalone
 from hatchet_sdk.engine_version import MinEngineVersion
 from pydantic import JsonValue, TypeAdapter
 from pydantic_core import to_json
@@ -510,10 +510,17 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
                 self.hatchet, config, topic, message_id=f'{ctx.run_id}:result', event=AgentRunResultEvent(result)
             )
 
-    async def _publish_terminal_error(self, ctx: RunContext[AgentDepsT], error_name: str) -> None:
+    async def _publish_terminal_error(
+        self, ctx: RunContext[AgentDepsT], error_name: str, *, retryable: bool = True
+    ) -> None:
         config = self._event_stream
         topic = self._run_topic()
         if config is not None and topic is not None:
+            durable_ctx = self._durable_context()
+            if retryable and durable_ctx.attempt_number < durable_ctx.max_attempts:
+                # Hatchet retries the durable task if the error fails it, and the retry's run publishes the outcome
+                # under the same IDs, so an error here would end subscribers' iteration before a result that may come.
+                return
             # Only the exception type: a consumer may show the stream to end users, and the message can carry a
             # provider's error body or a tool's internals. The durable task's own result has the full error.
             await publish_event(self.hatchet, config, topic, message_id=f'{ctx.run_id}:result', error=error_name)
@@ -532,7 +539,8 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         that carries the run's result, so they can be handed to a [`UIAdapter`][pydantic_ai.ui.UIAdapter]. The
         topic keeps its messages after the run, so a consumer can subscribe late, or again.
 
-        A run that times out or cancels itself ends the iterator like any failed run. A durable task that Hatchet
+        A run that times out or cancels itself ends the iterator like any failed run. A run that fails while the
+        durable task has retries left publishes no error, as the retry's run publishes the outcome. A durable task that Hatchet
         cancels publishes no terminal event, because Hatchet stops a task it evicts the same way and an evicted task's
         run continues once it's restored. A consumer that has to notice a cancelled run checks the workflow run's
         status, e.g. with `hatchet.runs.aio_get_status(workflow_run_id)`.
@@ -596,7 +604,9 @@ class _TerminalEventPublisher(AbstractCapability[AgentDepsT]):
         try:
             result = await handler()
         except Exception as error:
-            await self._durability._publish_terminal_error(ctx, type(error).__name__)  # pyright: ignore[reportPrivateUsage]
+            await self._durability._publish_terminal_error(  # pyright: ignore[reportPrivateUsage]
+                ctx, type(error).__name__, retryable=not isinstance(error, NonRetryableError)
+            )
             raise
         except asyncio.CancelledError:
             cancellation = ctx._cancellation  # pyright: ignore[reportPrivateUsage]
