@@ -3,6 +3,7 @@
 from collections.abc import AsyncGenerator, AsyncIterable, Sequence
 from contextlib import asynccontextmanager
 from io import StringIO
+from itertools import takewhile
 from pathlib import Path
 
 import anyio
@@ -357,8 +358,9 @@ def queue(live: LivePrompt, *texts: str) -> None:
 
 
 def queue_rows(live: LivePrompt) -> list[str]:
+    """The queue's rows, which lead the frame; an unexpected row among them ends the list, so assertions see it."""
     rows = [Text.from_ansi(row).plain for row in live.frame()]
-    return [row for row in rows if row.startswith(('Follow-up', 'Command', 'Editing -'))]
+    return list(takewhile(lambda row: row.startswith(('Follow-up', 'Command', 'Editing -')), rows))
 
 
 async def test_up_walks_queue_newest_first_then_history() -> None:
