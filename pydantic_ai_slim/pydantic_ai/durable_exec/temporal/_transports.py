@@ -28,6 +28,8 @@ from pydantic_ai.durable_exec._operation import (
     ParameterTransports,
     ToolsetCallToolParams,
     ToolsetGetToolsParams,
+    event_stream_handler_params,
+    handled_events,
 )
 from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult, Instructions, revalidate_function_call
 from pydantic_ai.durable_exec._workspace import WorkspaceCall, WorkspaceCallParams, WorkspaceCallResult
@@ -495,7 +497,8 @@ class _EventStreamHandlerTransport(
         ctx = params.run_context
         # A one-event unit keeps the single-event wire shape, so per-event dispatch (an unpatched history, or a
         # burst of one) stays readable by workers that predate batching.
-        event = params.events[0] if len(params.events) == 1 else params.events
+        events = handled_events(params)
+        event = events[0] if len(events) == 1 else events
         return (
             _EventStreamHandlerParams(
                 event=event,
@@ -510,7 +513,7 @@ class _EventStreamHandlerTransport(
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
         events = params.event if isinstance(params.event, list) else [params.event]
-        return _SemanticEventStreamHandlerParams(events, run_context=ctx)
+        return event_stream_handler_params(events, ctx)
 
 
 @dataclass(kw_only=True)

@@ -446,7 +446,7 @@ class DBOSDurability(BaseDurabilityCapability[AgentDepsT]):
             if reservation is not None:
                 event_operation = self._bound_event_operation
                 assert isinstance(event_operation, DBOSBoundOperation)
-                await event_operation.call_reserved(reservation, EventStreamHandlerParams([event], run_context=ctx))
+                await event_operation.call_reserved(reservation, EventStreamHandlerParams(event, run_context=ctx))
                 return
         await super()._dispatch_event_stream_event(ctx, event)
 

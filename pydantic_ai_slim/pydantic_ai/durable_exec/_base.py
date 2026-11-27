@@ -124,6 +124,8 @@ from ._operation import (
     ToolsetGetToolsParams,
     ToolsetKind,
     ToolsetValidateToolArgumentsId,
+    event_stream_handler_params,
+    handled_events,
 )
 from ._operation_backend import (
     BoundDurableOperation,
@@ -427,7 +429,8 @@ class _EventStreamHandlerCacheIdentity(CacheIdentity[EventStreamHandlerParams]):
     def project(self, params: EventStreamHandlerParams) -> tuple[object, ...]:
         # A one-event unit keeps the single-event identity, so engines that dispatch per event keep the cache keys
         # their recorded runs were written with.
-        return (params.events[0],) if len(params.events) == 1 else (params.events,)
+        events = handled_events(params)
+        return (params.event,) if len(events) == 1 else (events,)
 
 
 class _GetToolsCacheIdentity(CacheIdentity[ToolsetGetToolsParams]):
@@ -2329,7 +2332,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         bound_operation = self._bound_event_operation or self._bind_event_operation(
             self.get_durable_operation_backend()
         )
-        await bound_operation(EventStreamHandlerParams(events, run_context=ctx))
+        await bound_operation(event_stream_handler_params(events, ctx))
 
     def _bind_event_operation(
         self, backend: DurableOperationBackend[Any]
@@ -2348,7 +2351,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         handler = self._effective_event_stream_handler()
         assert handler is not None
         with self._durable_run_context_scope(params.run_context) as durable_ctx:
-            for event in params.events:
+            for event in handled_events(params):
                 await handler(durable_ctx, self._single_event_stream(event))
 
     @staticmethod

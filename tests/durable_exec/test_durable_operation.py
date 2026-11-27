@@ -4,7 +4,7 @@ import asyncio
 import inspect
 import sys
 from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from dataclasses import dataclass, fields, replace
 from typing import Any, Literal, assert_never, cast
 from unittest.mock import AsyncMock
 
@@ -63,6 +63,8 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
     TypedResultCodec,
+    event_stream_handler_params,
+    handled_events,
 )
 from pydantic_ai.durable_exec._operation_backend import (
     BoundDurableOperation,
@@ -285,6 +287,51 @@ async def test_event_stream_dispatch_defaults_to_one_unit_per_event() -> None:
     assert actual == handled == events
     event_calls = [call for call in bound.calls if call[0].endswith('__event_stream_handler')]
     assert [call[1] for call in event_calls] == [(event,) for event in events]
+
+
+def test_event_stream_handler_params_keeps_its_single_event_field() -> None:
+    """Custom backends read `params.event`, as before batching: the public params carry one event."""
+    assert [field.name for field in fields(EventStreamHandlerParams)] == ['event', 'run_context']
+
+
+async def test_a_backend_that_dispatches_per_event_receives_the_public_single_event_params() -> None:
+    """Batching is Temporal's alone, so another engine's event-handler operation gets one public params per event."""
+    received: list[EventStreamHandlerParams] = []
+
+    class RecordingBackend(_JournalBackend):
+        def bind(self, operation: DurableOperation[Any, Any, Any]) -> Any:
+            if isinstance(operation.operation_id, EventStreamHandlerId):
+                handler = operation.handler
+
+                async def recording(params: Any) -> Any:
+                    received.append(params)
+                    return await handler(params)
+
+                operation = replace(operation, handler=recording)
+            return super().bind(operation)
+
+    class RecordingJournalDurability(JournalDurability):
+        def get_durable_operation_backend(self) -> DurableOperationBackend[Any]:
+            return RecordingBackend(self)
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    durability = RecordingJournalDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='per-event-public-params', capabilities=[durability])
+    bound = RecordingJournalDurability.from_agent(agent)
+    assert bound is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
+    events = _tool_events(2)
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        for event in events:
+            yield event
+
+    assert [event async for event in bound.wrap_run_event_stream(ctx, stream=stream())] == events
+    assert [type(params) for params in received] == [EventStreamHandlerParams] * len(events)
+    assert [params.event for params in received] == events
 
 
 async def test_event_stream_dispatch_batches_ready_burst_and_preserves_handler_calls() -> None:
@@ -652,7 +699,7 @@ async def test_event_stream_handler_operation_preserves_one_handler_call_per_eve
     ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
 
     await durability._event_stream_handler_operation(  # pyright: ignore[reportPrivateUsage]
-        EventStreamHandlerParams(events, run_context=ctx)
+        event_stream_handler_params(events, ctx)
     )
 
     assert handled == events
@@ -1510,14 +1557,16 @@ def test_temporal_event_transport_keeps_single_event_wire_and_writes_bursts_as_l
     transport = _EventStreamHandlerTransport(durability)
 
     single = _tool_events(1)[:1]
-    wire, deps = transport.dump(EventStreamHandlerParams(single, run_context=ctx))
+    wire, deps = transport.dump(EventStreamHandlerParams(single[0], run_context=ctx))
     assert wire.event == single[0]
-    assert transport.load((wire, deps), runtime=object()).events == single
+    loaded = transport.load((wire, deps), runtime=object())
+    assert type(loaded) is EventStreamHandlerParams
+    assert loaded.event == single[0]
 
     burst = _tool_events(1)
-    wire, deps = transport.dump(EventStreamHandlerParams(burst, run_context=ctx))
+    wire, deps = transport.dump(event_stream_handler_params(burst, ctx))
     assert wire.event == burst
-    assert transport.load((wire, deps), runtime=object()).events == burst
+    assert handled_events(transport.load((wire, deps), runtime=object())) == burst
 
 
 def _exhaustive_identity(operation_id: DurableOperationId) -> str:
