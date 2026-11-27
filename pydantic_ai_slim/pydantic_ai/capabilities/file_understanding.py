@@ -48,8 +48,9 @@ _NAMESPACE_KEY = 'file_understanding'
 
 # Each download in flight reserves up to the per-file limit of the request's total, so text documents downloaded at
 # the same time would be refused once the text already held leaves less than that per download. They are downloaded
-# one at a time instead, so only the bytes actually downloaded count. Under Temporal `_describe` runs in an activity,
-# which this and the total don't reach, so each download there has the per-file limit only.
+# one at a time instead, so only the bytes actually downloaded count. A durable engine that runs each operation from
+# its serialized inputs, such as Temporal, runs `_describe` where this and the total don't reach, so each download
+# there has the per-file limit only.
 _text_download_lock: ContextVar[anyio.Lock | None] = ContextVar('_text_download_lock', default=None)
 
 _DEFAULT_INSTRUCTIONS = (
@@ -99,10 +100,11 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     description can differ, which changes earlier requests and costs the cached prefix.
 
     The distinct files a request needs described are described concurrently, while the text documents given by URL
-    are downloaded one after another, within a total of their own of 500 MiB per request (under Temporal, within the
-    50 MiB per-file limit only). Each describing call is a run of its own, but its requests, tokens and cost are added
-    to the agent run's [usage][pydantic_ai.usage.RunUsage], and the run's [usage limits][pydantic_ai.usage.UsageLimits]
-    are checked before any is sent, as if the describing requests were the run's next ones.
+    are downloaded one after another, within a total of their own of 500 MiB per request (under a durable engine that
+    runs each operation from its serialized inputs, such as Temporal, within the 50 MiB per-file limit only). Each
+    describing call is a run of its own, but its requests, tokens and cost are added to the agent run's
+    [usage][pydantic_ai.usage.RunUsage], and the run's [usage limits][pydantic_ai.usage.UsageLimits] are checked before
+    any is sent, as if the describing requests were the run's next ones.
     """
 
     fallback_subagent_model: Model | KnownModelName | str
