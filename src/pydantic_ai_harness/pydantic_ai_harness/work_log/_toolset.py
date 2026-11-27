@@ -73,6 +73,23 @@ class WorkLogRead(TypedDict):
     """Where the line the size cap cut continues, as a byte `offset` for a `unit='bytes'` read; else `None`."""
 
 
+_SEARCH_DESCRIPTION = (
+    'Search the work log of this conversation.\n\n'
+    'The log holds every tool call made so far with its full result, including calls made inside code{holds}. '
+    'Without `query`, returns the most recent entries, newest first. With `query`, ranks entries by BM25 over the '
+    'tool name, arguments and result: rare terms and exact words score higher. Each match shows an excerpt; read '
+    'an entry in full by its `seq`.'
+)
+_SEARCH_LOG_HOLDS: dict[tuple[bool, bool], str] = {
+    (True, False): ', and your earlier replies',
+    (True, True): ', and your earlier replies and thinking',
+    (False, True): ', and your earlier thinking, but not your replies',
+    (False, False): ', but not your replies',
+}
+"""What else the log holds, by `(WorkLog.record_text, WorkLog.record_thinking)`, so the model never reads a missing
+reply as one it didn't give."""
+
+
 class WorkLogToolset(FunctionToolset[AgentDepsT]):
     """The work log's tools, each running through one of `WorkLog`'s durable operations."""
 
@@ -86,12 +103,15 @@ class WorkLogToolset(FunctionToolset[AgentDepsT]):
             [RunContext[AgentDepsT], int, int, int, bool, str | None, ReadUnit], Awaitable[WorkLogRead | RetryRequest]
         ],
         toolset_id: str | None,
+        record_text: bool,
+        record_thinking: bool,
     ) -> None:
         # The log holds results a UI adapter may have hidden from the client, such as a `'private'` tool's.
         super().__init__(id=toolset_id, ui_visibility='redacted')
         self._search = search
         self._read = read
-        self.add_function(self.search_work_log, tool_kind=WORK_LOG_SEARCH_KIND)
+        description = _SEARCH_DESCRIPTION.format(holds=_SEARCH_LOG_HOLDS[record_text, record_thinking])
+        self.add_function(self.search_work_log, tool_kind=WORK_LOG_SEARCH_KIND, description=description)
         self.add_function(self.read_work_log, tool_kind=WORK_LOG_READ_KIND)
 
     async def search_work_log(
@@ -102,13 +122,7 @@ class WorkLogToolset(FunctionToolset[AgentDepsT]):
         run_id: str | None = None,
         limit: int = 10,
     ) -> WorkLogSearchResult:
-        """Search the work log of this conversation.
-
-        The log holds every tool call made so far with its full result, including calls made inside
-        code, and your earlier replies. Without `query`, returns the most recent entries, newest
-        first. With `query`, ranks entries by BM25 over the tool name, arguments and result: rare
-        terms and exact words score higher. Each match shows an excerpt; read an entry in full by
-        its `seq`.
+        """Search the work log of this conversation. The model sees `_SEARCH_DESCRIPTION`, which says what the log holds.
 
         Args:
             ctx: The run context (supplied by the agent).

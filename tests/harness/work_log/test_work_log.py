@@ -703,6 +703,30 @@ class TestWorkLogCodeMode:
 
 
 class TestWorkLogTools:
+    @pytest.mark.parametrize(
+        ('record_text', 'record_thinking', 'holds'),
+        [
+            (True, False, ', and your earlier replies'),
+            (True, True, ', and your earlier replies and thinking'),
+            (False, True, ', and your earlier thinking, but not your replies'),
+            (False, False, ', but not your replies'),
+        ],
+    )
+    async def test_the_search_description_says_what_the_log_holds(
+        self, record_text: bool, record_thinking: bool, holds: str
+    ) -> None:
+        """A model told the log holds its replies would read a missing one as a reply it never gave."""
+        descriptions: dict[str, str | None] = {}
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            descriptions.update((tool.name, tool.description) for tool in info.function_tools)
+            return ModelResponse(parts=[TextPart('done')])
+
+        work_log = WorkLog(InMemoryWorkLogStore(), record_text=record_text, record_thinking=record_thinking)
+        await Agent(FunctionModel(respond), capabilities=[work_log]).run('Go', conversation_id=_CONVERSATION)
+
+        assert f'including calls made inside code{holds}. Without `query`' in str(descriptions['search_work_log'])
+
     async def test_tools_are_redacted_for_ui_clients(self) -> None:
         """The log holds every tool's result, a `'private'` tool's included, so a UI client gets a placeholder."""
         seen: dict[str, str | None] = {}

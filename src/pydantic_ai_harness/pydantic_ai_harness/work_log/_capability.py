@@ -145,7 +145,13 @@ class WorkLog(AbstractCapability[AgentDepsT]):
 
     def get_toolset(self) -> AgentToolset[AgentDepsT] | None:
         """Provide `search_work_log` and `read_work_log`, each running through a durable operation."""
-        return WorkLogToolset[AgentDepsT](search=self._search, read=self._read, toolset_id=self.id)
+        return WorkLogToolset[AgentDepsT](
+            search=self._search,
+            read=self._read,
+            toolset_id=self.id,
+            record_text=self.record_text,
+            record_thinking=self.record_thinking,
+        )
 
     # --- recording ---
 

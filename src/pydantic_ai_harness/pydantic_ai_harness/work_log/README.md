@@ -65,7 +65,8 @@ Each entry is one tool call, one model reply, or one piece of model thinking:
   wrapped by [`ReportToolErrors`](../report_tool_errors/) is logged as `failed` with the message it
   reports. A failure that an outer capability recovers from is logged once, as `success`, with the recovered result. A result that an outer capability's `after_tool_execute` rejects is logged twice: as `success`, then as `retried` or `failed` with the rejection.
 - **Model replies.** Each text part of a response, with `record_text=True` (the default). Thinking
-  is logged only with `record_thinking=True`.
+  is logged only with `record_thinking=True`. `search_work_log`'s description tells the model which
+  of the two the log holds, so it doesn't read a reply missing from the log as one it never gave.
 
 Not logged:
 

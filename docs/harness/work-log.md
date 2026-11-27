@@ -49,7 +49,7 @@ Each entry is one tool call, one model reply, or one piece of model thinking:
 
 - **Tool calls that ran.** The tool's name and arguments (as JSON), the outcome, and the result as the model would see it: the return value, followed by a `ToolReturn`'s `content` when it has one. Text is stored as it is. Structured results are stored as indented JSON, one field per line, so `read_work_log` pages them by line and `pattern` matches a field; a value holding something with no JSON form, such as a type, is stored as compact JSON with that part as its `repr`. Files are not logged: each becomes a `[<media type> content not logged]` line.
 - **Failures.** A `ModelRetry` is logged with the outcome `retried` and the retry message. Any other exception is logged as `failed`, with its type only, and is still raised; a tool wrapped by [`ReportToolErrors`](report-tool-errors.md) is logged as `failed` with the message it reports. A failure that an outer capability recovers from is logged once, as `success`, with the recovered result. A result that an outer capability's `after_tool_execute` rejects is logged twice: as `success`, then as `retried` or `failed` with the rejection.
-- **Model replies.** Each text part of a response, with `record_text=True` (the default). Thinking is logged only with `record_thinking=True`.
+- **Model replies.** Each text part of a response, with `record_text=True` (the default). Thinking is logged only with `record_thinking=True`. `search_work_log`'s description tells the model which of the two the log holds, so it doesn't read a reply missing from the log as one it never gave.
 
 Not logged:
 
