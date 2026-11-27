@@ -189,7 +189,7 @@ def is_non_retryable(error: BaseException, non_retryable_model_errors: tuple[typ
 
     That's one of `NON_RETRYABLE_ERRORS` or `non_retryable_model_errors`.
     A `FallbackExceptionGroup` from a `FallbackModel` whose models all failed counts only when every error in it does,
-    so a chain that ran into rate limits or outages is retried like a single model would be.
+    so a chain that ran into rate limits or outages is still retried.
     """
     if isinstance(error, FallbackExceptionGroup):
         return all(is_non_retryable(member, non_retryable_model_errors) for member in error.exceptions)
