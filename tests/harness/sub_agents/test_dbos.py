@@ -237,11 +237,9 @@ async def test_parent_deny_unanswered_reaches_a_durable_child_in_the_workflow(db
 async def test_the_parents_managed_permissions_reach_a_durable_child_in_the_workflow(dbos: DBOS) -> None:
     """A delegate bound to `DBOSDurability` is held to the parent's managed rules without `shared_capabilities`."""
     observed: list[str] = []
-    ran: list[str] = []
 
     def run_command(command: str) -> str:
-        ran.append(command)
-        return 'ran'
+        raise AssertionError('the denied command must not run')  # pragma: no cover
 
     child_agent = Agent(
         call_then_echo('run_command', {'command': 'rm -rf doomed'}, 'c1', 'child done', observed),
@@ -264,7 +262,6 @@ async def test_the_parents_managed_permissions_reach_a_durable_child_in_the_work
         return (await parent.run('delegate')).output
 
     assert await workflow() == 'parent done'
-    assert ran == []
     assert observed == ['A managed permission rule denied this command, so it did not run. Do not retry it.']
 
 

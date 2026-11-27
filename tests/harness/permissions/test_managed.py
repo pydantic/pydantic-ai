@@ -525,11 +525,8 @@ class TestInheritedInDurableUnits:
         pytest.importorskip('temporalio')
         from pydantic_ai.durable_exec.temporal import TemporalRunContext
 
-        ran: list[str] = []
-
         def run_command(command: str) -> str:
-            ran.append(command)
-            return 'ran'
+            raise AssertionError('the denied command must not run')  # pragma: no cover
 
         worker = Agent[object, str](
             _delegating('rm -rf doomed'),
@@ -543,7 +540,6 @@ class TestInheritedInDurableUnits:
             TemporalRunContext[object](deps=None, tool_name='delegate_task', agent=parent), 'worker', 'clean up'
         )
         assert result == 'done'
-        assert ran == []
 
     async def test_without_capabilities_or_an_agent_nothing_is_carried(self) -> None:
         """As in a deprecated `TemporalAgent` with a custom six-argument `temporalize_toolset_func`."""
@@ -608,7 +604,7 @@ class TestReviewerApprovals:
 
     async def test_a_reviewers_approval_does_not_answer_a_managed_ask_on_a_plain_tool(self) -> None:
         def deploy(env: str) -> str:
-            return f'deployed {env}'
+            raise AssertionError('the held call must not run')  # pragma: no cover
 
         agent = Agent[None, 'str | DeferredToolRequests'](
             _calls(('deploy', {'env': 'prod'})),
