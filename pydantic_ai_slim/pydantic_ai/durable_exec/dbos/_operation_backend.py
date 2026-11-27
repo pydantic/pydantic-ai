@@ -79,6 +79,13 @@ _retry_after_attempts_before: ContextVar[int | None] = ContextVar('_dbos_retry_a
 as it always did instead of returning a wait no workflow code is there to wait.
 """
 
+_attempts_before_step: ContextVar[int] = ContextVar('_dbos_attempts_before_step', default=0)
+"""How many attempts earlier runs of the model step made before the durable wait this run of it follows.
+
+Set in the body of the step, where `DBOSOperationBackend.execution_attempt` adds it to the step's own attempt, so
+the execution attempt goes on growing across the runs a model error's `retry_after` splits the step into.
+"""
+
 
 def _returning_retry_after(
     step: Callable[..., Awaitable[object]], config: StepConfig
@@ -98,6 +105,7 @@ def _returning_retry_after(
     async def model_step(*args: Any, **kwargs: Any) -> object:
         attempts_before = _retry_after_attempts_before.get()
         token = _retry_after_attempts_before.set(None)
+        before_token = _attempts_before_step.set(attempts_before or 0)
         try:
             return await step(*args, **kwargs)
         except Exception as error:
@@ -117,6 +125,7 @@ def _returning_retry_after(
                 raise
             return _RetryAfterWait(pydantic_ai_retry_after=delay, attempts=status.current_attempt + 1)
         finally:
+            _attempts_before_step.reset(before_token)
             _retry_after_attempts_before.reset(token)
 
     return model_step
@@ -223,6 +232,13 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
     def __init__(self, *, agent_name: str, config: DBOSOperationConfig) -> None:
         super().__init__(namer=DBOSOperationNamer(agent_name), config=config)
 
+    def execution_attempt(self) -> int:
+        status = DBOS.step_status
+        if status is None or status.current_attempt is None:
+            return 1
+        # `current_attempt` is zero-based, and counts from the durable wait a model error's `retry_after` asked for.
+        return _attempts_before_step.get() + status.current_attempt + 1
+
     def register(
         self,
         operation: DurableOperation[ParamsT, WireT, ResultT],
@@ -297,6 +313,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                     model_settings: ModelSettings | None,
                     model_request_parameters: ModelRequestParameters,
                     run_context: RunContext[Any],
+                    attempt: int = 1,
                 ) -> object:
                     params = ModelRequestParams(
                         model_id,
@@ -304,6 +321,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                         model_settings=model_settings,
                         model_request_parameters=model_request_parameters,
                         run_context=run_context,
+                        attempt=attempt,
                     )
                     return operation.result_codec.dump(await operation.handler(cast(ParamsT, params)))
 
@@ -317,6 +335,7 @@ class DBOSOperationBackend(RegisteredOperationBackend[StepConfig]):
                         model_params.model_settings,
                         model_params.model_request_parameters,
                         model_params.run_context,
+                        model_params.attempt,
                     )
                     return operation.result_codec.load(payload)
 

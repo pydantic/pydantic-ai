@@ -57,6 +57,11 @@ class ModelRequestParams:
     model_settings: ModelSettings | None
     model_request_parameters: ModelRequestParameters
     run_context: RunContext[Any]
+    attempt: int = 1
+    """The [`attempt`][pydantic_ai.models.ModelRequestContext.attempt] at the request step this request is.
+
+    A streamed request's events record it in their [`origin`][pydantic_ai.messages.ModelResponseOrigin].
+    """
 
 
 @dataclass(frozen=True)

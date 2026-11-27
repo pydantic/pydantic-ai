@@ -35,6 +35,7 @@ from ._compat import (
     WorkspaceCallParams,
     WorkspaceCallResult,
     capability_operation_result_type,
+    dump_json_function_args,
     dump_json_object,
     function_tool_original_name,
     load_json_object,
@@ -94,6 +95,7 @@ class _ModelRequestPayload:
     model_request_parameters: ModelRequestParameters
     run_context: JSONObject
     model_id: str | None = None
+    attempt: int = 1
 
 
 @dataclass(kw_only=True)
@@ -138,7 +140,8 @@ class RenderFunctionCallTransport(Generic[AgentDepsT], RenderJSONTransport[Tools
         tool = params.tool
         if tool is None:  # pragma: no cover - core resolves tools before dispatch
             raise ValueError(f'Function tool {params.name!r} has no resolved definition.')
-        tool_args = to_json_object(_FUNCTION_TOOL_ARGS.dump_python(params.tool_args, mode='json', by_alias=True))
+        json_args = dump_json_function_args(self._toolset, tool, params.tool_args, by_alias=True)
+        tool_args = to_json_object(_FUNCTION_TOOL_ARGS.dump_python(json_args, mode='json', by_alias=True))
         payload = _CallToolPayload(
             name=params.name,
             tool_args=tool_args,
@@ -291,6 +294,7 @@ class RenderModelRequestTransport(Generic[AgentDepsT], RenderJSONTransport[Model
             model_request_parameters=params.model_request_parameters,
             run_context=self._context_codec.dump(params.run_context),
             model_id=params.model_id,
+            attempt=params.attempt,
         )
         return dump_json_object(_ModelRequestPayload, payload)
 
@@ -303,6 +307,7 @@ class RenderModelRequestTransport(Generic[AgentDepsT], RenderJSONTransport[Model
             model_settings=model_settings_from_json(decoded.model_settings),
             model_request_parameters=decoded.model_request_parameters,
             run_context=self._context_codec.load(decoded.run_context),
+            attempt=decoded.attempt,
         )
 
 

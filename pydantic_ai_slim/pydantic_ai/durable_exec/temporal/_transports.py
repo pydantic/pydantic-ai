@@ -35,6 +35,7 @@ from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DynamicToolsResult,
     Instructions,
+    dump_json_function_args,
     raw_tool_args_for_unit,
     revalidate_function_call,
 )
@@ -93,12 +94,13 @@ class _FunctionCallTransport(TemporalParameterTransport[ToolsetCallToolParams, t
     def dump(self, params: ToolsetCallToolParams) -> tuple[CallToolParams, Any]:
         assert params.tool is not None
         tool = params.tool
-        tool_args: dict[str, Any] = params.tool_args
+        # `PydanticAIPayloadConverter` dumps with `to_json`'s defaults.
+        tool_args = dump_json_function_args(self._toolset, tool, params.tool_args, by_alias=None)
         raw_tool_args = None
         # Serialized here, by the workflow's converter, so the activity input carries the JSON values the activity
         # loads. The converter writes them again unchanged: serializers run once, and the payload's bytes are the
         # ones `tool_args` gave before. `from_json` reads them back without an adapter, which a plugin would observe.
-        [payload] = workflow.payload_converter().to_payloads([params.tool_args])
+        [payload] = workflow.payload_converter().to_payloads([tool_args])
         if payload.metadata.get('encoding') == b'json/plain':
             tool_args = from_json(payload.data)
             raw_tool_args = raw_tool_args_for_unit(self._toolset, params, loaded_tool_args=tool_args)
@@ -249,6 +251,7 @@ class _RequestParams:
     telemetry_mcp_url_tool_names: set[str] | None = None
     serialized_run_context: Any
     model_id: str | None = None
+    attempt: int = 1
 
 
 @dataclass(kw_only=True)
@@ -409,6 +412,7 @@ class _ModelRequestTransport(TemporalParameterTransport[ModelRequestParams, tupl
                 telemetry_mcp_url_tool_names=params.model_request_parameters._telemetry_mcp_url_tool_names,  # pyright: ignore[reportPrivateUsage]
                 serialized_run_context=self._durability.run_context_type.serialize_run_context(ctx),
                 model_id=params.model_id,
+                attempt=params.attempt,
             ),
             ctx.deps,
         )
@@ -429,6 +433,7 @@ class _ModelRequestTransport(TemporalParameterTransport[ModelRequestParams, tupl
             model_settings=cast(ModelSettings | None, request.model_settings),
             model_request_parameters=request.model_request_parameters,
             run_context=ctx,
+            attempt=request.attempt,
         )
 
 

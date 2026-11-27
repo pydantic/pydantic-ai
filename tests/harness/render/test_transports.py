@@ -15,7 +15,15 @@ from typing_extensions import TypedDict
 from pydantic_ai import Agent, RunContext, Tool
 from pydantic_ai.capabilities import Hooks, RawToolArgs, ValidatedToolArgs
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolKind, ToolReturnPart
+from pydantic_ai.messages import (
+    ImageUrl,
+    ModelMessage,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolKind,
+    ToolReturnPart,
+)
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
@@ -197,6 +205,101 @@ async def test_aliased_function_arguments_are_revalidated_after_the_json_boundar
     assert await pending == 'aliased arguments arrived'
     assert seen == [('Ada', 2)]
     assert 'aliased-arguments__function_toolset__<agent>.call_tool' in context.task_names
+
+
+class Batch(BaseModel):
+    nums: Json[list[int]]
+
+
+class Line(BaseModel):
+    image: ImageUrl
+    nums: Json[list[int]] | None = None
+
+    @computed_field
+    @property
+    def count(self) -> int:
+        return len(self.nums or [])
+
+
+def json_argument_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    del info
+    returns = [part for message in messages for part in message.parts if isinstance(part, ToolReturnPart)]
+    if returns:
+        return ModelResponse(parts=[TextPart(', '.join(f'{part.tool_name}: {part.outcome}' for part in returns))])
+    return ModelResponse(
+        parts=[
+            ToolCallPart('sum_nums', {'nums': '[1, 2]'}, tool_call_id='nums'),
+            ToolCallPart('sum_batch', {'nums': '[3, 4]'}, tool_call_id='batch'),
+            ToolCallPart('sum_named', {'a': '[5]', 'b': '[6]'}, tool_call_id='named'),
+            ToolCallPart(
+                'tally',
+                {
+                    'lines': [
+                        {'image': {'url': 'https://example.com/a', 'media_type': 'image/png'}, 'nums': '[7]'},
+                        {'image': {'url': 'https://example.com/b', 'media_type': 'image/gif'}},
+                    ],
+                    'label': 'images',
+                },
+                tool_call_id='tally',
+            ),
+        ]
+    )
+
+
+async def test_json_function_arguments_cross_the_json_boundary_as_json_strings() -> None:
+    """A validated `Json` value is the parsed list, which the tool's schema rejects with `json_type` after the boundary.
+
+    So it crosses as a JSON string again: at the top level, nested in a model and taken by `**kwargs`. The rest of
+    the argument crosses as before, so the `ImageUrl` media types, computed fields that `round_trip=True` would
+    leave out, still reach the tool.
+
+    Not a VCR test: the claim is about the arguments crossing into the chained task run, and no provider request
+    is involved.
+    """
+    seen: dict[str, object] = {}
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(json_argument_model),
+        name='json-arguments',
+        deps_type=type(None),
+        capabilities=[runtime],
+    )
+
+    @agent.tool_plain
+    async def sum_nums(nums: Json[list[int]]) -> int:
+        seen['sum_nums'] = nums
+        return sum(nums)
+
+    @agent.tool_plain
+    async def sum_batch(batch: Batch) -> int:
+        seen['sum_batch'] = batch.nums
+        return sum(batch.nums)
+
+    @agent.tool_plain
+    async def sum_named(**named: Json[list[int]]) -> int:
+        seen['sum_named'] = named
+        return sum(map(sum, named.values()))
+
+    @agent.tool_plain
+    async def tally(lines: list[Line], label: str) -> int:
+        seen['tally'] = [(line.image.media_type, line.nums) for line in lines], label
+        return len(lines)
+
+    async def run_agent_impl(ctx: TaskContext) -> str:
+        del ctx
+        return (await agent.run('sum the numbers')).output
+
+    run_agent = runtime.task(run_agent_impl)
+    pending = run_agent.func(RecordingTaskContext())
+    assert inspect.isawaitable(pending)
+
+    assert await pending == 'sum_nums: success, sum_batch: success, sum_named: success, tally: success'
+    assert seen == {
+        'sum_nums': [1, 2],
+        'sum_batch': [3, 4],
+        'sum_named': {'a': [5], 'b': [6]},
+        'tally': ([('image/png', [7]), ('image/gif', None)], 'images'),
+    }
 
 
 class Venue(TypedDict):
@@ -827,3 +930,28 @@ async def test_function_tool_argument_shapes_cross_the_json_boundary() -> None:
 
     carried_raw = {name: 'raw_tool_args' in payload for name, payload in context.call_tool_payloads.items()}
     check_shapes('render', RECEIVED, in_process, carried_raw)
+
+
+def test_model_request_transport_carries_the_attempt() -> None:
+    """The child task gets the attempt at the request step, which its stream events record as their origin's.
+
+    Not a VCR test: the claim is about the attempt crossing the Render payload boundary, which involves no provider
+    request.
+    """
+    from pydantic_ai.durable_exec import ModelRequestParams
+    from pydantic_ai.messages import ModelRequest
+    from pydantic_ai.models import ModelRequestParameters
+
+    agent = Agent(TestModel(), name='attempt-transport', capabilities=[RenderWorkflows(Workflows())])
+    runtime = RenderWorkflows.from_agent(agent)
+    assert runtime is not None
+    transport = runtime.get_durable_operation_backend().parameter_transports.model_request(ModelResponse)
+    params = ModelRequestParams(
+        None,
+        messages=[ModelRequest.user_text_prompt('hi')],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        run_context=RunContext(deps=None, model=TestModel(), usage=RunUsage(), run_id='run', run_step=1),
+        attempt=3,
+    )
+    assert transport.load(transport.dump(params), runtime=None).attempt == 3

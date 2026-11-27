@@ -27,6 +27,7 @@ from pydantic_ai.durable_exec import (
     raw_tool_args_for_unit,
     revalidate_function_call,
 )
+from pydantic_ai.durable_exec._toolset import dump_json_function_args
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -144,8 +145,9 @@ def function_transport(
     def dump(params: ToolsetCallToolParams) -> _Call:
         tool = params.tool
         assert tool is not None
+        json_args = dump_json_function_args(toolset, tool, params.tool_args, by_alias=True, round_trip=True)
         # What the activity loads: `_Transport.dump` writes this again unchanged, as it is JSON already.
-        tool_args = _FUNCTION_TOOL_ARGS.dump_python(params.tool_args, mode='json', by_alias=True, round_trip=True)
+        tool_args = _FUNCTION_TOOL_ARGS.dump_python(json_args, mode='json', by_alias=True, round_trip=True)
         return _Call(
             name=params.name,
             tool_args=tool_args,
@@ -235,6 +237,7 @@ class _Request:
     context: ContextSnapshot
     streaming: bool = False
     instructions: str | None = None
+    attempt: int = 1
 
 
 _REQUEST = TypeAdapter(_Request)
@@ -249,6 +252,7 @@ def request_transport(restore: RestoreContext) -> _Transport[ModelRequestParams,
             model_settings=dict(params.model_settings) if params.model_settings is not None else None,
             model_request_parameters=params.model_request_parameters,
             context=ContextSnapshot.capture(params.run_context),
+            attempt=params.attempt,
         ),
         lambda wire: ModelRequestParams(
             wire.model_id,
@@ -256,6 +260,7 @@ def request_transport(restore: RestoreContext) -> _Transport[ModelRequestParams,
             model_settings=cast(ModelSettings | None, wire.model_settings),
             model_request_parameters=wire.model_request_parameters,
             run_context=restore(wire.context),
+            attempt=wire.attempt,
         ),
     )
 

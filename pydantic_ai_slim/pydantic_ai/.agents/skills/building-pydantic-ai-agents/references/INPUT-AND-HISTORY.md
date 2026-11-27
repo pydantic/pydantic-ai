@@ -29,7 +29,7 @@ from pydantic_ai.capabilities import FileUnderstanding
 
 agent = Agent(
     'openai:gpt-5.2',
-    capabilities=[FileUnderstanding(fallback_subagent_model='google:gemini-3-flash-preview')],
+    capabilities=[FileUnderstanding(fallback_subagent_model='google:gemini-4-hydrogen')],
 )
 result = agent.run_sync(['Summarize this call.', AudioUrl(url='https://example.com/call.mp3')])
 ```

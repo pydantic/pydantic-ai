@@ -414,7 +414,7 @@ class ArgShape:
     in_process: bool = True
     """Whether the tool receives what it does without a durable engine; otherwise the dump's losses remain."""
     raw_on_azure: bool | None = None
-    """`raw` on Azure Durable Task, whose dump keeps computed fields and `Json` values in models, when it differs."""
+    """`raw` on Azure Durable Task, whose dump leaves computed fields out, when it differs."""
     hook: Callable[[ValidatedToolArgs], ValidatedToolArgs] | None = None
     """An `after_tool_validate` hook for the call."""
     hook_value: str | None = None
@@ -442,8 +442,6 @@ SHAPES = [
     ArgShape(validate_by_name_only, {'loc': {'city': 'Paris'}}, raw=True),
     ArgShape(union_member, {'loc': CITY}, raw=True),
     ArgShape(secrets, {'token': SECRET, 'creds': {'token': SECRET}}, raw=True),
-    ArgShape(json_top_level, {'nums': '[1, 2]'}, raw=True),
-    ArgShape(json_nested, {'holder': {'nums': '[1, 2]'}}, raw=True, raw_on_azure=False),
     ArgShape(computed_field_forbidden, {'counted': {'qty': 2}}, raw=True, raw_on_azure=False),
     ArgShape(field_serializer_changes_value, {'shouted': {'word': 'hi'}}, raw=True),
     ArgShape(excluded_field, {'h': {'keep': 1, 'hidden': 9}}, raw=True),
@@ -463,6 +461,9 @@ SHAPES = [
     ArgShape(aliased_model, {'loc': CITY, 'n': 1}, raw=False),
     ArgShape(top_level_alias, {'guestName': 'Ada', 'n': 1}, raw=False),
     ArgShape(no_arguments, None, raw=False),
+    # Each engine dumps a `Json` value as a JSON string, which validates back.
+    ArgShape(json_top_level, {'nums': '[1, 2]'}, raw=False),
+    ArgShape(json_nested, {'holder': {'nums': '[1, 2]'}}, raw=False),
     # Validation runs user code, so the call crosses as before: the tool gets the masked secret.
     ArgShape(field_validator_runs, {'user': {'email': 'A@B.C'}, 'token': SECRET}, raw=False, in_process=False),
     ArgShape(model_post_init_runs, {'p': {'n': 1}, 'token': SECRET}, raw=False, in_process=False),

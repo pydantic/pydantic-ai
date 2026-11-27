@@ -46,7 +46,7 @@ from pydantic_ai.durable_exec import (
     raw_tool_args_for_unit,
     revalidate_function_call,
 )
-from pydantic_ai.durable_exec._toolset import opts_out_of_durable_unit
+from pydantic_ai.durable_exec._toolset import dump_json_function_args, opts_out_of_durable_unit
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import CapabilityEvent, CustomEvent, ModelMessage, ModelResponse
 from pydantic_ai.models import Model, ModelRequestContext, ModelRequestParameters
@@ -84,6 +84,7 @@ __all__ = (
     'WorkspaceCallParams',
     'WorkspaceCallResult',
     'capability_operation_result_type',
+    'dump_json_function_args',
     'dump_json_object',
     'dump_operation_params',
     'function_tool_original_name',
