@@ -447,7 +447,11 @@ As a last resort, if the bytes genuinely need to sit in the workflow history, ra
 
 [`Agent.run_stream()`][pydantic_ai.agent.Agent.run_stream], [`Agent.run_stream_events()`][pydantic_ai.agent.Agent.run_stream_events], and [`Agent.iter()`][pydantic_ai.agent.Agent.iter] work inside a Temporal workflow, but their events are buffered rather than delivered in real time. The model stream runs inside the durable activity, and once the activity completes the workflow replays its final response: each part arrives as one [`PartStartEvent`][pydantic_ai.messages.PartStartEvent] carrying its full content, rather than as the deltas the model streamed, so the deltas aren't recorded in the activity's result.
 
-For handlers with I/O side effects, pass `event_stream_handler=` to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. Model events are delivered live inside each model-request activity, while each tool event is delivered in its own event-handler activity. As with any Temporal activity, a handler may run more than once if an activity retries, so keep its side effects idempotent.
+For handlers with I/O side effects, pass `event_stream_handler=` to [`TemporalDurability`][pydantic_ai.durable_exec.temporal.TemporalDurability]. Model events are delivered live inside each model-request activity. Tool call events that are ready together cross the durable boundary in one event-handler activity, and every other event, including each tool result, crosses in an activity of its own. The handler is still invoked once for each event, in order, and tools keep running while call events are being handled. Other durable execution engines deliver each tool event in its own durable unit. As with any Temporal activity, a handler may run more than once if an activity retries, so keep its side effects idempotent.
+
+!!! warning "Compatibility impact: rolling upgrades with an event stream handler"
+
+    Batched event-handler activities are recorded with the `pydantic-ai-batched-event-dispatch` patch marker. An upgraded worker replaying a history from before the upgrade finds no marker and keeps the original per-event activity sequence, so in-flight workflows replay as before. A worker on an older version can't decode a batched event-handler activity or replay a history that carries the marker, so upgrade every worker before new workflows start.
 
 !!! warning "Compatibility impact: upgrading across v2.60.0 or v2.62.0 with an event stream handler"
 

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import copy
 import uuid
 from abc import abstractmethod
@@ -21,7 +22,7 @@ from contextlib import (
     nullcontext,
     suppress,
 )
-from contextvars import ContextVar
+from contextvars import ContextVar, copy_context
 from dataclasses import replace
 from functools import partial
 from typing import Any, ClassVar, Literal, NamedTuple, Protocol, Self, TypeVar, cast, runtime_checkable
@@ -57,6 +58,7 @@ from pydantic_ai.external_events import _refuse_unsupported_external_events  # p
 from pydantic_ai.messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     AgentStreamEvent,
+    FunctionToolCallEvent,
     ModelRequest,
     ModelResponse,
     ModelResponseStreamEvent,
@@ -123,6 +125,8 @@ from ._operation import (
     ToolsetGetToolsParams,
     ToolsetKind,
     ToolsetValidateToolArgumentsId,
+    event_stream_handler_params,
+    handled_events,
 )
 from ._operation_backend import (
     BoundDurableOperation,
@@ -279,9 +283,176 @@ class _CompactMessagesCacheIdentity(CacheIdentity[ModelCompactMessagesParams]):
         return (params.model_id, params.request_context, params.instructions, params.run_context)
 
 
+_PENDING_EVENT_DISPATCH: ContextVar[_BatchedEventDispatch | None] = ContextVar(
+    'pydantic_ai_pending_event_dispatch', default=None
+)
+"""The batched event dispatch whose pulled events a model request in this task waits for."""
+
+
+async def _await_pending_event_dispatch(run_id: str | None) -> None:
+    """Let every workflow-side event pulled before a model request reach the handler before that request does.
+
+    A model-request unit hands its events to the handler live, so under batched dispatch it would otherwise start
+    while an earlier event's handler unit is still in flight, and the handler would see the events out of order.
+    Raises when one of those earlier units failed, so the request doesn't run after events the handler never saw.
+    Only a request of the run whose stream is dispatched waits: tasks the stream starts, like tools, inherit the
+    dispatch, and an agent such a tool delegates to must not wait for the delegating run's events.
+    """
+    if (dispatch := _PENDING_EVENT_DISPATCH.get()) is None or dispatch.run_id != run_id:
+        return
+    await dispatch.drain()
+    if (error := dispatch.dispatch_error) is not None:
+        raise RuntimeError(
+            'The event stream handler failed for an earlier event, so this model request was not started.'
+        ) from error
+
+
+_DispatchItem = tuple[AgentStreamEvent, 'asyncio.Future[None]']
+
+
+class _BatchedEventDispatch:
+    """Hands a node's workflow-side events to the handler in bursts, while the node's stream runs ahead.
+
+    The producer pulls the stream, which is what runs the node's tools, so tools start while earlier events are
+    still being dispatched. The dispatcher sends the tool call events that became ready during the previous dispatch
+    as one durable unit, and every other event in a unit of its own (see `_take_burst`). Events reach the caller in
+    stream order, each dispatched one only once its unit recorded it.
+    Burst boundaries follow task scheduling: see `BaseDurabilityCapability._batch_event_stream_dispatch`.
+    """
+
+    def __init__(
+        self,
+        dispatch_events: Callable[[list[AgentStreamEvent]], Awaitable[None]],
+        stream: AsyncIterable[AgentStreamEvent],
+        run_id: str | None,
+    ) -> None:
+        self._dispatch_events = dispatch_events
+        self.run_id = run_id
+        """The run whose model requests wait for this dispatch; see `_await_pending_event_dispatch`."""
+        self._stream = stream
+        self._ready: list[_DispatchItem] = []
+        self._available = asyncio.Event()  # noqa: TID251  (runs on Temporal's deterministic workflow event loop)
+        self._output: asyncio.Queue[_DispatchItem | BaseException | None] = asyncio.Queue()  # noqa: TID251  (runs on Temporal's deterministic workflow event loop)
+        self._producer_done = False
+        self.dispatch_error: BaseException | None = None
+        """The error a burst's handler unit raised, once one has failed; no later model request starts."""
+        self._last_dispatched: asyncio.Future[None] | None = None
+
+    async def events(self) -> AsyncIterator[AgentStreamEvent]:
+        # The producer pulls the stream, so the model requests the stream runs happen in its task: give that task
+        # this dispatch so they wait for the events pulled before them (see `_await_pending_event_dispatch`).
+        producer_context = copy_context()
+        producer_context.run(_PENDING_EVENT_DISPATCH.set, self)
+        producer = asyncio.create_task(self._produce(), context=producer_context)
+        dispatcher = asyncio.create_task(self._dispatch())
+        try:
+            while item := await self._output.get():
+                if isinstance(item, BaseException):
+                    raise item
+                event, acknowledged = item
+                if isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                    # Acknowledge only once the caller has consumed it, releasing the producer to
+                    # pull the next event off the model stream. See `_produce`.
+                    yield event
+                    acknowledged.set_result(None)
+                    continue
+                # A dispatched event is only safe to hand on once its handler operation has
+                # recorded it, so the burst's future gates the yield rather than following it.
+                await acknowledged
+                yield event
+            await producer
+            await dispatcher
+        finally:
+            producer.cancel()
+            dispatcher.cancel()
+            await asyncio.gather(producer, dispatcher, return_exceptions=True)
+            await aclose_if_supported(self._stream)
+
+    async def drain(self) -> None:
+        """Wait until every event pulled so far has been dispatched, or its burst has failed (see `dispatch_error`)."""
+        pending = self._last_dispatched
+        if pending is None:
+            return
+        if not pending.done():
+            try:
+                # Shielded so that cancelling the waiting model request doesn't cancel the dispatch it waits for.
+                await asyncio.shield(pending)
+            except BaseException:
+                # `pending` failed, or was cancelled, which a failed burst does to the events after its first:
+                # `dispatch_error` says which. Only the caller's own cancellation propagates as is.
+                task = asyncio.current_task()
+                if task is not None and task.cancelling():
+                    raise
+
+    async def _produce(self) -> None:
+        try:
+            async for event in self._stream:
+                acknowledged = asyncio.get_running_loop().create_future()
+                self._output.put_nowait((event, acknowledged))
+                if isinstance(event, MODEL_RESPONSE_STREAM_EVENT_TYPES):
+                    # Replayed model events go to no handler, so nothing else will resolve their
+                    # future: the consumer does, after yielding. Waiting for it here is what keeps
+                    # the model stream's backpressure intact. Running ahead instead advances the
+                    # shared stream accumulator underneath events the caller has not seen yet, so
+                    # earlier events observe accumulated text and later deltas apply twice.
+                    await acknowledged
+                    continue
+                self._ready.append((event, acknowledged))
+                self._last_dispatched = acknowledged
+                self._available.set()
+        except BaseException as exc:
+            self._output.put_nowait(exc)
+        finally:
+            self._producer_done = True
+            self._available.set()
+            self._output.put_nowait(None)
+
+    async def _dispatch(self) -> None:
+        while True:
+            await self._available.wait()
+            self._available.clear()
+            if self._ready:
+                await self._dispatch_ready()
+            if self._ready:
+                self._available.set()
+            elif self._producer_done:
+                return
+
+    def _take_burst(self) -> list[_DispatchItem]:
+        """The ready events one unit dispatches: a run of tool call events, or any other event on its own.
+
+        The calls in one node's stream all come from one model response, which already fit in a payload, so a burst
+        of them can't outgrow what one event's unit carried before batching, while results of tools run in parallel
+        could. The split depends only on the events' types, so an upgrade that changes how an event serializes
+        can't move it and change the number of units an in-flight run schedules.
+        """
+        count = 1
+        if isinstance(self._ready[0][0], FunctionToolCallEvent):
+            while count < len(self._ready) and isinstance(self._ready[count][0], FunctionToolCallEvent):
+                count += 1
+        burst, self._ready = self._ready[:count], self._ready[count:]
+        return burst
+
+    async def _dispatch_ready(self) -> None:
+        burst = self._take_burst()
+        try:
+            await self._dispatch_events([event for event, _ in burst])
+        except BaseException as exc:
+            self.dispatch_error = exc
+            burst[0][1].set_exception(exc)
+            for _, acknowledged in burst[1:]:
+                acknowledged.cancel()
+            raise
+        for _, acknowledged in burst:
+            acknowledged.set_result(None)
+
+
 class _EventStreamHandlerCacheIdentity(CacheIdentity[EventStreamHandlerParams]):
     def project(self, params: EventStreamHandlerParams) -> tuple[object, ...]:
-        return (params.event,)
+        # A one-event unit keeps the single-event identity, so engines that dispatch per event keep the cache keys
+        # their recorded runs were written with.
+        events = handled_events(params)
+        return (params.event,) if len(events) == 1 else (events,)
 
 
 class _GetToolsCacheIdentity(CacheIdentity[ToolsetGetToolsParams]):
@@ -995,6 +1166,10 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         elif event_stream_handler is not None:
             dispatch_events = True
 
+        if dispatch_events and self._batch_event_stream_dispatch:
+            stream = self._batched_event_stream(ctx, stream)
+            dispatch_events = False
+
         try:
             async for event in stream:
                 # `ModelResponseStreamEvent`s were already delivered live to the handler inside the
@@ -1005,6 +1180,23 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
                 yield event
         finally:
             await aclose_if_supported(stream)
+
+    @property
+    def _batch_event_stream_dispatch(self) -> bool:
+        """Whether this durable run dispatches workflow-side events in bursts, one durable unit per burst.
+
+        A burst is the run of `FunctionToolCallEvent`s that became ready while the previous unit was in flight, so
+        its boundaries follow task scheduling; every other event still gets a unit of its own. Only an engine whose workflow code replays with the same scheduling, such as
+        Temporal's deterministic workflow event loop, may enable this: on any other engine a replay can form
+        different bursts and so a different sequence of durable units. Every other engine dispatches one unit per
+        event, in stream order.
+        """
+        return False
+
+    def _batched_event_stream(
+        self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[AgentStreamEvent]
+    ) -> AsyncIterator[AgentStreamEvent]:
+        return _BatchedEventDispatch(partial(self._dispatch_event_stream_events, ctx), stream, ctx.run_id).events()
 
     @property
     @abstractmethod
@@ -1822,6 +2014,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         )
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
+            await _await_pending_event_dispatch(ctx.run_id)
             return await operations.request(
                 ModelRequestParams(
                     model_id,
@@ -1833,6 +2026,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             )
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedModelRequestResult:
+            await _await_pending_event_dispatch(ctx.run_id)
             return await operations.request_stream(
                 ModelRequestParams(
                     model_id,
@@ -2144,7 +2338,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         return None
 
     async def _dispatch_event_stream_event(self, ctx: RunContext[AgentDepsT], event: AgentStreamEvent) -> None:
-        """Base-owned: deliver one workflow-side event inside a durable unit.
+        """Base-owned compatibility path: deliver one workflow-side event inside a durable unit.
 
         Sufficient for SEQUENCE-keyed engines (Restate/Lambda/Absurd/DBOS/Temporal), where the
         durable unit's identity is its encounter order, so content-identical events map to distinct
@@ -2153,10 +2347,14 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         (#5477 requirement 4). That override is the one genuine behavioral difference the hash-keyed
         family forces.
         """
+        await self._dispatch_event_stream_events(ctx, [event])
+
+    async def _dispatch_event_stream_events(self, ctx: RunContext[AgentDepsT], events: list[AgentStreamEvent]) -> None:
+        """Deliver a burst of workflow-side events inside one durable unit."""
         bound_operation = self._bound_event_operation or self._bind_event_operation(
             self.get_durable_operation_backend()
         )
-        await bound_operation(EventStreamHandlerParams(event, run_context=ctx))
+        await bound_operation(event_stream_handler_params(events, ctx))
 
     def _bind_event_operation(
         self, backend: DurableOperationBackend[Any]
@@ -2175,7 +2373,8 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         handler = self._effective_event_stream_handler()
         assert handler is not None
         with self._durable_run_context_scope(params.run_context) as durable_ctx:
-            await handler(durable_ctx, self._single_event_stream(params.event))
+            for event in handled_events(params):
+                await handler(durable_ctx, self._single_event_stream(event))
 
     @staticmethod
     async def _single_event_stream(

@@ -1,9 +1,10 @@
 from __future__ import annotations
 
+import asyncio
 import inspect
 import sys
-from collections.abc import AsyncIterable, Awaitable, Callable, Mapping, Sequence
-from dataclasses import dataclass, replace
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Mapping, Sequence
+from dataclasses import dataclass, fields, replace
 from typing import Any, Literal, assert_never, cast
 from unittest.mock import AsyncMock
 
@@ -17,20 +18,28 @@ from pydantic_ai import (
     AgentRunResult,
     AgentStreamEvent,
     FinalResultEvent,
+    FunctionToolCallEvent,
+    FunctionToolResultEvent,
     FunctionToolset,
     ModelResponse,
+    PartDeltaEvent,
+    PartStartEvent,
     RunContext,
     TextPart,
+    TextPartDelta,
     Tool,
     ToolsetTool,
 )
-from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools
+from pydantic_ai.capabilities import AbstractCapability, Capability, PrepareTools, ProcessEventStream
 from pydantic_ai.durable_exec import (
     DurabilityEngineSpec,
     JournalCallableOperationBackend,
     RoleBasedOperationConfig,
 )
-from pydantic_ai.durable_exec._base import BaseDurabilityCapability
+from pydantic_ai.durable_exec._base import (
+    BaseDurabilityCapability,
+    _await_pending_event_dispatch,  # pyright: ignore[reportPrivateUsage]
+)
 from pydantic_ai.durable_exec._codec import JSON_CODEC
 from pydantic_ai.durable_exec._operation import (
     CacheIdentity,
@@ -38,6 +47,7 @@ from pydantic_ai.durable_exec._operation import (
     DurableOperation,
     DurableOperationId,
     EventStreamHandlerId,
+    EventStreamHandlerParams,
     IdentityParameterTransport,
     ModelCancelSuspendedResponseId,
     ModelCancelSuspendedResponseParams,
@@ -53,6 +63,8 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
     TypedResultCodec,
+    event_stream_handler_params,
+    handled_events,
 )
 from pydantic_ai.durable_exec._operation_backend import (
     BoundDurableOperation,
@@ -98,10 +110,7 @@ from pydantic_ai.messages import (
     ModelMessage,
     ModelRequest,
     ModelResponseStreamEvent,
-    PartDeltaEvent,
     PartEndEvent,
-    PartStartEvent,
-    TextPartDelta,
     ToolCallPart,
     ToolReturn,
     ToolReturnPart,
@@ -236,6 +245,570 @@ class JournalDurability(BaseDurabilityCapability[Any]):
 
     def get_durable_operation_backend(self) -> DurableOperationBackend[Any]:
         return _JournalBackend(self)
+
+
+def _tool_events(count: int) -> list[AgentStreamEvent]:
+    events: list[AgentStreamEvent] = []
+    for index in range(count):
+        tool_call_id = str(index)
+        events.append(FunctionToolCallEvent(ToolCallPart('tool', {}, tool_call_id)))
+        events.append(FunctionToolResultEvent(ToolReturnPart('tool', index, tool_call_id)))
+    return events
+
+
+def _call_events(count: int, *, args_size: int = 0) -> list[AgentStreamEvent]:
+    return [
+        FunctionToolCallEvent(ToolCallPart('tool', {'data': 'x' * args_size}, str(index))) for index in range(count)
+    ]
+
+
+def _result_events(count: int, *, size: int = 0) -> list[AgentStreamEvent]:
+    return [FunctionToolResultEvent(ToolReturnPart('tool', 'x' * size, str(index))) for index in range(count)]
+
+
+class BatchingJournalDurability(JournalDurability):
+    """A journal engine that opts into burst dispatch, as Temporal does."""
+
+    @property
+    def _batch_event_stream_dispatch(self) -> bool:
+        return True
+
+
+async def test_event_stream_dispatch_defaults_to_one_unit_per_event() -> None:
+    """Without the opt-in, an engine dispatches each event in its own unit, in stream order, as before batching.
+
+    Cassettes record model requests, not how workflow-side events group into durable units, so a journal checks it.
+    """
+    handled: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        handled.extend([event async for event in stream])
+
+    durability = JournalDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='per-event-events', capabilities=[durability])
+    bound = JournalDurability.from_agent(agent)
+    assert bound is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
+    events = _tool_events(2)
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        for event in events:
+            yield event
+
+    actual = [event async for event in bound.wrap_run_event_stream(ctx, stream=stream())]
+
+    assert actual == handled == events
+    event_calls = [call for call in bound.calls if call[0].endswith('__event_stream_handler')]
+    assert [call[1] for call in event_calls] == [(event,) for event in events]
+
+
+def test_event_stream_handler_params_keeps_its_single_event_field() -> None:
+    """Custom backends read `params.event`, as before batching: the public params carry one event.
+
+    This is the shape of a public type, which no recorded request exercises.
+    """
+    assert [field.name for field in fields(EventStreamHandlerParams)] == ['event', 'run_context']
+
+
+async def test_a_backend_that_dispatches_per_event_receives_the_public_single_event_params() -> None:
+    """Batching is Temporal's alone, so another engine's event-handler operation gets one public params per event.
+
+    What a backend receives per durable unit is internal, so a journal backend checks it; no cassette records it.
+    """
+    received: list[EventStreamHandlerParams] = []
+
+    class RecordingBackend(_JournalBackend):
+        def bind(self, operation: DurableOperation[Any, Any, Any]) -> Any:
+            if isinstance(operation.operation_id, EventStreamHandlerId):
+                handler = operation.handler
+
+                async def recording(params: Any) -> Any:
+                    received.append(params)
+                    return await handler(params)
+
+                operation = replace(operation, handler=recording)
+            return super().bind(operation)
+
+    class RecordingJournalDurability(JournalDurability):
+        def get_durable_operation_backend(self) -> DurableOperationBackend[Any]:
+            return RecordingBackend(self)
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    durability = RecordingJournalDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='per-event-public-params', capabilities=[durability])
+    bound = RecordingJournalDurability.from_agent(agent)
+    assert bound is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
+    events = _tool_events(2)
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        for event in events:
+            yield event
+
+    assert [event async for event in bound.wrap_run_event_stream(ctx, stream=stream())] == events
+    assert [type(params) for params in received] == [EventStreamHandlerParams] * len(events)
+    assert [params.event for params in received] == events
+
+
+async def test_event_stream_dispatch_batches_ready_burst_and_preserves_handler_calls() -> None:
+    """How events group into durable units is internal and recorded by no cassette, so a journal backend checks it."""
+    handled: list[AgentStreamEvent] = []
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        handled.extend([event async for event in stream])
+
+    durability = BatchingJournalDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='batched-events', capabilities=[durability])
+    bound = BatchingJournalDurability.from_agent(agent)
+    assert bound is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
+    calls, results = _call_events(3), _result_events(3)
+    events = [*calls, *results]
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        for event in events:
+            yield event
+
+    actual = [event async for event in bound.wrap_run_event_stream(ctx, stream=stream())]
+
+    assert actual == handled == events
+    event_calls = [call for call in bound.calls if call[0].endswith('__event_stream_handler')]
+    # The ready calls share one unit; each result goes in its own, as before batching.
+    assert [call[1] for call in event_calls] == [(calls,), *((result,) for result in results)]
+
+
+async def test_event_stream_dispatch_accumulates_while_dispatch_is_in_flight() -> None:
+    """Call events yielded while a unit is in flight join the next one; only a blocked dispatch can show that."""
+    first_dispatch_started = asyncio.Event()
+    finish_first_dispatch = asyncio.Event()
+    batches: list[list[AgentStreamEvent]] = []
+
+    class BlockingJournalDurability(BatchingJournalDurability):
+        async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
+            batches.append(events)
+            if len(batches) == 1:
+                first_dispatch_started.set()
+                await finish_first_dispatch.wait()
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass
+
+    durability = BlockingJournalDurability(event_stream_handler=handler)
+    events = _call_events(4)
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        yield events[0]
+        await first_dispatch_started.wait()
+        yield events[1]
+        yield events[2]
+        finish_first_dispatch.set()
+        yield events[3]
+
+    assert [event async for event in durability.wrap_run_event_stream(ctx, stream=stream())] == events
+    assert batches == [[events[0]], events[1:]]
+
+
+async def test_event_stream_dispatch_ignores_spurious_wake(monkeypatch: pytest.MonkeyPatch) -> None:
+    """A wake with nothing ready must not dispatch an empty unit; no real run produces a spurious wake on demand."""
+    event_type = asyncio.Event
+
+    class SpuriousEvent(event_type):
+        first_wait = True
+
+        async def wait(self) -> Literal[True]:
+            if self.first_wait:
+                self.first_wait = False
+                return True
+            return await super().wait()
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    durability = BatchingJournalDurability(event_stream_handler=handler)
+    event = _tool_events(1)[0]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        await asyncio.sleep(0)
+        yield event
+
+    with monkeypatch.context() as patch:
+        patch.setattr(asyncio, 'Event', SpuriousEvent)
+        assert [item async for item in durability.wrap_run_event_stream(ctx, stream=stream())] == [event]
+
+
+async def test_event_stream_dispatch_propagates_handler_failure_and_closes_stream() -> None:
+    """A handler failure reaches the caller and closes the node stream without leaking the dispatcher task.
+
+    A failing handler and the dispatcher task it runs in are local, so no cassette can produce or observe them.
+    """
+    stream_closed = False
+    handler_error = RuntimeError('handler failed')
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        raise handler_error
+
+    durability = BatchingJournalDurability(event_stream_handler=handler)
+    events = _tool_events(2)
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    tasks_before = asyncio.all_tasks()
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        nonlocal stream_closed
+        try:
+            for event in events:
+                yield event
+        finally:
+            stream_closed = True
+
+    with pytest.raises(RuntimeError, match='handler failed') as exc_info:
+        async for _ in durability.wrap_run_event_stream(ctx, stream=stream()):
+            pass
+
+    await asyncio.sleep(0)
+    assert exc_info.value is handler_error
+    assert stream_closed
+    assert asyncio.all_tasks() == tasks_before
+
+
+async def test_event_stream_dispatch_propagates_producer_failure_and_closes_stream() -> None:
+    """A node stream failure reaches the caller after the events before it, with the stream closed.
+
+    A node stream that raises mid-way is constructed here, since no recorded model response fails that way.
+    """
+    stream_closed = False
+    producer_error = RuntimeError('producer failed')
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        async for _ in stream:
+            pass
+
+    durability = BatchingJournalDurability(event_stream_handler=handler)
+    event = _tool_events(1)[0]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        nonlocal stream_closed
+        try:
+            yield event
+            raise producer_error
+        finally:
+            stream_closed = True
+
+    received: list[AgentStreamEvent] = []
+    with pytest.raises(RuntimeError, match='producer failed') as exc_info:
+        async for item in durability.wrap_run_event_stream(ctx, stream=stream()):
+            received.append(item)
+
+    assert exc_info.value is producer_error
+    assert received == [event]
+    assert stream_closed
+
+
+async def test_event_stream_batching_preserves_model_delta_backpressure() -> None:
+    """The producer must not run ahead of the consumer on model deltas; that is task scheduling no cassette records."""
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass
+
+    durability = BatchingJournalDurability(event_stream_handler=handler)
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+    part = TextPart('hello ')
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        yield PartStartEvent(index=0, part=part)
+        for delta in ('world', '!'):
+            yield PartDeltaEvent(index=0, delta=TextPartDelta(delta))
+            part.content += delta
+            if delta == 'world':
+                yield _tool_events(1)[0]
+
+    observed_deltas: list[str] = []
+
+    async def observe(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        # Yielding to the scheduler after each event gives a producer without backpressure the chance to run ahead.
+        async for event in stream:  # real-wait: the scheduler yield is what this test proves backpressure against
+            await asyncio.sleep(0)
+            if isinstance(event, PartDeltaEvent):
+                assert isinstance(event.delta, TextPartDelta)
+                observed_deltas.append(event.delta.content_delta)
+
+    batched_stream = durability.wrap_run_event_stream(ctx, stream=stream())
+    observed_stream = ProcessEventStream(observe).wrap_run_event_stream(ctx, stream=batched_stream)
+    chunks: list[str] = []
+    deltas: list[str] = []
+    async for event in observed_stream:
+        if isinstance(event, PartStartEvent):
+            assert isinstance(event.part, TextPart)
+            chunks.append(event.part.content)
+        elif isinstance(event, PartDeltaEvent):
+            assert isinstance(event.delta, TextPartDelta)
+            deltas.append(event.delta.content_delta)
+            chunks.append(chunks[-1] + event.delta.content_delta)
+
+    assert observed_deltas == deltas == ['world', '!']
+    assert chunks == ['hello ', 'hello world', 'hello world!']
+
+
+async def test_event_stream_dispatch_does_not_block_embedded_tool_execution() -> None:
+    """Tools run while a call event is being dispatched; the interleaving is only observable with a blocked dispatch."""
+    dispatch_started = asyncio.Event()
+    finish_dispatch = asyncio.Event()
+    ordering: list[str] = []
+
+    class BlockingJournalDurability(BatchingJournalDurability):
+        async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
+            ordering.append('dispatch started')
+            dispatch_started.set()
+            await finish_dispatch.wait()
+            ordering.append('dispatch finished')
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass
+
+    durability = BlockingJournalDurability(event_stream_handler=handler)
+    call, result = _tool_events(1)
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        yield call
+        await dispatch_started.wait()
+        ordering.append('tool started')
+        finish_dispatch.set()
+        yield result
+
+    assert [event async for event in durability.wrap_run_event_stream(ctx, stream=stream())] == [call, result]
+    assert ordering == [
+        'dispatch started',
+        'tool started',
+        'dispatch finished',
+        'dispatch started',
+        'dispatch finished',
+    ]
+
+
+async def test_model_request_waits_for_events_pulled_before_it() -> None:
+    """A model request in the batched stream starts only once the events pulled before it reached the handler.
+
+    The ordering is between local tasks, which no cassette records, so the test drives it directly.
+    """
+    finish_dispatch = asyncio.Event()
+    ordering: list[str] = []
+
+    class BlockingJournalDurability(BatchingJournalDurability):
+        async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
+            ordering.append('dispatch started')
+            await finish_dispatch.wait()
+            ordering.append('dispatch finished')
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass  # pragma: no cover
+
+    durability = BlockingJournalDurability(event_stream_handler=handler)
+    event = _tool_events(1)[0]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        # Nothing pulled yet, so there is nothing to wait for.
+        await _await_pending_event_dispatch(ctx.run_id)
+        yield event
+        await asyncio.sleep(0)
+        ordering.append('model request waiting')
+        finish_dispatch.set()
+        await _await_pending_event_dispatch(ctx.run_id)
+        ordering.append('model request started')
+        # The pulled event is recorded by now.
+        await _await_pending_event_dispatch(ctx.run_id)
+
+    assert [item async for item in durability.wrap_run_event_stream(ctx, stream=stream())] == [event]
+    assert ordering == ['dispatch started', 'model request waiting', 'dispatch finished', 'model request started']
+
+
+async def test_a_delegated_run_does_not_wait_for_the_delegating_run_s_dispatch() -> None:
+    """A tool the stream starts inherits the dispatch, but a model request of the agent it delegates to starts at once.
+
+    The wait is a local task dependency between runs, which no cassette records, so the test drives it directly.
+    """
+    dispatch_started = asyncio.Event()
+    finish_dispatch = asyncio.Event()
+    ordering: list[str] = []
+
+    class BlockingJournalDurability(BatchingJournalDurability):
+        async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
+            dispatch_started.set()
+            await finish_dispatch.wait()
+            ordering.append('delegating run dispatch finished')
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass  # pragma: no cover
+
+    durability = BlockingJournalDurability(event_stream_handler=handler)
+    event = _tool_events(1)[0]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='delegating')
+
+    async def delegated_model_request() -> None:
+        await _await_pending_event_dispatch('delegate')
+        ordering.append('delegate model request started')
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        yield event
+        await dispatch_started.wait()
+        # Like a tool task the stream starts, the delegate's task inherits the dispatch through its context.
+        await asyncio.create_task(delegated_model_request())
+        finish_dispatch.set()
+
+    assert [item async for item in durability.wrap_run_event_stream(ctx, stream=stream())] == [event]
+    assert ordering == ['delegate model request started', 'delegating run dispatch finished']
+
+
+@pytest.mark.parametrize('payload_size', [10, 1_000_000], ids=['small', 'large'])
+async def test_how_events_split_into_units_does_not_depend_on_their_size(payload_size: int) -> None:
+    """Units split by event type only, so a change in how events serialize can't change an in-flight run's units.
+
+    Unit boundaries are internal and need payloads of chosen sizes, which a recording can't vary.
+    """
+    batches: list[list[AgentStreamEvent]] = []
+
+    class RecordingJournalDurability(BatchingJournalDurability):
+        async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
+            batches.append(events)
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass  # pragma: no cover
+
+    durability = RecordingJournalDurability(event_stream_handler=handler)
+    events = [*_call_events(3, args_size=payload_size), *_result_events(3, size=payload_size)]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        for event in events:
+            yield event
+
+    assert [event async for event in durability.wrap_run_event_stream(ctx, stream=stream())] == events
+    # Results of tools run in parallel could add up past a payload limit, so each goes alone; the calls come from
+    # one model response, which already fit in a payload.
+    assert [len(batch) for batch in batches] == [3, 1, 1, 1]
+
+
+@pytest.mark.parametrize('count', [1, 2], ids=['failed-event', 'event-after-the-failed-one'])
+async def test_model_request_after_a_failed_dispatch_does_not_start(count: int) -> None:
+    """A model request waiting on a failed burst raises a plain error chained from the handler's, and doesn't start.
+
+    A failed dispatch is a local handler failure, which no cassette can produce, so the test raises it directly.
+    """
+    handler_error = RuntimeError('handler failed')
+    waiting = asyncio.Event()
+    waiters: list[asyncio.Task[None]] = []
+
+    class FailingJournalDurability(BatchingJournalDurability):
+        async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
+            await waiting.wait()
+            raise handler_error
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass  # pragma: no cover
+
+    durability = FailingJournalDurability(event_stream_handler=handler)
+    events = [FunctionToolCallEvent(ToolCallPart('tool', {}, str(index))) for index in range(count)]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def wait_like_a_model_request() -> None:
+        waiting.set()
+        await _await_pending_event_dispatch(ctx.run_id)
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        for event in events:
+            yield event
+        # A task started here shares the pulling task's context, as a model request run inside a tool would.
+        waiters.append(asyncio.create_task(wait_like_a_model_request()))
+        await asyncio.Event().wait()
+
+    with pytest.raises(RuntimeError, match='handler failed'):
+        async for _ in durability.wrap_run_event_stream(ctx, stream=stream()):
+            pass  # pragma: no cover
+    (waiter,) = waiters
+    with pytest.raises(
+        RuntimeError, match='failed for an earlier event, so this model request was not started'
+    ) as raised:
+        await waiter
+    assert raised.value.__cause__ is handler_error
+
+
+async def test_model_request_wait_propagates_its_own_cancellation() -> None:
+    """Cancelling a model request that waits on a stuck dispatch cancels it rather than letting it resume.
+
+    Cancellation of a local wait is task scheduling, which no cassette records, so the test drives it directly.
+    """
+    dispatch_started = asyncio.Event()
+    waiting = asyncio.Event()
+    resumed = False
+
+    class StuckJournalDurability(BatchingJournalDurability):
+        async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
+            dispatch_started.set()
+            await asyncio.Event().wait()
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass  # pragma: no cover
+
+    durability = StuckJournalDurability(event_stream_handler=handler)
+    event = _tool_events(1)[0]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        nonlocal resumed
+        yield event
+        await dispatch_started.wait()
+        waiting.set()
+        await _await_pending_event_dispatch(ctx.run_id)
+        resumed = True  # pragma: no cover
+
+    async def consume() -> None:
+        async for _ in durability.wrap_run_event_stream(ctx, stream=stream()):
+            pass  # pragma: no cover
+
+    consumer = asyncio.create_task(consume())
+    await waiting.wait()
+    await asyncio.sleep(0)
+    consumer.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await consumer
+    assert not resumed
+
+
+async def test_event_stream_handler_operation_preserves_one_handler_call_per_event() -> None:
+    """A burst is one durable unit, but the handler is still called once per event; the unit count is internal."""
+    handled: list[AgentStreamEvent] = []
+    handler_calls = 0
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        nonlocal handler_calls
+        handler_calls += 1
+        handled.extend([event async for event in stream])
+
+    durability = BatchingJournalDurability(event_stream_handler=handler)
+    agent = Agent(TestModel(), name='burst-handler-calls', capabilities=[durability])
+    bound = BatchingJournalDurability.from_agent(agent)
+    assert bound is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
+    events = _call_events(2)
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        for event in events:
+            yield event
+
+    assert [event async for event in bound.wrap_run_event_stream(ctx, stream=stream())] == events
+
+    # The burst is one durable unit, but the handler still sees each event in its own call, as without batching.
+    event_calls = [call for call in bound.calls if call[0].endswith('__event_stream_handler')]
+    assert [call[1] for call in event_calls] == [(events,)]
+    assert handled == events
+    assert handler_calls == len(events)
 
 
 async def test_durability_forces_sequential_tools_inside_durable_context() -> None:
@@ -1073,6 +1646,33 @@ async def test_temporal_backend_labels_validation_activity(
     await bound(params)
 
     assert dispatched == [(registration, params, 'validate tool args: tools:guarded')]
+
+
+def test_temporal_event_transport_keeps_single_event_wire_and_writes_bursts_as_lists() -> None:
+    """Older histories carry single-event payloads, so the transport must still load them; no cassette sees the wire."""
+    pytest.importorskip('temporalio')
+    from pydantic_ai.durable_exec.temporal import TemporalDurability
+    from pydantic_ai.durable_exec.temporal._transports import (
+        _EventStreamHandlerTransport,
+    )
+
+    agent = Agent(TestModel(), name='event-wire-compat', capabilities=[TemporalDurability()])
+    durability = TemporalDurability.from_agent(agent)
+    assert durability is not None
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), agent=agent)
+    transport = _EventStreamHandlerTransport(durability)
+
+    single = _tool_events(1)[:1]
+    wire, deps = transport.dump(EventStreamHandlerParams(single[0], run_context=ctx))
+    assert wire.event == single[0]
+    loaded = transport.load((wire, deps), runtime=object())
+    assert type(loaded) is EventStreamHandlerParams
+    assert loaded.event == single[0]
+
+    burst = _tool_events(1)
+    wire, deps = transport.dump(event_stream_handler_params(burst, ctx))
+    assert wire.event == burst
+    assert handled_events(transport.load((wire, deps), runtime=object())) == burst
 
 
 def _exhaustive_identity(operation_id: DurableOperationId) -> str:

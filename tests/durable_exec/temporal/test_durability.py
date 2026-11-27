@@ -4782,12 +4782,14 @@ class CompletionOrderWorkflow:
         return (await _completion_order_agent.run(prompt)).output
 
 
-def _completion_order_event_key(data: bytes) -> tuple[str, str]:
-    event = json.loads(data)['event']
-    return event['event_kind'], event['part']['tool_call_id']
+def _completion_order_event_key(data: bytes) -> tuple[tuple[str, str], ...]:
+    """The events one event-handler activity carries: a single event, or a burst of them under batched dispatch."""
+    payload: Any = json.loads(data)['event']
+    events = cast(list[dict[str, Any]], payload if isinstance(payload, list) else [payload])
+    return tuple((event['event_kind'], event['part']['tool_call_id']) for event in events)
 
 
-_completion_order_replayed_inputs: list[tuple[str, str]] = []
+_completion_order_replayed_inputs: list[tuple[tuple[str, str], ...]] = []
 
 
 class _CompletionOrderInterceptor(Interceptor):
@@ -4907,7 +4909,7 @@ async def test_tool_results_completed_together_replay_in_recorded_order(
         if event.event_type == EventType.EVENT_TYPE_ACTIVITY_TASK_SCHEDULED
         and event.activity_task_scheduled_event_attributes.activity_type.name.endswith('__event_stream_handler')
     ]
-    assert recorded == [
+    assert [event for burst in recorded for event in burst] == [
         ('function_tool_call', 'call_a'),
         ('function_tool_call', 'call_b'),
         ('function_tool_result', 'call_a'),
@@ -5119,16 +5121,6 @@ async def test_durability_complex_agent_logfire_span_tree(
                                         BasicSpan(
                                             content='{"part": {"tool_name": "get_country", "args": "{}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'
                                         ),
-                                    ],
-                                )
-                            ],
-                        ),
-                        BasicSpan(
-                            content='StartActivity:agent__durability_complex_agent_logfire__event_stream_handler',
-                            children=[
-                                BasicSpan(
-                                    content='RunActivity:agent__durability_complex_agent_logfire__event_stream_handler',
-                                    children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
                                             content='{"part": {"tool_name": "get_product_name", "args": "{}", "tool_call_id": null, "tool_kind": null, "ui_visibility": null, "id": null, "provider_name": null, "provider_details": null, "part_kind": "tool-call"}, "args_valid": true, "event_kind": "function_tool_call"}'

@@ -14,6 +14,7 @@ from pydantic_ai.durable_exec._operation import (
     DurableOperationConfig,
     DurableOperationId,
     EventStreamHandlerId,
+    EventStreamHandlerParams,
     ModelCancelSuspendedResponseId,
     ModelCompactMessagesId,
     ModelCountTokensId,
@@ -25,6 +26,7 @@ from pydantic_ai.durable_exec._operation import (
     ToolsetGetInstructionsId,
     ToolsetGetToolsId,
     ToolsetValidateToolArgumentsId,
+    handled_events,
 )
 from pydantic_ai.durable_exec._operation_backend import BoundDurableOperation, RegisteredOperationBackend
 from pydantic_ai.exceptions import ModelAPIError, UserError
@@ -205,7 +207,10 @@ class TemporalBoundOperation(BoundDurableOperation[ParamsT, WireT, ResultT], Gen
             case CapabilityOperationId(capability_id=capability_id, operation=operation):
                 return '', f'capability: {capability_id}.{operation}'
             case EventStreamHandlerId():
-                return '', f'handle event: {cast(_EventParams, params).event.event_kind}'
+                events = handled_events(cast(EventStreamHandlerParams, params))
+                if len(events) == 1:
+                    return '', f'handle event: {cast(_EventParams, params).event.event_kind}'
+                return '', f'handle events: {len(events)}'
             case _:
                 # New operation ids use their stable activity name as the default summary. Their
                 # parameter transport must implement `TemporalParameterTransport`, including

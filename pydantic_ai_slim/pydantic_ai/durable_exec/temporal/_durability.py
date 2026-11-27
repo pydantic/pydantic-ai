@@ -611,6 +611,10 @@ class TemporalDurability(BaseDurabilityCapability[AgentDepsT]):
     def in_durable_context(self) -> bool:
         return workflow.in_workflow()
 
+    @property
+    def _batch_event_stream_dispatch(self) -> bool:
+        return workflow.patched('pydantic-ai-batched-event-dispatch')
+
     def get_default_run_id(self) -> str | None:
         if not self.in_durable_context:
             return None

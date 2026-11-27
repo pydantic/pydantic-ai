@@ -28,6 +28,8 @@ from pydantic_ai.durable_exec._operation import (
     ParameterTransports,
     ToolsetCallToolParams,
     ToolsetGetToolsParams,
+    event_stream_handler_params,
+    handled_events,
 )
 from pydantic_ai.durable_exec._toolset import CallToolResult, DynamicToolsResult, Instructions, revalidate_function_call
 from pydantic_ai.durable_exec._workspace import WorkspaceCall, WorkspaceCallParams, WorkspaceCallResult
@@ -275,7 +277,7 @@ class _CompactMessagesParams:
 @dataclass(kw_only=True)
 @with_config(ConfigDict(arbitrary_types_allowed=True))
 class _EventStreamHandlerParams:
-    event: AgentStreamEvent
+    event: AgentStreamEvent | list[AgentStreamEvent]
     serialized_run_context: Any
 
 
@@ -493,9 +495,13 @@ class _EventStreamHandlerTransport(
 
     def dump(self, params: _SemanticEventStreamHandlerParams) -> tuple[_EventStreamHandlerParams, Any]:
         ctx = params.run_context
+        # A one-event unit keeps the single-event wire shape, so per-event dispatch (an unpatched history, or a
+        # burst of one) stays readable by workers that predate batching.
+        events = handled_events(params)
+        event = events[0] if len(events) == 1 else events
         return (
             _EventStreamHandlerParams(
-                event=params.event,
+                event=event,
                 serialized_run_context=self._durability.run_context_type.serialize_run_context(ctx),
             ),
             ctx.deps,
@@ -506,7 +512,8 @@ class _EventStreamHandlerTransport(
     ) -> _SemanticEventStreamHandlerParams:
         params, deps = payload
         ctx = self._durability.deserialize_operation_run_context(params.serialized_run_context, deps)
-        return _SemanticEventStreamHandlerParams(params.event, run_context=ctx)
+        events = params.event if isinstance(params.event, list) else [params.event]
+        return event_stream_handler_params(events, ctx)
 
 
 @dataclass(kw_only=True)

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from abc import abstractmethod
 from collections.abc import Awaitable, Callable
-from dataclasses import KW_ONLY, dataclass
+from dataclasses import KW_ONLY, dataclass, field
 from typing import TYPE_CHECKING, Any, Generic, Literal, Protocol, TypeAlias, TypeVar, cast
 
 from pydantic_ai.messages import AgentStreamEvent, ModelMessage, ModelResponse
@@ -135,6 +135,35 @@ class EventStreamHandlerParams:
     event: AgentStreamEvent
     _: KW_ONLY
     run_context: RunContext[Any]
+
+
+@dataclass(frozen=True)
+class _EventStreamHandlerBurst(EventStreamHandlerParams):
+    """Several workflow-side events handled in one durable unit: `event` is the first, `rest` the ones after it.
+
+    Only an engine that batches event-handler dispatch builds one, and only for two or more events, so a backend
+    that dispatches one unit per event only ever sees `EventStreamHandlerParams`. See
+    `BaseDurabilityCapability._batch_event_stream_dispatch`.
+    """
+
+    rest: tuple[AgentStreamEvent, ...] = field(default=(), kw_only=True)
+
+
+def event_stream_handler_params(
+    events: list[AgentStreamEvent], run_context: RunContext[Any]
+) -> EventStreamHandlerParams:
+    """The params for one handler unit over `events`: the public single-event params for one, a burst for more."""
+    first, *rest = events
+    if not rest:
+        return EventStreamHandlerParams(first, run_context=run_context)
+    return _EventStreamHandlerBurst(first, run_context=run_context, rest=tuple(rest))
+
+
+def handled_events(params: EventStreamHandlerParams) -> list[AgentStreamEvent]:
+    """The events one handler unit carries, in stream order."""
+    if isinstance(params, _EventStreamHandlerBurst):
+        return [params.event, *params.rest]
+    return [params.event]
 
 
 @dataclass(frozen=True)
