@@ -36,6 +36,8 @@ previous label-as-switch design left a window in which a push got *neither* revi
 checked again when `CI` passes; a label or dispatch must be repeated. Nothing removes the
 `final-review` label: to retry a skipped request, remove and reapply it. A head that
 already has a `CI Review` is not reviewed again.
+An approval or `final-review` label requests a review only on a pull request into the default
+branch.
 
 `CI Review` starts on `workflow_run`, `pull_request_review`, `pull_request` (the
 `final-review` label) and `workflow_dispatch`. `workflow_run` and `workflow_dispatch`
@@ -100,7 +102,7 @@ nothing more.
 
 All three matter because `workflow_run` puts the workflow in base-repository context
 with full access to repository secrets, and the agent job checks out contributor-authored
-code and runs workspace scripts over it. Weaken any one of them and that checkout starts
+code and runs default-branch scripts over it. Weaken any one of them and that checkout starts
 accepting code the remaining gates do not cover. gh-aw will not backstop you: its
 "Restore agent config folders from base branch" step is gated on gh-aw's *own* PR
 checkout succeeding, which never happens under `workflow_run`. Under an approval or
@@ -144,8 +146,9 @@ what a same-repository run may trust:
   with the `workflows` permission, such as Dependabot. That author can already run any workflow
   with the repository's secrets through a `push` trigger.
 - `pydanty[bot]` lacks the `workflows` permission, so it cannot change a workflow file.
-- `pydanty[bot]` can push `.github/scripts/` and `.github/actions/`. So every job that runs a
-  script or a local action checks out the default branch, or fetches the script from it.
+- `pydanty[bot]` can push `.github/scripts/`, `.github/actions/` and the root `scripts/`. So every
+  job that runs a script or a local action checks out the default branch, or fetches the script
+  from it.
 
 Give every `actions/checkout` step `ref: ${{ github.event.repository.default_branch }}`, except one
 that checks out the head as data. Without `ref:`, the checkout is the PR's merge commit. Never use
@@ -329,7 +332,10 @@ Publication is serialized per PR and marks the `Gate:` statuses pending before s
 incomplete data fail closed. After the requirements are met, a new evaluation replaces the previous
 failure through GitHub's latest-per-context commit statuses. Rerun an existing current-head,
 default-branch `PR Review Gates` run to recover from an API failure or delayed observer; do not add
-branch-selectable dispatch to this privileged workflow. Workflows and scripts remain owned in `.github/CODEOWNERS`.
+branch-selectable dispatch to this privileged workflow. Do not rerun a run whose `Resolve review gate target` job
+was skipped. That run woke on a cancelled run, a merge group, or a skipped `PR Review Checks` run, and its rerun
+skips again.
+Workflows and scripts remain owned in `.github/CODEOWNERS`.
 
 # `PR Review Checks` reviews every same-repository pull request head
 

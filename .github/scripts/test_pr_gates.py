@@ -242,7 +242,8 @@ def test_review_workflow_uses_only_trusted_code_and_pinned_status_targets():
     assert set(workflow.on) == {'workflow_run', 'merge_group'}
     assert workflow.on['workflow_run'].workflows == ['PR Bots', 'PR Review Gates Events', 'PR Review Checks']
     assert workflow.jobs['review-target'].condition == (
-        "github.event_name != 'workflow_run' || (github.event.workflow_run.event != 'merge_group' && "
+        "github.event_name != 'workflow_run' || (github.event.workflow_run.conclusion != 'cancelled' && "
+        "github.event.workflow_run.event != 'merge_group' && "
         "(github.event.workflow_run.path != '.github/workflows/pr-review-checks.yml' || "
         "github.event.workflow_run.conclusion != 'skipped'))"
     )

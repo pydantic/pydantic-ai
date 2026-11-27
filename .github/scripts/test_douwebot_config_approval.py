@@ -162,6 +162,46 @@ def test_ordinary_douwebot_keeps_config_denial_and_author_exemption(tmp_path: Pa
     assert 'skipping agent-config guard' in exempt.stdout
 
 
+def _at_claude_fork_guard() -> dict[str, Any]:
+    workflow = yaml.safe_load(WORKFLOW.with_name('at-claude.yml').read_text(encoding='utf-8'))
+    steps = workflow['jobs']['at-claude-fork']['steps']
+    return next(step for step in steps if step.get('name') == 'Check for modified config files')
+
+
+def _path_matcher(step: dict[str, Any]) -> str:
+    match = re.search(r"grep -qiE '([^']+)'", step['run'])
+    assert match is not None
+    return match.group(1)
+
+
+def test_fork_at_claude_guard_matches_douwebot_guard():
+    """The `@claude` fork job and douwebot guard the same agent config paths."""
+    assert _path_matcher(_at_claude_fork_guard()) == _path_matcher(_step('Check for modified config files'))
+
+
+@pytest.mark.parametrize(
+    ('path', 'denied'),
+    [
+        ('pydantic_ai_slim/pydantic_ai/AGENTS.md', True),
+        ('CLAUDE.md', True),
+        ('CLAUDE.local.md', True),
+        ('.mcp.json', True),
+        ('.claude/settings.json', True),
+        ('.agents/skills/review/SKILL.md', True),
+        ('agent_docs/index.md', True),
+        ('pydantic_ai_slim/pydantic_ai/agent/__init__.py', False),
+    ],
+)
+def test_fork_at_claude_guard_denies_agent_config(tmp_path: Path, path: str, denied: bool):
+    """A fork author without write access cannot hand `@claude` a change to agent config."""
+    result, _ = _run_step(
+        _at_claude_fork_guard(),
+        tmp_path,
+        {'AUTHOR_PERMISSION': 'read', 'FAKE_DIFF': f'diff --git a/{path} b/{path}\n'},
+    )
+    assert result.returncode == (1 if denied else 0), f'stdout:\n{result.stdout}\nstderr:\n{result.stderr}'
+
+
 @pytest.mark.skipif(shutil.which('jq') is None, reason='the gh stub filters payloads with jq')
 @pytest.mark.parametrize(
     ('overrides', 'allowed'),

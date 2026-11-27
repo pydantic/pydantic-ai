@@ -13,6 +13,7 @@ from pydantic_ai.durable_exec._toolset import (
     CallToolResult,
     DurableFunctionToolset,
     ToolConfig,
+    dump_json_function_args,
     holds_tool_instance_defaults,
     listing_tools_before_tool_instance_defaults,
     unwrap_tool_call_result,
@@ -119,7 +120,8 @@ def temporalize_function_toolset(
                 args=[
                     CallToolParams(
                         name=name,
-                        tool_args=tool_args,
+                        # `PydanticAIPayloadConverter` dumps with `to_json`'s defaults.
+                        tool_args=dump_json_function_args(toolset, tool, tool_args, by_alias=None),
                         serialized_run_context=run_context_type.serialize_run_context(ctx),
                         tool_def=tool.tool_def,
                         # A `prepare` function can expose a tool under a different name than the toolset
