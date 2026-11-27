@@ -182,7 +182,7 @@ while the trigger stays exceeded. Usage (tokens and the request) folds into the 
 so `UsageLimits` sees it. Keep the default `id='summarizing_compaction'` under durable execution.
 Under Temporal, failed summary operations still propagate as `ActivityError` wrapping an
 `ApplicationError`: capability operations do not yet rebuild the model errors this recovery path
-catches. This exception is tracked in [#12291](https://github.com/pydantic/pydantic-ai/issues/12291).
+catches. This gap is tracked in [#12291](https://github.com/pydantic/pydantic-ai/issues/12291).
 
 ### `RelevanceCompaction`
 
