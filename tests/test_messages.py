@@ -1597,6 +1597,29 @@ def test_binary_content_from_path(tmp_path: Path):
     assert binary_content == snapshot(BinaryContent(data=b'[project]\nname = "test"', media_type='application/toml'))
 
 
+def test_binary_content_private_identifier_alias_is_honored():
+    binary_content = BinaryContent(data=b'abc', media_type='text/plain', _identifier='custom-id')
+    assert binary_content.identifier == 'custom-id'
+    assert replace(binary_content, _identifier='custom-id').identifier == 'custom-id'
+
+
+def test_binary_image_private_identifier_alias_is_honored():
+    binary_image = BinaryImage(data=b'\xff\xd8\xff\xe0' + b'0' * 100, media_type='image/jpeg', _identifier='bc8d49')
+    assert binary_image.identifier == 'bc8d49'
+    assert replace(binary_image, _identifier='bc8d49').identifier == 'bc8d49'
+
+
+def test_binary_audio_private_identifier_alias_is_honored():
+    binary_audio = BinaryAudio(data=b'\x00\x01', media_type='audio/wav', _identifier='custom-id')
+    assert binary_audio.identifier == 'custom-id'
+    assert replace(binary_audio, _identifier='custom-id').identifier == 'custom-id'
+
+
+def test_binary_content_identifier_alias_precedence():
+    binary_content = BinaryContent(data=b'abc', media_type='text/plain', identifier='alias-id', _identifier='name-id')
+    assert binary_content.identifier == 'alias-id'
+
+
 def test_uploaded_file_identifier_property():
     """Test that UploadedFile.identifier hashes the file_id."""
     # Test basic identifier (should be hashed)
