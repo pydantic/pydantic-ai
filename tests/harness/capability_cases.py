@@ -821,6 +821,8 @@ CASES: dict[str, CapabilityCase] = {
                 ResetCompaction[None](WorkLog[None](InMemoryWorkLogStore()), max_messages=50, keep_messages=7),
             ),
             _check_reset,
+            # The reset requires the `WorkLog` it names to be registered beside it.
+            companions=lambda reset: [reset.work_log] if isinstance(reset, ResetCompaction) else [],
         ),
         build=_reset_compaction,
     ),

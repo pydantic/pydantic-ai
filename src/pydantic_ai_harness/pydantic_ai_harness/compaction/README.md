@@ -646,7 +646,7 @@ The reset keeps, in order:
    [tool search discoveries](#tool-search-discoveries-across-compaction), as the other strategies
    that drop history keep them; `preserve_loaded_capabilities=False` unloads them instead;
 5. what the user wrote in each later turn older than the tail, all in one request and without the
-   tool results or harness data that came in the same requests, when `keep_user_turns=True` (the
+   tool results or harness data that came in the same requests, when `keep_user_prompts=True` (the
    default);
 6. the newest `keep_messages` messages (default `2`), with each tool call kept with its return.
    `keep_messages=0` still keeps the newest message, the request being answered. The tail also
@@ -655,12 +655,12 @@ The reset keeps, in order:
 
 Everything else leaves the history. The work log holds the tool calls and replies among it: it is for
 results that are expensive to get again and for what the model already did, not for a file's current
-contents, which the model reads again before it edits. With `keep_user_turns=False` only the first
+contents, which the model reads again before it edits. With `keep_user_prompts=False` only the first
 request and the tail keep the user's words, and the log doesn't hold the rest. An earlier notice and its `restate` text in the kept tail
 are removed, so each reset replaces the last notice rather than adding one.
 
-The notice is a `ResetNoticePart`, a data
-[capability part](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts): it reaches the model on the user channel in a `<context_cleared>` frame, with a note in the application's voice saying the frame is the application's, and a later compaction or summary doesn't take it for the user's words. Its
+The notice is a `ResetNoticePart`, an instruction
+[capability part](https://pydantic.dev/docs/ai/capabilities/custom/#capability-parts) in the application's voice, like a [receipt](#compaction-receipts): the model gets it as a mid-conversation system message, and a later compaction or summary doesn't take it for the user's words. Its
 typed fields `number`, `work_log` (the log's handle) and `kept_responses` are never sent to the
 model; find notices in history by the type. The default text tells the model that the conversation before this point was cleared and it is continuing the same task, how many times this conversation has been cleared, that the work log holds its earlier tool calls and replies (the replies only when `WorkLog.record_text` is on), how to pick up where it left off with the tools that search and read the log (under the names the model sees), to read a file again before editing it, since a log entry can be out of date, and what the reset kept. Its mentions of calls made inside code and of calling the tools from code apply when [Code Mode](../code_mode/) is on the agent. That wording was measured live across providers. The handle is what the [store](../work_log/README.md#stores)'s `locate` returns: a file path or a workspace directory, and none for the in-memory store or a store given its own `workspace=`, whose log the agent can reach only through the tools.
 

@@ -396,13 +396,15 @@ async def test_stating_a_configuration_twice_states_it_once(
     merged = await anyio.to_thread.run_sync(type(first).combine, [first, second])
     breaks: list[str] = []
     for label, capability in (('one of the pair', first), ('the pair combined', merged)):
-        once = await _first_request([capability], tmp_path)
+        companions = case.combine.companions(capability)
+        once = await _first_request([*companions, capability], tmp_path)
         # Stated once it must reach the model: two runs that fail alike would compare equal and check nothing.
-        if isinstance(once, str):
-            breaks.append(f'{label} alone does not run: {once}')
-        elif await _first_request([capability, capability], tmp_path) != once:
-            breaks.append(f'stated twice, {label} reaches the model differently')
-    _assert_holds(COMBINE_FIXED_POINT, name, breaks)
+        assert not isinstance(once, str), f'{name}: {label} alone does not run: {once}'
+        if await _first_request([*companions, capability, capability], tmp_path) != once:
+            breaks.append(label)
+    _assert_holds(
+        COMBINE_FIXED_POINT, name, [f'stated twice, {label} reaches the model differently' for label in breaks]
+    )
 
 
 @pytest.mark.parametrize('name', _cases(WORKSPACE_FROM_FUNCTION))

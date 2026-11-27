@@ -143,6 +143,8 @@ class Combines:
     # `Any`: each check takes its own capability type, which no single parameter type admits.
     check: Callable[[Any], None]
     """Asserts what survived. Reads derived state too, not just the declared fields."""
+    companions: Callable[[AbstractCapability[None]], Sequence[AbstractCapability[None]]] = lambda _: ()
+    """What the agent needs beside one of these to run, such as the `WorkLog` a `ResetCompaction` names."""
 
 
 @dataclass
@@ -777,9 +779,6 @@ COMBINE_FIXED_POINT = Contract(
     applies=lambda name, case: isinstance(case.combine, Combines) and _buildable(name, case),
     exempt={
         'SubAgents': Exempt(f'stating one roster twice raises on the repeated sub-agent name: {_ISSUES}13966'),
-        'ResetCompaction': Exempt(
-            'it requires the `WorkLog` it names on the same agent, so neither of the pair runs alone'
-        ),
     },
 )
 """A configuration stated twice is the same as stating it once, for one of `make`'s pair and for what the pair

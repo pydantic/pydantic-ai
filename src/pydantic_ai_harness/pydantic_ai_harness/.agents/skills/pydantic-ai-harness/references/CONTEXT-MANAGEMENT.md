@@ -285,10 +285,9 @@ usage, which still counts the result until the next response. The span gets
 
 ### `ResetCompaction`
 
-`ResetCompaction(work_log, max_messages=None, max_tokens=None, *, max_fraction=None, context_window=None, fallback_context_window=DEFAULT_CONTEXT_WINDOW, keep_messages=2, keep_user_turns=True, notice=default_reset_notice, restate=None, preserve_loaded_capabilities=True, tokenizer=None, id='reset_compaction')`:
+`ResetCompaction(work_log, max_messages=None, max_tokens=None, *, max_fraction=None, context_window=None, fallback_context_window=DEFAULT_CONTEXT_WINDOW, keep_messages=2, keep_user_prompts=True, notice=default_reset_notice, restate=None, preserve_loaded_capabilities=True, tokenizer=None, id='reset_compaction')`:
 zero-LLM. Clears the history in one step down to the first user request, a notice (a
-`ResetNoticePart`, data on the user channel in a `<context_cleared>` frame, with an application-voice note saying
-who wrote it) that names the
+`ResetNoticePart`, an instruction part in the application's voice, like a compaction receipt) that names the
 `WorkLog`'s handle and its search and read tools, pins, loaded-capability records, what the user
 wrote in each later turn (all in one request), and the newest `keep_messages` messages. The model reads earlier tool results
 back from the work log. Pass the `WorkLog` instance that is on the agent: `Agent(...)` raises

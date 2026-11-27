@@ -11,11 +11,13 @@ from pydantic_ai.capabilities import AbstractCapability, CapabilityOrdering, dur
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     DataCapabilityPart,
+    InstructionCapabilityPart,
     ModelMessage,
     ModelRequest,
     ModelRequestPart,
     ModelResponse,
     OperatorSource,
+    OperatorText,
     ToolResultSource,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -50,21 +52,12 @@ if TYPE_CHECKING:
 
 
 @dataclass(kw_only=True)
-class ResetNoticePart(
-    DataCapabilityPart[str],
-    namespace='reset_compaction',
-    name='notice',
-    tag='context_cleared',
-    # Without it, a model asked who wrote the frame can credit it to the user.
-    note=(
-        'The accompanying {frame} is from the application, not the user: it marks where earlier messages were cleared.'
-    ),
-):
-    """The notice `ResetCompaction` leaves where it cleared the conversation, on the user channel.
+class ResetNoticePart(InstructionCapabilityPart, namespace='reset_compaction', name='notice'):
+    """The notice `ResetCompaction` leaves where it cleared the conversation, in the application's voice.
 
-    Its text is the capability's own, from `ResetCompaction.notice`. It goes with a note in the application's
-    voice saying the frame is the application's. Find notices in history by this type: a later reset reads its
-    typed fields, which are never sent to the model.
+    Conversation-scoped like a `CompactionReceiptPart`, and like one its text is only the capability's own,
+    from `ResetCompaction.notice`. Find notices in history by this type: a later reset reads its typed fields,
+    which are never sent to the model.
     """
 
     number: int
@@ -221,7 +214,7 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
 
     Tool calls stay with their results, and the newest message is always kept, so `0` keeps one."""
 
-    keep_user_turns: bool = True
+    keep_user_prompts: bool = True
     """Keep what the user wrote in each turn after the first, ahead of the kept messages, when they don't hold it.
 
     Only the user's own parts, all in one request, so the kept history grows by no message per turn: tool
@@ -229,7 +222,10 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
     kept messages hold the user's words."""
 
     notice: Callable[[ResetNotice], str] = default_reset_notice
-    """Write the notice's text from what the reset did. Defaults to `default_reset_notice`."""
+    """Write the notice's text from what the reset did. Defaults to `default_reset_notice`.
+
+    The text is sent in the application's voice, so build it from the facts and your own wording, never from
+    text a user or a tool supplied."""
 
     restate: Callable[[RunContext[AgentDepsT]], Awaitable[str | CurrentStatePart | None]] | None = None
     """Return the task's current state to put after the notice, in a `<current_state>` frame.
@@ -296,10 +292,11 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
         if cutoff <= 0:
             return messages
         first = find_first_user_message(messages)
-        head = prepend_first_user_message(messages, cutoff, [])
+        # Core can merge an earlier notice into the first request; a reset replaces the notice rather than adding one.
+        head = without_reset_parts(prepend_first_user_message(messages, cutoff, []))
         kept_turns = [
             message
-            for index in (user_turn_starts(messages) if self.keep_user_turns else [])
+            for index in (user_turn_starts(messages) if self.keep_user_prompts else [])
             if index < cutoff and (message := messages[index]) is not first and isinstance(message, ModelRequest)
         ]
         # One request for every kept turn, so a message-count trigger can't be crossed by the turns alone. The
@@ -329,8 +326,10 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
         kept_responses = sum(isinstance(message, ModelResponse) for message in tail)
         parts: list[ModelRequestPart] = [
             ResetNoticePart(
-                content=self.notice(facts),
+                # The capability's own wording, or the operator's `notice`, with only facts filled in.
+                content=OperatorText(self.notice(facts)),
                 source=OperatorSource(),
+                scope='conversation',
                 capability_id=receipt_capability_id(ctx, self),
                 number=facts.number,
                 work_log=facts.work_log,
