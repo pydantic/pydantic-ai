@@ -10,7 +10,11 @@ from __future__ import annotations
 from pydantic_ai import ToolKind
 
 WORK_LOG_SEARCH_KIND = ToolKind('work_log', 'search_work_log')
-"""The kind of `WorkLog`'s `search_work_log` tool, whatever it is named. Its returns are exempt from `ToolOutputLimits`."""
+"""The kind of `WorkLog`'s `search_work_log` tool, whatever it is named.
+
+Its returns are exempt from `ToolOutputLimits`."""
 
 WORK_LOG_READ_KIND = ToolKind('work_log', 'read_work_log')
-"""The kind of `WorkLog`'s `read_work_log` tool, whatever it is named. Its returns are exempt from `ToolOutputLimits`."""
+"""The kind of `WorkLog`'s `read_work_log` tool, whatever it is named.
+
+Its returns are exempt from `ToolOutputLimits`."""

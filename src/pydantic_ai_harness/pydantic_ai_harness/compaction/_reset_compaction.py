@@ -278,7 +278,10 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
             )
 
     async def compact(self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT]) -> list[ModelMessage]:
-        """Clear everything but the first request, the notice, pins, loaded state, the user's later turns and the tail."""
+        """Clear all but the first request, the notice, pins, loaded state, the user's later turns and the tail.
+
+        The notice is built here, not enqueued, so a use as a strategy gets it too.
+        """
         cutoff = find_safe_cutoff(messages, self.keep_messages)
         if cutoff <= 0:
             return messages

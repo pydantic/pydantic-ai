@@ -272,8 +272,14 @@ class WorkspaceWorkLogStore:
         """Bind a run's workspace to the common store interface."""
         return _BoundWorkspaceWorkLogStore(self, workspace)
 
-    def locate(self, log_id: str) -> str:
-        """The log's directory, relative to the working directory."""
+    def locate(self, log_id: str) -> str | None:
+        """The log's directory, relative to the working directory, or `None` with a workspace of the store's own.
+
+        The agent's tools reach only the run's workspace, so a log kept elsewhere is reachable only through the
+        work log's tools.
+        """
+        if self._workspace is not None:
+            return None
         return f'{METADATA_DIR}/{WORK_LOG_DIR}/{file_name(log_id)}/'
 
     async def append(self, workspace: Workspace, log_id: str, record: WorkLogRecord) -> int:
@@ -349,5 +355,5 @@ class _BoundWorkspaceWorkLogStore:
     async def read(self, log_id: str, start: int = 1, stop: int | None = None) -> list[WorkLogEntry]:
         return await self.store.read(self.workspace, log_id, start, stop)
 
-    def locate(self, log_id: str) -> str:
+    def locate(self, log_id: str) -> str | None:
         return self.store.locate(log_id)

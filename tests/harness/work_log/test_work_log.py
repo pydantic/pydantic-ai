@@ -9,7 +9,6 @@ from collections.abc import AsyncIterator, Sequence
 from pathlib import Path
 
 import anyio
-import anyio.lowlevel
 import pytest
 from pydantic import TypeAdapter
 
@@ -51,6 +50,7 @@ from pydantic_ai_harness.work_log import (
     WorkLogStore,
     WorkspaceWorkLogStore,
 )
+from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.harness.conftest import IsStr
 
 from .._recording_durability import RecordingDurability
@@ -584,17 +584,28 @@ class TestWorkLogCodeMode:
         def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             return ModelResponse(parts=[TextPart('done')])
 
+        alpha_started = anyio.Event()
+        # The alpha call's statement has closed once the stream is past `print(b)`.
+        closed_at = args.index('print(b)') + len('print(b)')
+
         async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
             if len(messages) > 1:
                 yield 'done'
                 return
             yield {1: DeltaToolCall(name='run_code', tool_call_id='rc')}
+            waited = False
             for offset in range(0, len(args), 16):
                 yield {1: DeltaToolCall(json_args=args[offset : offset + 16])}
-                await anyio.lowlevel.checkpoint()
+                if not waited and offset + 16 >= closed_at:
+                    # Hold the rest of the stream until speculation has launched the call: a hang guard, not a timing
+                    # assertion, since without speculation `search` would not start before the stream ends.
+                    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                        await alpha_started.wait()
+                    waited = True
 
         async def search(query: str) -> str:
-            await anyio.lowlevel.checkpoint()
+            if query == 'alpha':
+                alpha_started.set()
             return f'result:{query}'
 
         store = InMemoryWorkLogStore()
@@ -632,9 +643,9 @@ class TestWorkLogCodeMode:
             yield {1: DeltaToolCall(name='run_code', tool_call_id='rc')}
             for chunk in chunks[:-1]:
                 yield {1: DeltaToolCall(json_args=chunk)}
-                await asyncio.sleep(0)
             # A hang guard, not a timing assertion: without eager execution `search` would never start.
-            await asyncio.wait_for(searched.wait(), timeout=30)
+            with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+                await searched.wait()
             yield {1: DeltaToolCall(json_args=chunks[-1])}
 
         store = InMemoryWorkLogStore()
@@ -1035,6 +1046,8 @@ class TestWorkLogStores:
         await agent.run('Paris?', conversation_id=_CONVERSATION)
 
         assert len(list((tmp_path / 'logs' / '.pydantic-ai-harness' / 'work-log' / _CONVERSATION).iterdir())) == 2
+        # The agent's tools reach only the run's workspace, so a reset notice names no handle for this log.
+        assert store.locate(_CONVERSATION) is None
 
     async def test_workspace_store_needs_a_workspace(self) -> None:
         agent = Agent(_scripted(), capabilities=[WorkLog(WorkspaceWorkLogStore())])

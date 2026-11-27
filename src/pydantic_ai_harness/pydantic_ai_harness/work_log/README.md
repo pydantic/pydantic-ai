@@ -158,7 +158,7 @@ application derive it on the server from the authenticated user, as for
 | --- | --- | --- |
 | `InMemoryWorkLogStore()` (default) | This process, until `discard(conversation_id)` or process exit | None: the agent reaches the log only through the tools |
 | `FileWorkLogStore(directory)` | One JSONL file per conversation, `<directory>/<log>.jsonl`, on the machine running the agent | The file's absolute path |
-| `WorkspaceWorkLogStore(workspace=None)` | One file per entry under `.pydantic-ai-harness/work-log/<log>/` in the run's workspace | That directory, relative to the working directory |
+| `WorkspaceWorkLogStore(workspace=None)` | One file per entry under `.pydantic-ai-harness/work-log/<log>/` in the run's workspace | That directory, relative to the working directory; none with `workspace=` |
 
 `<log>` is the conversation ID when it is 1 to 128 letters, digits, `.`, `_` or `-` and not only
 dots; otherwise it is the ID's SHA-256 hex digest, so no ID can name a path outside the store's
@@ -177,7 +177,7 @@ directory.
   key's digest. A search tool that ignores `.gitignore` also finds the copies of files the agent
   read that the entries hold, as they were when read. The store keeps only file names and keys in memory: each search reads every entry
   file, which in a remote sandbox is one round trip per entry. A symlinked log directory or entry
-  file raises `WorkspaceError`. A run with no workspace fails at its start; pass `workspace=` a backend, such as `LocalWorkspaceBackend('/var/work-logs')`, to keep logs in a workspace of their own instead. The agent's file and shell tools can't reach a workspace passed as `workspace=`, so the notice's handle then names a directory the agent can open only through the work log's tools. `FileSystem`'s default read-only patterns cover `.pydantic-ai-harness/`, but the agent's shell can still write there, so an entry read back from this store can hold what the agent wrote rather than what the tool returned.
+  file raises `WorkspaceError`. A run with no workspace fails at its start; pass `workspace=` a backend, such as `LocalWorkspaceBackend('/var/work-logs')`, to keep logs in a workspace of their own instead. The agent's file and shell tools can't reach a workspace passed as `workspace=`, so a reset notice then names no handle, as for the in-memory store. `FileSystem`'s default read-only patterns cover `.pydantic-ai-harness/`, but the agent's shell can still write there, so an entry read back from this store can hold what the agent wrote rather than what the tool returned.
 
 Each store numbers entries in memory, one append at a time per log, so it supports one writer process per log. Nothing prunes the file and workspace logs; delete them when you no longer need them.
 
