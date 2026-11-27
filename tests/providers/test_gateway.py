@@ -13,6 +13,7 @@ import pytest
 
 from pydantic_ai import Agent, ModelMessagesTypeAdapter, ModelResponse, UserError
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.capabilities import Instrumentation
 from pydantic_ai.models import infer_model
 
 from .._inline_snapshot import raises, snapshot
@@ -20,6 +21,7 @@ from ..conftest import TestEnv, try_import
 
 with try_import() as imports_successful:
     from google.genai import Client
+    from logfire.testing import CaptureLogfire
     from opentelemetry.sdk.trace import TracerProvider
 
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -247,10 +249,28 @@ def _chat_completion(request: httpx2.Request) -> httpx2.Response:
     return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=f'{events}data: [DONE]\n\n')
 
 
+async def _last_response(provider: Provider[Any], model_name: str, *, stream: bool = False) -> ModelResponse:
+    agent = Agent(OpenAIChatModel(model_name, provider=provider), capabilities=[Instrumentation()])
+    if stream:
+        async with agent.run_stream('What is the capital of France?') as result:
+            await result.get_output()
+        messages = result.all_messages()
+    else:
+        messages = (await agent.run('What is the capital of France?')).all_messages()
+    response = messages[-1]
+    assert isinstance(response, ModelResponse)
+    return response
+
+
+def _request_span_cost(capfire: CaptureLogfire) -> float:
+    [span] = [span for span in capfire.exporter.exported_spans_as_dict() if span['name'].startswith('chat ')]
+    return span['attributes']['operation.cost']
+
+
 @pytest.mark.vcr(ignore_hosts=['*'])
 @pytest.mark.parametrize('stream', [False, True])
 async def test_gateway_route_for_another_providers_models_is_priced_as_that_provider(
-    allow_model_requests: None, stream: bool
+    allow_model_requests: None, capfire: CaptureLogfire, stream: bool
 ):
     """A response from the OpenAI-compatible `doubleword` route keeps `openai` as its provider, and is priced as Doubleword.
 
@@ -259,34 +279,43 @@ async def test_gateway_route_for_another_providers_models_is_priced_as_that_prov
     """
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(_chat_completion)) as http_client:
         provider = gateway_provider('doubleword', http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL)
-        agent = Agent(OpenAIChatModel('deepseek-ai/DeepSeek-V4.1-Flash', provider=provider))
-        if stream:
-            async with agent.run_stream('What is the capital of France?') as result:
-                await result.get_output()
-            messages = result.all_messages()
-        else:
-            messages = (await agent.run('What is the capital of France?')).all_messages()
+        response = await _last_response(provider, 'deepseek-ai/DeepSeek-V4.1-Flash', stream=stream)
 
-    response = messages[-1]
-    assert isinstance(response, ModelResponse)
     assert (response.provider_name, response.pricing_provider) == ('openai', 'doubleword')
     price = response.cost()
     assert price.provider.id == 'doubleword'
     assert response.usage.cost == price.total_price > 0
+    assert _request_span_cost(capfire) == float(price.total_price)
     # It survives a round-trip through stored history.
     [stored] = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python([response]))
     assert isinstance(stored, ModelResponse) and stored.pricing_provider == 'doubleword'
 
 
-def test_gateway_route_for_its_own_provider_sets_no_pricing_provider():
-    """A route that serves its own provider's models, or a custom route named for no upstream, is priced by name."""
-    for provider in (
-        gateway_provider('openai', api_key='gw-key', base_url=GATEWAY_BASE_URL),
-        gateway_provider('openai', route='my-endpoint', api_key='gw-key', base_url=GATEWAY_BASE_URL),
-    ):
-        assert OpenAIChatModel('gpt-5', provider=provider)._pricing_provider_stamp is None  # pyright: ignore[reportPrivateUsage]
-    custom = gateway_provider('doubleword', route='my-endpoint', api_key='gw-key', base_url=GATEWAY_BASE_URL)
-    assert OpenAIChatModel('deepseek-ai/DeepSeek-V4.1-Flash', provider=custom)._pricing_provider_stamp == 'doubleword'  # pyright: ignore[reportPrivateUsage]
+@pytest.mark.vcr(ignore_hosts=['*'])
+@pytest.mark.parametrize(
+    'upstream, route, model_name, pricing_provider',
+    [
+        pytest.param('openai', None, 'gpt-5', None, id='openai'),
+        pytest.param('openai', 'my-endpoint', 'gpt-5', None, id='openai-custom-route'),
+        pytest.param(
+            'doubleword', 'my-endpoint', 'deepseek-ai/DeepSeek-V4.1-Flash', 'doubleword', id='doubleword-custom-route'
+        ),
+    ],
+)
+async def test_gateway_route_pricing_provider_follows_the_upstream(
+    allow_model_requests: None, upstream: str, route: str | None, model_name: str, pricing_provider: str | None
+):
+    """Only a route for another provider's models over the OpenAI API names a pricing provider, custom route or not.
+
+    Not a cassette test, for the same reason as the test above.
+    """
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(_chat_completion)) as http_client:
+        provider = gateway_provider(
+            upstream, route=route, http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL
+        )
+        response = await _last_response(provider, model_name)
+
+    assert (response.provider_name, response.pricing_provider) == ('openai', pricing_provider)
 
 
 @pytest.mark.vcr(ignore_hosts=['*'])
