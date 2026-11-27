@@ -335,6 +335,7 @@ class TestResetCompaction:
         with pytest.raises(ValueError, match='Set at most one of max_tokens or max_fraction'):
             ResetCompaction(work_log, max_tokens=1, max_fraction=0.5)
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_a_capability_loaded_in_the_cleared_history_stays_loaded(self) -> None:
         class Weather(AbstractCapability[None]):
             def __init__(self) -> None:
@@ -376,6 +377,7 @@ class TestResetCompaction:
             ]
         )
 
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_the_opt_out_leaves_a_capability_loaded_in_the_cleared_history_unloaded(self) -> None:
         class Weather(AbstractCapability[None]):
             def __init__(self) -> None:
