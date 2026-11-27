@@ -19,6 +19,7 @@ import anyio
 from pydantic_ai import AgentStreamEvent, CapabilityEvent, capture_run_messages
 from pydantic_ai.agent import AbstractAgent, AgentRunResult, EventStreamHandler
 from pydantic_ai.capabilities import AbstractCapability, AgentCapability, HookTimeoutError
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.durable_exec import BaseDurabilityCapability, DurableRunContext
 from pydantic_ai.exceptions import (
     ApprovalRequired,
@@ -59,6 +60,7 @@ from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.toolsets._capability_owned import CapabilityOwnedToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai.workspaces import LocalWorkspaceBackend, ReadOnlyWorkspace, Workspace
+from pydantic_ai_harness._capabilities import wrapper_chain
 from pydantic_ai_harness._code_tools import reserve_nested_call
 from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._sub_agent_output import (
@@ -69,6 +71,7 @@ from pydantic_ai_harness._sub_agent_output import (
 )
 from pydantic_ai_harness._usage import run_with_count_tokens_fallback
 from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
+from pydantic_ai_harness.permissions._capability import inherited_managed_permissions, managed_layer_not_held_by
 from pydantic_ai_harness.sub_agents._control import (
     DynamicAgents,
     DynamicAgentSpec,
@@ -899,8 +902,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         # Temporal runs a restored context in workflow code, and DBOS a restored context at all, only in a child workflow.
         if not (isinstance(ctx, DurableRunContext) and ctx.in_durable_context and ctx.agent is not None):
             return
-        durability = BaseDurabilityCapability.from_agent(ctx.agent)
-        if durability is None or durability.engine_spec.engine_name not in ('Temporal', 'DBOS'):
+        if not _runs_child_workflows(ctx.agent):
             return
         if (
             self._include_self
@@ -916,6 +918,12 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 'A `SubAgents` delegate tool running as a child workflow does not support `include_self`, '
                 '`inherit_tools`, `models`, `shared_capabilities`, `event_stream_handler`, `dynamic_agents`, '
                 "`task_control`, or a delegate's `max_calls`."
+            )
+        # The child workflow can't receive the parent's managed `Permissions`, so it would run without them.
+        if inherited_managed_permissions(ctx):
+            raise UserError(
+                'A `SubAgents` delegate tool running as a child workflow does not support a `Permissions` with '
+                '`max_mode` or `managed_rules` on the parent agent: the delegate would run without them.'
             )
 
     async def _delegate_recorded(
@@ -987,7 +995,14 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
 
         Raises:
             ModelRetry: no delegate has that name.
+            UserError: the delegate would pass this run's managed layer on through a child workflow, which drops it.
         """
+        sub_agent = self._find_agent(ctx, agent_name)
+        _check_durable_delegate(ctx, agent_name, sub_agent.agent)
+        return sub_agent
+
+    def _find_agent(self, ctx: RunContext[AgentDepsT], agent_name: str) -> SubAgent[AgentDepsT]:
+        """The delegate `agent_name` names: see `_resolve_agent`."""
         if self._is_self(agent_name):
             agent = ctx.agent
             if agent is None:  # pragma: no cover - the running agent is always set during a run
@@ -1029,8 +1044,7 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         sub_agent: SubAgent[AgentDepsT] | None = None
         key: str | None = None
         if remote is not None:
-            if model is not None:
-                raise ModelRetry(f"Sub-agent {agent_name!r} runs on its worker's model; omit `model`.")
+            _check_remote(ctx, agent_name, model)
             resumable, can_ask = remote.resumable, remote.can_ask_questions
         else:
             sub_agent = self._resolve_agent(ctx, agent_name)
@@ -1574,13 +1588,15 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
     ) -> list[AgentCapability[AgentDepsT]]:
         """The capabilities a child run gets.
 
-        The shared ones, the parent run's `DenyUnanswered`, task control's, then `serving_model` and the extras.
+        The shared ones, the parent run's `DenyUnanswered` and the managed layer of its `Permissions`, task
+        control's, then `serving_model` and the extras.
         """
         # Interim: a general hook for capabilities to pass themselves on to child runs (#13135) replaces this.
         deny = find_deny_unanswered(ctx)
         capabilities: list[AgentCapability[AgentDepsT]] = [
             *self._shared_capabilities,
             *([deny] if deny is not None else []),
+            *inherited_managed_permissions(ctx),
         ]
         if owner is not None and record is not None:
             capabilities.append(DelegationReports(owner, conversation_id=record.conversation_id, task_id=record.id))
@@ -1943,3 +1959,52 @@ def _managed_limits(usage: RunUsage, *, parent: UsageLimits | None, child: Usage
         cost_limit=cost,
         count_tokens_before_request=parent.count_tokens_before_request or child.count_tokens_before_request,
     )
+
+
+def _runs_child_workflows(agent: AbstractAgent[Any, Any]) -> bool:
+    """Whether `agent` is bound to an engine that runs a `SubAgents` delegation as a child workflow."""
+    durability = BaseDurabilityCapability.from_agent(agent)
+    return durability is not None and durability.engine_spec.engine_name in ('Temporal', 'DBOS')
+
+
+def _check_durable_delegate(ctx: RunContext[Any], agent_name: str, agent: AbstractAgent[Any, Any]) -> None:
+    """Refuse a durable delegate that could pass this run's managed layer on from a durable unit, which drops it.
+
+    Any durable engine may run the delegate's own delegations in a child workflow, task or activity whose context
+    carries its agent but not its run's capabilities. A layer the delegate agent holds itself, as an `include_self`
+    delegate does, is read there, so only a layer it would inherit counts. The managed layer is read last, so a
+    `max_mode` function is read here only for a durable delegate that delegates and doesn't hold it.
+    """
+    if BaseDurabilityCapability.from_agent(agent) is None or not _delegates(agent):
+        return
+    if managed_layer_not_held_by(ctx, agent):
+        # In such a unit, only the delegate agent's own capabilities can be read, not the layer it got.
+        raise UserError(
+            f'Sub-agent {agent_name!r} is bound to a durable execution engine and has its own `SubAgents` or `SubAgentToolset` '
+            'but no `Permissions` with the same `max_mode` and `managed_rules`: '
+            'a delegation it makes through a child workflow would run without the `max_mode` and `managed_rules` '
+            "of this run's `Permissions`, so it is refused (https://github.com/pydantic/pydantic-ai/issues/14944)."
+        )
+
+
+def _delegates(agent: AbstractAgent[Any, Any]) -> bool:
+    """Whether `agent` has a `SubAgents`, wrapped or not, or a `SubAgentToolset` among its toolsets."""
+    # Imported here: `_capability` imports this module.
+    from pydantic_ai_harness.sub_agents._capability import SubAgents
+
+    capabilities = leaf_capabilities(agent.root_capability)
+    if any(isinstance(found, SubAgents) for capability in capabilities for found in wrapper_chain(capability)):
+        return True
+    return any(_tree_has(toolset, lambda node: isinstance(node, SubAgentToolset)) for toolset in agent.toolsets)
+
+
+def _check_remote(ctx: RunContext[Any], agent_name: str, model: str | None) -> None:
+    """Refuse a delegation to a remote sub-agent that can't honor this run: see `_delegate_controlled`."""
+    if inherited_managed_permissions(ctx):
+        # The worker runs its own agent in another process, where the parent can't hold it to the layer.
+        raise UserError(
+            f'Remote sub-agent {agent_name!r} would run without the `max_mode` and `managed_rules` of this '
+            "run's `Permissions`: its worker runs its own agent, which they can't reach."
+        )
+    if model is not None:
+        raise ModelRetry(f"Sub-agent {agent_name!r} runs on its worker's model; omit `model`.")

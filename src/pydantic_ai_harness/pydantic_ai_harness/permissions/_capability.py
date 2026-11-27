@@ -3,13 +3,15 @@
 from __future__ import annotations
 
 import re
-from collections.abc import Awaitable, Callable, MutableSet, Sequence
+from collections.abc import Awaitable, Callable, Iterable, Iterator, MutableSet, Sequence
 from dataclasses import KW_ONLY, dataclass, field, replace
-from typing import Any, Literal, NamedTuple, cast
+from typing import Any, ClassVar, Literal, NamedTuple, cast
 
 from pydantic import BaseModel, ValidationError
 
+from pydantic_ai.agent import AbstractAgent
 from pydantic_ai.capabilities import AbstractCapability, ValidatedToolArgs, WrapperCapability
+from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import ApprovalRequired, SkipToolExecution, UserError
 from pydantic_ai.messages import ModelMessage, ToolCallPart, ToolReturn, ToolReturnPart
 from pydantic_ai.tools import (
@@ -23,6 +25,7 @@ from pydantic_ai.tools import (
     ToolDenied,
     matches_tool_selector,
 )
+from pydantic_ai_harness._capabilities import wrapper_chain
 from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness._shell_command import shell_command, shell_command_arg
 from pydantic_ai_harness.file_system._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
@@ -198,7 +201,9 @@ class Permissions(AbstractCapability[AgentDepsT]):
     The mode checks file writes, the `FileSystem` tools `write_file`, `edit_file`, and `create_directory`,
     recognized by their tool kind whatever they are named, and commands, the tools whose metadata declares
     `code_arg_language='shell'` and a `code_arg_name`, as the `Shell` tools that take a command do. Sub-agents'
-    runs this capability does not reach are not checked: pass it in `SubAgents(shared_capabilities=[...])`.
+    runs this capability does not reach are not checked by `mode` and `rules`: pass it in
+    `SubAgents(shared_capabilities=[...])`. Its `max_mode` and `managed_rules` reach every `SubAgents` delegate
+    that runs in this process on their own, and a remote delegate is refused while they apply.
 
     `mode` can be a function of the run context. It is read on every call, so a mode changed during a run
     applies from the run's next call.
@@ -208,9 +213,10 @@ class Permissions(AbstractCapability[AgentDepsT]):
 
     `max_mode` and `managed_rules` are limits set by whoever configures the agent for the people who run it,
     such as an organization's managed settings: `mode` and `rules`, which the person running it may choose,
-    can't loosen them. Every `'deny'`, managed or not, is checked before any `'ask'`, so approving a call
-    never runs one a rule denies. A call held by a managed rule or by `max_mode` is `person_only`, like a
-    protected change.
+    can't loosen them, and `SubAgents` holds each delegate to them, and the delegate's own delegates, whatever
+    it shares, or refuses a delegation it can't hold to them. Every `'deny'`, managed or not, is checked before
+    any `'ask'`, so approving a call never runs one a rule denies. A call held by a managed rule or by `max_mode`
+    is `person_only`, like a protected change.
     """
 
     mode: PermissionMode | Callable[[RunContext[AgentDepsT]], PermissionMode] = 'full'
@@ -720,3 +726,91 @@ def denial_message(request: PermissionRequest, *, reason: str | None = None) -> 
     """What the model is told when `request` is denied, with the person's `reason` when they gave one."""
     message = f'The user denied this {_WHAT[request.action]}, so it did not run.'
     return f'{message} Their reason: {reason}' if reason else message
+
+
+@dataclass
+class _InheritedPermissions(Permissions[AgentDepsT]):
+    """The managed layer of a parent run's `Permissions`, as `SubAgents` adds it to a delegate's run."""
+
+    # It holds no `protected_paths`, contributes no toolsets or durable operations, and every call it holds is for a
+    # person only, so it never records an approval: it decides from the call alone, and `SubAgents` can add it to a
+    # child run under durable execution.
+    _safe_at_runtime: ClassVar[bool] = True
+
+    @classmethod
+    def get_serialization_name(cls) -> str | None:
+        """Return `None`: only `SubAgents` builds it, so no agent spec names it."""
+        return None
+
+
+def inherited_managed_permissions(ctx: RunContext[AgentDepsT]) -> list[Permissions[AgentDepsT]]:
+    """The managed layer of each `Permissions` on `ctx`'s run, for a `SubAgents` delegate to inherit.
+
+    Each is a `Permissions` holding only the `max_mode` it has for `ctx`'s run, its `managed_rules`, and the
+    `ask_commands` an `'auto'` `max_mode` asks about, so the person's own `mode` and `rules` reach a delegate only
+    through `shared_capabilities`. A `PermissionRule.tools` predicate in `managed_rules` is called with the
+    delegate's run context.
+
+    Inside a durable unit, whose context carries the agent but not the run's capabilities, the agent's own
+    capabilities are read: a durable engine refuses a `Permissions` added per run.
+    """
+    return [
+        layer
+        for permissions in _permissions(_run_capabilities(ctx))
+        if (layer := _managed_layer(permissions, ctx)) is not None
+    ]
+
+
+def managed_layer_not_held_by(ctx: RunContext[AgentDepsT], agent: AbstractAgent[Any, Any]) -> bool:
+    """Whether a `Permissions` on `ctx`'s run has a managed layer that `agent`'s own capabilities don't also hold.
+
+    A `Permissions` of `agent` with the same `max_mode`, `managed_rules` and `ask_commands` holds it. A `max_mode`
+    function counts only when `agent` is `ctx`'s own agent: another agent's child workflow would call it with that
+    agent's context, which can return a weaker mode. A `max_mode` function is read only for a `Permissions` that
+    `agent` doesn't hold.
+    """
+    same_agent = agent is ctx.agent
+    held = [
+        _layer_key(permissions)
+        for permissions in _permissions(leaf_capabilities(agent.root_capability))
+        if same_agent or not callable(permissions.max_mode)
+    ]
+    return any(
+        _layer_key(permissions) not in held and _managed_layer(permissions, ctx) is not None
+        for permissions in _permissions(_run_capabilities(ctx))
+    )
+
+
+def _permissions(capabilities: Iterable[AbstractCapability[AgentDepsT]]) -> Iterator[Permissions[AgentDepsT]]:
+    """Each `Permissions` among `capabilities`, wrapped or not."""
+    for capability in capabilities:
+        for candidate in wrapper_chain(capability):
+            if isinstance(candidate, Permissions):
+                yield candidate
+
+
+def _layer_key(permissions: Permissions[Any]) -> tuple[object, ...]:
+    """What makes up the managed layer of `permissions`, before its `max_mode` is read."""
+    return (permissions.max_mode, list(permissions.managed_rules), list(permissions.ask_commands))
+
+
+def _run_capabilities(ctx: RunContext[AgentDepsT]) -> Iterable[AbstractCapability[AgentDepsT]]:
+    """The run's capabilities, or inside a durable unit that doesn't carry them, the agent's own."""
+    try:
+        return ctx.capabilities.values()
+    except UserError:
+        # Every durable engine's unit carries the live context or one rebuilt with its agent, except the deprecated
+        # `TemporalAgent` with a custom six-argument `temporalize_toolset_func`: there, nothing can be carried.
+        return () if ctx.agent is None else leaf_capabilities(ctx.agent.root_capability)
+
+
+def _managed_layer(
+    permissions: Permissions[AgentDepsT], ctx: RunContext[AgentDepsT]
+) -> _InheritedPermissions[AgentDepsT] | None:
+    """The managed layer of `permissions`, with its `max_mode` read for `ctx`'s run, or `None` when it has none."""
+    max_mode = _read(permissions.max_mode, ctx)
+    if max_mode == 'full' and not permissions.managed_rules:
+        return None
+    return _InheritedPermissions[AgentDepsT](
+        max_mode=max_mode, managed_rules=permissions.managed_rules, ask_commands=permissions.ask_commands
+    )

@@ -780,6 +780,11 @@ CASES: dict[str, CapabilityCase] = {
     'Permissions': CapabilityCase(
         Anonymous('each mode holds the calls it asks about, so stacked ones ask when any of them would')
     ),
+    '_InheritedPermissions': CapabilityCase(
+        Anonymous(
+            '`SubAgents` adds one per managed parent `Permissions` to a delegate; each holds what its own limits do'
+        )
+    ),
     'ManagedPrompt': CapabilityCase(
         Anonymous(
             'one per prompt name; the name derives its `id`, so two of one prompt are rejected when the agent is built'
