@@ -504,6 +504,8 @@ class ComputerUse(AbstractCapability[AgentDepsT]):
             sequential=True,
             prepare=_omit_on_read_only_workspace,
             tool_kind=COMPUTER_KIND,
+            # The model has to see the screenshot it returns, which code calling it would hide.
+            allowed_callers={'direct'},
             # It returns a screenshot, which has no schema to describe.
             include_return_schema=False,
             # The tool reads the run's messages and model in workflow code. Only the work on the screen is a durable

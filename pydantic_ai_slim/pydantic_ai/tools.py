@@ -3,7 +3,7 @@ from __future__ import annotations as _annotations
 import inspect
 import warnings
 import weakref
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence, Set as AbstractSet
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from enum import Enum
@@ -20,6 +20,7 @@ from typing import (
     TypeAlias,
     Union,
     cast,
+    get_args,
     overload,
 )
 
@@ -72,6 +73,7 @@ __all__ = (
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
+    'ToolCaller',
     'ToolUIVisibility',
     'DeferredToolRequests',
     'DeferredToolResults',
@@ -369,6 +371,30 @@ _without_toolset_sequential_defer_loading: ContextVar[bool] = ContextVar(
 """Set while Temporal and DBOS list tools for a workflow started before `FunctionToolset` applied its `sequential` and `defer_loading` to `Tool` instances."""
 
 
+ToolCaller: TypeAlias = Literal['direct', 'programmatic']
+"""Who may call a tool, as listed in its [`allowed_callers`][pydantic_ai.tools.ToolDefinition.allowed_callers].
+
+- `'direct'`: the model, in its response.
+- `'programmatic'`: code the model wrote, whether it runs in a local sandbox like the harness's Code Mode or in a
+  provider's code execution.
+"""
+
+_TOOL_CALLERS: frozenset[str] = frozenset(get_args(ToolCaller))
+
+
+def _validate_allowed_callers(tool_name: str, allowed_callers: AbstractSet[ToolCaller] | None) -> None:
+    if allowed_callers is None:
+        return
+    if not allowed_callers:
+        raise UserError(
+            f'Tool {tool_name!r} has empty `allowed_callers`, so nothing could call it; use `None` for no constraint.'
+        )
+    if unknown := sorted(set(allowed_callers) - _TOOL_CALLERS):
+        raise UserError(
+            f'Tool {tool_name!r} has unknown `allowed_callers` {unknown}; a caller is one of {sorted(_TOOL_CALLERS)}.'
+        )
+
+
 def _validate_max_retries(max_retries: int | None) -> None:
     if max_retries is not None and max_retries < 0:
         raise UserError(f'max_retries must be >= 0, got {max_retries}')
@@ -401,6 +427,7 @@ class Tool(Generic[ToolAgentDepsT]):
     durable: bool | None
     ui_visibility: ToolUIVisibility | None
     defer_loading: bool
+    allowed_callers: frozenset[ToolCaller] | None
     include_return_schema: bool | None
     function_schema: _function_schema.FunctionSchema
     """
@@ -436,6 +463,7 @@ class Tool(Generic[ToolAgentDepsT]):
         durable: bool | None = None,
         ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
     ):
@@ -515,6 +543,9 @@ class Tool(Generic[ToolAgentDepsT]):
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
+            allowed_callers: Who may call this tool: `{'direct'}` for only the model, `{'programmatic'}` for only code
+                the model wrote, such as in Code Mode, or both. Defaults to `None`, no constraint, so whatever runs code decides.
+                See [Who may call a tool](../tools-advanced.md#tool-callers) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, defaults to `False` unless the [`IncludeToolReturnSchemas`][pydantic_ai.capabilities.IncludeToolReturnSchemas] capability is used.
             function_schema: The function schema to use for the tool. If not provided, it will be generated.
@@ -523,6 +554,7 @@ class Tool(Generic[ToolAgentDepsT]):
         _validate_timeout(timeout)
         self.function = function
         self.name = name or function.__name__
+        _validate_allowed_callers(self.name, allowed_callers)
         self.function_schema = function_schema or _function_schema.function_schema(
             function,
             schema_generator,
@@ -547,6 +579,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.durable = durable
         self.ui_visibility = ui_visibility
         self.defer_loading = defer_loading
+        self.allowed_callers = frozenset(allowed_callers) if allowed_callers is not None else None
         self.include_return_schema = include_return_schema
 
     @classmethod
@@ -624,6 +657,7 @@ class Tool(Generic[ToolAgentDepsT]):
             durable=self.durable,
             ui_visibility=self.ui_visibility,
             defer_loading=self.defer_loading and not (without_toolset and self._defer_loading_from_toolset),
+            allowed_callers=self.allowed_callers,
             kind='unapproved' if self.requires_approval else 'function',
             return_schema=self.function_schema.return_schema,
             include_return_schema=self.include_return_schema,
@@ -686,6 +720,23 @@ if TYPE_CHECKING:
         def __get__(self, obj: object | None, owner: type[Any]) -> ToolPartKind | None: ...
 
         def __set__(self, obj: object, value: _messages.ToolKindLike | None) -> None: ...
+
+    class _AllowedCallersField:
+        """How type checkers see `ToolDefinition.allowed_callers`: set as any set of callers, read as a `frozenset`.
+
+        At runtime the field is a plain `frozenset[ToolCaller] | None`, which `ToolDefinition.__post_init__`
+        normalizes, so reading it costs nothing.
+        """
+
+        @overload
+        def __get__(self, obj: None, owner: type[Any]) -> None: ...
+
+        @overload
+        def __get__(self, obj: object, owner: type[Any]) -> frozenset[ToolCaller] | None: ...
+
+        def __get__(self, obj: object | None, owner: type[Any]) -> frozenset[ToolCaller] | None: ...
+
+        def __set__(self, obj: object, value: AbstractSet[ToolCaller] | None) -> None: ...
 
 
 KindArgsT = TypeVar('KindArgsT')
@@ -867,6 +918,25 @@ class ToolDefinition:
     See [Tool Search](../tools-advanced.md#tool-search) for more info.
     """
 
+    if TYPE_CHECKING:
+        allowed_callers: _AllowedCallersField = _AllowedCallersField()
+    else:
+        allowed_callers: frozenset[ToolCaller] | None = None
+    """Who may call this tool, as a set of [`ToolCaller`][pydantic_ai.tools.ToolCaller] values.
+
+    - `{'direct'}`: only the model, for example a tool whose result the model itself has to see, like a screenshot.
+    - `{'programmatic'}`: only code the model wrote, such as in the harness's Code Mode.
+    - `{'direct', 'programmatic'}`: both.
+
+    `None` (the default) puts no constraint on the tool, so whatever runs code decides, such as
+    Code Mode's `tools` selector. The field wins over such a selector, and a selector that has code call a tool
+    writes `{'programmatic'}` here, the way tool search writes `defer_loading`.
+    An empty set or an unknown caller raises [`UserError`][pydantic_ai.exceptions.UserError].
+    It reads back as a `frozenset`. To change it, for example from a `prepare` function, use
+    `replace(tool_def, allowed_callers=...)`, which validates it, rather than assigning the attribute.
+    See [Who may call a tool](../tools-advanced.md#tool-callers).
+    """
+
     unless_native: Annotated[
         str | None,
         # Old names were `prefer_builtin` and (after the builtin → native rename in https://github.com/pydantic/pydantic-ai/issues/5338)
@@ -1005,6 +1075,10 @@ class ToolDefinition:
             self.tool_kind = _tool_kind_id(self.tool_kind)
         if self.unless_tool_kind is not None and self.unless_tool_kind.__class__ is not str:
             self.unless_tool_kind = _tool_kind_id(self.unless_tool_kind)
+        if self.allowed_callers is not None:
+            _validate_allowed_callers(self.name, self.allowed_callers)
+            if self.allowed_callers.__class__ is not frozenset:
+                self.allowed_callers = frozenset(self.allowed_callers)
 
     @property
     def defer(self) -> bool:

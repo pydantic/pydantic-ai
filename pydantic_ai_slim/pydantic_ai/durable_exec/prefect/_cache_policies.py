@@ -237,10 +237,16 @@ def _excluded_fields(obj: object, *, is_framework: bool) -> frozenset[str]:
         excluded_fields |= _CAPABILITY_PART_EXCLUDED_FIELDS
     elif isinstance(obj, _INSTRUCTION_SOURCE_TYPES):
         excluded_fields |= _INSTRUCTION_SOURCE_EXCLUDED_FIELDS
-    elif isinstance(obj, ToolDefinition | BaseToolCallPart | BaseToolReturnPart) and obj.ui_visibility is None:
+    elif isinstance(obj, ToolDefinition | BaseToolCallPart | BaseToolReturnPart):
         # Left out while unset, so keys stay what they were before the field was added; a set stamp stays in the key,
         # since the model task's cached response carries it.
-        excluded_fields |= {'ui_visibility'}
+        if obj.ui_visibility is None:
+            excluded_fields |= {'ui_visibility'}
+        # Always left out, so keys stay what they were before the field was added, including for the
+        # `{'programmatic'}` Code Mode writes onto a tool it calls from `run_code`. Who may call a tool doesn't change
+        # what a call returns, and where Code Mode puts a tool already shows in the request's tools.
+        if isinstance(obj, ToolDefinition):
+            excluded_fields |= {'allowed_callers'}
     return excluded_fields
 
 

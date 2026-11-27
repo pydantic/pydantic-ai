@@ -18,8 +18,10 @@ from pydantic_ai.tool_manager import ToolManager
 from pydantic_ai.tools import AgentDepsT, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai_harness._code_tools import (
-    can_be_sandboxed,
+    callers_set_by_tool,
+    check_selector_names,
     contains_multimodal,
+    mark_called_from_code,
     partition_callable_tools,
     record_nested_call,
     run_nested_call,
@@ -260,15 +262,12 @@ class IPythonCodeModeToolset(WrapperToolset[AgentDepsT]):
         in_kernel: dict[str, ToolsetTool[AgentDepsT]] = {}
         native: dict[str, ToolsetTool[AgentDepsT]] = {}
         for name, tool in wrapped_tools.items():
-            tool_def = tool.tool_def
-            if (
-                can_be_sandboxed(tool_def)
-                and ctx.is_tool_available(tool_def)
-                and await matches_tool_selector(self.tool_selector, ctx, tool_def)
-            ):
-                in_kernel[name] = tool
-            else:
+            from_code, direct = await self._callers(ctx, tool.tool_def)
+            if from_code:
+                in_kernel[name] = mark_called_from_code(tool)
+            if direct:
                 native[name] = tool
+        wrapped_tools = wrapped_tools | in_kernel
         if RUN_CODE_TOOL_NAME in native:
             raise UserError(
                 f"Tool name '{RUN_CODE_TOOL_NAME}' is reserved for code mode. Rename your tool to avoid conflicts."
@@ -299,6 +298,20 @@ class IPythonCodeModeToolset(WrapperToolset[AgentDepsT]):
             wrapped_tools=wrapped_tools,
         )
         return result
+
+    async def _callers(self, ctx: RunContext[AgentDepsT], tool_def: ToolDefinition) -> tuple[bool, bool]:
+        """Whether code in the kernel and the model may call `tool_def` this step, as `(from_code, direct)`."""
+        check_selector_names(self.tool_selector, tool_def, owner='IPythonCodeMode')
+        callers = callers_set_by_tool(tool_def)
+        if callers is None:
+            from_code = ctx.is_tool_available(tool_def) and await matches_tool_selector(
+                self.tool_selector, ctx, tool_def
+            )
+            return from_code, not from_code
+        from_code, direct = callers
+        # Not revealed yet: one the model may call too is a deferred direct tool until then, and one only code may
+        # call stays off the wire.
+        return from_code and ctx.is_tool_available(tool_def), direct
 
     async def call_tool(
         self, name: str, tool_args: dict[str, Any], ctx: RunContext[AgentDepsT], tool: ToolsetTool[AgentDepsT]

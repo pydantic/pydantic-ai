@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence, Set as AbstractSet
 from dataclasses import KW_ONLY, dataclass, field
 from typing import Any, overload
 
@@ -36,6 +36,7 @@ from pydantic_ai.tools import (
     KindedToolDecorator,
     KindedToolPlainDecorator,
     Tool,
+    ToolCaller,
     ToolFuncContext,
     ToolFuncEither,
     ToolFuncPlain,
@@ -209,6 +210,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         durable: bool | None = None,
         ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
 
@@ -234,6 +236,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         durable: bool | None = None,
         ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
@@ -259,6 +262,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         durable: bool | None = None,
         ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a plain (no-[`RunContext`][pydantic_ai.tools.RunContext]) function tool on this capability.
@@ -284,6 +288,7 @@ class Capability(AbstractCapability[AgentDepsT]):
             durable=durable,
             ui_visibility=ui_visibility,
             defer_loading=defer_loading,
+            allowed_callers=allowed_callers,
             include_return_schema=include_return_schema,
         )
         return decorator if func is None else decorator(func)
@@ -313,6 +318,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         durable: bool | None = None,
         ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
 
@@ -338,6 +344,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         durable: bool | None = None,
         ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
@@ -363,6 +370,7 @@ class Capability(AbstractCapability[AgentDepsT]):
         durable: bool | None = None,
         ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a function tool (taking [`RunContext`][pydantic_ai.tools.RunContext]) on this capability.
@@ -388,6 +396,7 @@ class Capability(AbstractCapability[AgentDepsT]):
             durable=durable,
             ui_visibility=ui_visibility,
             defer_loading=defer_loading,
+            allowed_callers=allowed_callers,
             include_return_schema=include_return_schema,
         )
         return decorator if func is None else decorator(func)

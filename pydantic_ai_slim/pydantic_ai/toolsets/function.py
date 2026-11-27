@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from collections.abc import Awaitable, Callable, Sequence
+from collections.abc import Awaitable, Callable, Sequence, Set as AbstractSet
 from dataclasses import dataclass, replace
 from typing import Any, overload
 
@@ -28,6 +28,7 @@ from ..tools import (
     KindedToolDecorator,
     KindedToolPlainDecorator,
     Tool,
+    ToolCaller,
     ToolDefinition,
     ToolFuncContext,
     ToolFuncEither,
@@ -211,6 +212,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         durable: bool | None = None,
         ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool | None = None,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> KindedToolDecorator[AgentDepsT, KindArgsT, KindContentT]: ...
 
@@ -236,6 +238,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         durable: bool | None = None,
         ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool | None = None,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncContext[AgentDepsT, ToolParams]], ToolFuncContext[AgentDepsT, ToolParams]]: ...
 
@@ -261,6 +264,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         durable: bool | None = None,
         ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool | None = None,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which takes [`RunContext`][pydantic_ai.tools.RunContext] as its first argument.
@@ -341,6 +345,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 If `None`, the default value is determined by the toolset.
+            allowed_callers: Who may call this tool: `{'direct'}` for only the model, `{'programmatic'}` for only code
+                the model wrote, such as in Code Mode, or both. Defaults to `None`, no constraint, so whatever runs code decides.
+                See [Who may call a tool](../tools-advanced.md#tool-callers) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, the default value is determined by the toolset.
         """
@@ -368,6 +375,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 durable=durable,
                 ui_visibility=ui_visibility,
                 defer_loading=defer_loading,
+                allowed_callers=allowed_callers,
                 include_return_schema=include_return_schema,
             )
             return func_
@@ -399,6 +407,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         durable: bool | None = None,
         ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool | None = None,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> KindedToolPlainDecorator[KindArgsT, KindContentT]: ...
 
@@ -424,6 +433,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         durable: bool | None = None,
         ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool | None = None,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> Callable[[ToolFuncPlain[ToolParams]], ToolFuncPlain[ToolParams]]: ...
 
@@ -449,6 +459,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         durable: bool | None = None,
         ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool | None = None,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
         include_return_schema: bool | None = None,
     ) -> Any:
         """Decorator to register a tool function which DOES NOT take `RunContext` as an argument.
@@ -530,6 +541,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 or another tool's `ToolReturn.tools`.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
                 If `None`, the default value is determined by the toolset.
+            allowed_callers: Who may call this tool: `{'direct'}` for only the model, `{'programmatic'}` for only code
+                the model wrote, such as in Code Mode, or both. Defaults to `None`, no constraint, so whatever runs code decides.
+                See [Who may call a tool](../tools-advanced.md#tool-callers) for more info.
             include_return_schema: Whether to include the return schema in the tool definition sent to the model.
                 If `None`, the default value is determined by the toolset.
         """
@@ -558,6 +572,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
                 durable=durable,
                 ui_visibility=ui_visibility,
                 defer_loading=defer_loading,
+                allowed_callers=allowed_callers,
                 include_return_schema=include_return_schema,
             )
             return func_
@@ -680,6 +695,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
         include_return_schema: bool | None = None,
         durable: bool | None = None,
         ui_visibility: ToolUIVisibility | None = None,
+        allowed_callers: AbstractSet[ToolCaller] | None = None,
     ) -> Tool[AgentDepsT]:
         """Add a function as a tool to the toolset.
 
@@ -739,6 +755,9 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             ui_visibility: What a [UI adapter](../ui/overview.md#tool-visibility) sends a client for this tool's calls
                 and returns: `'public'`, `'redacted'` or `'private'`.
                 If `None`, the default value is determined by the toolset.
+            allowed_callers: Who may call this tool: `{'direct'}` for only the model, `{'programmatic'}` for only code
+                the model wrote, such as in Code Mode, or both. Defaults to `None`, no constraint, so whatever runs code decides.
+                See [Who may call a tool](../tools-advanced.md#tool-callers) for more info.
         """
         if docstring_format is None:
             docstring_format = self.docstring_format
@@ -781,6 +800,7 @@ class FunctionToolset(AbstractToolset[AgentDepsT]):
             durable=durable,
             ui_visibility=ui_visibility,
             defer_loading=defer_loading,
+            allowed_callers=allowed_callers,
             include_return_schema=include_return_schema,
         )
         self.add_tool(tool)

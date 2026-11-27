@@ -45,8 +45,10 @@ class IPythonCodeMode(AbstractCapability[AgentDepsT]):
     - `Sequence[str]`: only tools whose names are listed.
     - Callable `(ctx, tool_def) -> bool | Awaitable[bool]`: tools where the callable returns `True`.
 
-    The rest stay visible to the model as normal tool calls, as do framework control tools, tools
-    not yet revealed by tool search, native fallbacks, and other code-execution tools.
+    The rest stay visible to the model as normal tool calls. A tool's own `ToolDefinition.allowed_callers`
+    wins over the selector: `{'direct'}` tools stay native, `{'programmatic'}` tools are always in the
+    kernel, and `{'direct', 'programmatic'}` tools are both. Tools not yet revealed by tool search, native
+    fallbacks, and other code-execution tools stay native too.
     """
 
     max_retries: int = 3

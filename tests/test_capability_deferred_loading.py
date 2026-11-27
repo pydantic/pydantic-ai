@@ -4363,6 +4363,7 @@ async def test_the_catalog_reaches_models_in_the_request_parameters_and_the_wire
         for request in recorded
     ]
     assert all(tool.metadata is None for tool in load_tools)
+    assert all(tool.allowed_callers == {'direct'} for tool in load_tools)
     first, second = render_anthropic_bodies(recorded)
     assert first is not None and second is not None
     assert json.dumps(first['tools'], sort_keys=True) == json.dumps(second['tools'], sort_keys=True)

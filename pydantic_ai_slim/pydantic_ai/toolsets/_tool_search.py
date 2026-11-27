@@ -454,6 +454,8 @@ class ToolSearchToolset(WrapperToolset[AgentDepsT]):
             parameters_json_schema=schema,
             tool_kind=TOOL_SEARCH_KIND,
             unless_native=unless_native,
+            # What it finds is revealed to the model, not returned to code.
+            allowed_callers={'direct'},
         )
 
         return _SearchTool(

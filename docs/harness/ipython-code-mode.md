@@ -93,7 +93,7 @@ growth
 
 ## Selecting tools
 
-The `tools` field takes the same [`ToolSelector`](../api/tools.md) as Code Mode: `'all'` (the default), a list of tool names, a `(ctx, tool_def)` predicate, or a metadata dictionary. Tools that don't match stay visible to the model as regular tool calls. Framework control tools such as `search_tools`, tools that tool search hasn't revealed yet, native fallbacks, and other code-execution tools such as `Shell`'s `run_command` stay native whatever the selector says.
+The `tools` field takes the same [`ToolSelector`](../api/tools.md) as Code Mode: `'all'` (the default), a list of tool names, a `(ctx, tool_def)` predicate, or a metadata dictionary. Tools that don't match stay visible to the model as regular tool calls. A tool's own [`allowed_callers`](../tools-advanced.md#tool-callers) wins over the selector, as in Code Mode: `{'direct'}` keeps it a regular tool call, as for `search_tools`, `{'programmatic'}` puts it in the kernel only, and `{'direct', 'programmatic'}` makes it both. Tools that tool search hasn't revealed yet, native fallbacks, and other code-execution tools such as `Shell`'s `run_command` stay native too.
 
 ```python
 from pydantic_ai_harness import IPythonCodeMode
