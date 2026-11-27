@@ -226,9 +226,9 @@ CodeMode(
 - `eager=True`: side effects from early statements cannot be rolled back, and hooks/approval on `run_code` run only after the call finishes streaming. Only applies when `run_code` is the first tool call in the response.
 - `speculate`: pass tool names that are safe to run early, or `'declared'` to trust `Tool(metadata={'read_only': True})` and MCP `readOnlyHint`. Only calls with literal keyword arguments start early; unclaimed launches still cost what they cost. `CodeMode.speculation_stats` reports launched/adopted/evicted.
 - `eager` and `speculate` put runs in streaming mode, need asyncio, and are inactive under durable execution (Temporal, DBOS, Prefect).
-- `os_policy`: Monty's `OSPolicy`, merged key by key over the defaults (clock, sleeps, and random seeding routed to `os_access`). `{'datetime': 'system', 'timezone': 'Europe/Paris'}` gives the sandbox the worker's clock in that zone with no handler; `{'timezone': ...}` alone keeps the clock on `os_access` but makes `astimezone()` and `%Z` report the zone. Keep the defaults under Temporal: a `'system'` clock or `random_start` is re-read on replay. Fixed values stay fixed.
+- `os_policy`: Monty's `OSPolicy`, merged key by key over the defaults (clock, sleeps, and random seeding routed to `os_access`). `{'datetime': 'system', 'timezone': 'Europe/Paris'}` gives the sandbox the worker's clock in that zone with no handler; `{'timezone': ...}` alone keeps the clock on `os_access` but makes `astimezone()` and `%Z` report the zone. Keep the defaults under Temporal or Azure Durable Task: a `'system'` clock or `random_start` is re-read on replay. Fixed values stay fixed.
 - With `InputGuardrail(parallel=True)`, nested tool calls from `eager` and `speculate` wait for the guard's verdict, so a blocked prompt runs no tool.
-- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_seconds` also applies, except in Temporal workflow code. The factory runs once per run, or once per turn when turns run as activities. Only execution moves; tools, `os_access`, and prints stay host-side, and so do mounts unless turns run as activities, where the activity worker reads them. Run the worker on `pydantic-monty>=1.7.0`. `monty_sandbox_url` is the deprecated form.
+- `monty_sandbox`: an `http://`/`https://` server root URL (no key; no path, query, or fragment; `ws://`/`wss://` still work) or a sync or async function returning an `AsyncMontyRemote` (pass `metadata=` for an `authorization` header), to run code on a remote Monty worker over gRPC. A factory pool adds its `request_timeout` (10 s default) per-turn transport deadline; the configured `max_duration_seconds` also applies, except in Temporal workflow code and Azure Durable Task orchestrator code. The factory runs once per run, or once per turn when turns run as activities. Only execution moves; tools, `os_access`, and prints stay host-side, and so do mounts unless turns run as activities, where the activity worker reads them. Run the worker on `pydantic-monty>=1.7.0`. `monty_sandbox_url` is the deprecated form.
 - Configure credentials for a remote `monty_sandbox` in the pool factory, not in the model's instructions or tool arguments.
 
 ## Durable Execution
@@ -263,6 +263,14 @@ errors fail the workflow task instead: Temporal retries the task while the workf
 so the client keeps waiting if setup keeps failing. Inspect the task history or worker logs for the original error. To end the
 workflow, catch expected setup exceptions and raise
 `temporalio.exceptions.ApplicationError(..., non_retryable=True)` from the original exception.
+
+`CodeMode` also works next to `AzureDurableTaskDurability()` (install
+`pydantic-ai-harness[codemode,azure-durable-task]`). As under Temporal, `run_code` executes in
+orchestrator code and re-runs on every replay, nested tool calls are activities, sandbox sleeps are
+durable timers, and `max_duration_seconds` is off. Durable Task has no deadlock detector, so nothing
+bounds a snippet's computation: a CPU-bound snippet blocks the orchestrator thread indefinitely. Keep
+snippets to orchestration and put heavy or unbounded computation in a tool. Turns don't run as
+activities there, so a remote `monty_sandbox` must be reachable whenever the orchestrator replays.
 
 ## Agent Specs
 

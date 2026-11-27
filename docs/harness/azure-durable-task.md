@@ -109,6 +109,9 @@ completed results from history. This shapes how you write agents for it:
 - **Orchestrator-side code runs on every replay.** Hooks, instruction functions, output validators and
   inline tools must be deterministic and do no network, file or thread I/O. Put I/O in tools or a
   capability's `@durable_operation` method.
+- **Code Mode runs snippets in orchestrator code.** `CodeMode`'s `run_code` re-runs its snippets
+  on every replay, with nested tool calls as activities; see [Code Mode's Azure Durable Task
+  section](code-mode.md#azure-durable-task-durability).
 - **Names are persisted.** Activity names come from the agent's `name`, toolset IDs and tool names.
   Don't rename them while orchestrations that use them are still running.
 - **Token counts are activities.** With `count_tokens_before_request=True`, the count ahead of each
