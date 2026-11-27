@@ -25,7 +25,7 @@ from termflow.tui.menu import MenuResult
 
 from pydantic_ai import Agent
 from pydantic_ai.models.test import TestModel
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_ai_pax import app, chat, cli
 from pydantic_ai_pax.cli import cli as cli_module, self_update
 from pydantic_ai_pax.cli.cli import relaunch_argv
@@ -225,7 +225,7 @@ def test_install_commands(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> No
         f'pydantic-ai-pax @ {release}/pydantic_ai_pax-{NEWER}.tar.gz\n'
         f'pydantic-clai2 @ {release}/pydantic_clai2-{NEWER}.tar.gz\n'
         f'pydantic-ai-harness[coder,skills] @ {release}/pydantic_ai_harness-{NEWER}.tar.gz\n'
-        f'pydantic-ai-slim[anthropic,mcp,openai] @ {release}/pydantic_ai_slim-{NEWER}.tar.gz\n'
+        f'pydantic-ai-slim[anthropic,google,mcp,openai] @ {release}/pydantic_ai_slim-{NEWER}.tar.gz\n'
         f'pydantic-graph @ {release}/pydantic_graph-{NEWER}.tar.gz\n'
     )
     monkeypatch.setenv('CLAI_BLEEDING_URL', 'http://localhost:8000')
@@ -300,7 +300,7 @@ def _updates(
             overrides = Path(command[command.index('--overrides') + 1])
             text = await anyio.to_thread.run_sync(partial(overrides.read_text, encoding='utf-8'))
             assert 'pydantic-ai-harness[coder,skills] @ ' in text
-            assert 'pydantic-ai-slim[anthropic,mcp,openai] @ ' in text
+            assert 'pydantic-ai-slim[anthropic,google,mcp,openai] @ ' in text
         return (codes or [0]).pop(0)
 
     async def locate(uv: str) -> str | None:
@@ -744,7 +744,7 @@ async def test_shell_relaunches_after_an_install(tmp_path: Path, monkeypatch: py
     assert (reloaded.session_id, reloaded.new_session_id) == (None, '0b4f5d8e-3c1a-4e6b-9f2d-7a8c9b0d1e2f')
     resumed = await _relaunch_after(monkeypatch, tmp_path, ['hello'])
     assert resumed.session_id is not None
-    saved = await SqliteConversationStore(database=tmp_path / 'sessions.db').get(conversation_id=resumed.session_id)
+    saved = await SqliteSessionStore(database=tmp_path / 'sessions.db').get(conversation_id=resumed.session_id)
     assert saved.messages
 
 

@@ -121,8 +121,10 @@ def _find_prompt_part(
 
     The prompt is the most recent `UserPromptPart` in the run's history, `ctx.messages`. `messages`
     is this request's copy of the history, where an outer capability can add a `UserPromptPart` for
-    this request only (`SystemReminders`, `Planning` and `Memory` append one to the last request).
-    That part is not the user's prompt, so the prompt is found by identity: the guard neither
+    this request only, and capabilities enqueue records around the prompt (`Memory` and `Planning` put
+    their run-start records before it, `SystemReminders` appends its reminders after it), so the prompt
+    is not necessarily the request's last part. An added part is not the user's prompt, so the prompt
+    is found by identity: the guard neither
     screens nor overwrites the added part. A prompt an outer capability rewrote in place is still
     the same object, so the guard reads the rewritten text, and there is no separate original.
 

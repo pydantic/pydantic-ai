@@ -1202,8 +1202,8 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                                 stream,
                                 on_complete,
                             )
-                            streamed_result._full_history_from = (  # pyright: ignore[reportPrivateUsage]
-                                graph_ctx.state.appended_messages,
+                            streamed_result._settled_from = (  # pyright: ignore[reportPrivateUsage]
+                                graph_ctx.state,
                                 len(messages),
                             )
                             yield streamed_result
