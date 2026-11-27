@@ -311,7 +311,7 @@ To let the model choose which files the user gets, ask it to link them, and find
 [`file_links`][pydantic_ai.workspaces.file_links]:
 
 ```python {requires="workspace_agent.py"}
-from pydantic_ai import FileCitationSource
+from pydantic_ai import FileCitationSource, TextPart
 from pydantic_ai.workspaces import file_links
 
 from workspace_agent import agent
@@ -322,10 +322,14 @@ LINK_FILES = 'To give the user a file, link it as [name](sandbox:/absolute/path)
 async def main() -> None:
     result = await agent.run('Write fizzbuzz to fizzbuzz.py and send it to me.', instructions=LINK_FILES)
     # "Here it is: [fizzbuzz.py](sandbox:/home/me/project/fizzbuzz.py)"
-    citations = file_links(result.output)
+    for part in result.response.parts:
+        if isinstance(part, TextPart):
+            part.citations = [*(part.citations or []), *file_links(part.content)]
 
-    # Store the citations with the reply. When the user clicks the first link:
-    source = citations[0].sources[0]
+    # Save `result.all_messages()` as usual. When the user clicks the first link:
+    [part] = result.response.parts
+    assert isinstance(part, TextPart) and part.citations
+    source = part.citations[0].sources[0]
     assert isinstance(source, FileCitationSource)
     workspace = result.workspace  # or reattach with `backend(ref)`, as above
     if await workspace.in_working_dir(source.location.path):
@@ -335,14 +339,15 @@ async def main() -> None:
 ```
 
 - Without the instruction, most models only name the file, or say they can't send it.
-- Each [`Citation`][pydantic_ai.messages.Citation] holds the absolute path, in the workspace the reply ran in,
-  and its `anchor` is where the link is in the text, so you can replace the link with your own download link.
-  `file_links` reads only the text, so the file may not exist, and it skips links inside code.
-- Store the citations beside the reply, not on its `TextPart`, and serve only those, never a path or ref a
-  client sends. Read them from the workspace of `result.response.workspace_ref`, which you keep on the server.
-  The path comes from the model, so check it with `in_working_dir` first.
+- Each [`Citation`][pydantic_ai.messages.Citation] holds the absolute path, in the workspace of
+  `result.response.workspace_ref`, and its `anchor` is where the link is in the text, so a UI can replace the
+  link with your own download link. `file_links` reads only the text, so the file may not exist, and it skips
+  links inside code.
+- On the part, the citations are saved with the message history and sent to the client by the
+  [UI adapters](ui/overview.md), like web search citations. A client can send history back with any path, so
+  check every path with `in_working_dir` before you read it, and read from the workspace you keep on the server.
 - The file is read from the live workspace, so the link stops working once the sandbox is gone. To keep
-  it, read the file when you store the reply and save the bytes yourself.
+  it, read the file when you save the reply and store the bytes yourself.
 - Add the instruction only where you serve the files. Elsewhere the user gets a link that opens nothing.
 
 ## Cleaning up

@@ -111,6 +111,7 @@ from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDef
 from pydantic_ai.toolsets import ExternalToolset, FunctionToolset
 from pydantic_ai.toolsets._tool_search import parse_discovered_tools
 from pydantic_ai.usage import RunUsage, UsageLimits
+from pydantic_ai.workspaces import file_links
 
 from ._inline_snapshot import snapshot
 from .canonical_system_utils import PROVIDER_NAME, StampedModel
@@ -2043,6 +2044,43 @@ def test_dump_and_load_citations():
             Citation(sources=[DocumentCitationSource(document_id='file-1', title='notes.txt')]),
         ]
     )
+
+
+def test_dump_and_load_file_citations():
+    """A link to a file the model made goes to the client and back as the path alone, with no workspace ref.
+
+    Unit test: `file_links` only parses text, so no recording is involved.
+    """
+    content = 'Here it is: [out.csv](sandbox:/work/out.csv)'
+    messages: list[ModelMessage] = [
+        ModelRequest(parts=[UserPromptPart(content='Make a CSV.')]),
+        ModelResponse(parts=[TextPart(content, citations=file_links(content))]),
+    ]
+
+    ui_messages = VercelAIAdapter.dump_messages(messages)
+    [text] = [part for part in ui_messages[1].parts if isinstance(part, TextUIPart)]
+    assert text.provider_metadata == snapshot(
+        {
+            'pydantic_ai': {
+                'citations': [
+                    {
+                        'sources': [
+                            {
+                                'location': {'path': '/work/out.csv', 'kind': 'workspace'},
+                                'title': 'out.csv',
+                                'kind': 'file',
+                            }
+                        ],
+                        'anchor': {'start': 12, 'end': 44, 'kind': 'marker'},
+                    }
+                ]
+            }
+        }
+    )
+
+    [loaded] = VercelAIAdapter.load_messages(ui_messages)[1].parts
+    assert isinstance(loaded, TextPart)
+    assert loaded.citations == file_links(content)
 
 
 def test_load_invalid_citations():

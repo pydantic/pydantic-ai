@@ -72,11 +72,11 @@ directory (absolute paths and `..` reach any file the environment can read), so 
 model with `await workspace.in_working_dir(path)` first.
 
 To let the model pick the files the user gets, instruct it "To give the user a file, link it as
-[name](sandbox:/absolute/path)." and call `file_links(result.output)` from
-`pydantic_ai.workspaces`: a pure function returning one `Citation` per link outside code, with a `FileCitationSource`
-whose `location` holds the absolute path (in the workspace of `result.response.workspace_ref`), and an anchor on the link so the app can swap in its own
-download URL. Store them beside the reply (not on `TextPart.citations`: Anthropic replays a part's citations only when
-each covers its whole text), serve only stored ones, and check `in_working_dir` before `read_file`.
+[name](sandbox:/absolute/path)." and add `file_links(part.content)` (from `pydantic_ai.workspaces`) to each reply
+`TextPart`'s `citations`. It is a pure function returning one `Citation` per link outside code, with a
+`FileCitationSource` whose `location.path` is the absolute path in the workspace of `result.response.workspace_ref`,
+and an anchor on the link so a UI can swap in its own download URL. The citations then travel with message history
+and UI adapters like web citations; a client can send back any path, so check `in_working_dir` before `read_file`.
 
 Pydantic AI Harness's `ComputerUse` gives the model a `computer` tool that drives the screen of the run's workspace.
 The workspace's backend must have a screen, as the harness's sandbox desktops do. The protocols a screen implements

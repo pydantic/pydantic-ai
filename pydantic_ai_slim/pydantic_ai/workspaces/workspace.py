@@ -757,8 +757,15 @@ class Workspace(WorkspaceBackend):
         """Whether `path` is inside the working directory, once its symlinks are resolved.
 
         Check a path you didn't choose, such as one from a model's reply, before you read it: an absolute
-        path, `..` or a symlink can otherwise name any file the environment can read.
+        path, `..` or a symlink can otherwise name any file the environment can read. A backend with neither
+        [`SupportsRealpath`][pydantic_ai.workspaces.SupportsRealpath] nor commands can't resolve symlinks, so
+        every path is `False`. A symlink made between the check and the read isn't caught.
         """
+        backend: WorkspaceBackend = self
+        while isinstance(backend, Workspace):
+            backend = backend._backend
+        if not isinstance(backend, (SupportsRealpath, SupportsCommands)):
+            return False
         target = await self.realpath(await self.resolve(path))
         return is_within(target, await self.working_dir(), sep=self.paths.sep)
 

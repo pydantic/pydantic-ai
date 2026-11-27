@@ -7,14 +7,19 @@ from inline_snapshot import snapshot
 from pydantic_ai import FileCitationSource, MarkerCitationAnchor, WorkspaceLocation
 from pydantic_ai.workspaces import LocalWorkspaceBackend, Workspace, file_links
 
+from .workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend
+
 
 def test_file_links_reads_sandbox_links_only():
     """Not a VCR test: `file_links` only parses text, so no model response is involved."""
     text = (
         'Here is the [report](sandbox:/work/out/report.csv), the chart: ![a chart](<sandbox:/work/my%20chart.png>), '
         'the [copy](sandbox:/work/report(1).csv), [notes](sandbox:/work/notes.md "my notes") and [win](sandbox:C:/work/w.txt). '
-        'Not these: [relative](sandbox:out/x.csv), [docs](https://example.com), `[code](sandbox:/work/a.txt)`,\n'
-        '```\nprint("[fenced](sandbox:/work/b.txt)")\n```'
+        'Not these: [relative](sandbox:out/x.csv), [nul](sandbox:/work/a%00b), [docs](https://example.com), `[code](sandbox:/work/a.txt)`,\n'
+        '```\nprint("[fenced](sandbox:/work/b.txt)")\n```\n'
+        '1. Run ```pip install x``` and get [after inline](sandbox:/work/c.txt)\n'
+        '   ```\n   [indented fence](sandbox:/work/d.txt)\n   ```\n'
+        '2. Then [after list](sandbox:/work/e.txt)'
     )
 
     assert [
@@ -43,6 +48,14 @@ def test_file_links_reads_sandbox_links_only():
                 [FileCitationSource(location=WorkspaceLocation(path='C:/work/w.txt'), title='win')],
                 '[win](sandbox:C:/work/w.txt)',
             ),
+            (
+                [FileCitationSource(location=WorkspaceLocation(path='/work/c.txt'), title='after inline')],
+                '[after inline](sandbox:/work/c.txt)',
+            ),
+            (
+                [FileCitationSource(location=WorkspaceLocation(path='/work/e.txt'), title='after list')],
+                '[after list](sandbox:/work/e.txt)',
+            ),
         ]
     )
 
@@ -63,3 +76,13 @@ async def test_in_working_dir(tmp_path: Path):
     assert not await workspace.in_working_dir(f'{root}/../secret.txt')
     assert not await workspace.in_working_dir('/etc/passwd')
     assert not await workspace.in_working_dir(f'{root}/out/link.txt')
+
+
+async def test_in_working_dir_refuses_without_symlink_resolution():
+    """A backend that can't resolve symlinks can't show a path stays inside, so no path is.
+
+    Not a VCR test: it uses an in-memory backend, and no model response is involved.
+    """
+    workspace = Workspace(FilesystemOnlyWorkspaceBackend(FakeWorkspace('files-only')))
+
+    assert not await workspace.in_working_dir(f'{await workspace.working_dir()}/report.csv')

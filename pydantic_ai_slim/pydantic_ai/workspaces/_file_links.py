@@ -10,13 +10,15 @@ from urllib.parse import unquote
 from pydantic_ai.messages import Citation, FileCitationSource, MarkerCitationAnchor, WorkspaceLocation
 
 _CODE_OR_LINK = re.compile(
-    r'(?P<code>(?P<fence>`{3,}|~{3,})[\s\S]*?(?:\n(?P=fence)|\Z)|`[^`\n]+`)'
+    r'(?m)'
+    r'(?P<code>^[ \t]*+(?P<fence>`{3,}|~{3,})[\s\S]*?(?:\n[ \t]*+(?P=fence)|\Z)|`[^`\n]++`)'
     r'|!?\[(?P<title>[^\[\]\n]*+)\]\(\s*'
     r'(?:<sandbox:(?P<bracketed>[^>\n]++)>|sandbox:(?P<bare>(?:[^\s()<>]|\([^\s()<>]*+\))++))'
     r'(?:\s+"[^"\n]*+")?\s*\)'
 )
 """A fenced code block or inline code span, which is skipped, or a Markdown link or image to a `sandbox:` path:
-`[name](sandbox:/report(1).csv)`, `![chart](<sandbox:/a b.png>)`.
+`[name](sandbox:/report(1).csv)`, `![chart](<sandbox:/a b.png>)`. A fence opens only at the start of a line, and
+may be indented, as in a list.
 
 Matching both in one pass skips links inside code in linear time. The title can't hold `[`, and the possessive
 repeats never give back what they matched, so a reply full of unclosed brackets can't make a match restart its scan.
@@ -32,7 +34,7 @@ def file_links(text: str) -> list[Citation]:
     [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref].
 
     Each citation's anchor is the link's position in `text`, so you can replace the link with your own
-    download link. A link inside code, or to a relative path, is left as text.
+    download link. A link inside code, or to a relative path or one with a NUL byte, is left as text.
     Nothing is read, so the file may not exist. The path comes from the model: check it before reading
     it with [`Workspace.in_working_dir`][pydantic_ai.workspaces.Workspace.in_working_dir].
     """
@@ -41,7 +43,7 @@ def file_links(text: str) -> list[Citation]:
         if match['code'] is not None:
             continue
         path = unquote(match['bracketed'] or match['bare'])
-        if not (posixpath.isabs(path) or ntpath.isabs(path)):
+        if '\0' in path or not (posixpath.isabs(path) or ntpath.isabs(path)):
             continue
         source = FileCitationSource(WorkspaceLocation(path=path), title=match['title'] or None)
         citations.append(Citation(sources=[source], anchor=MarkerCitationAnchor(start=match.start(), end=match.end())))
