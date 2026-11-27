@@ -679,6 +679,13 @@ CASES: dict[str, CapabilityCase] = {
             'other passes that on'
         )
     ),
+    '_CoderShell': CapabilityCase(
+        Collides(
+            "Coder's own `Shell`; its toolset registers the persistent `shell` tool under a fixed name, and it "
+            'refuses any other `Shell` beside it (#14515)',
+            lambda cls: (cls(tools=['shell']), cls(tools=['shell'], default_timeout=20.0)),
+        )
+    ),
     'Coder': CapabilityCase(
         Anonymous('a packaged harness; composing two is composing their members'),
         build=_workspace(Coder),
