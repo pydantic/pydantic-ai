@@ -221,38 +221,64 @@ async def test_init_with_http_client_replaces_existing_gateway_hook():
         assert request.headers['Authorization'] == 'Bearer second'
 
 
+def _sse(events: list[dict[str, Any]], *, done: bool = False) -> httpx2.Response:
+    body = ''.join(f'data: {json.dumps(event)}\n\n' for event in events) + ('data: [DONE]\n\n' if done else '')
+    return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=body)
+
+
 def _chat_completion(request: httpx2.Request) -> httpx2.Response:
     """A Chat Completions or Responses reply with usage and no Gateway-reported cost, so the cost is estimated locally."""
     body = json.loads(request.content)
     if request.url.path.endswith('/responses'):
-        return httpx2.Response(
-            200,
-            json={
-                'id': 'resp_1',
-                'object': 'response',
-                'created_at': 0,
-                'model': body['model'],
-                'status': 'completed',
-                'output': [
-                    {
-                        'type': 'message',
-                        'id': 'msg_1',
-                        'role': 'assistant',
-                        'status': 'completed',
-                        'content': [{'type': 'output_text', 'text': 'Paris.', 'annotations': []}],
-                    }
-                ],
-                'parallel_tool_calls': True,
-                'tool_choice': 'auto',
-                'tools': [],
-                'usage': {
-                    'input_tokens': 100,
-                    'input_tokens_details': {'cached_tokens': 0},
-                    'output_tokens': 50,
-                    'output_tokens_details': {'reasoning_tokens': 0},
-                    'total_tokens': 150,
-                },
+        message = {
+            'type': 'message',
+            'id': 'msg_1',
+            'role': 'assistant',
+            'status': 'completed',
+            'content': [{'type': 'output_text', 'text': 'Paris.', 'annotations': []}],
+        }
+        response: dict[str, Any] = {
+            'id': 'resp_1',
+            'object': 'response',
+            'created_at': 0,
+            'model': body['model'],
+            'status': 'completed',
+            'output': [message],
+            'parallel_tool_calls': True,
+            'tool_choice': 'auto',
+            'tools': [],
+            'usage': {
+                'input_tokens': 100,
+                'input_tokens_details': {'cached_tokens': 0},
+                'output_tokens': 50,
+                'output_tokens_details': {'reasoning_tokens': 0},
+                'total_tokens': 150,
             },
+        }
+        if not body.get('stream'):
+            return httpx2.Response(200, json=response)
+        created = {**response, 'status': 'in_progress', 'output': [], 'usage': None}
+        return _sse(
+            [
+                {'type': 'response.created', 'sequence_number': 0, 'response': created},
+                {
+                    'type': 'response.output_item.added',
+                    'sequence_number': 1,
+                    'output_index': 0,
+                    'item': {**message, 'status': 'in_progress', 'content': []},
+                },
+                {
+                    'type': 'response.output_text.delta',
+                    'sequence_number': 2,
+                    'item_id': 'msg_1',
+                    'output_index': 0,
+                    'content_index': 0,
+                    'delta': 'Paris.',
+                    'logprobs': [],
+                },
+                {'type': 'response.output_item.done', 'sequence_number': 3, 'output_index': 0, 'item': message},
+                {'type': 'response.completed', 'sequence_number': 4, 'response': response},
+            ]
         )
     message = {'role': 'assistant', 'content': 'Paris.'}
     usage = {'prompt_tokens': 100, 'completion_tokens': 50, 'total_tokens': 150}
@@ -268,15 +294,14 @@ def _chat_completion(request: httpx2.Request) -> httpx2.Response:
                 'usage': usage,
             },
         )
-    chunks: list[dict[str, Any]] = [
-        {'choices': [{'index': 0, 'delta': message, 'finish_reason': None}]},
-        {'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}], 'usage': usage},
-    ]
-    events = ''.join(
-        f'data: {json.dumps({"id": "chatcmpl-1", "object": "chat.completion.chunk", "created": 0, "model": body["model"], **chunk})}\n\n'
-        for chunk in chunks
+    chunk = {'id': 'chatcmpl-1', 'object': 'chat.completion.chunk', 'created': 0, 'model': body['model']}
+    return _sse(
+        [
+            {**chunk, 'choices': [{'index': 0, 'delta': message, 'finish_reason': None}]},
+            {**chunk, 'choices': [{'index': 0, 'delta': {}, 'finish_reason': 'stop'}], 'usage': usage},
+        ],
+        done=True,
     )
-    return httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=f'{events}data: [DONE]\n\n')
 
 
 async def _last_response(
@@ -285,17 +310,21 @@ async def _last_response(
     *,
     stream: bool = False,
     model_class: type[OpenAIChatModel] | type[OpenAIResponsesModel] = OpenAIChatModel,
-) -> ModelResponse:
+) -> tuple[ModelResponse, Decimal | None]:
+    """The run's last response, and for a streamed run the cost `result.usage()` estimated before the run ended."""
     agent = Agent(model_class(model_name, provider=provider), capabilities=[Instrumentation()])
+    streamed_cost: Decimal | None = None
     if stream:
         async with agent.run_stream('What is the capital of France?') as result:
-            await result.get_output()
+            async for _ in result.stream_output(debounce_by=None):
+                pass
+            streamed_cost = result.usage.cost
         messages = result.all_messages()
     else:
         messages = (await agent.run('What is the capital of France?')).all_messages()
     response = messages[-1]
     assert isinstance(response, ModelResponse)
-    return response
+    return response, streamed_cost
 
 
 def _request_span_cost(capfire: CaptureLogfire) -> float:
@@ -310,6 +339,7 @@ def _request_span_cost(capfire: CaptureLogfire) -> float:
         pytest.param(OpenAIChatModel, False, id='chat'),
         pytest.param(OpenAIChatModel, True, id='chat-stream'),
         pytest.param(OpenAIResponsesModel, False, id='responses'),
+        pytest.param(OpenAIResponsesModel, True, id='responses-stream'),
     ],
 )
 async def test_gateway_route_for_another_providers_models_is_priced_as_that_provider(
@@ -321,11 +351,11 @@ async def test_gateway_route_for_another_providers_models_is_priced_as_that_prov
     """A response from the OpenAI-compatible `doubleword` route keeps `openai` as its provider, and is priced as Doubleword.
 
     Not a cassette test: pricing is local, and what matters is what the response records, which any Chat Completions
-    reply shows. `ignore_hosts` lets the request reach the mock transport.
+    or Responses reply shows. `ignore_hosts` lets the request reach the mock transport.
     """
     async with httpx2.AsyncClient(transport=httpx2.MockTransport(_chat_completion)) as http_client:
         provider = gateway_provider('doubleword', http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL)
-        response = await _last_response(
+        response, streamed_cost = await _last_response(
             provider, 'deepseek-ai/DeepSeek-V4.1-Flash', stream=stream, model_class=model_class
         )
 
@@ -334,6 +364,8 @@ async def test_gateway_route_for_another_providers_models_is_priced_as_that_prov
     assert price.provider.id == 'doubleword'
     assert response.usage.cost == price.total_price > 0
     assert _request_span_cost(capfire) == float(price.total_price)
+    # A streamed run's usage is priced the same way before the response reaches history.
+    assert streamed_cost == (price.total_price if stream else None)
     # It survives a round-trip through stored history.
     [stored] = ModelMessagesTypeAdapter.validate_python(ModelMessagesTypeAdapter.dump_python([response]))
     assert isinstance(stored, ModelResponse) and stored.pricing_provider == 'doubleword'
@@ -365,7 +397,7 @@ async def test_gateway_route_pricing_provider_follows_the_upstream(
         provider = gateway_provider(
             upstream, route=route, http_client=http_client, api_key='gw-key', base_url=GATEWAY_BASE_URL
         )
-        response = await _last_response(provider, model_name)
+        response, _ = await _last_response(provider, model_name)
 
     assert (response.provider_name, response.pricing_provider) == ('openai', pricing_provider)
 

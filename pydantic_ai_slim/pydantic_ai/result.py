@@ -260,7 +260,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 self._raw_stream_response.usage,
                 model_name=self.response.model_name,
                 provider_api_url=self.response.provider_url,
-                provider_name=self.response.provider_name,
+                provider_name=self.response.pricing_provider or self.response.provider_name,
                 genai_request_timestamp=self.response.timestamp,
                 price_context=self.response.provider_details,
             )
