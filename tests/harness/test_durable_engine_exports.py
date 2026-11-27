@@ -105,7 +105,18 @@ def test_temporal_activity_names_do_not_depend_on_the_import_path() -> None:
             }
         )
     harness_names, core_names = names
-    assert {'agent__exports__model_request', 'agent__exports__toolset__functions__call_tool'} <= harness_names
+    assert harness_names == {
+        'agent__exports__external_event_ask',
+        'agent__exports__model_cancel_suspended_response',
+        'agent__exports__model_compact_messages',
+        'agent__exports__model_count_tokens',
+        'agent__exports__model_request',
+        'agent__exports__model_request_stream',
+        'agent__exports__toolset__<agent>__call_tool',
+        'agent__exports__toolset__<agent>__validate_args',
+        'agent__exports__toolset__functions__call_tool',
+        'agent__exports__toolset__functions__validate_args',
+    }
     assert harness_names == core_names
 
 
@@ -115,7 +126,16 @@ def test_dbos_step_names_do_not_depend_on_the_import_path() -> None:
     from pydantic_ai_harness.dbos import DBOSOperationNamer
 
     harness_names = [DBOSOperationNamer('exports').operation_name(operation_id) for operation_id in _OPERATION_IDS]
-    assert 'exports__model.request' in harness_names
+    assert harness_names == [
+        'exports__model.request',
+        'exports__model.request_stream',
+        'exports__event_stream_handler',
+        'exports__mcp_server__mcp.get_tools',
+        'exports__mcp_server__mcp.get_instructions',
+        'exports__mcp_server__mcp.call_tool',
+        'exports__function_toolset__functions.validate_args',
+        'exports__function_toolset__functions.call_tool',
+    ]
     assert harness_names == [
         CoreDBOSOperationNamer('exports').operation_name(operation_id) for operation_id in _OPERATION_IDS
     ]
@@ -129,7 +149,18 @@ def test_prefect_task_names_do_not_depend_on_the_import_path() -> None:
     harness_names = [
         PrefectOperationNamer().invocation_name(operation_id, label='get_weather') for operation_id in _OPERATION_IDS
     ]
-    assert harness_names[0].operation_name == 'Model Request: test'
+    expected = [
+        'Model Request: test',
+        'Model Request (Streaming): test',
+        'Handle Stream Event',
+        'Get MCP Tools: mcp',
+        'Get MCP Instructions: mcp',
+        'Call MCP Tool: get_weather',
+        'Validate Tool Args: get_weather',
+        'Call Tool: get_weather',
+    ]
+    assert [name.operation_name for name in harness_names] == expected
+    assert [name.display_name for name in harness_names] == expected
     assert harness_names == [
         CorePrefectOperationNamer().invocation_name(operation_id, label='get_weather')
         for operation_id in _OPERATION_IDS
