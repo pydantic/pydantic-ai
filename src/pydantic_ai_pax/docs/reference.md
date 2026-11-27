@@ -93,7 +93,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | Setting | Default | What it does |
 |---|---|---|
 | `model` | `openai-codex:gpt-6-astra` | Provider-qualified model for every turn. Overrides the model baked into the agent. |
-| `run.request_limit` | `10000` | Most model requests one prompt may make. The model is told how many are left, and the last one answers instead of failing the turn. |
+| `run.request_limit` | `10000` | Most model requests one prompt may make. The last one answers with what the model has instead of failing the turn. |
 | `display.thinking` | `true` | Show the model's thinking as it streams. |
 | `display.task_models` | `true` | Name the model each subagent runs on in its start row, which waits for the child to report it. Off, the row prints at once without it. |
 | `display.theme` | `default` | Keep Pax colours, readable on light and dark terminals, or select a bundled Termflow palette with /theme. |
@@ -1262,12 +1262,12 @@ reads `<$0.0001`. There is no spending cap here; use the agent's `UsageLimits`
 for that.
 
 `run.request_limit` caps the model requests of one prompt, its delegated tasks'
-included. Each request tells the model how many it has left
-([Report Remaining Budget](../../../docs/harness/report-remaining-budget.md)), and the
-last one the limit allows asks it to answer with what it has, tools unavailable
-([Wrap Up At Limits](../../../docs/harness/wrap-up-at-limits.md)), so the turn ends on that
-answer instead of a request-limit error. An `--agent` of your own gets the same, since
-Pax runs it under the same limit.
+included. The last request the limit allows asks the model to answer with what it
+has, tools unavailable ([Wrap Up At Limits](../../../docs/harness/wrap-up-at-limits.md)),
+so the turn ends on that answer instead of a request-limit error. An `--agent` of your
+own gets the same, since Pax runs it under the same limit. Pax does not add
+[Report Remaining Budget](../../../docs/harness/report-remaining-budget.md), which would
+add a line to every request; add it with a plugin if you want the model to see its budget.
 
 When a provider response omits usage information, `/usage` and `/cost` mark the
 known token and cost totals as lower bounds. The response count is still

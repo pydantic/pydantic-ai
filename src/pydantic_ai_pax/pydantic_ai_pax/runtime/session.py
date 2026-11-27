@@ -48,7 +48,6 @@ from pydantic_ai.output import OutputSpec
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.usage import UsageLimits
 from pydantic_ai.workspaces import WorkspaceBackend, WorkspaceRef
-from pydantic_ai_harness.report_remaining_budget import ReportRemainingBudget
 from pydantic_ai_harness.shell import LLM_API_KEY_ENV_PATTERNS
 from pydantic_ai_harness.step_persistence import (
     ContinuableSnapshot,
@@ -1199,7 +1198,7 @@ class Session(Generic[DepsT, OutputT]):
         """`_bind` for a prompt, plus its task reports and Pax's `LocalWorkspace`, and the run's `workspace`.
 
         The `workspace` is `'new'` when `previous` last worked in another local directory. With `usage_limits`
-        (`run.request_limit`), the model is told what is left, and its last request answers instead of raising.
+        (`run.request_limit`), the last request the limits allow answers instead of raising.
         """
         run_model, capabilities = self._bind(models)
         if self.delegations is not None:
@@ -1216,7 +1215,7 @@ class Session(Generic[DepsT, OutputT]):
             workspace = 'new'
         if self.usage_limits is not None:
             # Last, after compaction, so the wrap-up sees what a summary spent before the request.
-            capabilities += [ReportRemainingBudget[DepsT](), WrapUpAtLimits[DepsT]()]
+            capabilities.append(WrapUpAtLimits[DepsT]())
         return run_model, capabilities, workspace
 
     async def prompt(self, text: str | None, *, images: Sequence[BinaryContent] = ()) -> AgentRunResult[OutputT]:

@@ -67,7 +67,6 @@ _HARNESS_DOCS = (
     'refine_output',
     'render_sandbox',
     'repo_context',
-    'report_remaining_budget',
     'shell',
     'skills',
     'slack',

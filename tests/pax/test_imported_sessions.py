@@ -75,7 +75,6 @@ from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from pydantic_ai_pax.runtime.sessions import Sessions
 from pydantic_ai_pax.ui.menus.session_browser import SessionBrowser
-from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 
 AT = '2026-10-01T12:00:00Z'
 CLAUDE_ID = '1f6c7d2e-0b4a-4c1e-9d3f-5a2b8c9e7f10'
@@ -1425,7 +1424,6 @@ def test_browser_marks_sessions_to_import() -> None:
     assert browser.handle_key(Key.ENTER) == imported
 
 
-@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
 async def test_startup_flags_import_through_chat_and_headless(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
@@ -1461,8 +1459,7 @@ async def test_startup_flags_import_through_chat_and_headless(
     codex = next(entry for entry in await store.listing() if entry.tags == ('codex',))
     saved = await store.get(conversation_id=codex.id)
     assert 'Add a --verbose flag' in str(saved.messages[0].parts)
-    # The prompt, then the request-scoped notes Pax adds to its request, such as the budget left.
-    request = saved.messages[-3]
+    request = saved.messages[-2]
     assert isinstance(request, ModelRequest)
     assert [p.content for p in request.parts if isinstance(p, UserPromptPart)] == ['follow up']
 

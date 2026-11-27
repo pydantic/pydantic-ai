@@ -85,8 +85,8 @@ class Settings(BaseModel):
         default=10000,
         gt=0,
         description=(
-            'Most model requests one prompt may make. The model is told how many are left, '
-            'and the last one answers instead of failing the turn.'
+            'Most model requests one prompt may make. The last one answers with what the model has '
+            'instead of failing the turn.'
         ),
     )
     tool_retries: int = Field(
