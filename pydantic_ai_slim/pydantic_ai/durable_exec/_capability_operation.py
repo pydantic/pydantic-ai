@@ -157,13 +157,18 @@ class CapabilityMethodDeclaration:
     result_type: object
     ctx_parameter: str | None
     model_request_parameter: str | None = None
-    returns_model_request_context: bool = False
-    """Whether the operation returns the request context it takes, as `before_model_request` does, rather than a
-    value of its own, as `after_model_request` does with its response."""
 
     @property
     def model_request_hook(self) -> bool:
         return self.model_request_parameter is not None
+
+    @property
+    def returns_model_request_context(self) -> bool:
+        """Whether the operation returns the request context it takes.
+
+        As `before_model_request` does, rather than a value of its own, as `after_model_request` does with its response.
+        """
+        return self.result_type is ModelRequestContextProjection
 
 
 class CapabilityCacheIdentity(CacheIdentity[CapabilityOperationParams]):
@@ -426,11 +431,11 @@ def _declaration(
         and signature.parameters[model_request_parameter].kind is inspect.Parameter.VAR_POSITIONAL
     ):
         raise UserError('ModelRequestContext cannot be used as a variadic positional parameter (`*args`)')
-    return_hint = type_hints.get('return')
-    if model_request_parameter is not None:
-        return_hint = _hook_return_hint(capability, handler) or return_hint
+    # An override of a built-in hook returns what that hook returns, whatever its own annotation says: the response,
+    # for `after_model_request`. Any other operation on the request context returns the context.
+    hook_return_hint = _hook_return_hint(capability, handler) if model_request_parameter is not None else None
     returns_model_request_context = model_request_parameter is not None and (
-        return_hint is None or return_hint is ModelRequestContext
+        hook_return_hint is None or hook_return_hint is ModelRequestContext
     )
     replacements: dict[str, object] = {}
     if model_request_parameter is not None:
@@ -443,7 +448,7 @@ def _declaration(
     result_type = (
         ModelRequestContextProjection
         if returns_model_request_context
-        else extract_return_schema_type(return_hint, bound)
+        else extract_return_schema_type(hook_return_hint or type_hints.get('return'), bound)
     )
     return CapabilityMethodDeclaration(
         name=operation_name,
@@ -453,7 +458,6 @@ def _declaration(
         result_type=result_type,
         ctx_parameter=ctx_parameter,
         model_request_parameter=model_request_parameter,
-        returns_model_request_context=returns_model_request_context,
     )
 
 

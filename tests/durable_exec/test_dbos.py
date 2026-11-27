@@ -6026,7 +6026,7 @@ class _AliasedChecksTheResponseDurably(AbstractCapability[object]):
 
 @pytest.mark.parametrize('capability', [_UnannotatedChecksTheResponseDurably, _AliasedChecksTheResponseDurably])
 async def test_dbos_durability_an_unannotated_durable_after_model_request_returns_its_response(
-    dbos: DBOS, capability: type[AbstractCapability[object]]
+    dbos: DBOS, capability: type[_UnannotatedChecksTheResponseDurably | _AliasedChecksTheResponseDurably]
 ) -> None:
     """An override returns what the hook it overrides returns, so that, not its own annotation, decides how it's sent."""
     agent = Agent(

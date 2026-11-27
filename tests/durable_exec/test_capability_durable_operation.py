@@ -913,6 +913,15 @@ class UnannotatedCustomModelRequestOperation(CustomModelRequestOperation):
         return request
 
 
+class AnyAnnotatedCustomModelRequestOperation(CustomModelRequestOperation):
+    """A custom operation on the request context annotated as returning `Any` still returns the context."""
+
+    @durable_operation('rewrite_request')
+    async def rewrite_request(self, ctx: RunContext[Any], request: ModelRequestContext) -> Any:
+        request.messages = [ModelRequest(parts=[UserPromptPart('custom replacement')])]
+        return request
+
+
 class ModelReplacingBeforeModelRequest(AbstractCapability[Any]):
     id = 'model_replacing_before_model'
 
@@ -1982,7 +1991,10 @@ async def test_decorated_model_request_hook_sees_the_model_before_capabilities_w
     assert not any(isinstance(model, BatchedModel) for model in recorder.models)
 
 
-@pytest.mark.parametrize('capability', [CustomModelRequestOperation, UnannotatedCustomModelRequestOperation])
+@pytest.mark.parametrize(
+    'capability',
+    [CustomModelRequestOperation, UnannotatedCustomModelRequestOperation, AnyAnnotatedCustomModelRequestOperation],
+)
 async def test_custom_model_request_operation_round_trips_request_only_projection(
     capability: type[CustomModelRequestOperation],
 ) -> None:
