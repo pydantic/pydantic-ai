@@ -14,8 +14,9 @@ A guard keeps the registry complete: every function in Pydantic AI and Pydantic 
 transformation that breaks a check for a case is a known finding, a strict `xfail` linked to its issue in the
 transform's `exempt`, so the fix fails the suite until its entry is removed.
 
-The run-level transformations (a `ModelFallback` switch, compaction, history processors), which rerun the case rather
-than transform its native history, live in `c4_transforms_runlevel.py`, which merges them into `TRANSFORMS`.
+The run-level transformations (a `ModelFallback` switch, compaction, history processors) live in
+`c4_transforms_runlevel.py`, which merges them into `TRANSFORMS`. Two of them rerun the case; the others transform its
+native history with the real strategy.
 """
 
 from __future__ import annotations
@@ -80,9 +81,9 @@ with try_import():
 Transformation = Literal[
     'model_fallback_switch',  # run-level: fallback at request k, history compared with the native run
     'summarizing',  # SummarizingCompaction (harness)
-    'sliding_window',  # SlidingWindow history processor
-    'compaction_part',  # provider compaction kept as CompactionPart (OpenAI/Anthropic shapes, offline)
-    'history_processor',  # a user `history_processors=[...]` that returns a filtered copy
+    'sliding_window',  # SlidingWindowCompaction (harness)
+    'compaction_part',  # Anthropic's compaction block kept as a CompactionPart, and the trim around it (offline)
+    'history_processor',  # a `ProcessHistory` processor that returns a rebuilt copy
     'type_adapter',  # ModelMessagesTypeAdapter dump/load (also in C1; kept here for the registry)
     'sanitize',  # sanitize_messages(strip_system_prompts=True)
     'vercel_ai',  # dump_messages/load_messages round trip
@@ -284,15 +285,8 @@ _TRANSFORMS: dict[Transformation, Transform] = {
 
 
 def _run_level_transforms() -> dict[Transformation, Transform]:
-    """The run-level transforms in `c4_transforms_runlevel.py`, which imports `Transform` from here, once it exists."""
-    module = f'{__package__}.c4_transforms_runlevel'
-    try:
-        return importlib.import_module(module).RUN_LEVEL_TRANSFORMS
-    except ModuleNotFoundError as error:
-        # Only the module missing: an import error inside it fails the suite.
-        if error.name != module:  # pragma: no cover
-            raise
-        return {}
+    """The run-level transforms in `c4_transforms_runlevel.py`, imported lazily since it imports `Transform` from here."""
+    return importlib.import_module(f'{__package__}.c4_transforms_runlevel').RUN_LEVEL_TRANSFORMS
 
 
 @functools.cache
@@ -493,7 +487,6 @@ _BUILDS = 'builds the parts a run appends, which C1 checks on every route, rathe
 _FOREIGN = "builds a history from another protocol's or library's messages: there's no Pydantic AI history to compare"
 _NOT_SENT = 'its output is compared or indexed, never sent to a model'
 _DURABLE = 'a durable round trip, which D1 covers per case'
-_RUN_LEVEL = 'run-level: registered by `c4_transforms_runlevel.py` (cross-replay) as `{}`'
 _PENDING = "PENDING: rewrites history the model later sees, and isn't a `Transform` yet"
 
 TRANSFORM_EXEMPT: dict[str, str] = {
@@ -543,13 +536,11 @@ TRANSFORM_EXEMPT: dict[str, str] = {
             'pydantic_ai.messages.post_compaction_window',
             'pydantic_ai.messages._post_compaction_window_for_response',
             'pydantic_ai.models.Model._restore_response_scoped_tool_call_ids',
-            'pydantic_ai.models.Model._trim_before_compaction',
             'pydantic_ai.models.Model.prepare_messages',
             'pydantic_ai.models.Model._repair_dangling_translated_tool_search_calls',
             'pydantic_ai.models.Model._translate_legacy_tool_reveals',
             'pydantic_ai.models.Model._announce_in_standing_prompt',
             'pydantic_ai.models._convert_speech_parts',
-            'pydantic_ai.models._trim_messages_before_compaction',
             'pydantic_ai.models._drop_superseded_request_scoped_prompts',
             'pydantic_ai.models._without_answered_parts',
             'pydantic_ai.models._drop_request_scoped_prompts_no_user_message_clears',
@@ -629,28 +620,6 @@ TRANSFORM_EXEMPT: dict[str, str] = {
         ],
         _DURABLE,
     ),
-    'pydantic_ai.models.fallback._rewind_messages': _RUN_LEVEL.format('model_fallback_switch'),
-    'pydantic_ai.capabilities.process_history._run_history_processor': _RUN_LEVEL.format('history_processor'),
-    **dict.fromkeys(
-        [
-            'pydantic_ai_harness.compaction._summarizing_compaction.without_legacy_summaries',
-            'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction.compact',
-            'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._kept_user_messages',
-            'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._insert_receipt',
-            'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._compact_if_smaller',
-            'pydantic_ai_harness.compaction._summary.without_summaries',
-        ],
-        _RUN_LEVEL.format('summarizing'),
-    ),
-    **dict.fromkeys(
-        [
-            'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction.compact',
-            'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction._prepend_receipt',
-            'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction._without_receipts',
-            'pydantic_ai_harness.compaction._sliding_window_compaction.SlidingWindowCompaction._dropped_messages',
-        ],
-        _RUN_LEVEL.format('sliding_window'),
-    ),
     **dict.fromkeys(
         [
             'pydantic_ai._agent_graph._repair_interrupted_tail',
@@ -691,10 +660,27 @@ TRANSFORM_EXEMPT: dict[str, str] = {
         ],
         _PENDING,
     ),
+    # Reached only on paths the run-level transforms in `c4_transforms_runlevel.py` don't take yet.
+    'pydantic_ai.models.fallback._rewind_messages': (
+        'PENDING: runs only when a pinned continuation fails after a suspended response, which the '
+        '`model_fallback_switch` transform (a plain 503 on a tool turn) never produces'
+    ),
+    'pydantic_ai_harness.compaction._summarizing_compaction.without_legacy_summaries': (
+        'PENDING: `summarizing` never reaches it: it runs only when an earlier summary is in the history'
+    ),
+    'pydantic_ai_harness.compaction._summary.without_summaries': (
+        'PENDING: `summarizing` never reaches it: it runs only when an earlier summary is in the history'
+    ),
+    'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._kept_user_messages': (
+        'PENDING: `summarizing` never reaches it: it runs only with `keep_user_messages=True`'
+    ),
+    'pydantic_ai_harness.compaction._summarizing_compaction.SummarizingCompaction._compact_if_smaller': (
+        'PENDING: `summarizing` never reaches it: it runs from `before_model_request`, not `compact`'
+    ),
 }
 """Each function that returns `list[ModelMessage]` without being a registered transformation, with why.
 
-A run-level entry goes when `c4_transforms_runlevel.py` registers it; a `PENDING` one when it becomes a `Transform`."""
+A `PENDING` entry goes when a `Transform`, here or in `c4_transforms_runlevel.py`, reaches the function and registers it."""
 
 
 def test_every_history_function_is_registered() -> None:
