@@ -141,6 +141,19 @@ def test_empty_history_and_line_end_movement() -> None:
     assert buffer.cursor == len(buffer.text)
 
 
+def test_rows_wrap_at_word_boundaries_with_character_fallback() -> None:
+    """A word that does not fit moves whole to the next row; only overlong words split."""
+    text = 'Best pick for persistence layer in a multi-agent app'
+    rows = PromptBuffer(text=text, cursor=len(text)).rows(width=40, limit=8)
+    assert rows == ['Best pick for persistence layer in a ', 'multi-agent app\x1b[7m \x1b[27m']
+
+    overlong = PromptBuffer(text='x' * 45, cursor=45)
+    assert overlong.rows(width=40, limit=8) == ['x' * 40, 'x' * 5 + '\x1b[7m \x1b[27m']
+
+    moved = PromptBuffer(text=text, cursor=text.index('multi'))
+    assert moved.rows(width=40, limit=8)[1] == '\x1b[7mm\x1b[27multi-agent app '
+
+
 @pytest.mark.parametrize('key', ['backspace', 'ctrl-w', 'x'])
 def test_any_edit_to_recalled_history_becomes_the_restored_draft(key: str) -> None:
     buffer = PromptBuffer(history=['older', 'recalled word'])

@@ -269,7 +269,7 @@ class PromptBuffer:
         return ''.join(parts), cursor
 
     def rows(self, *, width: int, limit: int) -> list[str]:
-        """Wrap into terminal cells and keep the nonblinking cursor in view."""
+        """Wrap into terminal cells at word boundaries and keep the nonblinking cursor in view."""
         width = max(1, width)
         rows = ['']
         cells = 0
@@ -277,26 +277,48 @@ class PromptBuffer:
         text, cursor = self.display()
         # A newline under the cursor paints as a blank, a tab as four spaces.
         painted = {'\n': ' ', '\t': '    '}
+        # Where the last space or tab painted in this row ended, as (row length, cells), so a word
+        # that does not fit can move to the next row whole. Painted tabs are one character but four
+        # cells, so the cut must be recorded while painting, not derived from the text afterwards.
+        break_at: tuple[int, int] | None = None
+        cursor_at: int | None = None
         for index, char in enumerate(text + ' '):
             is_cursor = index == cursor
-            if index == len(text) and not is_cursor:
-                break
             if char == '\n' and not is_cursor:
                 rows.append('')
                 cells = 0
+                break_at = None
+                cursor_at = None
                 continue
             display = painted.get(char, char if char.isprintable() else '?')
             size = visible_length(display)
             if cells + size > width:
-                rows.append('')
-                cells = 0
+                if break_at is not None and break_at[1] + size <= width:
+                    cut, moved = break_at
+                    if cursor_at is not None:
+                        if cursor_at >= cut:
+                            # The cursor is inside the word moving to the next row.
+                            cursor_row = len(rows)
+                            cursor_at -= cut
+                        else:
+                            cursor_at = None
+                    head, tail = rows[-1][:cut], rows[-1][cut:]
+                    rows[-1] = head
+                    rows.append(tail)
+                    cells -= moved
+                else:
+                    # The word fills a row by itself: split it at the cell edge as before.
+                    cursor_at = None
+                    rows.append('')
+                    cells = 0
+                break_at = None
             if is_cursor:
                 cursor_row = len(rows) - 1
+                cursor_at = len(rows[-1])
                 display = f'\x1b[7m{display}\x1b[27m'
             rows[-1] += display
             cells += size
-            if char == '\n':
-                rows.append('')
-                cells = 0
+            if char in (' ', '\t'):
+                break_at = (len(rows[-1]), cells)
         start = max(0, cursor_row - limit + 1)
         return rows[start : start + limit]
