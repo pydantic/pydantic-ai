@@ -5462,6 +5462,36 @@ async def test_tool_raises_approval_required():
         assert result.is_complete
 
 
+async def test_run_stream_keeps_call_deferred_while_running_next_to_approval_tool():
+    """A call a tool defers while running joins the `DeferredToolRequests` `run_stream()` ends on."""
+
+    async def llm(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name='get_weather', json_args='{"city": "Paris"}', tool_call_id='weather')}
+        yield {1: DeltaToolCall(name='delete_file', json_args='{"path": "a.txt"}', tool_call_id='delete')}
+
+    agent = Agent(FunctionModel(stream_function=llm), output_type=[str, DeferredToolRequests])
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        raise CallDeferred(metadata={'job': 'weather-1'})
+
+    @agent.tool_plain(requires_approval=True)
+    def delete_file(path: str) -> str:
+        return 'deleted'  # pragma: no cover
+
+    async with agent.run_stream('Hello') as result:
+        output = await result.get_output()
+
+    assert output == snapshot(
+        DeferredToolRequests(
+            calls=[ToolCallPart(tool_name='get_weather', args='{"city": "Paris"}', tool_call_id='weather')],
+            approvals=[ToolCallPart(tool_name='delete_file', args='{"path": "a.txt"}', tool_call_id='delete')],
+            metadata={'weather': {'job': 'weather-1'}},
+            validated_args={'weather': {'city': 'Paris'}},
+        )
+    )
+
+
 async def test_deferred_tool_iter():
     agent = Agent(TestModel(), output_type=[str, DeferredToolRequests])
 

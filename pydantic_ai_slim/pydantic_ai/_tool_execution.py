@@ -1226,6 +1226,19 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             async with aclosing(self._resolve_deferred_calls()) as events:
                 async for event in events:
                     yield event
+        elif (
+            self.final_result
+            and isinstance(self.final_result.output, DeferredToolRequests)
+            and any(self.deferred_calls.values())
+        ):
+            # `run_stream()` ends on the calls deferred by their tool's kind before any tool runs. Calls a tool
+            # deferred while running (`CallDeferred`, `ApprovalRequired`) are still pending, so add them too.
+            _with_deferred_tool_requests(
+                self.final_result.output,
+                _deferred_tool_requests(
+                    self.deferred_calls, self.deferred_metadata, self.deferred_validated_args, order=self.tool_calls
+                ),
+            )
 
     async def _collect_deferred_calls(self) -> AsyncIterator[_messages.AgentStreamEvent]:
         """Stub deferred calls (a final result was reached) or validate-and-collect them for resolution."""
