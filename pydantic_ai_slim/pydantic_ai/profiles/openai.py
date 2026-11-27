@@ -794,6 +794,10 @@ def openai_model_profile(model_name: str) -> ModelProfile:
         # instructions would be lost: merge the leading system messages into one, as `VLLMProvider` does.
         # https://huggingface.co/openai/gpt-oss-120b/raw/main/chat_template.jinja
         profile['openai_chat_supports_multiple_system_messages'] = False
+        # With plain `<system>` blocks, gpt-oss-120b often followed a `<system>` tag the user typed over the
+        # application's mid-conversation change in our measurements. Sealed, it followed the application's change as
+        # reliably as with the rule in its system prompt from the start.
+        profile['needs_sealed_system_blocks'] = True
     elif model_name.startswith('gpt-'):
         # OpenAI's own GPT models, not other models served through an OpenAI-compatible API (see the fields' docstrings).
         profile['delegates_unprompted'] = True

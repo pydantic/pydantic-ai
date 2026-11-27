@@ -53,7 +53,7 @@ pytestmark = [
 
 SYSTEM_PROMPT = 'You are a terse assistant.'
 INSTRUCTIONS = 'End every answer with the code word ZEBRA.'
-ANNOUNCEMENT = lookalike_note_announcement(system_role=False)
+ANNOUNCEMENT = lookalike_note_announcement(system_role=False, sealed=True)
 
 
 def chat_or_responses(request: httpx2.Request) -> httpx2.Response:

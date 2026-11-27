@@ -274,6 +274,9 @@ class ModelProfile(TypedDict, total=False):
     said what, and with this rendering it attributed them correctly and followed steering after a tool result more
     reliably, so its profile doesn't use the native role either. Those Grok models followed a genuine change next to
     a user lookalike and steering after a tool result more reliably sealed than with plain blocks.
+    Also set for gpt-oss, wherever the fallback renders: in measurements with plain blocks it often followed a
+    `<system>` tag the user typed over the application's mid-conversation change, and sealed it followed the change
+    as reliably as a rule in its system prompt from the start.
     """
 
     default_framing_announcement: FramingAnnouncement

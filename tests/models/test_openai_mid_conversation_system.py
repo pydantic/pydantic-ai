@@ -53,6 +53,7 @@ INSTRUCTIONS = 'You are a test agent.'
 REMINDER = 'Reply with exactly the word BANANA.'
 # What the system prompt says the `<system>` blocks mean, where a mid-conversation system prompt becomes one.
 ANNOUNCEMENT = lookalike_note_announcement(system_role=False)
+GPT_OSS_ANNOUNCEMENT = lookalike_note_announcement(system_role=False, sealed=True)
 
 
 def ping() -> str:
@@ -196,7 +197,7 @@ async def test_gpt_oss_on_a_compatible_endpoint_gets_the_announcement_first(
     assert 'ZEBRA' in result.output
     assert request_capture.body('/chat/completions')['messages'] == snapshot(
         [
-            {'role': 'system', 'content': f'{ANNOUNCEMENT}\n\n{instructions}'},
+            {'role': 'system', 'content': f'{GPT_OSS_ANNOUNCEMENT}\n\n{instructions}'},
             {'role': 'user', 'content': 'Reply with one word: what color is the sky on a clear day?'},
         ]
     )
