@@ -112,7 +112,7 @@ agent = Agent('openai:gpt-5.2', name='support_agent')
 
 When omitted, the name is inferred from the variable the agent is assigned to and falls back to `'agent'` when it can't be (e.g. agents kept in a list or dict). A stable name pays off most when several agents run in one app and you need to tell their traces apart.
 
-To check which capabilities and toolsets a run actually used, read its run span's `pydantic_ai.capabilities` and `pydantic_ai.toolsets` attributes, keyed by class. Each capability's `active` field says whether it was in force, which shows whether the model loaded a deferred capability. A bundle such as Harness `Coder` is one entry whose `members` list the capabilities it's made of. Each model request span lists that step's active capability ids in `pydantic_ai.active_capabilities`. See [Capabilities and toolsets](https://pydantic.dev/docs/ai/integrations/logfire/#capabilities-and-toolsets).
+To check which capabilities and toolsets a run actually used, read its run span's `pydantic_ai.capabilities` and `pydantic_ai.toolsets` attributes, keyed by class. Each capability's `active` field says whether it was in force, which shows whether the model loaded a deferred capability. Each entry is a capability you configured: one that holds others, such as a bundle like Harness `Coder` or a capability like Harness `Skills` that `for_run` replaces with one per skill, lists them in its `members`. Each model request span lists that step's active capability ids in `pydantic_ai.active_capabilities`. See [Capabilities and toolsets](https://pydantic.dev/docs/ai/integrations/logfire/#capabilities-and-toolsets).
 
 Good uses:
 

@@ -52,7 +52,8 @@ async def _recorded_capabilities(tmp_path: Path, *, include_content: bool) -> di
 
 async def test_a_coder_run_records_coder_with_its_members(tmp_path: Path) -> None:
     # `Coder` is the capability the user configured, so the run records it once, with the capabilities it
-    # registers as its members rather than beside it.
+    # registers as its members rather than beside it. Its unnamed private pieces roll up into it, and
+    # `FileSystem` holds the `AnnounceWorkingDirectory` its `for_run` brings along.
     assert await _recorded_capabilities(tmp_path, include_content=True) == snapshot(
         {
             'pydantic_ai.capabilities.Instrumentation': [
@@ -65,19 +66,22 @@ async def test_a_coder_run_records_coder_with_its_members(tmp_path: Path) -> Non
                     'active': True,
                     'members': {
                         'pydantic_ai.capabilities.AbstractCapability': [
-                            {'id': 'coder_instructions', 'defer_loading': False, 'active': True},
-                            {'id': '<_report_exhausted_retries:*>', 'defer_loading': False, 'active': True},
-                            {'id': '<_default_caching:*>', 'defer_loading': False, 'active': True},
-                            {'id': '<_set_tool_strict:*>', 'defer_loading': False, 'active': True},
+                            {'id': 'coder_instructions', 'defer_loading': False, 'active': True}
                         ],
                         'pydantic_ai_harness.file_system.FileSystem': [
-                            {'id': '<file_system:*>', 'defer_loading': False, 'active': True}
+                            {
+                                'id': '<file_system:*>',
+                                'defer_loading': False,
+                                'active': True,
+                                'members': {
+                                    'pydantic_ai_harness.announce_working_directory.AnnounceWorkingDirectory': [
+                                        {'id': 'announce_working_directory', 'defer_loading': False, 'active': True}
+                                    ]
+                                },
+                            }
                         ],
                         'pydantic_ai_harness.shell.Shell': [
                             {'id': '<shell:*>', 'defer_loading': False, 'active': True}
-                        ],
-                        'pydantic_ai_harness.announce_working_directory.AnnounceWorkingDirectory': [
-                            {'id': 'announce_working_directory', 'defer_loading': False, 'active': True}
                         ],
                         'pydantic_ai_harness.repo_context.RepoContext': [
                             {'id': '<repo_context:*>', 'defer_loading': False, 'active': True}
@@ -118,16 +122,20 @@ async def test_a_coder_run_without_content_records_only_chosen_ids(tmp_path: Pat
     assert capabilities['pydantic_ai_harness.coder.Coder'][0].get('members') == snapshot(
         {
             'pydantic_ai.capabilities.AbstractCapability': [
-                {'id': 'coder_instructions', 'defer_loading': False, 'active': True},
-                {'defer_loading': False, 'active': True},
-                {'defer_loading': False, 'active': True},
-                {'defer_loading': False, 'active': True},
+                {'id': 'coder_instructions', 'defer_loading': False, 'active': True}
             ],
-            'pydantic_ai_harness.file_system.FileSystem': [{'defer_loading': False, 'active': True}],
+            'pydantic_ai_harness.file_system.FileSystem': [
+                {
+                    'defer_loading': False,
+                    'active': True,
+                    'members': {
+                        'pydantic_ai_harness.announce_working_directory.AnnounceWorkingDirectory': [
+                            {'id': 'announce_working_directory', 'defer_loading': False, 'active': True}
+                        ]
+                    },
+                }
+            ],
             'pydantic_ai_harness.shell.Shell': [{'defer_loading': False, 'active': True}],
-            'pydantic_ai_harness.announce_working_directory.AnnounceWorkingDirectory': [
-                {'id': 'announce_working_directory', 'defer_loading': False, 'active': True}
-            ],
             'pydantic_ai_harness.repo_context.RepoContext': [{'defer_loading': False, 'active': True}],
             'pydantic_ai_harness.sub_agents.SubAgents': [{'id': 'sub_agents', 'defer_loading': False, 'active': True}],
             'pydantic_ai_harness.compaction.ClearToolResults': [{'defer_loading': False, 'active': True}],

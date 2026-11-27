@@ -642,7 +642,8 @@ def _recorded_classes(
 
     A capability a factory resolved to is registered as the wrapper that stands in for it, so it's
     recorded as the class the factory returned. When that capability registers its own members, the
-    members are recorded instead of the wrapper.
+    members are recorded instead of the wrapper. An unnamed piece of a framework capability isn't recorded:
+    see `_is_unnamed_piece`.
     """
     from pydantic_ai.capabilities._dynamic import ResolvedDynamicCapability
 
@@ -657,9 +658,20 @@ def _recorded_classes(
             cls: type[AbstractCapability[Any]] = type(capability.wrapped)
         else:
             cls = type(capability)
-        if not _is_framework_internal(cls):
+        if not _is_framework_internal(cls) and not _is_unnamed_piece(capability, cls):
             classes[capability_id] = cls
     return classes
+
+
+def _is_unnamed_piece(capability: AbstractCapability[Any], cls: type[AbstractCapability[Any]]) -> bool:
+    """Whether `capability` is an unnamed piece of a Pydantic AI or Harness capability, like several of Harness `Coder`'s.
+
+    Its class is private and it has no chosen id, so its record would only say "a capability" under an id the run
+    assigned. It rolls up into the record of the capability the user configured, whose `active` it counts towards.
+    """
+    return (
+        capability.id is None and cls.__module__.partition('.')[0] in _PUBLIC_PACKAGES and cls.__name__.startswith('_')
+    )
 
 
 def recorded_capability_ids(
@@ -703,30 +715,8 @@ def _is_bundle(capability: AbstractCapability[Any]) -> bool:
     return not (cls.__module__.partition('.')[0] in _PUBLIC_PACKAGES and cls.__name__.startswith('_'))
 
 
-def _bundles(root: AbstractCapability[Any] | None) -> list[AbstractCapability[Any]]:
-    """The bundles in a run's capability tree, outer ones before those they hold.
-
-    A `CombinedCapability` flattens a bundle it holds into its own children and keeps it in its `_bundles`
-    view instead. One a wrapper, such as a capability function's, or a deferred group holds stays in the tree.
-    """
-    from pydantic_ai.capabilities.combined import CombinedCapability
-    from pydantic_ai.capabilities.wrapper import WrapperCapability
-
-    bundles: list[AbstractCapability[Any]] = []
-
-    def walk(capability: AbstractCapability[Any]) -> None:
-        if isinstance(capability, CombinedCapability):
-            if _is_bundle(capability):
-                bundles.append(capability)
-            bundles.extend(bundle for bundle in capability._bundles if _is_bundle(bundle))  # pyright: ignore[reportPrivateUsage]
-            for child in capability.capabilities:
-                walk(child)
-        elif isinstance(capability, WrapperCapability):
-            walk(capability.wrapped)
-
-    if root is not None:
-        walk(root)
-    return bundles
+_CapabilityResolutions: TypeAlias = Mapping[int, tuple['AbstractCapability[Any]', 'AbstractCapability[Any]']]
+"""What binding and `for_run` replaced each configured capability with, by its `id()`; see `capabilities._resolutions`."""
 
 
 @dataclass
@@ -736,6 +726,7 @@ class _CapabilityRecorder:
     capabilities: Mapping[str, AbstractCapability[Any]]
     active_ids: Set[str]
     url_ids: Set[str]
+    resolutions: _CapabilityResolutions
     include_content: bool
 
     def __post_init__(self) -> None:
@@ -743,6 +734,51 @@ class _CapabilityRecorder:
         self.ids_by_capability = {
             id(capability): capability_id for capability_id, capability in self.capabilities.items()
         }
+        self.owners: dict[int, tuple[AbstractCapability[Any], ...]] = {}
+        """By a run capability's `id()`, the configured capabilities it's recorded under, outermost first."""
+        self.resolving: set[int] = set()
+        """The `id()`s of the replaced capabilities `walk` is inside the replacements of."""
+        self.owner_records: dict[int, CapabilityRecord] = {}
+        self.owner_members: dict[int, dict[str, list[CapabilityRecord]]] = {}
+
+    def walk(self, capability: AbstractCapability[Any], owners: tuple[AbstractCapability[Any], ...] = ()) -> None:
+        """Note which configured capabilities each run capability `capability` was configured as belongs to."""
+        from pydantic_ai.capabilities._dynamic import DynamicCapability
+        from pydantic_ai.capabilities._resolutions import resolution_chain
+        from pydantic_ai.capabilities.combined import CombinedCapability, is_deferred_group
+        from pydantic_ai.capabilities.wrapper import WrapperCapability
+
+        if id(capability) in self.resolving:
+            # Its replacement holds it, as Harness `FileSystem`'s holds it beside the `AnnounceWorkingDirectory` it
+            # brings along: it's registered itself, so its own entry is the record holding the rest.
+            self.owners.setdefault(id(capability), owners)
+            return
+        chain = resolution_chain(capability, self.resolutions)
+        resolved = chain[-1]
+        # Its `for_run` replaced it with another kind of capability, like Harness `Skills` with one per skill, so the
+        # configured capability is the record and holds what it became. A factory stands for what it returns instead.
+        replaced = type(resolved) is not type(capability) and not isinstance(
+            capability, CombinedCapability | WrapperCapability | DynamicCapability
+        )
+        links = {id(link) for link in chain[:-1]} if replaced else set[int]()
+        if replaced:
+            owners = (*owners, capability)
+        self.resolving |= links
+        try:
+            if isinstance(resolved, CombinedCapability):
+                if _is_bundle(resolved) or is_deferred_group(resolved):
+                    owners = (*owners, resolved)
+                    # A deferred group is registered itself, so its own entry is its record.
+                    self.owners.setdefault(id(resolved), owners)
+                # As configured: flattening merged a bundle's children into its container and lost the bundle.
+                for child in resolved._configured:  # pyright: ignore[reportPrivateUsage]
+                    self.walk(child, owners)
+            else:
+                self.owners.setdefault(id(resolved), owners)
+                if isinstance(resolved, WrapperCapability):
+                    self.walk(resolved.wrapped, owners)
+        finally:
+            self.resolving -= links
 
     def leaf(self, capability_id: str, cls: type[AbstractCapability[Any]]) -> CapabilityRecord:
         recorded = _records_id(self.capabilities, capability_id, self.url_ids, include_content=self.include_content)
@@ -753,26 +789,45 @@ class _CapabilityRecorder:
             'active': capability_id in self.active_ids,
         }
 
-    def registered_ids(self, bundle: AbstractCapability[Any]) -> list[str]:
-        """The ids of the run's capabilities `bundle` registers, itself included when it's a deferred group."""
-        registered: list[AbstractCapability[Any]] = []
-        bundle.apply(registered.append)
-        return [self.ids_by_capability[id(member)] for member in registered if id(member) in self.ids_by_capability]
-
-    def bundle(self, bundle: AbstractCapability[Any], member_ids: Sequence[str]) -> CapabilityRecord:
-        members: dict[str, list[CapabilityRecord]] = {}
-        for member_id in member_ids:
-            if (cls := self.classes.get(member_id)) is not None:
-                members.setdefault(public_class_path(cls), []).append(self.leaf(member_id, cls))
-        if (own_id := self.ids_by_capability.get(id(bundle))) is not None:
-            return {**self.leaf(own_id, type(bundle)), 'members': members}
-        bundle_id = bundle.id if bundle.id is not None and bundle.id not in self.url_ids else None
+    def owner(self, owner: AbstractCapability[Any]) -> CapabilityRecord:
+        """The record of a configured capability that holds others, before its members are added to it."""
+        if (own_id := self.ids_by_capability.get(id(owner))) is not None:
+            return self.leaf(own_id, type(owner))
+        owner_id = owner.id if owner.id is not None and owner.id not in self.url_ids else None
         return {
-            **_component_record(type(bundle), bundle_id, include_content=self.include_content),
-            'defer_loading': False,
-            'active': any(member_id in self.active_ids for member_id in member_ids),
-            'members': members,
+            **_component_record(type(owner), owner_id, include_content=self.include_content),
+            'defer_loading': owner.defer_loading is True,
+            'active': False,
         }
+
+    def members_of(
+        self, owners: Sequence[AbstractCapability[Any]], capability_id: str, records: dict[str, list[CapabilityRecord]]
+    ) -> dict[str, list[CapabilityRecord]]:
+        """Where `capability_id`'s record goes: the members of the innermost of `owners`, whose records it adds."""
+        target = records
+        for owner in owners:
+            if (members := self.owner_members.get(id(owner))) is None:
+                record = self.owner_records[id(owner)] = self.owner(owner)
+                record['members'] = members = self.owner_members[id(owner)] = {}
+                target.setdefault(public_class_path(type(owner)), []).append(record)
+            if capability_id in self.active_ids and id(owner) not in self.ids_by_capability:
+                self.owner_records[id(owner)]['active'] = True
+            target = members
+        return target
+
+    def records(self) -> dict[str, list[CapabilityRecord]]:
+        records: dict[str, list[CapabilityRecord]] = {}
+        for capability_id, capability in self.capabilities.items():
+            owners = self.owners.get(id(capability), ())
+            target = self.members_of(owners, capability_id, records)
+            # One that holds others, such as a deferred group, is registered itself: its record is the owner's.
+            if (not owners or owners[-1] is not capability) and (cls := self.classes.get(capability_id)) is not None:
+                target.setdefault(public_class_path(cls), []).append(self.leaf(capability_id, cls))
+        # One whose pieces all rolled up, or merged into another's, holds nothing worth listing.
+        for owner_key, members in self.owner_members.items():
+            if not members:
+                del self.owner_records[owner_key]['members']
+        return records
 
 
 def capability_records(
@@ -780,35 +835,22 @@ def capability_records(
     root: AbstractCapability[Any] | None,
     active_ids: Set[str],
     url_ids: Set[str],
+    resolutions: _CapabilityResolutions,
     *,
     include_content: bool,
 ) -> dict[str, list[CapabilityRecord]]:
-    """The capabilities registered for a run, by class, for the agent run span.
+    """The capabilities configured for a run, by class, for the agent run span.
 
-    Keyed by class so that a backend can index which classes a run used by key alone. A bundle the user
-    configured as one, like Harness `Coder`, is recorded as one record, with the capabilities it registers in
-    its `members`, so each capability is recorded once.
+    Keyed by class so that a backend can index which classes a run used by key alone. A capability that holds
+    others is recorded as the capability the user configured, with what it holds in its `members`: a bundle like
+    Harness `Coder`, a deferred group, and a capability whose `for_run` replaced it with others, like Harness
+    `Skills`. Each is recorded where the first capability it holds was registered, and is active when one of
+    those is. Computed from `root`'s tree as configured when the span ends, so a run pays for it only when traced.
     """
-    recorder = _CapabilityRecorder(capabilities, active_ids, url_ids, include_content)
-    # Each bundle is recorded where its first registered capability would have been.
-    bundles_at: dict[str, tuple[AbstractCapability[Any], list[str]]] = {}
-    claimed: set[str] = set()
-    for bundle in _bundles(root):
-        owned = recorder.registered_ids(bundle)
-        # A bundle another bundle already holds is recorded as part of that one.
-        if not owned or claimed.issuperset(owned):
-            continue
-        claimed.update(owned)
-        bundles_at[owned[0]] = (bundle, [member_id for member_id in owned if capabilities[member_id] is not bundle])
-
-    records: dict[str, list[CapabilityRecord]] = {}
-    for capability_id in capabilities:
-        if (found := bundles_at.get(capability_id)) is not None:
-            bundle, member_ids = found
-            records.setdefault(public_class_path(type(bundle)), []).append(recorder.bundle(bundle, member_ids))
-        elif capability_id not in claimed and (cls := recorder.classes.get(capability_id)) is not None:
-            records.setdefault(public_class_path(cls), []).append(recorder.leaf(capability_id, cls))
-    return records
+    recorder = _CapabilityRecorder(capabilities, active_ids, url_ids, resolutions, include_content)
+    if root is not None:
+        recorder.walk(root)
+    return recorder.records()
 
 
 def add_toolset_records(

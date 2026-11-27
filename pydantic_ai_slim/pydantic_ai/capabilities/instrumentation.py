@@ -428,6 +428,7 @@ class Instrumentation(AbstractCapability[Any]):
                     ctx.root_capability,
                     self._active_capability_ids | ctx.active_capability_ids,
                     mcp_url_ids,
+                    ctx._capability_resolutions,  # pyright: ignore[reportPrivateUsage]
                     include_content=settings.include_content,
                 )
             ).decode(),

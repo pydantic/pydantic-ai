@@ -348,7 +348,7 @@ Agent.instrument_all(InstrumentationSettings(use_aggregated_usage_attribute_name
 
 ### Capabilities and toolsets
 
-Agent run spans record what the run was made of: `pydantic_ai.capabilities` lists the [capabilities](capabilities/overview.md) registered for the run, including whatever a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] resolved to, and `pydantic_ai.toolsets` the [toolsets](toolsets.md) its model requests used, including whatever a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] resolved to on each step. Both are keyed by the class, so a query can find the runs that used one without unpacking the list:
+Agent run spans record what the run was made of: `pydantic_ai.capabilities` lists the [capabilities](capabilities/overview.md) configured for the run, including whatever a [`DynamicCapability`][pydantic_ai.capabilities.DynamicCapability] resolved to, and `pydantic_ai.toolsets` the [toolsets](toolsets.md) its model requests used, including whatever a [`DynamicToolset`][pydantic_ai.toolsets.DynamicToolset] resolved to on each step. Both are keyed by the class, so a query can find the runs that used one without unpacking the list:
 
 ```json
 {
@@ -363,7 +363,13 @@ Agent run spans record what the run was made of: `pydantic_ai.capabilities` list
 }
 ```
 
-A bundle of capabilities you configure as one, a [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] subclass such as Pydantic AI Harness's [`Coder`](harness/coder.md) or one of your own, is one entry, keyed by its class like any other. The capabilities it's made of are in its `members`, keyed the same way, rather than beside it, so each capability is listed once. A bundle inside another is part of the outer one. A plain `CombinedCapability`, which only groups capabilities, isn't listed itself. A `Coder` run records, trimmed:
+Each entry is a capability you configured. One that holds others records them in its `members`, keyed the same way, rather than beside it, so each capability is listed once:
+
+- A bundle of capabilities you configure as one, a [`CombinedCapability`][pydantic_ai.capabilities.CombinedCapability] subclass such as Pydantic AI Harness's [`Coder`](harness/coder.md) or one of your own. A bundle inside another is one of its members. A plain `CombinedCapability`, which only groups capabilities, isn't listed itself.
+- A capability whose [`for_run`][pydantic_ai.capabilities.AbstractCapability.for_run] replaces it with others, such as Pydantic AI Harness's [`Skills`](harness/skills.md), which registers one capability per skill. When the replacement keeps the capability itself, as `FileSystem` keeps itself beside the `AnnounceWorkingDirectory` it brings along, its own entry holds the rest.
+- A [deferred](capabilities/on-demand.md) group of capabilities, which the model loads as one.
+
+A `Coder` run records, trimmed:
 
 ```json
 {
@@ -373,7 +379,18 @@ A bundle of capabilities you configure as one, a [`CombinedCapability`][pydantic
       "active": true,
       "members": {
         "pydantic_ai.capabilities.AbstractCapability": [{"id": "coder_instructions", "defer_loading": false, "active": true}],
-        "pydantic_ai_harness.file_system.FileSystem": [{"id": "<file_system:9c41d0>", "defer_loading": false, "active": true}],
+        "pydantic_ai_harness.file_system.FileSystem": [
+          {
+            "id": "<file_system:9c41d0>",
+            "defer_loading": false,
+            "active": true,
+            "members": {
+              "pydantic_ai_harness.announce_working_directory.AnnounceWorkingDirectory": [
+                {"id": "announce_working_directory", "defer_loading": false, "active": true}
+              ]
+            }
+          }
+        ],
         "pydantic_ai_harness.shell.Shell": [{"id": "<shell:2be7f3>", "defer_loading": false, "active": true}],
         "pydantic_ai_harness.sub_agents.SubAgents": [{"id": "sub_agents", "defer_loading": false, "active": true}]
       }
@@ -383,7 +400,7 @@ A bundle of capabilities you configure as one, a [`CombinedCapability`][pydantic
 }
 ```
 
-A bundle's `active` is whether any of its members was, and its `id` is the one you gave it, if any.
+An entry holding others is active when any of them was, unless it's registered itself, as a deferred group is, and its `id` is the one you gave it, if any. The unnamed pieces Pydantic AI and Pydantic AI Harness build a capability from, of private classes and with no `id`, aren't listed: they count towards the entry of the capability you configured, and are left out of `pydantic_ai.active_capabilities` too.
 
 Tools registered on the agent itself (with `tools=` or [`@agent.tool`][pydantic_ai.agent.Agent.tool]) and output tools aren't listed, as the framework owns the toolsets that hold them; their tools are on the model request spans' tool definitions. Neither are the capabilities the framework adds to a run for its own bookkeeping. Toolsets that record identically are listed once, however many steps used them: that includes separate toolsets of one class with no recorded id, so the list's length isn't a toolset count. Under [durable execution](durable_execution/overview.md), a `DynamicToolset` is listed as `pydantic_ai.toolsets.DynamicToolset` rather than as the toolsets it resolves to, since the engine resolves it outside the run's own toolset tree.
 

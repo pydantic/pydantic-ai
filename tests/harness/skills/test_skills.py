@@ -321,9 +321,18 @@ class TestSkills:
                     {'id': 'instrumentation', 'defer_loading': False, 'active': True}
                 ],
                 'pydantic_ai.capabilities.ToolSearch': [{'id': 'tool_search', 'defer_loading': False, 'active': True}],
-                'pydantic_ai.capabilities.AbstractCapability': [
-                    {'id': 'deploy', 'defer_loading': True, 'active': False},
-                    {'id': 'review', 'defer_loading': True, 'active': True},
+                'pydantic_ai_harness.skills.Skills': [
+                    {
+                        'id': 'skills',
+                        'defer_loading': False,
+                        'active': True,
+                        'members': {
+                            'pydantic_ai.capabilities.AbstractCapability': [
+                                {'id': 'deploy', 'defer_loading': True, 'active': False},
+                                {'id': 'review', 'defer_loading': True, 'active': True},
+                            ]
+                        },
+                    }
                 ],
             }
         )

@@ -90,21 +90,18 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
     # `capabilities` keeps the given order: no order of whole branches matches the interleaved
     # dispatch order, and rebuilding from a re-sorted one would change how ties sort.
     _dispatch: Sequence[AbstractCapability[AgentDepsT]] = field(init=False, repr=False)
-    # A `CombinedCapability` subclass the user configured as one, like Harness `Coder`, is flattened too, so a
-    # trace could not say the run used it. This view retains each one (nested ones included, outer first),
-    # rebound with its children as `_instruction_sources` is, for the agent run span to record.
-    _bundles: Sequence[CombinedCapability[AgentDepsT]] = field(init=False, repr=False)
+    # The children as configured, before flattening merged nested containers in. Flattening loses a
+    # `CombinedCapability` subclass the user configured as one, like Harness `Coder`, so the agent run span reads
+    # this to record it. Set once and carried unchanged by `_rebound`: the span maps each configured child to what
+    # binding and `for_run` replaced it with (see `_resolutions`), so nothing is rebuilt on the run path.
+    _configured: Sequence[AbstractCapability[AgentDepsT]] = field(init=False, repr=False)
 
     def __post_init__(self) -> None:
         if self.id is not None:
             validate_instruction_id_segment(self.id, kind='Capability id')
+        self._configured = list(self.capabilities)
         instruction_sources: list[AbstractCapability[AgentDepsT]] = []
-        bundles: list[CombinedCapability[AgentDepsT]] = []
         for capability in self.capabilities:
-            if isinstance(capability, CombinedCapability) and not is_deferred_group(capability):
-                if type(capability) is not CombinedCapability:
-                    bundles.append(capability)
-                bundles.extend(capability._bundles)
             if (
                 isinstance(capability, CombinedCapability)
                 and not is_deferred_group(capability)
@@ -119,7 +116,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             else:
                 instruction_sources.append(capability)
         self._instruction_sources = instruction_sources
-        self._bundles = bundles
         self.__normalize_capabilities()
 
     def _rebound(
@@ -161,9 +157,6 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
             rebound
             for source in new_self._instruction_sources
             if (rebound := self.__rebind_source(source, replacements, pending)) is not None
-        ]
-        new_self._bundles = [
-            rebound for bundle in new_self._bundles if (rebound := _rebind_bundle(bundle, replacements)) is not None
         ]
         new_self.__normalize_capabilities()
         return new_self
@@ -320,7 +313,10 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         is set on every child as well as on the container.
         """
         lowered = super().with_authority(authority)
-        return lowered._rebound([child.with_authority(authority) for child in self.capabilities])
+        children = [child.with_authority(authority) for child in self.capabilities]
+        result = lowered._rebound(children)
+        result._configured = _configured_view(self._configured, dict(zip(map(id, self.capabilities), children)))
+        return result
 
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> CombinedCapability[AgentDepsT]:
         new_caps = [capability._keep_authority(capability.for_agent(agent)) for capability in self.capabilities]
@@ -1139,17 +1135,23 @@ class CombinedCapability(AbstractCapability[AgentDepsT]):
         return accumulated if any_handled else None
 
 
-def _rebind_bundle(
-    bundle: CombinedCapability[AgentDepsT],
-    replacements: Mapping[int, Sequence[AbstractCapability[AgentDepsT] | None]],
-) -> CombinedCapability[AgentDepsT] | None:
-    """A retained bundle rebuilt from what its children, flattened into the rebound container, became."""
-    pending = {key: list(decisions) for key, decisions in replacements.items()}
-    rebound_children = [
-        child if id(child) not in replacements else _take_decision(child, pending) for child in bundle.capabilities
-    ]
-    surviving = [child for child in rebound_children if child is not None]
-    return bundle._rebound(surviving, replacements) if surviving else None  # pyright: ignore[reportPrivateUsage]
+def _configured_view(
+    configured: Sequence[AbstractCapability[AgentDepsT]],
+    replaced: Mapping[int, AbstractCapability[AgentDepsT]],
+) -> list[AbstractCapability[AgentDepsT]]:
+    """`configured` with each flattened child swapped for its replacement in `replaced`, nested containers included.
+
+    A nested container's copy holds the replacements as its configured children, for the agent run span to read.
+    """
+    view: list[AbstractCapability[AgentDepsT]] = []
+    for capability in configured:
+        if isinstance(capability, CombinedCapability) and id(capability) not in replaced:
+            copied = replace_no_init(capability)
+            copied._configured = _configured_view(capability._configured, replaced)  # pyright: ignore[reportPrivateUsage]
+            view.append(copied)
+        else:
+            view.append(replaced.get(id(capability), capability))
+    return view
 
 
 def _take_decision(

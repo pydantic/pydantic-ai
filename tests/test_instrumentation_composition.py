@@ -263,7 +263,7 @@ class SupportBundle(CombinedCapability[Any]):
 
 
 async def test_a_bundle_is_recorded_once_with_its_members() -> None:
-    """A bundle is one record holding what it registers, a bundle inside it is part of it, and a factory's is too."""
+    """A bundle is one record holding what it registers, a bundle inside it is one of its members, and a factory's is too."""
     capability, exporter = instrumentation()
     inner = SupportBundle([Capability(id='escalation', instructions='Escalate.')])
 
@@ -295,8 +295,7 @@ async def test_a_bundle_is_recorded_once_with_its_members() -> None:
                     'active': True,
                     'members': {
                         'pydantic_ai.capabilities.Capability': [
-                            {'id': 'billing', 'defer_loading': False, 'active': True},
-                            {'id': 'escalation', 'defer_loading': False, 'active': True},
+                            {'id': 'billing', 'defer_loading': False, 'active': True}
                         ],
                         'pydantic_ai.capabilities.AbstractCapability': [
                             {
@@ -304,6 +303,18 @@ async def test_a_bundle_is_recorded_once_with_its_members() -> None:
                                 'user_class': 'tests.test_instrumentation_composition.BillingGuard',
                                 'defer_loading': False,
                                 'active': True,
+                            }
+                        ],
+                        'pydantic_ai.capabilities.CombinedCapability': [
+                            {
+                                'user_class': 'tests.test_instrumentation_composition.SupportBundle',
+                                'defer_loading': False,
+                                'active': True,
+                                'members': {
+                                    'pydantic_ai.capabilities.Capability': [
+                                        {'id': 'escalation', 'defer_loading': False, 'active': True}
+                                    ]
+                                },
                             }
                         ],
                     },
@@ -359,6 +370,132 @@ async def test_a_deferred_bundle_is_recorded_with_its_own_id_and_state() -> None
     )
 
 
+@dataclass
+class Desk(AbstractCapability[Any]):
+    """A user capability whose `for_run` replaces it, as Harness `Skills` does: with a group, itself or another one."""
+
+    becomes: Literal['group', 'group_with_itself', 'another']
+
+    async def for_run(self, ctx: RunContext[Any]) -> AbstractCapability[Any]:
+        if self.becomes == 'group':
+            return CombinedCapability([Capability(id='refunds', instructions='Refund.'), BillingGuard()])
+        if self.becomes == 'group_with_itself':
+            # Nested, so the group holding it isn't the replacement itself.
+            return CombinedCapability([CombinedCapability([self, Capability(id='invoices', instructions='Invoice.')])])
+        return Thinking()
+
+
+async def test_a_capability_its_for_run_replaced_is_recorded_with_what_it_became() -> None:
+    """The configured capability is the record, holding what it became; one its replacement holds is registered."""
+    capability, exporter = instrumentation()
+    agent = Agent(
+        TestModel(),
+        capabilities=[
+            capability,
+            Desk('group', id='support'),
+            Desk('group_with_itself', id='billing'),
+            Desk('another'),
+        ],
+    )
+
+    await agent.run('Hello')
+
+    assert run_span_composition(exporter)['capabilities'] == snapshot(
+        {
+            'pydantic_ai.capabilities.Instrumentation': [
+                {'id': 'instrumentation', 'defer_loading': False, 'active': True}
+            ],
+            'pydantic_ai.capabilities.ToolSearch': [{'id': 'tool_search', 'defer_loading': False, 'active': True}],
+            'pydantic_ai.capabilities.AbstractCapability': [
+                {
+                    'id': 'support',
+                    'user_class': 'tests.test_instrumentation_composition.Desk',
+                    'defer_loading': False,
+                    'active': True,
+                    'members': {
+                        'pydantic_ai.capabilities.Capability': [
+                            {'id': 'refunds', 'defer_loading': False, 'active': True}
+                        ],
+                        'pydantic_ai.capabilities.AbstractCapability': [
+                            {
+                                'id': IsStr(regex=r'<billing_guard:[0-9a-f]{6}>'),
+                                'user_class': 'tests.test_instrumentation_composition.BillingGuard',
+                                'defer_loading': False,
+                                'active': True,
+                            }
+                        ],
+                    },
+                },
+                {
+                    'id': 'billing',
+                    'user_class': 'tests.test_instrumentation_composition.Desk',
+                    'defer_loading': False,
+                    'active': True,
+                    'members': {
+                        'pydantic_ai.capabilities.Capability': [
+                            {'id': 'invoices', 'defer_loading': False, 'active': True}
+                        ]
+                    },
+                },
+                {
+                    'user_class': 'tests.test_instrumentation_composition.Desk',
+                    'defer_loading': False,
+                    'active': True,
+                    'members': {
+                        'pydantic_ai.capabilities.Thinking': [
+                            {'id': 'thinking', 'defer_loading': False, 'active': True}
+                        ]
+                    },
+                },
+            ],
+        }
+    )
+
+
+async def test_a_lowered_bundle_is_recorded_as_configured() -> None:
+    """`with_authority` lowers a bundle's pieces, nested bundles included, and the record still holds them."""
+    capability, exporter = instrumentation()
+    inner = SupportBundle([Capability(id='escalation', instructions='Escalate.')])
+    bundle = SupportBundle([Capability(id='billing', instructions='Bill.'), inner], id='support')
+    agent = Agent(TestModel(), capabilities=[capability, bundle.with_authority('user')])
+
+    await agent.run('Hello')
+
+    assert run_span_composition(exporter)['capabilities'] == snapshot(
+        {
+            'pydantic_ai.capabilities.Instrumentation': [
+                {'id': 'instrumentation', 'defer_loading': False, 'active': True}
+            ],
+            'pydantic_ai.capabilities.ToolSearch': [{'id': 'tool_search', 'defer_loading': False, 'active': True}],
+            'pydantic_ai.capabilities.CombinedCapability': [
+                {
+                    'id': 'support',
+                    'user_class': 'tests.test_instrumentation_composition.SupportBundle',
+                    'defer_loading': False,
+                    'active': True,
+                    'members': {
+                        'pydantic_ai.capabilities.Capability': [
+                            {'id': 'billing', 'defer_loading': False, 'active': True}
+                        ],
+                        'pydantic_ai.capabilities.CombinedCapability': [
+                            {
+                                'user_class': 'tests.test_instrumentation_composition.SupportBundle',
+                                'defer_loading': False,
+                                'active': True,
+                                'members': {
+                                    'pydantic_ai.capabilities.Capability': [
+                                        {'id': 'escalation', 'defer_loading': False, 'active': True}
+                                    ]
+                                },
+                            }
+                        ],
+                    },
+                }
+            ],
+        }
+    )
+
+
 def test_capability_records_without_a_root_capability() -> None:
     """Without a root capability there are no bundles, so each capability is its own record."""
     from pydantic_ai._instrumentation import capability_records
@@ -368,6 +505,7 @@ def test_capability_records_without_a_root_capability() -> None:
         None,
         {'billing'},
         set(),
+        {},
         include_content=True,
     )
 
