@@ -159,6 +159,19 @@ routes `gemini-2.5-pro` to it, that setting fails there.
 `NativeOutput` with function tools, and native tools with function tools, stay unavailable on these model names, as on
 Gemini 2.5. To use the new models' features, change the model name.
 
+## Gemini 4 {#gemini-4}
+
+!!! note "Gemini 4 notes"
+    - **Thinking can't be turned off.** `gemini-4-argon`, `gemini-4-carbon`, `gemini-4-hydrogen` and `gemini-4-neon`
+      accept no thinking level below `low`, so `thinking=False` and `thinking='minimal'` send `low` (see
+      [Configure thinking](#configure-thinking)).
+    - **Prompt tokens include a fixed overhead.** For the same content, Google counts about 33 more prompt tokens per
+      request and about 4 more per message on Gemini 4 than on Gemini 3 (measured on `gemini-4-neon` and
+      `gemini-4-hydrogen`, 2026-11). These tokens are billed, and `usage.input_tokens` reports them as Google does.
+    - **Implicit caching needs a warm-up.** Gemini caches prompts implicitly, with nothing to configure. A long prefix
+      sent again a few seconds after its first request may not be read from the cache yet; later requests that repeat
+      it are.
+
 ## Interactions API
 
 Choose Google's [Interactions API](https://ai.google.dev/gemini-api/docs/interactions-overview) when you need
