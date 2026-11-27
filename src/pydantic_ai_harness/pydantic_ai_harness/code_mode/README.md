@@ -682,8 +682,8 @@ description lists. Servers before 1.5 speak WebSockets, which this client no lon
 
 Pool creation, connection, and session checkout errors (bad credentials, an invalid server URL, a
 pool factory exception) propagate to the code calling the agent, not to the model as `ModelRetry`,
-since it can't fix sandbox configuration. A checkout refused with `caller_cap`, `capacity`, or
-`worker_unavailable` is first retried once after a short backoff. In a Temporal workflow, the
+since it can't fix sandbox configuration. The Monty SDK handles admission retries within the original
+checkout budget. Harness passes the final refusal to the caller. In a Temporal workflow, the
 exception reaches workflow code and follows the [workflow failure policy](#temporal-durability), not
 the model retry policy.
 
