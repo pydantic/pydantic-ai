@@ -356,7 +356,7 @@ async def _run_lifecycle_hooks(  # noqa: C901
 
     outer_context = contextvars.copy_context()
     # Code without a `RunContext`, such as a workspace, reads the run's telemetry from the context `wrap_run`'s task
-    # and the run body inherit. `Instrumentation.wrap_run` publishes it once the run's span is open; until then,
+    # and the run body inherit. `Instrumentation.wrap_run` publishes it while the run's span is open; outside it,
     # including in a nested run's outer `wrap_run` hooks, there is none, rather than the parent's.
     wrap_context = outer_context.copy()
     wrap_context.run(publish_run_telemetry, None)

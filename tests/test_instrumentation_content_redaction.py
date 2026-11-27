@@ -1428,9 +1428,15 @@ async def test_no_content_reaches_telemetry_from_a_helper_without_a_context(
         async with realtime.session() as session:
             _ = [event async for event in session]
 
-    names = {span.name for span in exporter.get_finished_spans()}
-    assert {'example helper', 'example span', 'example decision'} <= names
     check(exporter, include_content, {'helper_content', 'decision_content'})
+    # Each channel on its own span, so one that stops recording can't hide behind another that still does.
+    attributes = {span.name: dict(span.attributes or {}) for span in exporter.get_finished_spans()}
+    helper_content = SECRETS['helper_content'] if include_content else None
+    assert attributes['example helper'].get('example.first') == helper_content
+    assert attributes['example span'].get('example.first') == helper_content
+    assert attributes['execute_tool lookup'].get('example.later') == helper_content
+    decision_content = SECRETS['decision_content'] if include_content else None
+    assert attributes['example decision'].get('example.reason') == decision_content
 
 
 @dataclass(frozen=True)

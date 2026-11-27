@@ -383,20 +383,21 @@ Where the tracer comes from:
 - A standalone helper that users call outside any run takes `tracer: Tracer | None = None` and falls
   back to `NoOpTracer()`, so it emits the same span shape as the in-run path (`compaction`'s
   `compact_messages`).
-- A span opened in `for_run` goes to the right tracer, but it isn't a child of the run's `invoke_agent`
-  span, which opens after `for_run` returns. Record from a hook inside the run instead, such as
-  `before_run`. `Skills` still records its scan from `for_run`; moving it is a follow-up.
+- Record from hooks that run inside the run's span, such as `before_run` or the tool and model request
+  hooks. `for_run` runs before the run's tracing settings are final and before its `invoke_agent` span
+  opens. `Skills` still records its scan from `for_run`; moving it is a follow-up.
+- Replayed work is not exported twice only on Temporal. DBOS and Prefect don't report replay to these
+  helpers.
 
 What to record, and where:
 
 - Prefer an attribute on the tool call's span, through `tool_call_span(ctx)`. It is the call's
-  `execute_tool` span in the tool hooks (`before_tool_execute`, `after_tool_execute`,
-  `wrap_tool_execute`), in a tool's body and in a toolset's `call_tool`. Everywhere else, such as
-  `for_run`, `before_run` and `wrap_run`, it is `INVALID_SPAN`. Don't call
+  `execute_tool` span while `Instrumentation` has it open for that call: in `before_tool_execute`,
+  `after_tool_execute`, a `wrap_tool_execute` inside `Instrumentation`, a tool's body and a toolset's
+  `call_tool`. Everywhere else, such as `for_run`, `before_run`, `wrap_run`, `before_tool_validate`, or
+  a task that outlives the call, it is `INVALID_SPAN`. Don't call
   `opentelemetry.trace.get_current_span()` directly: in an uninstrumented run it returns whatever span
   the application has open, such as its request span.
-- Take `tool_call_span(ctx)` before or after nested work, never while a child span may be current in
-  another task.
 - A durable-unit context that did not carry the tracer makes every telemetry helper a no-op: the unit
   is untraced.
 - Give a decision its own `record_decision` when there's no span to put it on, when one span can see

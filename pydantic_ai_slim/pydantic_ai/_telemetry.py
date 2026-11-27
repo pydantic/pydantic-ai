@@ -7,9 +7,9 @@ Public through `pydantic_ai.capabilities`:
 - `tool_call_span(ctx)`: the `execute_tool` span of the tool call `ctx` belongs to, to add attributes to.
 
 Core code that runs during a run but has no `RunContext`, such as a `Workspace` that runs share and that
-can outlive a run, uses `open_ambient_span`. It reads the tracer and content flag the run publishes once
-its `agent run` span is open, in the context its body, tools and their tasks inherit. A value stored on
-such an object would apply one run's settings to another's calls.
+can outlive a run, uses `open_ambient_span`. It reads the tracer and content flag the run publishes while
+its run span (or a realtime session's span) is open, in the context its body, tools and their tasks
+inherit. A value stored on such an object would apply one run's settings to another's calls.
 """
 
 from __future__ import annotations as _annotations
@@ -19,7 +19,7 @@ from contextlib import contextmanager
 from contextvars import ContextVar
 from typing import TYPE_CHECKING, Any, NamedTuple
 
-from opentelemetry.trace import INVALID_SPAN, NoOpTracer, Span, Tracer, get_current_span
+from opentelemetry.trace import INVALID_SPAN, NoOpTracer, Span, Tracer
 from opentelemetry.util.types import AttributeValue
 
 from ._durable_replay import start_as_current_span
@@ -29,6 +29,7 @@ if TYPE_CHECKING:
     from ._run_context import RunContext
 
 __all__ = (
+    'bind_tool_call_span',
     'open_ambient_span',
     'open_span',
     'publish_run_telemetry',
@@ -49,27 +50,64 @@ class _TracedRun(NamedTuple):
     include_content: bool
 
 
-_published_traced_run: ContextVar[_TracedRun | None] = ContextVar('pydantic_ai.published_traced_run', default=None)
-"""The traced run that code without a `RunContext` traces to, or `None` when there is none."""
+class _PublishedRun(NamedTuple):
+    """A traced run published for code without a `RunContext`, valid only while `owner_span` records.
 
-
-def publish_run_telemetry(ctx: RunContext[Any] | None) -> None:
-    """Make `ctx`'s run the one code without a `RunContext` traces to; `None`, or an untraced run, means none.
-
-    A plain set, for a context the run owns: the run's body may finish in a different `Context`
-    than it started in, where resetting a token raises.
+    `owner_span` is the run's span, or a realtime session's span. A task that copied the context keeps
+    the value after the span ends; checking the span keeps that task from tracing with a finished run.
     """
-    _published_traced_run.set(_traced_run_of(ctx))
+
+    traced_run: _TracedRun
+    owner_span: Span
+
+
+_published_run: ContextVar[_PublishedRun | None] = ContextVar('pydantic_ai.published_run', default=None)
+
+
+class _BoundToolCall(NamedTuple):
+    """The `execute_tool` span `Instrumentation` opened for one tool call of one run."""
+
+    span: Span
+    run_id: str | None
+
+
+_bound_tool_call: ContextVar[_BoundToolCall | None] = ContextVar('pydantic_ai.bound_tool_call', default=None)
+
+
+def publish_run_telemetry(tracer: Tracer | None, include_content: bool = False, owner_span: Span | None = None) -> None:
+    """Publish a run for code without a `RunContext`, while `owner_span` records; `None` publishes none.
+
+    A plain set, for a context the caller owns, such as a task it created.
+    """
+    published = (
+        None if tracer is None or owner_span is None else _PublishedRun(_TracedRun(tracer, include_content), owner_span)
+    )
+    _published_run.set(published)
 
 
 @contextmanager
-def run_telemetry_scope(ctx: RunContext[Any] | None) -> Generator[None]:
-    """Publish `ctx`'s run for a block that starts and ends in one `Context`."""
-    token = _published_traced_run.set(_traced_run_of(ctx))
+def run_telemetry_scope(ctx: RunContext[Any] | None, owner_span: Span | None = None) -> Generator[None]:
+    """Publish `ctx`'s run, while `owner_span` records, for a block that starts and ends in one `Context`.
+
+    `None` for either publishes none, which hides a parent run's value from a nested run's setup.
+    """
+    traced_run = _traced_run_of(ctx)
+    published = None if traced_run is None or owner_span is None else _PublishedRun(traced_run, owner_span)
+    token = _published_run.set(published)
     try:
         yield
     finally:
-        _published_traced_run.reset(token)
+        _published_run.reset(token)
+
+
+@contextmanager
+def bind_tool_call_span(span: Span, *, run_id: str | None) -> Generator[None]:
+    """Make `span` what `tool_call_span` returns for this run's tool call, for the span's lifetime."""
+    token = _bound_tool_call.set(_BoundToolCall(span, run_id))
+    try:
+        yield
+    finally:
+        _bound_tool_call.reset(token)
 
 
 @contextmanager
@@ -83,13 +121,16 @@ def open_span(
 ) -> Generator[Span]:
     """Open `name` on the run's tracer.
 
+    Meant for tool, model request and run hooks, which run inside the run's span. `for_run` runs before
+    the run's tracing settings are final, so a span opened there can go to a tracer the run then drops.
+
     Yields `INVALID_SPAN` when the run isn't traced. `attributes` are always recorded; `content`, which
     can quote what the span is about, only when the run captures content. Both are set at the start, so
     Logfire's console and pending spans show them. An uncaught `Exception` marks the span ERROR, sets
     `error.type` to the exception's type, and is recorded by its type only, unless the run captures
     content, as its message can quote content. A cancellation is not an error, as in OpenTelemetry's own
-    spans: it leaves the status unset. In a durable run, a span that covered only replayed work is not
-    exported again.
+    spans: it leaves the status unset. In a Temporal workflow, a span that covered only replayed work is
+    not exported again.
     """
     with _open_span(_traced_run_of(ctx), name, attributes=attributes, content=content) as span:
         yield span
@@ -104,9 +145,11 @@ def open_ambient_span(
 ) -> Generator[Span]:
     """`open_span` for core code with no `RunContext`, on the run published for the calling context.
 
-    Yields `INVALID_SPAN` outside a traced run, and in a run's setup, before its `agent run` span opens.
+    Yields `INVALID_SPAN` outside a traced run's span: in its setup, before the span opens, and after it ends.
     """
-    with _open_span(_published_traced_run.get(), name, attributes=attributes, content=content) as span:
+    published = _published_run.get()
+    traced_run = published.traced_run if published is not None and published.owner_span.is_recording() else None
+    with _open_span(traced_run, name, attributes=attributes, content=content) as span:
         yield span
 
 
@@ -149,10 +192,12 @@ def record_decision(
 ) -> None:
     """Record that a capability decided something that changed the run's course, such as a guard blocking a value.
 
+    Meant for tool, model request and run hooks, which run inside the run's span. `for_run` runs before
+    the run's tracing settings are final, so a decision recorded there can go to a tracer the run then drops.
+
     It is recorded as a span named `name`, on the run's tracer, that ends as soon as it starts. `attributes`
     are always recorded; `content`, which can quote what the decision was about, only when the run captures
-    content. On a durable engine that reports when it is replaying, such as Temporal, a decision made
-    again during replay is not exported again.
+    content. In a Temporal workflow, a decision made again during replay is not exported again.
     """
     if (traced_run := _traced_run_of(ctx)) is not None:
         with start_as_current_span(traced_run.tracer, name, attributes=_with_content(traced_run, attributes, content)):
@@ -162,16 +207,17 @@ def record_decision(
 def tool_call_span(ctx: RunContext[Any], /) -> Span:
     """The `execute_tool` span of the tool call `ctx` belongs to, to add attributes to, or `INVALID_SPAN`.
 
-    It is the span only inside a tool call of a traced run: in the tool hooks, the tool's body and a
-    toolset's `call_tool`. Everywhere else, such as `for_run`, `before_run` and `wrap_run`, it is
-    `INVALID_SPAN`, so a capability never writes to a span the run doesn't own, such as the
-    application's span around the run or a parent run's tool call. Take it before or after nested work,
-    not while a child span may be current. An attribute that can quote content is set only
-    `if ctx.trace_include_content`.
+    It is the span only while `Instrumentation` has it open for this call: in `before_tool_execute`,
+    `after_tool_execute`, a `wrap_tool_execute` ordered inside `Instrumentation`, the tool's body and a
+    toolset's `call_tool`. Everywhere else, such as `for_run`, `before_run`, `wrap_run`,
+    `before_tool_validate` or a task that outlives the call, it is `INVALID_SPAN`, so a capability never
+    writes to a span the call doesn't own. An attribute that can
+    quote content is set only `if ctx.trace_include_content`.
     """
-    if _traced_run_of(ctx) is None or ctx.tool_call_id is None:
+    bound = _bound_tool_call.get()
+    if bound is None or not bound.span.is_recording() or bound.run_id != ctx.run_id:
         return INVALID_SPAN
-    return get_current_span()
+    return bound.span
 
 
 _TRACE_FIELDS = frozenset({'tracer', 'trace_include_content'})

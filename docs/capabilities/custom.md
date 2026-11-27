@@ -1390,7 +1390,7 @@ print(result.output)
 #> {"delete_file":"Deleting is not allowed."}
 ```
 
-With the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability or [Logfire](../logfire.md) set up, the trace shows `no_deletes refused call` for the `delete_file` call, with its arguments only when content is allowed. [`open_span`][pydantic_ai.capabilities.open_span] marks the span as failed if the work raises, sets `error.type`, and records the error's message only when content is allowed. In a tool hook, a tool or a toolset's `call_tool`, [`tool_call_span(ctx)`][pydantic_ai.capabilities.tool_call_span] returns the tool call's `execute_tool` span, so you can add attributes to it instead of opening a new one. Set an attribute that can quote content only `if ctx.trace_include_content`.
+With the [`Instrumentation`][pydantic_ai.capabilities.Instrumentation] capability or [Logfire](../logfire.md) set up, the trace shows `no_deletes refused call` for the `delete_file` call, with its arguments only when content is allowed. [`open_span`][pydantic_ai.capabilities.open_span] marks the span as failed if the work raises, sets `error.type`, and records the error's message only when content is allowed. In `before_tool_execute`, `after_tool_execute`, a tool or a toolset's `call_tool`, [`tool_call_span(ctx)`][pydantic_ai.capabilities.tool_call_span] returns the tool call's `execute_tool` span, so you can add attributes to it instead of opening a new one. Set an attribute that can quote content only `if ctx.trace_include_content`.
 
 ## Durable capability operations {#durable-capability-operations}
 
