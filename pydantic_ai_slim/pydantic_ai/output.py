@@ -512,7 +512,7 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
         },
     )
     # An empty registry resolves references inside the schema and never fetches a remote one.
-    validator: Any = validator_class(json_schema, registry=Registry())
+    validator: Any = validator_class(json_schema, registry=Registry[Any]())
 
     def validate(value: dict[str, Any]) -> dict[str, Any]:
         # JSON has no NaN or infinity, and they pass `minimum`/`maximum` checks, so they're refused first. Some
