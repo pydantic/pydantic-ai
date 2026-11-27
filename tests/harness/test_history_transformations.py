@@ -69,7 +69,7 @@ from .test_capability_routes import CASES, PROBES, PUBLIC, RouteRun, _calls, _na
 
 with try_import():
     from pydantic_ai.ui.ag_ui import AGUIAdapter
-    from pydantic_ai.ui.ag_ui._utils import (  # pyright: ignore[reportPrivateUsage]
+    from pydantic_ai.ui.ag_ui._utils import (
         DEFAULT_AG_UI_VERSION,
         ENCRYPTED_VALUE_VERSION,
         parse_ag_ui_version,
