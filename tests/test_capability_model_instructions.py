@@ -419,11 +419,11 @@ def test_lowered_authority_sends_its_text_through_history(
         return ModelResponse(parts=[TextPart('ok')])
 
     spy = InstructionSpy()
-    agent = Agent(
-        FunctionModel(respond, model_name=model_name),
-        instructions='Be brief.',
-        capabilities=[ModelInstructions[None]({'gpt-6*': 'GPT-6'}).with_authority('none'), spy],
-    )
+    capabilities: list[AbstractCapability[None]] = [
+        ModelInstructions[None]({'gpt-6*': 'GPT-6'}).with_authority('none'),
+        spy,
+    ]
+    agent = Agent(FunctionModel(respond, model_name=model_name), instructions='Be brief.', capabilities=capabilities)
     agent.run_sync('Hi')
     assert spy.seen == hook_parts
     assert requests == received
