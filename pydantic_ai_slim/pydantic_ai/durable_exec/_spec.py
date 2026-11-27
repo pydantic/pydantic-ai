@@ -112,7 +112,8 @@ class DurabilityEngineSpec:
     Set this when the engine replays container code and needs each replay to take the recorded path.
     A capability that runs its own code there, such as Pydantic AI Harness's `CodeMode` sandbox, then
     turns off its wall-clock execution limit, because a limit that fires on one execution but not the
-    other would make them diverge. Temporal and Azure Durable Task set it.
+    other would make them diverge. Temporal and Azure Durable Task set it. DBOS and AWS Lambda also
+    re-run workflow code but keep the default for now, so Code Mode keeps its time limit there (#12539).
     """
 
     thread_wakeable_loop: bool = True

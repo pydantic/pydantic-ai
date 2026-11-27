@@ -123,7 +123,9 @@ as Pydantic AI Harness's [Code Mode](../harness/code-mode.md) and
 - [`replays_orchestrator_code`][pydantic_ai.durable_exec.DurabilityEngineSpec.replays_orchestrator_code]: set it to `True` when the engine replays container code and each replay
   must take the recorded path. Code Mode then turns off `max_duration_seconds` there, because an
   elapsed-time limit that fires on one execution but not the other would make them diverge.
-  Temporal and Azure Durable Task set it.
+  Temporal and Azure Durable Task set it. DBOS and AWS Lambda also re-run workflow code but keep the
+  default for now, so Code Mode keeps its time limit there
+  ([#12539](https://github.com/pydantic/pydantic-ai/issues/12539)).
 - [`thread_wakeable_loop`][pydantic_ai.durable_exec.DurabilityEngineSpec.thread_wakeable_loop]: set it to `False` when the container's event loop doesn't run callbacks
   scheduled from other threads with `call_soon_threadsafe()`. The sandbox completes each awaited call
   from a thread of its own, so Code Mode and Dynamic Workflow then call it through a blocking portal,
