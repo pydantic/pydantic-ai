@@ -50,7 +50,10 @@ from pydantic_ai_pax.runtime.task_prompts import is_delegate_tool
 
 MODES: dict[PermissionMode, str] = {
     'full': 'Full access: everything runs without asking.',
-    'auto': 'Auto: file edits and commands run; commands that delete, push, install, or reach the network ask first.',
+    'auto': (
+        'Auto: file edits and commands run; commands that delete, push, install, or reach the network ask first, '
+        "changes to Pax's own settings always ask, and run_code gets the workspace read-only."
+    ),
     'read-only': 'Read only: every file write and command asks first.',
 }
 

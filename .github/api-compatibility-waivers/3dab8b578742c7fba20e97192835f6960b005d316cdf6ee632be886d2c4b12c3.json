@@ -1,0 +1,5 @@
+{
+  "against": "v2.76.0",
+  "reason": "Pax 0.x: `MODES['auto']`, the text `/permissions` prints for `auto`, also says that changes to Pax's own settings always ask and that `run_code` gets the workspace read-only; the other modes' text is unchanged.",
+  "pull_request": "https://github.com/pydantic/pydantic-ai/pull/14818"
+}
