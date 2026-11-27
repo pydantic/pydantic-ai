@@ -327,3 +327,9 @@ the same tool wins over it.
 
 `name=` sets the activity name prefix (the agent's `name` by default), `models=` registers extra models
 by ID for `agent.run(model=...)`, and `event_stream_handler=` runs a handler as activities.
+
+## API reference
+
+::: pydantic_ai_harness.azure_durable_task.AzureDurableTaskDurability
+
+::: pydantic_ai_harness.azure_durable_task.run_durable
