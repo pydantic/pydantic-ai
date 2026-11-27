@@ -1,0 +1,413 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "222"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-mini
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Hello.
+        instructions: End every answer with the code word ZEBRA.
+        reasoning:
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1673"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795737251
+        created_at: 1795737250
+        error: null
+        frequency_penalty: 0.0
+        id: resp_031ca0cf473c847e006b08c6a1ea3487d1b19d2a0bf24dffd7
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: End every answer with the code word ZEBRA.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-mini-2026-03-17
+        moderation: null
+        object: response
+        output:
+        - content:
+          - annotations: []
+            logprobs: []
+            text: Hello! How can I help you today? ZEBRA
+            type: output_text
+          id: msg_031ca0cf473c847e006b08c6a2f8e487d1afe2ada43be842f6
+          phase: final_answer
+          role: assistant
+          status: completed
+          type: message
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        status: completed
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 23
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 16
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 39
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-26T23:54:11.595357+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "388"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-mini
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: What is the capital of France?
+        - role: system
+          content: From now on, answer in French.
+        instructions: End every answer with the code word ZEBRA.
+        previous_response_id: resp_031ca0cf473c847e006b08c6a1ea3487d1b19d2a0bf24dffd7
+        reasoning:
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1485"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795737252
+        created_at: 1795737252
+        error: null
+        frequency_penalty: 0.0
+        id: resp_031ca0cf473c847e006b08c6a3bc7487d1bbaaaff6ed83993b
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: End every answer with the code word ZEBRA.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-mini-2026-03-17
+        moderation: null
+        object: response
+        output:
+        - content:
+          - annotations: []
+            logprobs: []
+            text: La capitale de la France est Paris. ZEBRA
+            type: output_text
+          id: msg_031ca0cf473c847e006b08c6a4a93487d1847879edb4fc3414
+          phase: final_answer
+          role: assistant
+          status: completed
+          type: message
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: resp_031ca0cf473c847e006b08c6a1ea3487d1b19d2a0bf24dffd7
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        status: completed
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 64
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 15
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 79
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-26T23:54:13.237929+00:00
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "372"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-mini
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: And of Spain?
+        - role: system
+          content: From now on, answer in Spanish.
+        instructions: End every answer with the code word ZEBRA.
+        previous_response_id: resp_031ca0cf473c847e006b08c6a3bc7487d1bbaaaff6ed83993b
+        reasoning:
+          context: all_turns
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1136"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: 1795737254
+        created_at: 1795737253
+        error: null
+        frequency_penalty: 0.0
+        id: resp_031ca0cf473c847e006b08c6a5539c87d184c077c29fdd71bf
+        image:
+          context_compression: disabled
+        incomplete_details: null
+        input_transformations: []
+        instructions: End every answer with the code word ZEBRA.
+        max_output_tokens: null
+        max_tool_calls: null
+        model: gpt-5.4-mini-2026-03-17
+        moderation: null
+        object: response
+        output:
+        - content:
+          - annotations: []
+            logprobs: []
+            text: La capital de España es Madrid. ZEBRA
+            type: output_text
+          id: msg_031ca0cf473c847e006b08c6a5e38487d1aa04e81184e449cd
+          phase: final_answer
+          role: assistant
+          status: completed
+          type: message
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: resp_031ca0cf473c847e006b08c6a3bc7487d1bbaaaff6ed83993b
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        status: completed
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools: []
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 101
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 14
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 115
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-26T23:54:14.480953+00:00
