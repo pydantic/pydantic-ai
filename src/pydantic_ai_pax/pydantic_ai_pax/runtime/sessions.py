@@ -414,6 +414,9 @@ class Sessions(Generic[DepsT, OutputT]):
             return saved
         entries, page, offset = list(saved), saved, len(saved)
         own = sum(source_of(entry) == source for entry in saved)
+        # With fewer than `limit` copies from `source`, this pages through the whole store and reruns `query` on
+        # each page, on every reload of the browser. It runs on a worker thread; if it gets slow for large stores,
+        # the store could filter on the source tag instead.
         while own < limit and len(page) == limit:
             page = await self.store.listing(query=query, limit=limit, offset=offset)
             offset += len(page)
