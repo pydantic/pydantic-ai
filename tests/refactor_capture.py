@@ -149,7 +149,8 @@ what a test that leaves it set records depends on how fast the stream arrives.
 
 Each span the OpenTelemetry SDK ends is one line of kind `span`, with its name, number, parent, kind, the name of its
 instrumentation scope, its attributes, its status, and its events, each with its name and attributes. An exception
-event's stack trace is left out, since a refactor moves the lines it names. A test's spans are numbered in the order
+event's stack trace is left out, since a refactor moves the lines it names, and so is the exception fingerprint Logfire
+sets on a span, which hashes the function and source line of each frame in it. A test's spans are numbered in the order
 they started, and a parent is named by its number; a parent that didn't start in the test the span ends in, like a
 remote one, is `external`. Concurrent tool calls end their spans in any order, so a test's span lines come after its
 others, ahead of the durable execution ones below, in the order the spans started. A span ended again is recorded once.
@@ -212,18 +213,19 @@ each kind sorted, a policy's calls kept together.
 Each test starts with `random` seeded from its node id, so a test that draws from it draws the same values on both
 sides, and both sides run with one `PYTHONHASHSEED`, so a set, like the tool names in model request parameters, is
 recorded in the same order. Lines, and the id of each test node run, are written per `pytest-xdist` worker when each
-test ends. Generated tool call ids, UUIDs (version 4 ones without dashes too), the trace and span ids of a W3C trace
-context, like the `traceparent` an MCP client or Prefect puts in a request body, object addresses (the decimal one a
-`unittest.mock` repr gives, and the hex one anyio names a cancel scope by, too), timestamps within a day of the capture
-(ones in the basic format of a SigV4 `x-amz-date` header, an AG-UI event's milliseconds since the epoch, a naive
-datetime's `str()`, like the local time the `clai` agent's system prompt states, and ones in JSON a value holds as text,
-like an AG-UI message's `encryptedValue` or a web API response's event stream, too), history digests (which hash those
-timestamps), attempt durations, local server ports, multipart boundaries, pytest's numbered temporary directories, the
-random suffix of the key a capability without an `id` gets, `PromptInjectionDefender`'s measured `latency_ms`,
-`Planning`'s step ids where its plan and its reply to an added step render them, the code hash a Prefect `task_key` ends
-in, which hashes the file the task function was compiled from, the digest of a run's inputs that keys the task
-`PrefectDurability` draws the run's default ID from, which hashes the timestamps of the history the run is handed,
-the process ID a Temporal worker's identity starts with, the trace and span IDs an online evaluation's dispatch
+test ends. Generated tool call ids, UUIDs (version 4 and 5 ones without dashes too, like a sub-agent task's ID, which
+hashes the run's), the number asyncio names a task by, which counts the tasks the process created, the trace and span
+ids of a W3C trace context, like the `traceparent` an MCP client or Prefect puts in a request body, object addresses
+(the decimal one a `unittest.mock` repr gives, and the hex one anyio names a cancel scope by, too), timestamps within a
+day of the capture (ones in the basic format of a SigV4 `x-amz-date` header, an AG-UI event's milliseconds since the
+epoch, a naive datetime's `str()`, like the local time the `clai` agent's system prompt states, and ones in JSON a value
+holds as text, like an AG-UI message's `encryptedValue` or a web API response's event stream, too), history digests
+(which hash those timestamps), attempt durations, local server ports, multipart boundaries, pytest's numbered temporary
+directories, the random suffix of the key a capability without an `id` gets, `PromptInjectionDefender`'s measured
+`latency_ms`, `Planning`'s step ids where its plan and its reply to an added step render them, the code hash a Prefect
+`task_key` ends in, which hashes the file the task function was compiled from, the digest of a run's inputs that keys
+the task `PrefectDurability` draws the run's default ID from, which hashes the timestamps of the history the run is
+handed, the process ID a Temporal worker's identity starts with, the trace and span IDs an online evaluation's dispatch
 references, durations a clock measured, like the evaluated call's in that dispatch and a delegation's that
 `DelegationFinishedEvent` reports, the time a streamed request's chat span records its first chunk took, the id a
 sub-agent's question to its parent gets, Temporal timers computed from a clock reading, and the `custom_id` of each batch
@@ -393,8 +395,12 @@ GENERATED_VALUES = [
     (re.compile(r'(pytest-of-[^/"]+/pytest-)\d+(?:/popen-gw\d+)?'), r'\1N'),
     # The `uuid4().hex[:12]` id a sub-agent's question to its parent gets, which its task question and answer carry.
     (re.compile(r'("question_id":")[0-9a-f]{12}"'), r'\1QUESTION_ID"'),
-    # `uuid4().hex` ids, like `AskUserQuestion.id`; the version and variant digits spare most other hex digests.
-    (re.compile(r'(?<![0-9a-f])[0-9a-f]{12}4[0-9a-f]{3}[89ab][0-9a-f]{15}(?![0-9a-f])'), 'UUID'),
+    # `uuid4().hex` ids, like `AskUserQuestion.id`, and `uuid5().hex` ones, like a sub-agent task's ID, which is also its
+    # conversation's and hashes the run's ID; the version and variant digits spare most other hex digests.
+    (re.compile(r'(?<![0-9a-f])[0-9a-f]{12}[45][0-9a-f]{3}[89ab][0-9a-f]{15}(?![0-9a-f])'), 'UUID'),
+    # asyncio numbers the tasks it names by default in the order the process created them, like the cancelling task
+    # anyio's cancellation message renders.
+    (re.compile(r'(?<![\w-])Task-\d+(?![\w-])'), 'Task-N'),
     # The key the framework gives a capability without an `id` ends in a random suffix.
     (re.compile(r'<(\w+):[0-9a-f]{6}>'), r'<\1:ID>'),
     # `PromptInjectionDefender` times each screening it runs.
@@ -530,8 +536,9 @@ CANARY_RECORDS = {
     'agent_stream': '`AgentStream` calls',
     'span': 'spans',
 }
-# The span event attributes left out of a capture: a stack trace names the lines a refactor moves.
-UNRECORDED_SPAN_EVENT_ATTRIBUTES = frozenset({'exception.stacktrace'})
+# The span and span event attributes left out of a capture: a stack trace names the lines a refactor moves, and Logfire's
+# exception fingerprint hashes the function and source line of each frame in it.
+UNRECORDED_SPAN_ATTRIBUTES = frozenset({'exception.stacktrace', 'logfire.exception.fingerprint'})
 # The capability hooks the tool manager runs a tool call through, whose calls a capture records.
 TOOL_HOOKS = (
     'wrap_tool_validate',
@@ -1832,6 +1839,12 @@ class RefactorCapture:
 
     def _span_record(self, span: ReadableSpan, number: int) -> dict[str, object]:
         """A record of `span`, which has ended, numbered `number`, with its parent named by its number."""
+
+        def recorded_attributes(attributes: Mapping[str, object] | None) -> object:
+            return normalized(
+                {key: value for key, value in (attributes or {}).items() if key not in UNRECORDED_SPAN_ATTRIBUTES}
+            )
+
         parent = span.parent
         return {
             'kind': 'span',
@@ -1842,20 +1855,10 @@ class RefactorCapture:
             'parent': None if parent is None else self._span_numbers.get(parent.span_id, 'external'),
             'span_kind': span.kind.name,
             'scope': None if span.instrumentation_scope is None else span.instrumentation_scope.name,
-            'attributes': normalized(dict(span.attributes or {})),
+            'attributes': recorded_attributes(span.attributes),
             'status': {'code': span.status.status_code.name, 'description': normalized(span.status.description)},
             'events': [
-                {
-                    'name': event.name,
-                    'attributes': normalized(
-                        {
-                            key: value
-                            for key, value in (event.attributes or {}).items()
-                            if key not in UNRECORDED_SPAN_EVENT_ATTRIBUTES
-                        }
-                    ),
-                }
-                for event in span.events
+                {'name': event.name, 'attributes': recorded_attributes(event.attributes)} for event in span.events
             ],
         }
 
