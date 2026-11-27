@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterator
+from contextlib import nullcontext
+from contextvars import ContextVar
 from dataclasses import KW_ONLY, dataclass, replace
 from typing import TYPE_CHECKING, TypeGuard, TypeVar
 
+import anyio
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai._file_input import SendableFile, inferred_media_type, unsupported_file_input
@@ -18,7 +21,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import KnownModelName, Model, download_item
+from pydantic_ai.models import (
+    KnownModelName,
+    Model,
+    _open_request_download_budget,  # pyright: ignore[reportPrivateUsage]
+    download_item,
+)
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage
@@ -37,6 +45,12 @@ _FRAMEWORK_METADATA_KEY = '__pydantic_ai__'
 """The namespace in `metadata` reserved for framework state, which the UI adapters never send to or read from a client."""
 
 _NAMESPACE_KEY = 'file_understanding'
+
+# Each download in flight reserves up to the per-file limit of the request's total, so text documents downloaded at
+# the same time would be refused once the text already held leaves less than that per download. They are downloaded
+# one at a time instead, so only the bytes actually downloaded count. Under Temporal `_describe` runs in an activity,
+# which this and the total don't reach, so each download there has the per-file limit only.
+_text_download_lock: ContextVar[anyio.Lock | None] = ContextVar('_text_download_lock', default=None)
 
 _DEFAULT_INSTRUCTIONS = (
     'Describe this file in detail, so that someone who cannot see it can answer questions about it. '
@@ -84,10 +98,11 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     back, so a conversation whose history the client holds describes the file again each turn, and a new
     description can differ, which changes earlier requests and costs the cached prefix.
 
-    The distinct files a request needs described are described concurrently. Each describing call is a run of its
-    own, but its requests, tokens and cost are added to the agent run's [usage][pydantic_ai.usage.RunUsage], and
-    the run's [usage limits][pydantic_ai.usage.UsageLimits] are checked before any is sent, as if the describing
-    requests were the run's next ones.
+    The distinct files a request needs described are described concurrently, while the text documents given by URL
+    are downloaded one after another, within a total of their own of 500 MiB per request (under Temporal, within the
+    50 MiB per-file limit only). Each describing call is a run of its own, but its requests, tokens and cost are added
+    to the agent run's [usage][pydantic_ai.usage.RunUsage], and the run's [usage limits][pydantic_ai.usage.UsageLimits]
+    are checked before any is sent, as if the describing requests were the run's next ones.
     """
 
     fallback_subagent_model: Model | KnownModelName | str
@@ -194,7 +209,13 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
             if requests:
                 usage_limits.check_before_request(ctx.usage + RunUsage(requests=requests))
 
-        results = await gather(*(self._describe(item) for item in pending.values()))
+        token = _text_download_lock.set(anyio.Lock())
+        try:
+            # A total of its own: the model request this hook prepares opens another for the files it downloads.
+            with _open_request_download_budget():
+                results = await gather(*(self._describe(item) for item in pending.values()))
+        finally:
+            _text_download_lock.reset(token)
         for identity, (description, usage) in zip(pending, results):
             # usage-attribution: ok, the run's total only; the describing run's own span reports these requests
             ctx.usage.incr(usage)
@@ -211,7 +232,11 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         from pydantic_ai.agent import Agent
 
         if isinstance(item, DocumentUrl) and _text_media_type(item) is not None:
-            return (await download_item(item, data_format='text'))['data'], RunUsage()
+            # Waited for inside the operation rather than before it is scheduled, so a durable engine still sees
+            # every `describe` operation of the request scheduled at once.
+            lock = _text_download_lock.get()
+            async with lock if lock is not None else nullcontext():
+                return (await download_item(item, data_format='text'))['data'], RunUsage()
 
         agent: Agent[None, str] = Agent(
             self.fallback_subagent_model, output_type=str, instructions=self.instructions or _DEFAULT_INSTRUCTIONS

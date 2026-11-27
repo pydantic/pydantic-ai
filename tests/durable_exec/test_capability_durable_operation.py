@@ -10,6 +10,7 @@ from contextlib import asynccontextmanager
 from dataclasses import dataclass, replace
 from decimal import Decimal
 from typing import TYPE_CHECKING, Any, cast
+from unittest.mock import patch
 
 import pytest
 from inline_snapshot import snapshot
@@ -78,6 +79,7 @@ from pydantic_ai.usage import RequestUsage, RunUsage
 from ..batch_utils import FAST_BATCH_SETTINGS
 from ..conftest import try_import
 from ..model_lifecycle_utils import LifecycleTrackingModel
+from ..models.conftest import serve_text_files
 from .preamble_text import (
     RunAndStreamResult,
     StructuredOutput,
@@ -2782,3 +2784,89 @@ async def test_file_understanding_reads_a_recorded_description_instead_of_descri
     durability = RecordingDurability.from_agent(continued)
     assert durability is not None
     assert [name for name, _ in durability.calls if '__capability__' in name] == []
+
+
+_TEXT_DOWNLOAD_CASES = [
+    pytest.param({f'small{i}': 5 for i in range(11)}, None, id='within-the-total'),
+    pytest.param(
+        {f'doc{i}': 1000 for i in range(11)},
+        'File URL downloads for one model request exceed the total of 10240 bytes; '
+        'pass large files as `BinaryContent` instead.',
+        id='past-the-total',
+    ),
+]
+
+
+def _text_document_agent(name: str, durability: AbstractCapability[Any]) -> Agent[None, str]:
+    text_only = FunctionModel(
+        lambda messages, info: ModelResponse(parts=[TextPart('ok')]),
+        profile=ModelProfile(supports_document_input=False),
+    )
+    return Agent(
+        text_only,
+        name=name,
+        capabilities=[FileUnderstanding(fallback_subagent_model=TestModel()), durability],
+    )
+
+
+@requires_dbos
+@pytest.mark.parametrize(('sizes', 'error'), _TEXT_DOWNLOAD_CASES)
+async def test_dbos_file_understanding_text_downloads_share_one_total(
+    dbos: DBOS, sizes: dict[str, int], error: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A DBOS step runs in the workflow's context, so `describe` steps download one at a time within one total.
+
+    The limits are scaled down: 1 KiB per file and 10 KiB in total.
+    """
+    in_flight = serve_text_files(monkeypatch, sizes)
+    agent = _text_document_agent('dbos_file_understanding', DBOSDurability())
+    workflow_id = str(uuid.uuid4())
+
+    @DBOS.workflow(name=f'file_understanding_{workflow_id}')
+    async def workflow() -> None:
+        await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
+
+    with (
+        patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 1024),
+        patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 10 * 1024),
+        SetWorkflowID(workflow_id),
+    ):
+        if error is None:
+            await workflow()
+        else:
+            with pytest.raises(ValueError) as exc_info:
+                await workflow()
+            assert str(exc_info.value) == error
+
+    assert in_flight == [1] * 11
+
+
+@requires_prefect
+@pytest.mark.xdist_group(name='prefect')
+@pytest.mark.parametrize(('sizes', 'error'), _TEXT_DOWNLOAD_CASES)
+async def test_prefect_file_understanding_text_downloads_share_one_total(
+    prefect_test_server: None, sizes: dict[str, int], error: str | None, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """A Prefect task runs in the flow's context, so `describe` tasks download one at a time within one total.
+
+    The limits are scaled down: 1 KiB per file and 10 KiB in total.
+    """
+    in_flight = serve_text_files(monkeypatch, sizes)
+    agent = _text_document_agent('prefect_file_understanding', PrefectDurability())
+
+    @flow
+    async def run() -> None:
+        await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
+
+    with (
+        patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 1024),
+        patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 10 * 1024),
+    ):
+        if error is None:
+            await run()
+        else:
+            with pytest.raises(ValueError) as exc_info:
+                await run()
+            assert str(exc_info.value) == error
+
+    assert in_flight == [1] * 11

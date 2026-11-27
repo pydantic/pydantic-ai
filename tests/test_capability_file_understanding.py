@@ -42,6 +42,7 @@ from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .conftest import IsStr, try_import
+from .models.conftest import serve_text_files
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -558,6 +559,86 @@ async def test_a_text_document_by_url_is_downloaded_once_per_conversation():
         first = await agent.run([DocumentUrl('https://example.com/big.txt'), 'Summarize.'])
         await agent.run('Again.', message_history=first.all_messages())
         assert download.call_count == 1
+
+
+def _text_document_agent(seen: list[list[ModelMessage]]) -> Agent[None, str]:
+    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    text_only = FunctionModel(capture, profile=ModelProfile(supports_document_input=False))
+    return Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(Describer()))])
+
+
+async def test_text_documents_by_url_are_downloaded_one_at_a_time(monkeypatch: pytest.MonkeyPatch):
+    """Text documents share the request's download total, and are downloaded one after another.
+
+    Each download in flight reserves up to the per-file limit of the total, so 11 at once would leave the last one
+    nothing, however small the files are. One at a time, only the bytes actually downloaded count. The limits are
+    scaled down: 1 KiB per file and 10 KiB in total.
+    """
+    sizes = {f'small{i}': 5 for i in range(11)}
+    in_flight = serve_text_files(monkeypatch, sizes)
+    seen: list[list[ModelMessage]] = []
+    agent = _text_document_agent(seen)
+
+    with (
+        patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 1024),
+        patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 10 * 1024),
+    ):
+        await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
+
+    assert in_flight == [1] * 11
+    assert [len(item.splitlines()[1]) for item in last_prompt(seen) if isinstance(item, str)] == [5] * 11
+
+
+async def test_text_documents_by_url_are_downloaded_while_the_total_has_room(monkeypatch: pytest.MonkeyPatch):
+    """With most of the total already downloaded, each small document still gets what is left of it.
+
+    A cap of downloads in flight would not do: with 9 KiB of the 10 KiB total held, ten small documents in flight at
+    once can't each reserve the 1 KiB per-file limit.
+    """
+    sizes = {**{f'big{i}': 1000 for i in range(9)}, **{f'small{i}': 5 for i in range(10)}}
+    serve_text_files(monkeypatch, sizes)
+    seen: list[list[ModelMessage]] = []
+    agent = _text_document_agent(seen)
+
+    with (
+        patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 1024),
+        patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 10 * 1024),
+    ):
+        await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
+
+    assert [len(item.splitlines()[1]) for item in last_prompt(seen) if isinstance(item, str)] == [1000] * 9 + [5] * 10
+
+
+@pytest.mark.parametrize(
+    ('sizes', 'error'),
+    [
+        pytest.param(
+            {f'doc{i}': 1000 for i in range(11)},
+            'File URL downloads for one model request exceed the total of 10240 bytes; '
+            'pass large files as `BinaryContent` instead.',
+            id='past-the-total',
+        ),
+        pytest.param({'doc': 2000}, 'Download exceeds the maximum size of 1024 bytes.', id='past-the-per-file-limit'),
+    ],
+)
+async def test_text_documents_by_url_are_refused_past_the_download_limits(
+    sizes: dict[str, int], error: str, monkeypatch: pytest.MonkeyPatch
+):
+    """The text documents one request downloads are refused past the per-request total, as well as the per-file limit."""
+    serve_text_files(monkeypatch, sizes)
+    agent = _text_document_agent([])
+
+    with (
+        patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 1024),
+        patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 10 * 1024),
+        pytest.raises(ValueError) as exc_info,
+    ):
+        await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
+
+    assert str(exc_info.value) == error
 
 
 @pytest.mark.skipif(not imports_successful(), reason='anthropic or google not installed')

@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, Protocol, cast
 
 import httpx2
 import pytest
+from anyio.lowlevel import checkpoint
 from pydantic import BaseModel, ConfigDict, JsonValue
 from pytest_mock import MockerFixture
 
@@ -185,6 +186,25 @@ def mock_downloads(
         return httpx2.AsyncClient(transport=httpx2.MockTransport(handle_request))
 
     monkeypatch.setattr('pydantic_ai._ssrf.create_async_httpx2_client', create_http_client)
+
+
+def serve_text_files(monkeypatch: pytest.MonkeyPatch, sizes: dict[str, int]) -> list[int]:
+    """Serve a text file of `sizes[name]` bytes at `/<name>.txt`, and return how many downloads were in flight as each arrived."""
+    in_flight: list[int] = []
+    downloading = 0
+
+    async def handle_request(request: httpx2.Request) -> httpx2.Response:
+        nonlocal downloading
+        downloading += 1
+        in_flight.append(downloading)
+        # Lets any other download that has started reach the server before this one answers.
+        await checkpoint()
+        downloading -= 1
+        size = sizes[request.url.path.removeprefix('/').removesuffix('.txt')]
+        return httpx2.Response(200, content=b'x' * size, headers={'content-type': 'text/plain'}, request=request)
+
+    mock_downloads(monkeypatch, handle_request)
+    return in_flight
 
 
 class InfAsString(BaseModel):
