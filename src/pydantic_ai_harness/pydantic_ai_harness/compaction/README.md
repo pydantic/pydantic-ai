@@ -639,16 +639,17 @@ The reset keeps, in order:
 4. the records of loaded [on-demand capabilities](#on-demand-capabilities-across-compaction) and
    [tool search discoveries](#tool-search-discoveries-across-compaction), as the other strategies
    that drop history keep them; `preserve_loaded_capabilities=False` unloads them instead;
-5. the latest user prompt, when `keep_latest_user_prompt=True` (the default) and it is older than
-   the tail;
+5. what the user wrote in each later turn older than the tail, without the tool results or
+   harness data that came in the same request, when `keep_user_turns=True` (the default);
 6. the newest `keep_messages` messages (default `2`), with each tool call kept with its return.
    `keep_messages=0` still keeps the newest message, the request being answered. The tail also
    reaches back to the latest response that names a workspace (its `workspace_ref`) when only
    requests follow it, as the other strategies' tails do.
 
-Everything else leaves the history. The work log holds the tool calls and replies among it, but not
-user prompts, so user turns between the first and the latest are gone: `ResetCompaction` suits runs
-where the user states the task up front. An earlier notice and its `restate` text in the kept tail
+Everything else leaves the history. The work log holds the tool calls and replies among it: it is for
+results that are expensive to get again and for what the model already did, not for a file's current
+contents, which the model reads again before it edits. With `keep_user_turns=False` only the first
+request and the tail keep the user's words, and the log doesn't hold the rest. An earlier notice and its `restate` text in the kept tail
 are removed, so each reset replaces the last notice rather than adding one.
 
 The notice is a `ResetNoticePart`, a data
@@ -660,18 +661,18 @@ model; find notices in history by the type. The default text tells the model tha
 continues, how many times this conversation has been cleared, the work log's handle and the tools
 that search and read it (under the names the model sees, so a `PrefixTools` rename applies, and
 usable as tools or from code), that file contents in the log may be out of date, and what the reset
-kept. The handle is what the [store](../work_log/README.md#stores)'s `locate` returns: the
-conversation ID, a file path or a workspace directory.
+kept. The handle is what the [store](../work_log/README.md#stores)'s `locate` returns: a file path or a workspace directory, and none for the in-memory store, whose log the agent can reach only through the tools.
 
 To write your own, pass `notice=`, a function from a `ResetNotice` to the text:
 
 | Field | Meaning |
 | --- | --- |
 | `number` | Resets in this conversation, this one included, counting from `1` |
-| `work_log` | The log's handle, or `None` when no conversation ID is known, such as `compact_now` without `conversation_id=` |
+| `work_log` | The log's handle, or `None` for the in-memory store or when no conversation ID is known, such as `compact_now` without `conversation_id=` |
 | `search_tool`, `read_tool` | The names the model sees for `search_work_log` and `read_work_log` |
 | `cleared_messages` | Messages this reset removed |
 | `kept_first_request` | Whether the first user request was kept |
+| `kept_user_turns` | User turns after the first kept ahead of the tail |
 | `kept_messages` | Messages kept in the tail |
 | `kept_tool_calls` | Tool calls kept with their results in the tail |
 
@@ -679,10 +680,7 @@ To write your own, pass `notice=`, a function from a `ResetNotice` to the text:
 
 `restate` adds the state of the task after the notice: an async function of the `RunContext` that
 returns text, a `CurrentStatePart`, or `None` or an empty string to add nothing. It reaches the model
-in a `<current_state>` frame. Text is recorded as your application's own words. For text your code
-didn't write, such as `git status` output, return
-`CurrentStatePart(content=..., source=ToolResultSource(tool_name='git status'))` with its real
-source, so text in it that looks like a frame gets a note naming its author. It runs as the
+in a `<current_state>` frame. Text is recorded as the output of the `restate` callable (a `ToolResultSource` named after it), so text in it that looks like a frame gets a note naming its author, as command output such as `git status` should. Return `CurrentStatePart(content=..., source=OperatorSource())` for text your application wrote itself, or another source for text from elsewhere. It runs as the
 `restate` durable operation of the stable default `id='reset_compaction'`, so a replay reuses the
 recorded result. An exception it raises fails the request, as any hook error does; as a
 `TieredCompaction` tier on that tier's trigger, one of its `skip_on` errors skips the tier instead.
@@ -690,10 +688,9 @@ recorded result. An exception it raises fails the request, as any hook error doe
 Each notice records its number, and the next reset counts on from the latest notice in the history,
 so the count continues in a run resumed from saved history, such as a
 [`StepPersistence`](../step_persistence/) snapshot. The work log records the same number in each
-entry's `context`. Carrying `result.all_messages()` into the next run keeps the reset history and
-its cached prefix. `result.conversation` holds the cleared messages too, so the next run's first
-request is over the trigger again and resets once more, with no model call but a cache miss and the
-count one higher. The count starts over at `1` when the latest notice isn't in the history the run
+entry's `context`. `result.conversation` holds the cleared messages too: a run continued from it
+clears them again before its first request, so it sends what the last reset left, as a run continued
+from `result.all_messages()` does. The count starts over at `1` when the latest notice isn't in the history the run
 gets, such as a `ConversationStore.load(limit=...)` window that leaves it out, or history a UI
 client sends back, which carries no capability parts.
 
@@ -1067,7 +1064,7 @@ cardinality low:
 | `compaction.target_unreached` | bool | `TieredCompaction` only: `true` when every tier ran and the history is still estimated above the target. Absent otherwise |
 | `compaction.target_tokens` | int | With `compaction.target_unreached`: the resolved target |
 | `compaction.estimate` | int | With `compaction.target_unreached`: the estimate the stop decision used, anchored on provider-reported usage when there is any |
-| `compaction.reset.number` | int | `ResetCompaction` only: the reset's number in the conversation, this one included |
+| `compaction.reset.number` | int | `ResetCompaction` only: the reset's number in the conversation, this one included. Set when the reset ran, also when `TieredCompaction` then rejects its result as not smaller |
 
 Only `gen_ai.conversation.compacted` comes from the OpenTelemetry GenAI semantic convention; the
 rest are harness-specific. Token counts use the strategy's `tokenizer`, else the text estimate

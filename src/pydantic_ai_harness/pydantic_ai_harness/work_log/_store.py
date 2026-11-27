@@ -90,8 +90,8 @@ class WorkLogStore(Protocol):
         """Return the entries with `start <= seq < stop` in `seq` order; `stop=None` reads to the end."""
         ...  # pragma: no cover
 
-    def locate(self, log_id: str) -> str:
-        """Return the handle a reset notice shows for the log.
+    def locate(self, log_id: str) -> str | None:
+        """Return the handle a reset notice shows for the log, or `None` when there is nothing the agent could open.
 
         Pure and synchronous, with no I/O, so it can be called from any context.
         """
@@ -141,8 +141,9 @@ class InMemoryWorkLogStore:
         entries = self._entries.get(log_id, [])
         return entries[max(start, 1) - 1 : None if stop is None else max(stop - 1, 0)]
 
-    def locate(self, log_id: str) -> str:
-        return log_id
+    def locate(self, log_id: str) -> None:
+        # The log is in this process only: the agent reaches it through the tools, and the id may be client input.
+        return None
 
     def discard(self, log_id: str) -> None:
         """Forget `log_id`'s log, such as when its conversation has ended."""

@@ -277,30 +277,29 @@ usage, which still counts the result until the next response. The span gets
 `compaction.model_requested`.
 ### `ResetCompaction`
 
-`ResetCompaction(work_log, max_messages=None, max_tokens=None, *, max_fraction=None, context_window=None, fallback_context_window=DEFAULT_CONTEXT_WINDOW, keep_messages=2, keep_latest_user_prompt=True, notice=default_reset_notice, restate=None, preserve_loaded_capabilities=True, tokenizer=None, id='reset_compaction')`:
+`ResetCompaction(work_log, max_messages=None, max_tokens=None, *, max_fraction=None, context_window=None, fallback_context_window=DEFAULT_CONTEXT_WINDOW, keep_messages=2, keep_user_turns=True, notice=default_reset_notice, restate=None, preserve_loaded_capabilities=True, tokenizer=None, id='reset_compaction')`:
 zero-LLM. Clears the history in one step down to the first user request, a notice (a
 `ResetNoticePart`, data on the user channel in a `<context_cleared>` frame) that names the
-`WorkLog`'s handle and its search and read tools, pins, loaded-capability records, the latest user
-prompt, and the newest `keep_messages` messages. The model reads earlier tool results
+`WorkLog`'s handle and its search and read tools, pins, loaded-capability records, what the user
+wrote in each later turn, and the newest `keep_messages` messages. The model reads earlier tool results
 back from the work log. Pass the `WorkLog` instance that is on the agent: `Agent(...)` raises
 `UserError` without one, and a run raises at its start when the registered `WorkLog` is a different
 one, or when it's registered without a trigger; as a strategy (a tier, a fallback entry,
 `CompactOnRequest`'s strategy, `compact_now`) it needs none. `notice=` takes a
 `ResetNotice -> str` callable (`number`, `work_log`, `search_tool`, `read_tool`,
-`cleared_messages`, `kept_first_request`, `kept_messages`, `kept_tool_calls`); `default_reset_notice`
+`cleared_messages`, `kept_first_request`, `kept_user_turns`, `kept_messages`, `kept_tool_calls`); `default_reset_notice`
 is the default.
 `restate=` takes an async `RunContext -> str | CurrentStatePart | None` whose result goes in a
-`<current_state>` frame after the notice; return a `CurrentStatePart` with its real source (such as
-`ToolResultSource`) for text the code didn't write. It runs as the `restate` durable operation, and
+`<current_state>` frame after the notice; a string is recorded as the callable's output
+(`ToolResultSource`), and a `CurrentStatePart` keeps the source you give it. It runs as the `restate` durable operation, and
 an exception it raises fails the request. The span gets `compaction.reset.number`.
 
 Gotchas: put it last in `TieredCompaction` and don't combine it with `SlidingWindowCompaction`,
 `SummarizingCompaction` or `RelevanceCompaction`, which drop or summarize the notice. If the kept
 history alone is over the trigger it resets after every response, so add `ToolOutputLimits` and set
-the trigger well above what `keep_messages` keeps. User turns between the first and the latest are
-dropped and the work log does not hold them. Continue with `result.all_messages()`:
-`result.conversation` still holds the cleared messages, so the next run resets again. It can't be
-loaded from an agent spec.
+the trigger well above what `keep_messages` keeps. A run continued from `result.conversation`
+clears what the last reset cleared again before its first request. The in-memory store shows no
+handle in the notice. It can't be loaded from an agent spec.
 
 ```python
 from pydantic_ai import Agent

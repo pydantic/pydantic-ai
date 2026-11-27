@@ -15,6 +15,7 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     OperatorSource,
+    ToolResultSource,
 )
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness._work_log_kinds import WORK_LOG_READ_KIND, WORK_LOG_SEARCH_KIND
@@ -99,6 +100,9 @@ class ResetNotice:
     kept_first_request: bool
     """Whether the conversation's first user request is still in it."""
 
+    kept_user_turns: int
+    """User turns after the first request still in the conversation, besides one in the kept messages."""
+
     kept_messages: int
     """Messages kept after the notice, at the end of the conversation."""
 
@@ -131,13 +135,15 @@ def default_reset_notice(notice: ResetNotice) -> str:
 class ResetCompaction(AbstractCapability[AgentDepsT]):
     """Clear the conversation down to a small kept shape, and leave a notice pointing the model at its work log.
 
-    When the history passes a trigger, everything is cleared except the first user request, the
-    latest user prompt, pinned content, loaded capabilities and the last `keep_messages` messages.
-    A notice on the user channel says the conversation was cleared and names the `WorkLog`'s
-    tools, so the model can search and read the full results of its earlier work instead of running
-    it again. No model is called. A later reset replaces the notice rather than adding another.
+    When the history passes a trigger, everything is cleared except the first user request, what
+    the user wrote in later turns, pinned content, loaded capabilities and the last `keep_messages`
+    messages. A notice on the user channel says the conversation was cleared and names the
+    `WorkLog`'s tools, so the model can search and read the full results of its earlier work instead
+    of running it again. No model is called. A later reset replaces the notice rather than adding
+    another.
 
-    `work_log` must be the `WorkLog` registered on the same agent.
+    `work_log` must be the `WorkLog` registered on the same agent. It is passed explicitly because
+    used as a strategy, such as through `compact_now`, the reset has no agent to find it on.
 
     Example:
         ```python
@@ -180,8 +186,11 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
 
     Tool calls stay with their results, and the newest message is always kept, so `0` keeps one."""
 
-    keep_latest_user_prompt: bool = True
-    """Keep the latest user prompt ahead of the kept messages when they don't hold it."""
+    keep_user_turns: bool = True
+    """Keep what the user wrote in each turn after the first, ahead of the kept messages, when they don't hold it.
+
+    Only the user's own parts: tool results and harness data in the same request are cleared. With `False`,
+    only the first request and the kept messages hold the user's words."""
 
     notice: Callable[[ResetNotice], str] = default_reset_notice
     """Write the notice's text from what the reset did. Defaults to `default_reset_notice`."""
@@ -243,12 +252,12 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
             return messages
         first = find_first_user_message(messages)
         head = prepend_first_user_message(messages, cutoff, [])
-        latest: list[ModelMessage] = []
-        starts = user_turn_starts(messages) if self.keep_latest_user_prompt else []
-        prompt = messages[starts[-1]] if starts and starts[-1] < cutoff else None
-        if isinstance(prompt, ModelRequest) and prompt is not first:
-            # Its user turns only: tool results merged into it would have lost their calls.
-            latest.append(replace(prompt, parts=[part for part in prompt.parts if is_user_part(part)]))
+        turns: list[ModelMessage] = [
+            # The user's parts only: tool results merged into the request would have lost their calls.
+            replace(message, parts=[part for part in message.parts if is_user_part(part)])
+            for index in (user_turn_starts(messages) if self.keep_user_turns else [])
+            if index < cutoff and (message := messages[index]) is not first and isinstance(message, ModelRequest)
+        ]
         tail = without_reset_parts(messages[cutoff:])
         log_id = ctx.conversation_id or next(
             (message.conversation_id for message in reversed(messages) if message.conversation_id), None
@@ -258,8 +267,9 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
             work_log=None if log_id is None else self.work_log.store.locate(log_id),
             search_tool=ctx.tool_name_for_kind(WORK_LOG_SEARCH_KIND) or 'search_work_log',
             read_tool=ctx.tool_name_for_kind(WORK_LOG_READ_KIND) or 'read_work_log',
-            cleared_messages=cutoff - len(head) - len(latest),
+            cleared_messages=cutoff - len(head) - len(turns),
             kept_first_request=first is not None,
+            kept_user_turns=len(turns),
             kept_messages=len(tail),
             kept_tool_calls=len(iter_tool_pairs(tail)),
         )
@@ -276,20 +286,23 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
             )
         ]
         if self.restate is not None and (state := await self._restate(ctx)):
-            parts.append(
-                state
-                if isinstance(state, CurrentStatePart)
-                else CurrentStatePart(content=state, source=OperatorSource())
-            )
+            parts.append(state if isinstance(state, CurrentStatePart) else self._state_part(state))
         compacted = reinject_pinned(
-            messages, [*head, ModelRequest(parts=parts), *latest, *tail], insert_at=len(head) + 1
+            messages, [*head, ModelRequest(parts=parts), *turns, *tail], insert_at=len(head) + 1
         )
         return keep_loaded_state(
             messages,
             compacted,
-            kept_from=len(compacted) - len(tail) - len(latest),
+            kept_from=len(compacted) - len(tail) - len(turns),
             deferred_ids=deferred_capability_ids(ctx),
             preserve=self.preserve_loaded_capabilities,
+        )
+
+    def _state_part(self, state: str) -> CurrentStatePart:
+        """`restate`'s text, as the output of the callable that produced it: text the code ran, not wrote."""
+        name = getattr(self.restate, '__name__', None)
+        return CurrentStatePart(
+            content=state, source=ToolResultSource(tool_name=name if isinstance(name, str) else 'restate')
         )
 
     @durable_operation('restate')
@@ -304,7 +317,12 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
         request_context: ModelRequestContext,
     ) -> ModelRequestContext:
         """Reset when the history passes the trigger and the model has responded since the last reset."""
-        messages: list[ModelMessage] = list(ctx.messages)
+        messages = without_cleared(list(ctx.messages))
+        if len(messages) < len(ctx.messages):
+            # A run continued from `result.conversation` gets back what the newest reset cleared: clear it again,
+            # leaving what that reset sent, rather than resetting anew and losing what followed it.
+            ctx.messages[:] = messages
+            request_context = replace(request_context, messages=messages)
         request_ctx = context_for_request(ctx, request_context)
         token_trigger = resolve_token_trigger(
             self.max_tokens, self.max_fraction, request_ctx.model, self.fallback_context_window, self.context_window
@@ -350,6 +368,28 @@ def last_reset_notice(messages: Sequence[ModelMessage]) -> ResetNoticePart | Non
                 if isinstance(part, ResetNoticePart):
                     return part
     return None
+
+
+def without_cleared(messages: list[ModelMessage]) -> list[ModelMessage]:
+    """*messages* without the ones between the first user request and the newest notice, which that reset cleared.
+
+    A history that came through the latest reset holds none: there the notice follows the first request. A run's
+    `result.conversation` keeps every message, so it holds the cleared ones there.
+    """
+    notice_at = next(
+        (
+            index
+            for index in range(len(messages) - 1, -1, -1)
+            if isinstance(message := messages[index], ModelRequest)
+            and any(isinstance(part, ResetNoticePart) for part in message.parts)
+        ),
+        None,
+    )
+    if notice_at is None:
+        return messages
+    first = find_first_user_message(messages)
+    kept = 0 if first is None else messages.index(first) + 1
+    return [*messages[:kept], *messages[notice_at:]] if kept < notice_at else messages
 
 
 def reset_count(messages: Sequence[ModelMessage]) -> int:

@@ -853,7 +853,7 @@ class TestWorkLogStores:
         assert [entry['seq'] for entry in await store.read('log', 2)] == [2, 3]
         assert [entry['seq'] for entry in await store.read('log', 1, 3)] == [1, 2]
         assert await store.read('log', 0, 0) == []
-        assert store.locate('log') == 'log'
+        assert store.locate('log') is None
         assert InMemoryWorkLogStore() == store
 
         store.discard('log')

@@ -86,7 +86,7 @@ Each match has the entry's `seq`, `context`, `kind` and `tool_name`, its argumen
 
 Both tools return `TypedDict`s, so [Code Mode](code-mode.md) shows their return types to the model, and a script can search and read the log in one `run_code` call. Both are exempt from `ToolOutputLimits`, as its own `read_tool_result` and `grep_tool_result` are: each result is already bounded, and a spilled one would need a second tool to read.
 
-The tools return other tools' results, by their own [UI visibility](../ui/overview.md#tool-visibility), not by that of the tools they recorded. Under a `'public'` default, a `'private'` tool's result reaches a UI client through `read_work_log`, as it does through `ToolBridge` or Code Mode.
+The tools return other tools' results, by their own [UI visibility](../ui/overview.md#tool-visibility), not by that of the tools they recorded. Under a `'public'` default, a `'private'` tool's result reaches a UI client through `read_work_log`, as it does through `ToolBridge` or Code Mode. To keep such results from the client, set a non-public `default_ui_visibility` on the adapter, which these tools take.
 
 ## One log per conversation
 
@@ -104,13 +104,13 @@ The value is trusted as given. UI adapters set it from client input, so in a mul
 
 `<log>` is the conversation ID when it is 1 to 128 letters, digits, `.`, `_` or `-` and not only dots; otherwise it is the ID's SHA-256 hex digest, so no ID can name a path outside the store's directory.
 
-- **In memory.** The log grows for as long as the process runs, so a long-lived server should call `discard` when a conversation ends. Two `WorkLog()`s with default stores are one log stated twice (see [Two of them](#two-of-them)).
-- **File.** The directory is created on the first write. The process reads a log's file once, the first time it touches that log, to learn which entries it already holds.
-- **Workspace.** The working directory's `.pydantic-ai-harness/` holds a `.gitignore`, so the entries stay out of version control, and the agent's own file and shell tools can open them. The `Workspace` protocol has no append, so each entry is its own file, named by its `seq` and its key's digest. The store keeps only file names and keys in memory: each search reads every entry file, which in a remote sandbox is one round trip per entry. A symlinked log directory or entry file raises `WorkspaceError`. A run with no workspace fails at its start; pass `workspace=` a backend, such as `LocalWorkspaceBackend('/var/work-logs')`, to keep logs in a workspace of their own instead.
+- **In memory.** The log grows for as long as the process runs, so a long-lived server should call `discard` when a conversation ends. Two `WorkLog()`s with default stores are one log stated twice (see [Two of them](#two-of-them)). A reset notice names no handle for it: the agent reaches the log only through the tools.
+- **File.** The directory is created on the first write. The process reads a log's file once, the first time it touches that log, to learn which entries it already holds. A reset notice names the file's absolute path.
+- **Workspace.** The working directory's `.pydantic-ai-harness/` holds a `.gitignore`, so the entries stay out of version control, and the agent's own file and shell tools can open them. The `Workspace` protocol has no append, so each entry is its own file, named by its `seq` and its key's digest. A search tool that ignores `.gitignore` also finds the copies of files the agent read that the entries hold, as they were when read. The store keeps only file names and keys in memory: each search reads every entry file, which in a remote sandbox is one round trip per entry. A symlinked log directory or entry file raises `WorkspaceError`. A run with no workspace fails at its start; pass `workspace=` a backend, such as `LocalWorkspaceBackend('/var/work-logs')`, to keep logs in a workspace of their own instead.
 
 Each store numbers entries in memory under a lock per log, so it supports one writer process per log. Nothing prunes the file and workspace logs; delete them when you no longer need them.
 
-To keep the log elsewhere, implement `WorkLogStore`: `append(log_id, record)` returns the entry's `seq` and writes nothing when the log already holds `record['key']`; `read(log_id, start=1, stop=None)` returns entries with `start <= seq < stop`, in order; `locate(log_id)` returns the handle, synchronously and without I/O.
+To keep the log elsewhere, implement `WorkLogStore`: `append(log_id, record)` returns the entry's `seq` and writes nothing when the log already holds `record['key']`; `read(log_id, start=1, stop=None)` returns entries with `start <= seq < stop`, in order; `locate(log_id)` returns the handle a reset notice names, or `None` when the agent can't open the log itself, synchronously and without I/O.
 
 ## Code Mode
 
@@ -145,7 +145,7 @@ Keep the `id` fixed once a workflow is live. Under a durable engine a store oper
 ## Limitations
 
 - A search reads the conversation's whole log on every call, so it gets slower as the log grows.
-- The log holds files as they were when the tool read them. A later write is not reflected in an earlier entry.
+- The log holds files as they were when the tool read them. A later write is not reflected in an earlier entry. The log is for results that are expensive to get again and for what the model already did, not for a file's current contents.
 - Speculative calls keep their provisional IDs; the log does not map them to the IDs the script would have given them.
 
 ## Further reading
