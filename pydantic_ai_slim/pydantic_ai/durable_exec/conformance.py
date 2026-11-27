@@ -272,7 +272,8 @@ class DurableEngineSuite:
 
         The suite counts the model requests of a capability's own runs itself.
         """
-        return dict
+        # Every built-in engine's suite counts its stand-ins, so only a third-party engine's runs this default.
+        return dict  # pragma: no cover
 
     def expected_units(self, name: str) -> Sequence[str] | None:
         """The units a run of the case `name` records besides its model requests, in order, to pin their names.

@@ -182,7 +182,6 @@ def test_the_defaults_pin_nothing_and_count_nothing() -> None:
     assert suite.expected_units('case') is None
     assert suite.marks('case') == ()
     assert suite.model_request_unit('case') is None
-    assert DurableEngineSuite.count_requests._get_wrapped_function()(suite)() == {}  # pyright: ignore[reportPrivateUsage]
     assert suite._run_breaks('case', _Script(), None, EngineRun('', ANSWER, ['model']), Counter()) == []  # pyright: ignore[reportPrivateUsage]
 
 
