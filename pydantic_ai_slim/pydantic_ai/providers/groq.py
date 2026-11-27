@@ -105,7 +105,13 @@ class GroqProvider(Provider[AsyncGroq]):
             profile,
             groq_model_profile(model_name),
             # Groq documents JSON mode for every model it serves.
-            ModelProfile(supports_inline_system_prompts=True, supports_json_object_output=True),
+            ModelProfile(
+                # Groq doesn't keep a mid-conversation `system` message in place on gpt-oss, so a request that adds
+                # one only reads the cached prefix up to the instructions and tools; the same text as `<system>` in
+                # a user turn keeps the whole prefix cached: https://github.com/pydantic/pydantic-ai/issues/14516
+                supports_inline_system_prompts=not model_name.startswith('openai/gpt-oss-'),
+                supports_json_object_output=True,
+            ),
             ModelProfile(json_schema_transformer=_GroqQwenStrictOutputJsonSchemaTransformer)
             if model_name.startswith('qwen/qwen3.8-')
             else None,
