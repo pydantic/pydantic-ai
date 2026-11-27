@@ -1,5 +1,8 @@
+version: 1
 interactions:
 - request:
+    method: POST
+    uri: https://api.typesafe.ai/v1/systemone
     headers:
       accept:
       - application/json
@@ -8,70 +11,74 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - '975'
+      - "924"
       content-type:
       - application/json
       host:
       - api.typesafe.ai
-    method: POST
-    parsed_body:
-      model: jev-latest
-      questions:
-        asks_for_secret:
-          instructions:
-            field: asks_for_secret
-            goal: Judge a support reply against the support policy.
-            instructions: Answer each question about <Output>.
-            question: Does the reply ask for a password or a login code?
-          type: noul
-        completeness:
-          instructions:
-            field: completeness
-            goal: Judge a support reply against the support policy.
-            instructions: Answer each question about <Output>.
-            question: How completely does the reply address the request?
-          type: noul
-        policy:
-          criteria:
-            compliant: null
-            violation: null
-          instructions:
-            field: policy
-            goal: Judge a support reply against the support policy.
-            instructions: Answer each question about <Output>.
-            question: Does the reply comply with the support policy?
-          type: choice
-      state: |-
-        <Output>
-        I cannot reset your password, but you can do it yourself from the account page.
-        </Output>
-    uri: https://api.typesafe.ai/v1/systemone
+    body:
+      type: json
+      content:
+        state: |-
+          <Output>
+          I cannot reset your password, but you can do it yourself from the account page.
+          </Output>
+        model: jev-latest
+        questions:
+          policy:
+            type: choice
+            criteria:
+              compliant: null
+              violation: null
+            instructions:
+              field: policy
+              question: Does the reply comply with the support policy?
+              goal: Judge a support reply against the support policy.
+              background: Answer each question about <Output>.
+          completeness:
+            type: noul
+            instructions:
+              field: completeness
+              question: How completely does the reply address the request?
+              goal: Judge a support reply against the support policy.
+              background: Answer each question about <Output>.
+          asks_for_secret:
+            type: noul
+            instructions:
+              field: asks_for_secret
+              question: Does the reply ask for a password or a login code?
+              goal: Judge a support reply against the support policy.
+              background: Answer each question about <Output>.
   response:
+    status: 200
     headers:
-      content-length:
-      - '317'
+      alt-svc:
+      - h3=":443"; ma=86400
       content-type:
       - application/json
-    parsed_body:
-      answers:
-        asks_for_secret:
-          noul: 0.03
-          type: noul
-        completeness:
-          noul: 0.6
-          type: noul
-        policy:
-          choice: compliant
-          confidence: 0.96
-          probabilities:
-            compliant: 0.98
-            violation: 0.02
-          type: choice
-      model: jev-1.13.0
-      usage:
-        input_tokens: 490
-        output_tokens: 74
-    status:
-      code: 200
-      message: OK
-version: 1
+      transfer-encoding:
+      - chunked
+      x-typesafe-request-id:
+      - req_01a21e251eb075339ec7e27600422330
+    body:
+      type: json
+      content:
+        model: jev-1.14.0
+        answers:
+          policy:
+            type: choice
+            choice: compliant
+            confidence: 0.88
+            probabilities:
+              compliant: 0.94
+              violation: 0.06
+          completeness:
+            type: noul
+            noul: 0.63
+          asks_for_secret:
+            type: noul
+            noul: 0.03
+        usage:
+          input_tokens: 490
+          output_tokens: 74
+  recorded_at: 2026-11-27T17:54:38.996986+00:00

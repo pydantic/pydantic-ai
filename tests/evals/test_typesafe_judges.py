@@ -85,8 +85,8 @@ async def test_structured_judge_with_typesafe(
 
     assert to_jsonable_python(result) == snapshot(
         {
-            'policy': {'value': 'compliant', 'reason': 'confidence 0.96'},
-            'completeness': 0.6,
+            'policy': {'value': 'compliant', 'reason': 'confidence 0.88'},
+            'completeness': 0.63,
             'asks_for_secret': {'value': False, 'reason': 'confidence 0.94'},
         }
     )
@@ -108,7 +108,7 @@ I cannot reset your password, but you can do it yourself from the account page.
                         'field': 'policy',
                         'question': 'Does the reply comply with the support policy?',
                         'goal': 'Judge a support reply against the support policy.',
-                        'instructions': 'Answer each question about <Output>.',
+                        'background': 'Answer each question about <Output>.',
                     },
                 },
                 'completeness': {
@@ -117,7 +117,7 @@ I cannot reset your password, but you can do it yourself from the account page.
                         'field': 'completeness',
                         'question': 'How completely does the reply address the request?',
                         'goal': 'Judge a support reply against the support policy.',
-                        'instructions': 'Answer each question about <Output>.',
+                        'background': 'Answer each question about <Output>.',
                     },
                 },
                 'asks_for_secret': {
@@ -126,7 +126,7 @@ I cannot reset your password, but you can do it yourself from the account page.
                         'field': 'asks_for_secret',
                         'question': 'Does the reply ask for a password or a login code?',
                         'goal': 'Judge a support reply against the support policy.',
-                        'instructions': 'Answer each question about <Output>.',
+                        'background': 'Answer each question about <Output>.',
                     },
                 },
             },
@@ -154,9 +154,9 @@ async def test_structured_judge_rubrics_with_typesafe(
 
     assert to_jsonable_python(result) == snapshot(
         {
-            'follows_policy': {'value': True, 'reason': 'confidence 0.72'},
-            'gives_next_step': {'value': True, 'reason': 'confidence 0.88'},
-            'never_asks_for_secrets': {'value': True, 'reason': 'confidence 0.94'},
+            'follows_policy': {'value': True, 'reason': 'confidence 0.62'},
+            'gives_next_step': {'value': True, 'reason': 'confidence 0.90'},
+            'never_asks_for_secrets': {'value': True, 'reason': 'confidence 0.96'},
         }
     )
     assert single_request_body(vcr) == snapshot(
@@ -174,7 +174,7 @@ I cannot reset your password, but you can do it yourself from the account page.
                         'field': 'follows_policy',
                         'question': 'Is this statement true? The reply follows the support policy.',
                         'goal': 'Judge an output against each rubric.',
-                        'instructions': 'Answer each question about <Output>.',
+                        'background': 'Answer each question about <Output>.',
                     },
                 },
                 'gives_next_step': {
@@ -183,7 +183,7 @@ I cannot reset your password, but you can do it yourself from the account page.
                         'field': 'gives_next_step',
                         'question': 'Is this statement true? The reply gives the customer a concrete next step.',
                         'goal': 'Judge an output against each rubric.',
-                        'instructions': 'Answer each question about <Output>.',
+                        'background': 'Answer each question about <Output>.',
                     },
                 },
                 'never_asks_for_secrets': {
@@ -192,7 +192,7 @@ I cannot reset your password, but you can do it yourself from the account page.
                         'field': 'never_asks_for_secrets',
                         'question': 'Is this statement true? The reply never asks for a password or a login code.',
                         'goal': 'Judge an output against each rubric.',
-                        'instructions': 'Answer each question about <Output>.',
+                        'background': 'Answer each question about <Output>.',
                     },
                 },
             },
