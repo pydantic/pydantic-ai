@@ -108,7 +108,8 @@ class ModelInstructions(AbstractCapability[AgentDepsT]):
     def combine(cls, capabilities: Sequence[AbstractCapability[AgentDepsT]]) -> AbstractCapability[AgentDepsT]:
         """Two under one `id` are one block stated twice; two with different instructions raise rather than merge.
 
-        Merging two mappings would make one's patterns shadow the other's, depending on their order.
+        Merging two mappings would make one's patterns shadow the other's, depending on their order. Agreeing ones
+        merge as any capability's fields do, which keeps the lowest authority ceiling either was given.
         """
         first = capabilities[0]
         assert isinstance(first, ModelInstructions)
@@ -119,7 +120,7 @@ class ModelInstructions(AbstractCapability[AgentDepsT]):
                     f'Capability id {first.id!r} is used by multiple `ModelInstructions` capabilities that disagree '
                     "on 'instructions'. Give each its own `id`, or make them agree."
                 )
-        return first
+        return super().combine(capabilities)
 
 
 def _match(instructions: Mapping[str, str], model: AbstractModel) -> str | None:

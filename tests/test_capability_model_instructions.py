@@ -31,8 +31,8 @@ from pydantic_ai.exceptions import ModelAPIError, UserError
 from pydantic_ai.models import Model, infer_model
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
-from pydantic_ai.models.instrumented import InstrumentedModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.usage import RunUsage
 
 from .conftest import try_import
@@ -315,12 +315,13 @@ def test_without_an_id_changes_rewrite() -> None:
     ]
 
 
-@pytest.mark.parametrize('instrument', [False, True])
-def test_fallback_model_warns_and_sends_nothing(instrument: bool) -> None:
+@pytest.mark.parametrize('wrapped', [False, True])
+def test_fallback_model_warns_and_sends_nothing(wrapped: bool) -> None:
+    """Also when another model wraps the `FallbackModel`, like a user's own `WrapperModel`."""
     recorder = Recorder()
     model: Model = FallbackModel(FunctionModel(recorder, model_name='gpt-6-luna'))
-    if instrument:
-        model = InstrumentedModel(model)
+    if wrapped:
+        model = WrapperModel(model)
     agent = Agent(model, instructions='Be brief.', capabilities=[ModelInstructions({'*': 'Any.'})])
     with pytest.warns(UserWarning, match="can't tell which model a `FallbackModel` will use"):
         agent.run_sync('Hi')
@@ -338,6 +339,17 @@ def test_fallback_model_does_not_call_the_function() -> None:
     request = result.all_messages()[0]
     assert isinstance(request, ModelRequest)
     assert request.instructions is None
+
+
+def test_two_with_one_id_keep_the_lowest_authority() -> None:
+    """A copy lowered with `with_authority` keeps its ceiling when it combines with one at full authority."""
+    capability = ModelInstructions({'*': 'Any.'})
+    for capabilities in (
+        [capability, capability.with_authority('none')],
+        [capability.with_authority('none'), capability],
+    ):
+        combined = ModelInstructions.combine(capabilities)
+        assert combined._effective_authority == 'none'  # pyright: ignore[reportPrivateUsage]
 
 
 def test_two_with_one_id_and_different_instructions_raise() -> None:
