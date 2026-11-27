@@ -564,7 +564,7 @@ including how to write custom report evaluators that produce `ScalarResult` and 
 | [`IsInstance`][pydantic_evals.evaluators.IsInstance] | Type validation | `bool` + reason | Free | Instant |
 | [`MaxDuration`][pydantic_evals.evaluators.MaxDuration] | Performance threshold | `bool` | Free | Instant |
 | [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] | Subjective quality | `bool` and/or `float` | $$ | Slow |
-| [`StructuredJudge`][pydantic_evals.evaluators.StructuredJudge] | Typed questions, one request | `bool`, `str` or `float` per question + confidence | $$ | Slow |
+| [`StructuredJudge`][pydantic_evals.evaluators.StructuredJudge] | Typed questions, one request | `bool`, `int`, `float` or `str` per question + confidence | $$ | Slow |
 | [`GEval`][pydantic_evals.evaluators.GEval] | Chain-of-thought scoring | `int` + reason | $$ | Slow |
 | [`HasMatchingSpan`][pydantic_evals.evaluators.HasMatchingSpan] | Behavioral check | `bool` | Free | Fast |
 

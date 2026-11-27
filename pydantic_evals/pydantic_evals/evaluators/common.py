@@ -377,7 +377,8 @@ class StructuredJudge(Evaluator[object, object, object]):
     ```
 
     A `bool` answer is reported as an assertion, an `int` or `float` as a score, and a `str` as a label.
-    An `Enum` is reported as whatever its value is, so an `Enum` of strings is a label and an `IntEnum` a
+    A report groups labels by value, so ask for a `Literal` or an `Enum` when the answer is a category: free
+    text gives each case a label of its own, and never becomes the reason for another answer. An `Enum` is reported as whatever its value is, so an `Enum` of strings is a label and an `IntEnum` a
     score. An answer of `None` is reported as no measure at all, the way
     [`EqualsExpected`][pydantic_evals.evaluators.EqualsExpected] reports nothing without an expected
     output. Any other answer is an error, since there is no measure to report it as. When the judge reports how

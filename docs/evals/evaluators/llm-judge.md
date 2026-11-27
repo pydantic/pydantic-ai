@@ -596,8 +596,8 @@ in one API call; on Jev the one-evaluator-per-measure shape gives the advantage 
 - **There is no written reason.** [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] records why it
   reached its verdict; `StructuredJudge` reports the answers alone. When the judge reports how confident
   it is in an answer, as a [decision model](../../models/decision.md) does, that confidence is the
-  answer's reason. Add a `str` field to the output type if you want the judge to write a reason, and use
-  `LLMJudge` when the reason is the point.
+  answer's reason. A `str` field the judge writes freely is reported as a label of its own, not as the
+  reason for the other answers, so use `LLMJudge` when the reason is the point.
 
 ## Validating a Judge Against Human Labels
 
