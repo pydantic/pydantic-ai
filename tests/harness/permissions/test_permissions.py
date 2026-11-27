@@ -2368,6 +2368,29 @@ class TestReviewerApprovals:
         assert (await agent.run('go')).output == 'deployed prod'
         assert asked == [{'permissions': {'person_only': True}}]
 
+    async def test_a_persons_own_ask_on_a_plain_tool_stays_a_plain_approval_under_a_managed_layer(self) -> None:
+        """Only a managed ask is for a person only; the person's own ask still takes the plain approval flow."""
+        asked: list[object] = []
+
+        def deploy(env: str) -> str:
+            return f'deployed {env}'
+
+        async def handler(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            asked.extend(requests.metadata.get(call.tool_call_id) for call in requests.approvals)
+            return await _approve_all(ctx, requests)
+
+        agent = Agent[None, str](
+            _calls(('deploy', {'env': 'prod'})),
+            deps_type=type(None),
+            tools=[Tool(deploy)],
+            capabilities=[
+                Permissions(max_mode='auto', rules=[PermissionRule('ask', tools=['deploy'], reason='Deploys.')]),
+                HandleDeferredToolCalls[None](handler=handler),
+            ],
+        )
+        assert (await agent.run('go')).output == 'deployed prod'
+        assert asked == [{'reason': 'Deploys.'}]
+
     @pytest.mark.parametrize(
         'permissions',
         [
