@@ -369,6 +369,41 @@ class TestResetCompaction:
             ]
         )
 
+    async def test_the_opt_out_leaves_a_capability_loaded_in_the_cleared_history_unloaded(self) -> None:
+        class Weather(AbstractCapability[None]):
+            def __init__(self) -> None:
+                self.id = 'weather'
+                self.description = 'Weather forecasts.'
+                self.defer_loading = True
+
+            def get_toolset(self) -> FunctionToolset[None]:
+                return FunctionToolset[None]([lookup])
+
+        work_log = WorkLog[None](InMemoryWorkLogStore())
+        script = Script(
+            [
+                ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'weather'}, tool_call_id='l1')]),
+                _call('Paris', 'c1'),
+                ModelResponse(parts=[TextPart('Paris is sunny.')]),
+            ]
+        )
+        reset = ResetCompaction(work_log, max_messages=6, keep_messages=1, preserve_loaded_capabilities=False)
+        agent = Agent(script.model(), deps_type=type(None), capabilities=[work_log, Weather(), reset])
+
+        first = await agent.run('Paris?', conversation_id=_CONVERSATION)
+        second = await agent.run('And Rome?', message_history=first.all_messages())
+
+        # No load is recorded again: a note says the capability was unloaded.
+        assert _shape(second.all_messages()) == snapshot(
+            [
+                "request: user 'Paris?', baseline",
+                'request: notice #1',
+                'request: user "Compacting the conversation unloaded these capabilities: \'weather\'. Their instructions and tools are no longer available. Call `load_capability` for any you still need before using its tools."',
+                "request: user 'And Rome?'",
+                "response: text 'done'",
+            ]
+        )
+
     @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
     async def test_planning_records_the_plan_again_in_the_reset_request(self) -> None:
         work_log = WorkLog[None](InMemoryWorkLogStore())
