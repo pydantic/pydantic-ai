@@ -642,8 +642,8 @@ class ContentFilterError(UnexpectedModelBehavior):
     [`RaiseContentFilterError`][pydantic_ai.capabilities.RaiseContentFilterError].
 
     When raised by the agent loop or `RaiseContentFilterError`, `message` includes the finish or block reason and,
-    when the provider sends one, its refusal text (`provider_details['refusal']`); `body` holds a one-element JSON list containing the serialized
-    [`ModelResponse`][pydantic_ai.messages.ModelResponse] (loadable via
+    when the provider sends one, its refusal text (`provider_details['refusal']`); `body` holds a one-element JSON
+    list containing the serialized [`ModelResponse`][pydantic_ai.messages.ModelResponse] (loadable via
     [`ModelMessagesTypeAdapter`][pydantic_ai.messages.ModelMessagesTypeAdapter], including `provider_details` such as
     `refusal` and `refusal_category`). Image generation and decision models may also raise `ContentFilterError` with
     provider-specific `message` and `body`.
