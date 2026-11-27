@@ -20,7 +20,7 @@ from pydantic_ai import Agent, ToolDefinition
 from pydantic_ai.models.test import TestModel
 from pydantic_ai_harness.ask_user import AskUser, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.compaction import ReportContextUsage
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_ai_pax.app import DEFAULT_PLUGINS
 from pydantic_ai_pax.builtin_plugins import herdr, herdr_client
 from pydantic_ai_pax.builtin_plugins.herdr_client import HerdrClient
@@ -140,7 +140,7 @@ async def test_question_state_and_cleanup(recorded: RecordingClient, answer_erro
 
 
 async def test_session_titles_metadata(recorded: RecordingClient, tmp_path: Path) -> None:
-    store = SqliteConversationStore(database=tmp_path / 'sessions.db')
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
     session = Session(Agent(TestModel()), deps=None, conversations=store)
     host = PluginHost(
         name='herdr',
@@ -197,13 +197,13 @@ async def test_session_titles_metadata(recorded: RecordingClient, tmp_path: Path
 @pytest.mark.parametrize(
     ('directory', 'filename', 'with_database'),
     [
-        ('pydantic-clai2', 'config.db', False),
-        ('pydantic-clai2', 'other.db', True),
+        ('pydantic-ai-pax', 'config.db', False),
+        ('pydantic-ai-pax', 'other.db', True),
         ('custom', 'my-settings.db', True),
         ("it's", 'config.db', None),
-        ('pydantic-clai2', "it's.db", None),
-        ('pydantic-clai2', 'line\nbreak.db', None),
-        ('pydantic-clai2', None, None),
+        ('pydantic-ai-pax', "it's.db", None),
+        ('pydantic-ai-pax', 'line\nbreak.db', None),
+        ('pydantic-ai-pax', None, None),
     ],
 )
 async def test_resume_argv_database(
@@ -218,9 +218,7 @@ async def test_resume_argv_database(
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path))
     folder = tmp_path / directory
     folder.mkdir()
-    session = Session(
-        Agent(TestModel()), deps=None, conversations=SqliteConversationStore(database=folder / 'sessions.db')
-    )
+    session = Session(Agent(TestModel()), deps=None, conversations=SqliteSessionStore(database=folder / 'sessions.db'))
     host = PluginHost(
         name='herdr',
         console=Console(file=io.StringIO(), force_terminal=True),

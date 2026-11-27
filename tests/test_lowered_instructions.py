@@ -236,7 +236,8 @@ async def test_every_adapter_sends_lowered_instructions_on_the_user_channel(case
     assert 'Static note.' not in json.dumps(body.system)
     wire = case.wire(body.messages)
     carrying = [message for message in wire if any('Static note.' in block.value for block in message.blocks)]
-    assert [message.role for message in carrying] == ['user']
+    # Every baseline opens with the user prompt, so its role names the provider's user channel.
+    assert [message.role for message in carrying] == [case.baseline[0].role]
     (message,) = carrying
     text = ''.join(block.value for block in message.blocks)
     assert '<capability_instructions>\nStatic note.\n\nThe count is 1.\n</capability_instructions>' in text
