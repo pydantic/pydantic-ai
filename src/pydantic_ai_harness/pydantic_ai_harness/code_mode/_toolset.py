@@ -602,6 +602,7 @@ def _module_stubs(modules: Mapping[str, ExternalModule]) -> dict[str, str | None
             {
                 f'{name}.{attr}': value
                 for attr, value in module.attrs.items()
+                # Monty hides attributes starting with `_` from the sandbox, so a hidden submodule needs no stubs.
                 if isinstance(value, ExternalModule) and not attr.startswith('_')
             }
         )

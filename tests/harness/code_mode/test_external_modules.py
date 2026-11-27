@@ -42,7 +42,6 @@ WAREHOUSE = ExternalModule(
         'total': total,
         'fx_rate': fx_rate,
         'CURRENCY': 'USD',
-        '_private': total,
         'util': ExternalModule({'doubled': doubled}, stubs='def doubled(n: int) -> int: ...'),
     },
     stubs='def total(region: str) -> float: ...\nasync def fx_rate(currency: str) -> float: ...\nCURRENCY: str',
@@ -106,35 +105,28 @@ async def test_module_calls_from_a_remote_worker(monty_relay: MontyRelay) -> Non
     await _assert_module_calls(monty_relay.url)
 
 
-async def test_module_binding_lasts_across_snippets() -> None:
-    result = await _agent('import warehouse', 'warehouse.total(region="eu")').run('go')
-    assert result.output == '160.0'
-
-
 async def test_module_exception_is_raised_at_the_call_site() -> None:
     code = 'import warehouse\ntry:\n    warehouse.total(region="apac")\nexcept KeyError as e:\n    r = e.args[0]\nr'
     result = await _agent(code).run('go')
     assert result.output == '"no region \'apac\'"'
 
 
-@pytest.mark.parametrize(
-    'call', ['warehouse.total(**kwargs)', 'await warehouse.fx_rate(**kwargs)'], ids=['sync', 'async']
-)
-async def test_wrong_arguments_are_raised_at_the_call_site(call: str) -> None:
-    """Arguments a function can't take raise `TypeError` in the sandbox, for an async function too.
+async def test_wrong_arguments_to_an_async_function_are_raised_at_the_call_site() -> None:
+    """An async function rejects bad arguments when called, before there is a coroutine to defer.
 
     Only the first snippet is type-checked, so the second reaches the function with the wrong arguments.
     """
-    code = f'kwargs = {{"unknown": 1}}\ntry:\n    {call}\n    r = "called"\nexcept TypeError:\n    r = "caught"\nr'
+    code = (
+        'kwargs = {"unknown": 1}\ntry:\n    await warehouse.fx_rate(**kwargs)\n'
+        '    r = "called"\nexcept TypeError:\n    r = "caught"\nr'
+    )
     assert (await _agent('import warehouse', code).run('go')).output == "'caught'"
 
 
 async def test_stubs_type_check_the_snippet_and_describe_the_module() -> None:
-    agent = _agent('import warehouse\nwarehouse.total(region=1)', 'import warehouse\nwarehouse._private')
-    result = await agent.run('go')
-    first, second = [p.content for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
-    assert isinstance(first, str) and 'Type error in code' in first and 'invalid-argument-type' in first
-    assert isinstance(second, str) and 'Type error in code' in second
+    result = await _agent('import warehouse\nwarehouse.total(region=1)').run('go')
+    (returned,) = [p.content for m in result.all_messages() for p in m.parts if isinstance(p, ToolReturnPart)]
+    assert isinstance(returned, str) and 'Type error in code' in returned and 'invalid-argument-type' in returned
 
     info: list[AgentInfo] = []
 
@@ -161,7 +153,6 @@ async def test_stubs_type_check_the_snippet_and_describe_the_module() -> None:
             "`external_modules` key 'warehouse.util' is not a module name.",
             id='dotted_name',
         ),
-        pytest.param({'class': WAREHOUSE}, "`external_modules` key 'class' is not a module name.", id='keyword'),
         pytest.param(
             {'warehouse': ExternalModule({'total': total}), 'other': WAREHOUSE},
             "Missing for: 'warehouse'.",

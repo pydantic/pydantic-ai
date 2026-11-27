@@ -160,14 +160,11 @@ def module_functions(modules: Mapping[str, ExternalModule]) -> dict[str, Callabl
     """The host functions in `modules` and their submodules, keyed by the dotted name a sandbox call reports.
 
     Monty names a call after the module it was imported from, however the sandbox bound it, so
-    `from duckdb import sql; sql(...)` arrives as `duckdb.sql`. Attributes starting with `_` are
-    not exposed to the sandbox, so they are left out.
+    `from duckdb import sql; sql(...)` arrives as `duckdb.sql`.
     """
     functions: dict[str, Callable[..., object]] = {}
     for name, module in modules.items():
         for attr, value in module.attrs.items():
-            if attr.startswith('_'):
-                continue
             if isinstance(value, ExternalModule):
                 functions |= module_functions({f'{name}.{attr}': value})
             elif callable(value):
