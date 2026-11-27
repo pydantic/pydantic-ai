@@ -793,7 +793,9 @@ class TestMCPToolsetIntegration:
         """
         tasks_before = asyncio.all_tasks()
         toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
-        agent = Agent(TestModel(call_tools=[]), toolsets=[toolset])
+        # A name skips the agent's name inference, which reads this frame's `f_locals`. Before Python 3.13, that
+        # read leaves a snapshot of the locals on the frame, which would still hold `toolset` after the `del` below.
+        agent = Agent(TestModel(call_tools=[]), name='stdio_agent', toolsets=[toolset])
         async with agent:
             await agent.run('Hello')
 
