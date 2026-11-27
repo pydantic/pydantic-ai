@@ -3705,6 +3705,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         # Content enqueued during a tool call replaces the request it went into with a copy. Keep this node on the
         # copy, so what's recorded on its request below, like the instructions sent, lands in history.
         self.request = _enqueue.run_queue(run_context).request_in_history(self.request)
+        _record_appended_after(ctx.state, self.request)
 
         # Preserve the object identity already held by outer wrappers while exposing the final
         # request produced by the before-chain. The lifecycle also continues with this original
@@ -6214,6 +6215,20 @@ def _set_resumed_history(
         resumed_request=ctx.deps.resumed_request,
         resumed_request_index=ctx.deps.resumed_request_index,
     )
+
+
+def _record_appended_after(state: GraphAgentState, request: _messages.ModelRequest) -> None:
+    """Record the messages a `before_model_request` hook appended to the history after `request` with `ctx.messages.append(...)`.
+
+    The run's record keeps them, so its conversation does, as a capability that trims the history in a later step
+    may drop them.
+    """
+    history, recorded = state.message_history, state.appended_messages.messages
+    index = next((index for index in range(len(history) - 1, -1, -1) if history[index] is request), None)
+    if recorded is None or index is None or index == len(history) - 1:
+        return
+    known = {id(message) for message in recorded}
+    recorded.extend(message for message in history[index + 1 :] if id(message) not in known)
 
 
 def _first_new_message_index(

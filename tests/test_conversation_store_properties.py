@@ -689,16 +689,6 @@ KNOWN_FINDINGS = [
         'before them. The persistence docs describe this placement: after the messages the run was given.',
     ),
     KnownFinding(
-        'message-appended-in-a-trimmed-run-is-lost',
-        frozenset({'S5'}),
-        lambda turn, earlier: (
-            dataclasses.replace(turn, capability=None) if turn.hook == 'append_before_model_request' else turn
-        ),
-        ((Turn(mode='tool', capability='trim', keep=1, hook='append_before_model_request'),),),
-        'A message a `before_model_request` hook adds with `ctx.messages.append(...)` is not in '
-        '`result.conversation`, so not saved, when a capability trims it from the history in a later request.',
-    ),
-    KnownFinding(
         'superseded-summary-is-lost',
         frozenset({'S6'}),
         # Only a run that makes more than one request can summarize its own summary.
@@ -732,6 +722,11 @@ FIXED_FINDINGS: dict[str, tuple[tuple[Turn, ...], ...]] = {
     # A message a `before_run` hook added with `ctx.messages.append(...)` to a continued conversation was in
     # `result.conversation` but not saved: the save started after it.
     'message-appended-before-run-is-lost': ((Turn(), Turn(hook='append_before_run')),),
+    # A message a `before_model_request` hook added with `ctx.messages.append(...)` wasn't in `result.conversation`
+    # when a capability trimmed it from the history in a later request.
+    'message-appended-in-a-trimmed-run-is-lost': (
+        (Turn(mode='tool', capability='trim', keep=1, hook='append_before_model_request'),),
+    ),
     # Two requests in a row, like an appended prompt and the new one, a prompt and an enqueued message, came back
     # merged, and a window that starts with a tool result came back without it, so `load()` didn't equal the
     # conversation that was saved.
