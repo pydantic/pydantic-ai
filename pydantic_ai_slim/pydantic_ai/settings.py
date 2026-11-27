@@ -189,6 +189,7 @@ class ModelSettings(TypedDict, total=False):
     * Snowflake
     * Z.AI
     * Bedrock Mantle
+    * Claude Agent
     """
 
     temperature: float
@@ -396,6 +397,7 @@ class ModelSettings(TypedDict, total=False):
     * OpenAI ChatGPT
     * OpenAI Codex
     * Anthropic
+    * Claude Agent (Claude Code itself is set not to retry)
     * Google GenerateContent (keeps the delays and status codes of the provider's `retry_options`)
     * Groq
     * Mistral (`0` only, which turns off a `retry_config` set on the client; other values are ignored without a
@@ -643,6 +645,7 @@ class ModelSettings(TypedDict, total=False):
 
     * OpenAI
     * Anthropic
+    * Claude Agent
     * Google
     * Groq
     * Mistral
@@ -709,6 +712,7 @@ class ModelSettings(TypedDict, total=False):
       `20260209` or `20260318` web tools, which on the Anthropic API the setting has the model call directly unless the request
       needs code execution; see [Web Tool Callers](../models/anthropic.md#web-tool-callers))
     * Bedrock (TXT and PDF documents, including those returned by tools, on Anthropic models)
+    * Claude Agent (documents in a user prompt)
     * xAI (inline citations)
 
     Only used when the output is text. On Anthropic models, a `tool_choice` that forces a tool call raises a

@@ -18,6 +18,9 @@ To use [Anthropic](https://anthropic.com) through their API, go to [console.anth
 
 `AnthropicModelName` lists the latest Anthropic models for autocomplete. Any other model id the API accepts works too.
 
+!!! tip
+    You can also use a [Claude subscription that includes Claude Code](claude-agent.md) instead of an API key: the `claude-agent:` prefix runs your agent on your logged-in Claude account through your own Claude Code.
+
 ## Environment variable
 
 Once you have the API key, you can set it as an environment variable:
