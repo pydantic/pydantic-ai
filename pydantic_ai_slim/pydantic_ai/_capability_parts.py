@@ -207,7 +207,7 @@ def render_capability_part(part: CapabilityPart) -> RenderedCapabilityPart:
     if isinstance(part, _CapabilityInstructionsPart):
         # A lowered capability's instructions are framework data like any other: `kind` says what they are.
         tag = CAPABILITY_DATA_TAG
-        attrs: dict[str, str | None] = {'kind': part.kind, 'capability': _capability_attribute(part)}
+        attrs: dict[str, str | None] = _capability_instructions_attributes(part)
     elif rendering.voice == 'instruction':
         tag = part.kind.rpartition('.')[2]
         attrs = {}
@@ -264,6 +264,11 @@ def _data_frame_attributes(part: CapabilityPart) -> dict[str, str | None]:
     }
 
 
+def _capability_instructions_attributes(part: _CapabilityInstructionsPart) -> dict[str, str | None]:
+    """The attributes of a lowered capability's instructions' `<pyai:data>` frame: its kind and its capability."""
+    return {'kind': part.kind, 'capability': _capability_attribute(part)}
+
+
 def _capability_attribute(part: CapabilityPart) -> str | None:
     """The `capability` attribute naming the capability a part is from, or `None` when its id isn't a plain identifier."""
     source = part.source
@@ -284,22 +289,28 @@ def lowered_instruction_statement(
     """
     assert change.authority != 'operator'
     source = CapabilitySource(_statement_capability_id(change), authority=change.authority)
-    parts: list[SystemPromptPart | CapabilityPart] = []
-    if restated:
-        author = _author_phrase(source)
-        assert author is not None
-        # Saying what replaces the earlier block keeps models from voiding the new block too; a withdrawal has none.
-        note = (
-            f'What {author} said earlier is replaced by the block below.'
-            if change.content is not None
-            else f'What {author} said earlier no longer applies.'
-        )
-        parts.append(SystemPromptPart(note, timestamp=timestamp))
+    instructions = None
     if change.content is not None:
         # Safe for text the operator didn't write: the part is never stored or enqueued, only rendered, and its source
         # is below operator authority, so it renders as framed data rather than in the application's voice.
         content = OperatorText(change.content)
-        parts.append(_CapabilityInstructionsPart(content=content, source=source, timestamp=timestamp))
+        instructions = _CapabilityInstructionsPart(content=content, source=source, timestamp=timestamp)
+    parts: list[SystemPromptPart | CapabilityPart] = []
+    if restated:
+        author = _author_phrase(source)
+        assert author is not None
+        if instructions is None:
+            note = f'What {author} said earlier no longer applies.'
+        else:
+            # Saying what replaces the earlier block keeps models from voiding the new block too. It names the frame
+            # rather than its position, as providers order system and user content their own way. Its attributes are
+            # plain identifiers: the kind is the framework's and `_capability_attribute` checks the capability id.
+            attrs = _capability_instructions_attributes(instructions)
+            frame, _ = capability_frame_tags(CAPABILITY_DATA_TAG, attrs=attrs)
+            note = f'What {author} said earlier is replaced by the accompanying {frame}.'
+        parts.append(SystemPromptPart(note, timestamp=timestamp))
+    if instructions is not None:
+        parts.append(instructions)
     return parts
 
 

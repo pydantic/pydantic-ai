@@ -105,6 +105,13 @@ class JudgeSteeringPart(InstructionCapabilityPart, namespace='trajectory_judge',
     """The random id the note names the feedback's frame by, and that frame carries."""
 
 
+_JUDGE_FEEDBACK_NOTE = 'The accompanying {frame} is a course correction from a trajectory judge reviewing this run.'
+"""What a `JudgeFeedbackPart` is for, which its `JudgeSteeringPart` says to follow.
+
+The kind declares it so its note doesn't say the feedback has no authority, which would contradict the steering note.
+"""
+
+
 @dataclass(kw_only=True)
 class JudgeFeedbackPart(
     DataCapabilityPart[str],
@@ -112,11 +119,12 @@ class JudgeFeedbackPart(
     name='feedback',
     tag='judge_feedback',
     attributes=('judge', 'ref'),
+    note=_JUDGE_FEEDBACK_NOTE,
 ):
     """A trajectory judge's course correction, as the judge model wrote it.
 
-    Data on the user channel in a `<pyai:data kind="trajectory_judge.feedback" judge="..." ref="...">` frame, with a note saying the judge wrote
-    it, not the user or the application. Find them in history by this type.
+    Data on the user channel in a `<pyai:data kind="trajectory_judge.feedback" judge="..." ref="...">` frame, with a note saying it's a
+    course correction from the judge, which wrote it, not the user or the application. Find them in history by this type.
     """
 
     judge: str
