@@ -4011,8 +4011,11 @@ class TestBrowserEvents:
         session.tracer = tracer
         toolset = _toolset(page, session=session)
         tools = await toolset.get_tools(_ctx())
+        # The rebuilt context didn't carry the content setting either, so it reads as `False` and the URL is left out.
         await toolset.call_tool('get_text', {}, DurableRunContext[None](deps=None), tools['get_text'])
-        assert [span.name for span in exporter.get_finished_spans()] == ['browser get_text']
+        (span,) = exporter.get_finished_spans()
+        assert span.name == 'browser get_text'
+        assert span.attributes is not None and 'url.full' not in span.attributes
 
     async def test_network_event_attributes_follow_otel_conventions(self) -> None:
         page = _FakePage()

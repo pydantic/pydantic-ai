@@ -723,18 +723,25 @@ tracer and content setting from here at call time.
 """
 
 
-def _traced_calling_ctx() -> RunContext[Any] | None:
-    """The calling tool call's `ctx` when its run is traced, else `None`."""
+def _traced_calling_ctx() -> tuple[RunContext[Any] | None, bool]:
+    """The calling tool call's `ctx` when its run is traced, else `None`, and whether to record content.
+
+    Outside a run, and in an uninstrumented one, there is no content setting to follow, so the session's
+    tracer records content as it always has.
+    """
     ctx = _calling_ctx.get()
     if ctx is None:
-        return None
+        return None, True
     try:
-        # A context rebuilt in a durable unit that didn't carry the tracer raises on reading it: untraced.
-        # One that didn't carry `trace_include_content` reads it as `False`, so that read needs no guard.
         tracer = ctx.tracer
     except UserError:
-        return None
-    return None if isinstance(tracer, NoOpTracer) else ctx
+        # A context rebuilt in a durable unit that didn't carry the tracer raises on reading it, so the span
+        # goes to the session's tracer. The content setting is still the run's, and reads as `False` when it
+        # wasn't carried either.
+        return None, ctx.trace_include_content
+    if isinstance(tracer, NoOpTracer):
+        return None, True
+    return ctx, ctx.trace_include_content
 
 
 _ABORTED_FAILURE = 'net::ERR_FAILED'
@@ -1949,8 +1956,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
             # model how long the call was allowed, which a countdown would understate.
             reported = deadlines.navigation_ms if governed_by_navigation else deadlines.action_ms
             # The session can outlive a run, so the tracer and content setting are the calling run's, read now.
-            ctx = _traced_calling_ctx()
-            include_content = ctx is None or ctx.trace_include_content
+            ctx, include_content = _traced_calling_ctx()
             with self._operation_span(
                 ctx,
                 action,
@@ -2004,7 +2010,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
                 return error
             # No page means no events and no URL, so the span is never published to the session.
             with self._operation_span(
-                _traced_calling_ctx(), action, {'browser.action': action, 'browser.outcome': 'error'}
+                _traced_calling_ctx()[0], action, {'browser.action': action, 'browser.outcome': 'error'}
             ):
                 return self._truncate_output(message)
 
@@ -2714,7 +2720,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         """
         async with self._operation_lock:
             with self._operation_span(
-                _traced_calling_ctx(), action, {'browser.action': action, 'browser.outcome': 'ok'}
+                _traced_calling_ctx()[0], action, {'browser.action': action, 'browser.outcome': 'ok'}
             ):
                 return body()
 
