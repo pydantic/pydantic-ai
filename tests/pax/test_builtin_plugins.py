@@ -27,6 +27,7 @@ CURATED = {
     'ask_user',
     'repo_context',
     'compaction',
+    'label_cross_model_history',
     'refinement',
     'persistence',
     'observability',

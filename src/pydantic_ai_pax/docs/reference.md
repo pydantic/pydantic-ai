@@ -2871,7 +2871,8 @@ them as your prompts and compaction doesn't treat them as your requests. A note
 opens the history saying it ran in the other agent, and another closes it saying
 it continues in Pax, whose tools and instructions now apply. A Claude Code
 session keeps the name you or Claude Code gave it, and a Codex session the name
-in Codex's index.
+in Codex's index. The built-in `label_cross_model_history` plugin also tells the
+model that the imported answers are not its own, whichever model continues the session.
 
 A compaction summary Claude Code or Codex wrote is imported as a summary like
 the ones Pax's own compaction writes, so Pax's compaction later builds on it
@@ -3503,6 +3504,14 @@ provider, and relies on argument repair and retries instead. A `NativeOutput` sc
 the provider's mode, as Anthropic and Bedrock only offer native output in strict mode. The built-in `compaction`
 plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
 it summarises older messages before the context runs out and adds `/compact`.
+The built-in `label_cross_model_history` plugin, harness
+[Label Cross Model History](../../../docs/harness/label-cross-model-history.md), tells the model when
+earlier answers in the conversation came from another model: after `/model` switches models mid-session,
+or in a session imported from Claude Code or Codex. It adds a short note to the conversation where that
+starts, leaving the earlier messages as they were so the cached prompt prefix doesn't move, and a
+conversation that stays on one model is sent exactly as without it. The same
+model on another of your accounts (`PROVIDER@PROFILE:NAME`) counts as the same model.
+`/plugins disable label_cross_model_history` turns it off.
 The built-in `refinement` plugin adds `/refine`: the model reviews its last answer and gives it
 again, revised, as a turn of its own. Add words to say what to look at, such as
 `/refine check the error handling`. To have every answer reviewed without asking, add harness

@@ -16,6 +16,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='ask_user', factory='pydantic_ai_pax.builtin_plugins.ask_user_menu'),
     PluginSettings(id='repo_context', factory='pydantic_ai_pax.builtin_plugins.repo_context'),
     PluginSettings(id='compaction', factory='pydantic_ai_pax.builtin_plugins.compaction', settings={}),
+    PluginSettings(id='label_cross_model_history', factory='pydantic_ai_pax.builtin_plugins.label_cross_model_history'),
     PluginSettings(id='refinement', factory='pydantic_ai_pax.builtin_plugins.refinement'),
     PluginSettings(id='persistence', factory='pydantic_ai_pax.runtime.sessions'),
     PluginSettings(id='observability', factory='pydantic_ai_pax.builtin_plugins.logfire'),
