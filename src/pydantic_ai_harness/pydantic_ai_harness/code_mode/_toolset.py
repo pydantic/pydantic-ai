@@ -64,7 +64,6 @@ from pydantic_ai_harness._code_tools import (
     signatures_and_conflicts,
 )
 from pydantic_ai_harness._monty_exec import (
-    TIME_LIMIT_MESSAGE,
     MontyExecutor,
     MontyRunState,
     MontySandbox,
@@ -75,11 +74,12 @@ from pydantic_ai_harness._monty_exec import (
     Snapshot,
     TurnComplete,
     TurnFeed,
+    WorkerFailure,
     check_monty_sandbox,
     in_temporal_workflow,
     module_functions,
     resolve_limits,
-    worker_failure_message,
+    worker_failure,
 )
 from pydantic_ai_harness._monty_turns import MontyFailure, MontyTurn, TurnRequest, model_safe_result
 from pydantic_ai_harness._warn import HarnessDeprecationWarning, renamed_duration_limit, warn_argument_renamed
@@ -838,6 +838,27 @@ def _started_calls_note(execution: RunCodeExecution) -> str:
     if not execution.nested_calls:
         return ''
     return f'\n\n{_describe_started_calls(execution.nested_calls, execution.nested_returns)}'
+
+
+TIME_LIMIT_MESSAGE = (
+    'The code ran longer than its time limit and was stopped, so the session was reset. '
+    'Re-run any imports, recreate any state you need, and make the code do less work per call.'
+)
+# The REPL keeps state between snippets, so each retry says what the reset lost.
+_WORKER_FAILURE_ADVICE: dict[WorkerFailure, str] = {
+    'time_limit': TIME_LIMIT_MESSAGE,
+    'crashed': 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.',
+    'session_ended': (
+        'The sandbox session ended; state is lost. Re-run any imports, recreate any state '
+        'you need, and continue in a fresh session.'
+    ),
+    'connection_lost': (
+        'The sandbox connection was lost and the session was reset. Re-run any imports, '
+        'recreate any state you need, and try again.'
+    ),
+    'other': 'Code execution failed and the session was reset. Re-run any imports, recreate any state you need, and try again.',
+    'aborted': 'The code aborted inside the sandbox and the session was reset. Revise the code and try again.',
+}
 
 
 def _refuse_after_output(execution: RunCodeExecution) -> None:
@@ -1687,7 +1708,13 @@ class CodeModeToolset(WrapperToolset[AgentDepsT]):
                 # can't be trusted: reset, and the retry starts from a fresh, type-checked session.
                 await run_state.reset()
                 _raise_run_ending_error(execution)
-                message = worker_failure_message(failure, capture, remote=self.monty_sandbox is not None)
+                kind = worker_failure(failure)
+                message = _WORKER_FAILURE_ADVICE[kind]
+                if kind == 'other':
+                    # A remote pool's error text can carry its URL or credentials, so only the type is shown.
+                    remote = self.monty_sandbox is not None
+                    shown = failure.type_name if remote else f'{failure.type_name}: {failure.display}'
+                    message += f'\n{capture.prepend_to(shown)}'
                 return ModelRetry(f'{message}{_started_calls_note(execution)}')
 
     def _dispatch_tool_call(

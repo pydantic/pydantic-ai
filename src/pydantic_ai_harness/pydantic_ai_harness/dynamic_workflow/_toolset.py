@@ -44,7 +44,7 @@ from pydantic_ai.usage import UsageLimits
 from pydantic_ai_harness.deny_unanswered._capability import find_deny_unanswered
 
 try:
-    from pydantic_monty import AsyncMontyRemote, ResourceLimits
+    from pydantic_monty import ResourceLimits
 except ImportError as _import_error:  # pragma: no cover
     raise ImportError(
         'pydantic-monty is required for DynamicWorkflow. '
@@ -57,10 +57,11 @@ from pydantic_ai_harness._monty_exec import (
     MontyRunState,
     MontySandbox,
     PrintCapture,
+    WorkerFailure,
     check_monty_sandbox,
     in_temporal_workflow,
     resolve_limits,
-    worker_failure_message,
+    worker_failure,
 )
 from pydantic_ai_harness._monty_turns import MontyFailure
 from pydantic_ai_harness._sub_agent_output import (
@@ -545,11 +546,21 @@ def _budget_terminal_result(
     }
 
 
+# Each `run_workflow` call runs in a fresh session, so the advice carries no state to recreate. `other`
+# host errors re-raise in `call_tool` instead.
+_WORKER_FAILURE_ADVICE: dict[WorkerFailure, str] = {
+    'time_limit': 'The workflow script ran longer than its time limit and was stopped. Make it do less work per call.',
+    'crashed': 'The workflow script crashed the sandbox worker. Revise the script and try again.',
+    'session_ended': 'The sandbox session ended before the workflow script finished. Try again.',
+    'connection_lost': 'The sandbox connection was lost before the workflow script finished. Try again.',
+    'aborted': 'The workflow script aborted inside the sandbox. Revise the script and try again.',
+}
+
+
 def _failure_outcome(
     failure: MontyFailure,
     capture: PrintCapture,
     *,
-    remote: bool,
     budget_exhausted: bool,
     max_agent_calls: int,
     completed_dispatches: list[_CompletedDispatch],
@@ -576,7 +587,7 @@ def _failure_outcome(
         case _:
             # The worker, its connection, or the host failed rather than the script. Completed sub-agent
             # results are listed so the retry can reuse them as plain values.
-            message = worker_failure_message(failure, capture, remote=remote)
+            message = _WORKER_FAILURE_ADVICE[worker_failure(failure)]
             if budget_exhausted:
                 return _budget_terminal_result(
                     max_agent_calls=max_agent_calls, last_error=message, completed_dispatches=completed_dispatches
@@ -742,9 +753,7 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
     """Creates the scheduler that decides when each script's sub-agent calls start.
     See `DynamicWorkflow.call_scheduler`."""
 
-    monty_sandbox: str | Callable[[], AsyncMontyRemote | Awaitable[AsyncMontyRemote]] | None = field(
-        default=None, repr=False
-    )
+    monty_sandbox: MontySandbox | None = field(default=None, repr=False)
     """Where the orchestration script runs: a Monty server URL or a function that returns the remote pool.
     See `DynamicWorkflow.monty_sandbox`."""
 
@@ -1085,12 +1094,13 @@ class DynamicWorkflowToolset(AbstractToolset[AgentDepsT]):
                 completed = await executor.run(partial(session.feed_start, code, print_callback=capture.callback))
             except BaseException as exc:
                 failure = MontyFailure.from_error(exc)
-                if failure is None:
-                    raise  # an interruption, such as cancellation
+                if failure is None or failure.kind == 'other':
+                    # An interruption such as cancellation, or a host error such as a failing scheduler or
+                    # Lambda `flush`: the caller handles it, and its text never reaches the model.
+                    raise
                 outcome = _failure_outcome(
                     failure,
                     capture,
-                    remote=self.monty_sandbox is not None,
                     budget_exhausted=budget_exhausted,
                     max_agent_calls=self.max_agent_calls,
                     completed_dispatches=completed_dispatches,

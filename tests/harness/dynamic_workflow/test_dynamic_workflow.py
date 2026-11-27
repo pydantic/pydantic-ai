@@ -1137,8 +1137,7 @@ async def test_worker_crash_after_budget_exhaustion_returns_terminal_result(
     assert isinstance(out, dict)
     assert 'budget' in out['error']
     assert out['last_error'] == snapshot(
-        'The code ran longer than its time limit and was stopped, so the session was reset. '
-        'Re-run any imports, recreate any state you need, and make the code do less work per call.'
+        'The workflow script ran longer than its time limit and was stopped. Make it do less work per call.'
     )
     assert out['completed'] == ['counted(task="first") -> "counted-result"']
 
@@ -1185,7 +1184,7 @@ async def test_sandbox_panic_after_budget_exhaustion_returns_terminal_result(
         'further sub-agent calls in this run will be refused.'
     )
     assert out['last_error'] == snapshot(
-        'The code aborted inside the sandbox and the session was reset. Revise the code and try again.'
+        'The workflow script aborted inside the sandbox. Revise the script and try again.'
     )
     assert out['completed'] == ['counted(task="first") -> "counted-result"']
 
@@ -1582,6 +1581,21 @@ async def test_call_scheduler_errors_reach_the_script_without_host_details() -> 
     assert await _run_script(passing.get_toolset(), code.format(name='bad')) == snapshot(
         "sub-agent 'bad' raised ValueError"
     )
+
+
+class _FlushFailingScheduler:
+    async def run(self, call: WorkflowCall) -> object:
+        return await call.start()
+
+    async def flush(self) -> None:
+        raise ValueError('db password=hunter2')
+
+
+async def test_a_failing_scheduler_flush_reaches_the_caller_not_the_model() -> None:
+    """A host error that never passed through the script raises to the caller, so its text stays off the model."""
+    workflow = DynamicWorkflow[object](agents=[_sub_agent()], call_scheduler=lambda ctx: _FlushFailingScheduler())
+    with pytest.raises(ValueError, match='hunter2'):
+        await _run_script(workflow.get_toolset(), "await sub(task='x')")
 
 
 # --- Runtime reveal --------------------------------------------------------

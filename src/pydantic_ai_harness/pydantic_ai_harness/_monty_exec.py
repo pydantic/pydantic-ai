@@ -23,7 +23,7 @@ from collections.abc import Awaitable, Callable, Container, Coroutine, Mapping
 from contextlib import AbstractAsyncContextManager, AsyncExitStack, nullcontext
 from dataclasses import dataclass, field
 from functools import partial
-from typing import Any, Literal, TypeVar, assert_never
+from typing import Any, Literal, TypeAlias, TypeVar, assert_never
 from urllib.parse import urlsplit
 
 import anyio
@@ -396,44 +396,23 @@ class PrintCapture:
         return f'[stdout before error]\n{printed}\n[/stdout before error]\n{error_message}'
 
 
-TIME_LIMIT_MESSAGE = (
-    'The code ran longer than its time limit and was stopped, so the session was reset. '
-    'Re-run any imports, recreate any state you need, and make the code do less work per call.'
-)
+WorkerFailure: TypeAlias = Literal['time_limit', 'crashed', 'session_ended', 'connection_lost', 'other', 'aborted']
+"""What failed when the sandbox worker, its connection, or the host failed rather than the code."""
 
 
-def worker_failure_message(failure: MontyFailure, capture: PrintCapture, *, remote: bool) -> str:
-    """The retry message for a `crashed`, `disconnected`, `other`, or `panic` failure.
-
-    Those are failures of the sandbox worker, its connection, or the host rather than of the code.
-    With a `remote` sandbox an `other` error shows only its type, because its text can carry the
-    pool's URL or credentials. Each capability appends what the model needs to retry safely.
-    """
+def worker_failure(failure: MontyFailure) -> WorkerFailure:
+    """Classify a `crashed`, `disconnected`, `other`, or `panic` failure; each capability words its own advice."""
     match failure.kind:
         case 'crashed':
-            if failure.timed_out:
-                return TIME_LIMIT_MESSAGE
-            return 'The code crashed the sandbox worker and the session was reset. Revise the code and try again.'
+            return 'time_limit' if failure.timed_out else 'crashed'
         case 'disconnected':
             if failure.cause == 'turn_timeout':
-                return TIME_LIMIT_MESSAGE
-            if failure.cause in ('session_timeout', 'idle_timeout'):
-                return (
-                    'The sandbox session ended; state is lost. Re-run any imports, recreate any state '
-                    'you need, and continue in a fresh session.'
-                )
-            return (
-                'The sandbox connection was lost and the session was reset. Re-run any imports, '
-                'recreate any state you need, and try again.'
-            )
+                return 'time_limit'
+            return 'session_ended' if failure.cause in ('session_timeout', 'idle_timeout') else 'connection_lost'
         case 'other':
-            error_text = failure.type_name if remote else f'{failure.type_name}: {failure.display}'
-            return (
-                'Code execution failed and the session was reset. Re-run any imports, recreate '
-                f'any state you need, and try again.\n{capture.prepend_to(error_text)}'
-            )
+            return 'other'
         case _:
-            return 'The code aborted inside the sandbox and the session was reset. Revise the code and try again.'
+            return 'aborted'
 
 
 class MontyTurnFailed(Exception):

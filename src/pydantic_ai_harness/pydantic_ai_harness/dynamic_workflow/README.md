@@ -481,10 +481,10 @@ Only the script moves to the worker. Sub-agents and `print` output stay in your 
 arguments, and their results.
 
 Pool creation, connection, and session checkout errors propagate to the code calling the agent,
-since the model can't fix sandbox configuration. A worker crash, lost connection, or unexpected host
-error ends the script and becomes a model retry that reports the session reset and lists the
-completed sub-agent results. Remote host-side error details, which can contain pool URLs or
-credentials, are left out; the original exception stays the retry's cause. A time limit, including a
+since the model can't fix sandbox configuration. A worker crash or lost connection ends the script
+and becomes a model retry that lists the completed sub-agent results; the original exception stays
+the retry's cause. Any other host error, such as a failing `call_scheduler`, also propagates to your
+code, so its text never reaches the model. A time limit, including a
 pool's `request_timeout` and a remote `turn_timeout`, asks the model to make the script do less
 work.
 
