@@ -220,8 +220,8 @@ def tool_call_span(ctx: RunContext[Any], /) -> Span:
     `after_tool_execute`, a `wrap_tool_execute` ordered inside `Instrumentation`, the tool's body and a
     toolset's `call_tool`. Everywhere else, such as `for_run`, `before_run`, `wrap_run`,
     `before_tool_validate` or a task that outlives the call, it is `INVALID_SPAN`, so a capability never
-    writes to a span the call doesn't own. An attribute that can
-    quote content is set only `if ctx.trace_include_content`.
+    writes to a span the call doesn't own. An attribute that can quote content is set only
+    `if ctx.trace_include_content`.
     """
     bound = _bound_tool_call.get()
     if bound is None or not bound.span.is_recording() or bound.run_id != ctx.run_id:
@@ -229,15 +229,13 @@ def tool_call_span(ctx: RunContext[Any], /) -> Span:
     return bound.span
 
 
-_TRACE_FIELDS = frozenset({'tracer', 'trace_include_content'})
-
-
 def _traced_run_of(ctx: RunContext[Any] | None) -> _TracedRun | None:
     if ctx is None:
         return None
     # A context rebuilt inside a durable unit has only the fields its engine carried, and reading any
-    # other raises. Work in a unit that didn't carry the tracer goes untraced rather than failing.
-    if not _TRACE_FIELDS <= ctx.__dataclass_fields__.keys():
+    # other raises. `trace_include_content` is defaulted to `False` there, so only the tracer can be
+    # missing: work in a unit that didn't carry it goes untraced rather than failing.
+    if 'tracer' not in ctx.__dataclass_fields__:
         return None
     # `ctx` is the only source: in a durable unit the engine already narrowed its flag to the worker's setting.
     return None if isinstance(ctx.tracer, NoOpTracer) else _TracedRun(ctx.tracer, ctx.trace_include_content)
