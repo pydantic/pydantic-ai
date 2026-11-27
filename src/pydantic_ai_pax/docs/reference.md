@@ -2407,15 +2407,16 @@ It looks for:
 | the same result | the same tool call (same tool, same arguments) returned the same result 3 times in a row |
 | two calls in turn | two tool calls alternated, A-B-A-B, for 3 cycles |
 | the same call | the same tool call was made 5 times within the last 10 tool calls |
-| the same answer | 3 responses in a row without tool calls had the same text |
+| the same answer | 3 responses in a row without tool calls had the same text, which takes a check on the answer that asks the model to retry more than once (Pax allows one output retry) |
 | the same call at once | one response made the same tool call 5 times |
-| repeated text | a response's text or thinking repeated the same passage back to back, past about 2,000 characters |
+| repeated thinking | a response's thinking repeated the same passage back to back, past about 2,000 characters |
 
 The note joins the next request after the tool results, and stays in the conversation from then
-on; nothing earlier is rewritten. For repeated text or thinking, Pax instead stops that response and
-asks again with the note on that one request, which counts as one of the turn's output retries: a model that loops a
-second time ends the turn with `Exceeded maximum output retries`. Tool call arguments are not
-checked for repeated passages, so writing a file with many identical rows works as usual.
+on; nothing earlier is rewritten. For repeated thinking, Pax instead stops that response and
+asks again with the note on that one request, which counts as one of the turn's output retries: a
+model that loops a second time ends the turn with `Exceeded maximum output retries`. Visible text and
+tool call arguments are not checked for repeated passages, since they can repeat on purpose, such as
+a line you asked for many times or a file of identical rows, and stopping them would end the turn.
 
 Only this turn's responses count, so a loop has to build up again after a new prompt or a resume.
 In code mode (`run.code_mode`, on by default) the model calls tools from inside `run_code`, and
@@ -2429,7 +2430,7 @@ your own declaration of the harness capability under the same id, with the setti
 page:
 
 ```text
-/plugins add detect_loops pydantic_ai_harness.detect_loops:DetectLoops '{"repeated_result_threshold": 5, "stream_channels": ["thinking", "text"]}'
+/plugins add detect_loops pydantic_ai_harness.detect_loops:DetectLoops '{"repeated_result_threshold": 5, "stream_channels": ["thinking"]}'
 ```
 
 ### Task delegation

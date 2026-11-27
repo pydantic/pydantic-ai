@@ -201,40 +201,42 @@ async def test_code_mode_compares_run_code_calls(
 LOOPING_SENTENCE = 'Let me check the config file once more. '
 
 
-@pytest.mark.parametrize(
-    ('looping', 'pattern', 'what'),
-    [
-        ([LOOPING_SENTENCE] * 100, 'repeated_stream_text', 'Your response'),
-        ([DeltaThinkingPart(content=LOOPING_SENTENCE)] * 100, 'repeated_thinking', 'Your thinking'),
-    ],
-    ids=['text', 'thinking'],
-)
-async def test_a_response_that_repeats_itself_is_retried_with_a_nudge(
-    tmp_path: Path,
-    monkeypatch: pytest.MonkeyPatch,
-    capsys: pytest.CaptureFixture[str],
-    looping: Reply,
-    pattern: str,
-    what: str,
+async def test_thinking_that_repeats_itself_is_retried_with_a_nudge(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
 ) -> None:
     seen: list[list[ModelMessage]] = []
-    replies = [looping, ['The config sets no port.']]
+    replies = [[DeltaThinkingPart(content=LOOPING_SENTENCE)] * 100, ['The config sets no port.']]
     assert await run(tmp_path, monkeypatch, scripted(replies, seen), (CODER, DETECT_LOOPS)) == 0
     assert capsys.readouterr().out == 'The config sets no port.\n'
     # The stream was stopped at the first check past 2,000 characters and the response dropped, so the retry is the
     # same request with the feedback and the nudge appended.
-    assert newest_request(seen[1]) == [
-        'Is the job done?',
-        snapshot("""\
+    assert newest_request(seen[1]) == snapshot(
+        [
+            'Is the job done?',
+            """\
 Your previous response failed the application's validation (this is automated feedback, not a message from the user):
 <pyai:retry_feedback>
 Your previous response was rejected because it kept repeating itself.
 </pyai:retry_feedback>\
-"""),
-        f'<system>{what} repeated the same passage 51 times, which is not making progress. Change your approach, or '
-        'explain what is blocking you.</system>',
-    ]
-    assert await saved_nudges(tmp_path) == [(pattern, ())]
+""",
+            '<system>Your thinking repeated the same passage 51 times, which is not making progress. Change your approach, or explain what is blocking you.</system>',
+        ]
+    )
+    assert await saved_nudges(tmp_path) == [('repeated_thinking', ())]
+
+
+async def test_an_answer_that_repeats_a_line_on_purpose_is_kept(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    """Visible text is not checked within a response, so an answer that repeats a line as asked ends the turn."""
+    answer = 'All work and no play makes Jack a dull boy.\n' * 80
+    seen: list[list[ModelMessage]] = []
+    assert (
+        await run(tmp_path, monkeypatch, scripted([[answer[:1000], answer[1000:]]], seen), (CODER, DETECT_LOOPS)) == 0
+    )
+    assert capsys.readouterr().out == answer + '\n'
+    assert len(seen) == 1
+    assert await saved_nudges(tmp_path) == []
 
 
 async def test_a_file_with_repeated_rows_is_written_without_a_retry(
