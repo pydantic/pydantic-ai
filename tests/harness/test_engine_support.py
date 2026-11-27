@@ -249,6 +249,7 @@ def test_the_suites_run_every_run_context_scenario() -> None:
     """
     run_context = {scenario for scenario in SCENARIOS if scenario.startswith('RunContext.')}
     assert run_context <= set(SCENARIO_RUNS) <= set(SCENARIOS)
+    assert not any(scenario.startswith('BackgroundTools.') for scenario in SCENARIO_RUNS), sorted(SCENARIO_RUNS)
 
 
 def test_the_cases_refer_to_the_public_calls() -> None:

@@ -561,7 +561,7 @@ CASES: dict[str, CapabilityCase] = {
         ),
         build=lambda _: CompactOnRequest(SlidingWindowCompaction(max_messages=1, keep_messages=2)),
         calls=Calls.of(CALLS['CompactOnRequest'], moves_cache_prefix=COMPACTION_REWRITES_HISTORY),
-        # Temporal refuses its per-run toolset (a `refused` or `broken` cell in its support table), so it records nothing there.
+        # Temporal breaks on its per-run toolset (a `broken` cell in its support table, #14403), so it records nothing there.
         durable_steps=DurableSteps(dbos=('capability__compact_on_request.compact',)),
     ),
     'PruneToolResults': CapabilityCase(
@@ -1024,7 +1024,7 @@ CASES: dict[str, CapabilityCase] = {
             lambda cls: (cls(), cls(cache=False)),
         ),
         calls=Calls.of(CALLS['PydanticAIDocs']),
-        # Temporal refuses its id-less toolset (a `refused` or `broken` cell in its support table), so it records nothing there.
+        # Temporal refuses its id-less toolset (a `refused` cell in its support table, #9233), so it records nothing there.
         durable_steps=DurableSteps(dbos=_workspace_steps(2)),
     ),
     'Notion': CapabilityCase(
@@ -1141,7 +1141,7 @@ CASES: dict[str, CapabilityCase] = {
     'BrowserUse': CapabilityCase(
         Collides('its toolset registers its browser tools under fixed names'),
         requires='browser_use',
-        # Temporal refuses its id-less toolset (a `refused` or `broken` cell in its support table). Only the browser-use CI job installs
+        # Temporal refuses its id-less toolset (a `refused` cell in its support table, #9233). Only the browser-use CI job installs
         # `browser_use`, and it doesn't run the durable suites, so neither checks this case in CI.
         calls=Calls((('browse_web', {'task': 'Find the price of the Pro plan.'}),), build=_browser_use),
     ),

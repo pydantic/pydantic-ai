@@ -237,7 +237,10 @@ class CapabilityCase:
     """What the calls record under each durable engine, run one per response."""
     launches_python: str | None = None
     """Why running the calls launches a Python interpreter, such as a kernel process: a suite that runs them marks
-    the test `subprocess` with it, as `conditional`, since a durable engine may refuse the case before it launches."""
+    the test `subprocess` with it, as `conditional`, since a durable engine may refuse the case before it launches.
+
+    Every contract the case runs under gets the same conditional mark, the non-durable ones included, so the
+    stale-marker check doesn't judge any of them."""
 
     @property
     def reason(self) -> str:
