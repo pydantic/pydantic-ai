@@ -322,7 +322,7 @@ LINK_FILES = 'To give the user a file, link it as [name](sandbox:/absolute/path)
 async def main() -> None:
     result = await agent.run('Write fizzbuzz to fizzbuzz.py and send it to me.', instructions=LINK_FILES)
     # "Here it is: [fizzbuzz.py](sandbox:/home/me/project/fizzbuzz.py)"
-    citations = file_links(result.output, result.response.workspace_ref)
+    citations = file_links(result.output)
 
     # Store the citations with the reply. When the user clicks the first link:
     source = citations[0].sources[0]
@@ -335,11 +335,12 @@ async def main() -> None:
 ```
 
 - Without the instruction, most models only name the file, or say they can't send it.
-- Each [`Citation`][pydantic_ai.messages.Citation] names the workspace and the absolute path, and its
-  `anchor` is where the link is in the text, so you can replace the link with your own download link.
+- Each [`Citation`][pydantic_ai.messages.Citation] holds the absolute path, in the workspace the reply ran in,
+  and its `anchor` is where the link is in the text, so you can replace the link with your own download link.
   `file_links` reads only the text, so the file may not exist, and it skips links inside code.
 - Store the citations beside the reply, not on its `TextPart`, and serve only those, never a path or ref a
-  client sends. The path comes from the model, so check it with `in_working_dir` first.
+  client sends. Read them from the workspace of `result.response.workspace_ref`, which you keep on the server.
+  The path comes from the model, so check it with `in_working_dir` first.
 - The file is read from the live workspace, so the link stops working once the sandbox is gone. To keep
   it, read the file when you store the reply and save the bytes yourself.
 - Add the instruction only where you serve the files. Elsewhere the user gets a link that opens nothing.

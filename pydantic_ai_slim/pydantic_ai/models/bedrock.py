@@ -91,6 +91,7 @@ from pydantic_ai.exceptions import (
 )
 from pydantic_ai.messages import (
     ERROR_OUTCOMES,
+    CitationSource,
     InstructionPart,
     _tool_result_provenance_tags,  # pyright: ignore[reportPrivateUsage]
 )
@@ -641,7 +642,7 @@ def _map_citation_source(
 def _map_citations(
     citations: Sequence[CitationOutputTypeDef | CitationsDeltaTypeDef], text: str
 ) -> list[Citation] | None:
-    sources = [source for citation in citations if (source := _map_citation_source(citation))]
+    sources: list[CitationSource] = [source for citation in citations if (source := _map_citation_source(citation))]
     if not sources:
         return None
     # Bedrock cites whole blocks of text, so the citation covers the whole part.

@@ -72,9 +72,9 @@ directory (absolute paths and `..` reach any file the environment can read), so 
 model with `await workspace.in_working_dir(path)` first.
 
 To let the model pick the files the user gets, instruct it "To give the user a file, link it as
-[name](sandbox:/absolute/path)." and call `file_links(result.output, result.response.workspace_ref)` from
+[name](sandbox:/absolute/path)." and call `file_links(result.output)` from
 `pydantic_ai.workspaces`: a pure function returning one `Citation` per link outside code, with a `FileCitationSource`
-whose `location` holds the workspace ref and the absolute path, and an anchor on the link so the app can swap in its own
+whose `location` holds the absolute path (in the workspace of `result.response.workspace_ref`), and an anchor on the link so the app can swap in its own
 download URL. Store them beside the reply (not on `TextPart.citations`: Anthropic replays a part's citations only when
 each covers its whole text), serve only stored ones, and check `in_working_dir` before `read_file`.
 

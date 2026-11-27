@@ -4044,13 +4044,14 @@ class DocumentCitationSource:
 
 @dataclass(repr=False, kw_only=True, frozen=True)
 class WorkspaceLocation:
-    """A file in a [workspace](../workspace.md), named by the environment and the path inside it."""
+    """A file in the [workspace](../workspace.md) the response ran in,
+    [`ModelResponse.workspace_ref`][pydantic_ai.messages.ModelResponse.workspace_ref].
 
-    workspace: WorkspaceRef
-    """The environment the file is in."""
+    It holds no reference to the workspace, so a client that sees or sends it back can't point it at another one.
+    """
 
     path: str
-    """The file's absolute path inside the workspace."""
+    """The file's absolute path inside the workspace, as the model wrote it."""
 
     kind: Literal['workspace'] = 'workspace'
     """Location type identifier, used as a discriminator for deserialization."""
