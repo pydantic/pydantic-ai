@@ -23,6 +23,7 @@ import anyio
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
+from pydantic_ai._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai._framing import neutralize_tags, second_model_prompt
 from pydantic_ai._utils import is_str_dict
 from pydantic_ai.capabilities import AbstractCapability, durable_operation
@@ -40,7 +41,6 @@ from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_ai_harness._message_text import CHARS_PER_TOKEN, tool_return_text, user_prompt_text
 from pydantic_ai_harness._usage import reserved_usage_limits
-from pydantic_ai_harness.compaction._capability_loads import deferred_capability_ids, keep_loaded_state
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._receipts import (
@@ -49,6 +49,7 @@ from pydantic_ai_harness.compaction._receipts import (
     format_receipt,
     is_receipt_message,
     make_receipt_part,
+    receipt_capability_id,
     record_receipt,
 )
 from pydantic_ai_harness.compaction._shared import (
@@ -553,7 +554,7 @@ class RelevanceCompaction(AbstractCapability[AgentDepsT]):
             handle=handle,
             has_summary=has_summary,
         )
-        return ModelRequest(parts=[make_receipt_part(text)])
+        return ModelRequest(parts=[make_receipt_part(text, capability_id=receipt_capability_id(ctx, self))])
 
     @durable_operation('judge')
     async def _judge_steps(

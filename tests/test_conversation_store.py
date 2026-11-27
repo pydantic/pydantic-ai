@@ -46,7 +46,8 @@ from pydantic_ai.messages import ModelSettingsDeltaPart, SystemPromptPart, ToolR
 from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition
+from pydantic_ai.toolsets import ExternalToolset
 from pydantic_ai.usage import RunUsage, UsageLimits
 from pydantic_graph import End
 
@@ -655,6 +656,30 @@ async def test_a_streamed_run_ending_on_its_streamed_response_keeps_what_a_capab
     assert conversation_view(stream.result.conversation.messages) == conversation_view(expected)
 
 
+@pytest.mark.parametrize('output_type', [str, int])
+async def test_a_streamed_run_on_a_loaded_conversation_saves_after_it(output_type: type[str] | type[int]) -> None:
+    """The settled result of a streamed run keeps what saving the conversation it was given needs, like its revision, and the next run can go on from it once saved."""
+    store = InMemoryConversationStore()
+    agent = Agent(TestModel(), output_type=output_type)
+    await store.save(await agent.run('one', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+
+    async with agent.run_stream('two', conversation=loaded) as stream:
+        await stream.get_output()
+    await store.save(stream.result)
+    # The result saved is the one `result` returns from then on, so the next run can go on from it.
+    third = await agent.run('three', conversation=stream.result.conversation)
+    await store.save(third)
+
+    stored = await store.load('c')
+    assert stored is not None
+    assert conversation_view(stored.messages) == conversation_view(third.all_messages())
+    record = await store.read_record('c')
+    assert record is not None
+    assert record.branches == []
+
+
 class _AppendsToTheFirstRequest(AbstractCapability[None]):
     """Adds a message to history the deprecated way: appending to `request_context.messages` in `before_model_request`."""
 
@@ -1060,6 +1085,100 @@ async def test_a_summary_a_capability_puts_in_place_of_messages_is_stored_after_
 
 
 @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_summary_in_place_of_loaded_messages_is_saved_after_the_ones_the_store_has() -> None:
+    """The store only adds after the messages it has, so a summary of some of them goes after all of them."""
+    store = InMemoryConversationStore()
+    looked_up = Agent(FunctionModel(_LookUp(calls=2)))
+
+    @looked_up.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    await store.save(await looked_up.run('look it up', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+
+    result = await _summarizing_agent(_LookUp()).run('and again', conversation=loaded)
+
+    assert conversation_view(result.all_messages()) == snapshot(
+        ['user-prompt: summary of 5', 'text: done', 'user-prompt: and again', 'text: done']
+    )
+    expected = snapshot(
+        [
+            'user-prompt: look it up',
+            'call call-1',
+            'return call-1: fact 1',
+            'call call-2',
+            'return call-2: fact 2',
+            'text: done',
+            'user-prompt: summary of 5',
+            'user-prompt: and again',
+            'text: done',
+        ]
+    )
+    assert conversation_view(result.conversation.messages) == expected
+    await store.save(result)
+    stored = await store.load('c')
+    assert stored is not None
+    assert conversation_view(stored.messages) == expected
+    record = await store.read_record('c')
+    assert record is not None
+    assert record.branches == []
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+async def test_a_summary_before_a_kept_loaded_message_is_saved_before_the_runs_own_messages() -> None:
+    """A summary of loaded messages goes right after them, even when the history also drops the run's own prompt."""
+    summary = ModelRequest(parts=[UserPromptPart('summary of one')])
+
+    def summarize_one_and_drop_two(messages: list[ModelMessage]) -> list[ModelMessage]:
+        prompts = {id(m): _prompt_text(m) for m in messages}
+        called = any(isinstance(m, ModelResponse) and m.tool_calls for m in messages)
+        return [summary if prompts[id(m)] == 'one' else m for m in messages if not (called and prompts[id(m)] == 'two')]
+
+    store = InMemoryConversationStore()
+    await store.save(
+        Conversation(
+            conversation_id='c',
+            messages=[ModelRequest(parts=[UserPromptPart('one')]), ModelResponse(parts=[TextPart('ok')])],
+        )
+    )
+    loaded = await store.load('c')
+    assert loaded is not None
+    agent = Agent(FunctionModel(_LookUp(calls=1)), capabilities=[ProcessHistory(summarize_one_and_drop_two)])
+
+    @agent.tool_plain
+    def lookup(n: int) -> str:
+        return f'fact {n}'
+
+    result = await agent.run('two', conversation=loaded)
+
+    expected = snapshot(
+        [
+            'user-prompt: one',
+            'text: ok',
+            'user-prompt: summary of one',
+            'user-prompt: two',
+            'call call-1',
+            'return call-1: fact 1',
+            'text: done',
+        ]
+    )
+    assert conversation_view(result.conversation.messages) == expected
+    await store.save(result)
+    stored = await store.load('c')
+    assert stored is not None
+    assert conversation_view(stored.messages) == expected
+
+
+def _prompt_text(message: ModelMessage) -> str | None:
+    return next(
+        (part.content for part in message.parts if isinstance(part, UserPromptPart) and isinstance(part.content, str)),
+        None,
+    )
+
+
+@pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
 async def test_a_summarized_conversation_carried_in_memory_is_summarized_again_like_one_loaded_from_the_store() -> None:
     """The full history, summaries included, goes on to the next run, whose capability summarizes it again."""
     store = InMemoryConversationStore()
@@ -1095,8 +1214,8 @@ async def test_a_summarized_conversation_carried_in_memory_is_summarized_again_l
             'user-prompt: summary of 5',
             'call call-3',
             'return call-3: fact 3',
-            'user-prompt: summary of 7',
             'text: done',
+            'user-prompt: summary of 7',
             'user-prompt: and again',
             'call call-4',
             'return call-4: fact 4',
@@ -1622,6 +1741,50 @@ async def test_an_edited_serialized_window_branches_inside_the_window(edited: in
     assert reloaded.messages == [*second.all_messages()[:2], *revived.messages]
 
 
+async def test_dropping_the_last_of_two_identical_turns_is_saved() -> None:
+    """Cutting the history down to a turn equal to the one dropped isn't mistaken for the history a run cleaned."""
+    store = InMemoryConversationStore()
+    turn = [ModelRequest(parts=[UserPromptPart('again')]), ModelResponse(parts=[TextPart('ok')])]
+    await store.save(Conversation(conversation_id='c', messages=[*turn, *turn]))
+    loaded = await store.load('c')
+    assert loaded is not None
+
+    loaded.messages = loaded.messages[:2]
+    await store.save(loaded)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == turn
+    # The dropped turn stays stored, on a branch, as for any other cut.
+    record = await store.read_record('c')
+    assert record is not None
+    assert len(record.branches) == 1
+
+
+async def test_dropping_the_oldest_turn_is_saved() -> None:
+    """Cutting the oldest turns, so the messages kept are the stored tail, isn't mistaken for the history a run cleaned."""
+    store = InMemoryConversationStore()
+    messages = [
+        ModelRequest(parts=[UserPromptPart('one')]),
+        ModelResponse(parts=[TextPart('a')]),
+        ModelRequest(parts=[UserPromptPart('two')]),
+        ModelResponse(parts=[TextPart('b')]),
+    ]
+    await store.save(Conversation(conversation_id='c', messages=messages))
+    loaded = await store.load('c')
+    assert loaded is not None
+
+    loaded.messages = loaded.messages[2:]
+    await store.save(loaded)
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert reloaded.messages == messages[2:]
+    record = await store.read_record('c')
+    assert record is not None
+    assert len(record.branches) == 1
+
+
 @dataclasses.dataclass
 class _Answer:
     text: str
@@ -1875,6 +2038,82 @@ async def test_a_prompt_appended_after_stored_requests_that_merge_is_stored_once
     )
     record = await store.read_record('c')
     assert record is not None and record.branches == []
+
+
+@pytest.mark.parametrize(
+    'metadata',
+    [None, {'__pydantic_ai__': {'ui_message_id': 't1'}}],
+    ids=['no-metadata', 'ui-message-id'],
+)
+async def test_a_tool_result_appended_after_a_server_and_an_external_tool_call_is_stored_once(
+    metadata: dict[str, Any] | None,
+) -> None:
+    """The run merges the stored server tool result into the appended external one it sends, and the store gets each once.
+
+    A UI adapter gives the appended request the `ui_message_id` metadata.
+    See https://github.com/pydantic/pydantic-ai/issues/13547.
+    """
+    requests: list[list[ModelMessage]] = []
+
+    def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        requests.append(messages)
+        if len(requests) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('lookup', {}, tool_call_id='srv-1'),
+                    ToolCallPart('pick_file', {}, tool_call_id='front-1'),
+                ]
+            )
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(
+        FunctionModel(model),
+        toolsets=[ExternalToolset([ToolDefinition(name='pick_file')])],
+        output_type=[str, DeferredToolRequests],
+    )
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'server value'
+
+    store = InMemoryConversationStore()
+    await store.save(await agent.run('go', conversation=Conversation(conversation_id='c')))
+    loaded = await store.load('c')
+    assert loaded is not None
+    loaded.messages.append(
+        ModelRequest(parts=[ToolReturnPart('pick_file', 'a.txt', tool_call_id='front-1')], metadata=metadata)
+    )
+
+    await store.save(await agent.run(conversation=loaded))
+
+    reloaded = await store.load('c')
+    assert reloaded is not None
+    assert conversation_view(reloaded.messages) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: done',
+        ]
+    )
+    record = await store.read_record('c')
+    assert record is not None and record.branches == []
+
+    await agent.run('and now?', conversation=reloaded)
+
+    assert conversation_view(requests[-1]) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: done',
+            'user-prompt: and now?',
+        ]
+    )
 
 
 @pytest.mark.moves_cache_prefix(reason='The appended request has other instructions than the stored one.')
