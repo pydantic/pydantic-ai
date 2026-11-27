@@ -214,7 +214,7 @@ run_acp_stdio_sync(agent, prompt_capabilities=schema.PromptCapabilities(image=Tr
 
 ## Session persistence
 
-Pass a `session_store` to let a client reopen a past conversation with `session/load`. Each committed turn is persisted as two parts -- the model's message history and the client-visible transcript (the user's messages plus everything streamed back) -- and reopening restores the history into the agent and replays the transcript to the client, so its UI is rebuilt as the user last saw it. Without a store, `session/load` is advertised as unsupported.
+Pass a `session_store` to let a client reopen a past conversation with `session/load`. Each committed turn is persisted as two parts -- the model's message history and the client-visible transcript (the user's messages plus the streamed message and tool-call updates) -- and reopening restores the history into the agent and replays the transcript to the client, so its UI is rebuilt as the user last saw it. Without a store, `session/load` is advertised as unsupported.
 
 ```python
 from pydantic_ai_harness.experimental.acp import InMemorySessionStore
@@ -241,6 +241,8 @@ To advertise ids Pydantic AI's `infer_model` does not understand (for example OA
 ## Token usage
 
 Each completed turn reports its token counts (input/output/total, plus cached tokens) on the ACP `PromptResponse`, summed across any approval pauses. This is an UNSTABLE ACP field, so clients that don't support it simply ignore it.
+
+Each completed turn also ends with a `usage_update` session notification. `used` is the last model request's total tokens (`input_tokens + output_tokens`), rather than the turn-wide sum, and `size` is the context window of the model that served that request, falling back to `DEFAULT_CONTEXT_WINDOW` when it cannot be resolved. The notification is not persisted in the session transcript or replayed by `session/load`.
 
 ## Cancellation and limitations
 
