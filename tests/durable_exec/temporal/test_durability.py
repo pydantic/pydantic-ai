@@ -73,6 +73,7 @@ from pydantic_ai import (
     UserPromptPart,
     WebSearchTool,
     WebSearchUserLocation,
+    XSearchTool,
 )
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import WrapperAgent
@@ -93,6 +94,7 @@ from pydantic_ai.capabilities import (
     SetToolMetadata,
     Toolset,
     WrapperCapability,
+    XSearch,
     durable_operation,
 )
 from pydantic_ai.capabilities.abstract import AbstractCapability, CapabilityOrdering
@@ -113,6 +115,7 @@ from pydantic_ai.exceptions import (
     ModelQuotaExceededError,
     ModelRateLimitError,
     ModelRetry,
+    ModelSchemaTooComplexError,
     ModelTimeoutError,
     ModelUnavailableError,
     SkipModelRequest,
@@ -161,6 +164,7 @@ from ..._inline_snapshot import snapshot
 from ...batch_utils import FAST_BATCH_SETTINGS, FAST_POLLING, FailingBatchTestModel, SlowBatchTestModel
 from ...continuation_utils import ScriptedContinuationModel, StreamSegment, scripted_response
 from ...realtime_connections import InferredConnection
+from ...schema_too_complex_utils import CompilingModel
 from ..override_rebind_cases import REBIND_CASES, RebindCase
 from ..span_utils import drop_fastmcp_client_spans
 
@@ -170,7 +174,7 @@ try:
     from temporalio.api.enums.v1 import EventType
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
-    from temporalio.exceptions import ActivityError, ApplicationError
+    from temporalio.exceptions import ActivityError, ApplicationError, RetryState
     from temporalio.worker import (
         Interceptor,
         Replayer,
@@ -589,6 +593,73 @@ async def test_durability_fallback_attempts_run_as_activities(client: Client):
     # The response records the candidate that answered, which is what the workflow resumes a continuation on.
     assert output == ('from fallback', 'fallback_target')
     # The failed attempt on the agent's model and the one on the fallback model.
+    assert _scheduled_activity_count(history) == 2
+
+
+# --- Durability when the provider can't compile an inferred Native Output schema ---
+
+
+_schema_too_complex_modes: list[str] = []
+
+
+def _schema_too_complex_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    mode = info.model_request_parameters.output_mode
+    _schema_too_complex_modes.append(mode)
+    if mode == 'native':
+        raise ModelHTTPError.for_category(ModelSchemaTooComplexError, status_code=400, model_name='compiler')
+    return ModelResponse(parts=[ToolCallPart('final_result', {'label': 'survey', 'answer': 'answered'})])
+
+
+schema_too_complex_durable_agent = Agent(
+    CompilingModel(
+        _schema_too_complex_fn,
+        model_name='compiler',
+        profile=ModelProfile(supports_json_schema_output=True, default_structured_output_mode='native'),
+    ),
+    name='durability_schema_too_complex_agent',
+    output_type=Answer,
+    capabilities=[
+        TemporalDurability(
+            # The rejection isn't retried in its activity, by default, even when the retry policy would.
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        ),
+    ],
+)
+
+
+@workflow.defn
+class SchemaTooComplexDurableAgentWorkflow:
+    @workflow.run
+    async def run(self, prompt: str) -> str:
+        return (await schema_too_complex_durable_agent.run(prompt)).output.answer
+
+
+@pytest.mark.moves_cache_prefix(
+    reason="the Tool Output attempt sends the output tool, which the rejected Native Output attempt, that nothing cached, didn't"
+)
+async def test_durability_too_complex_inferred_native_output_is_attempted_in_tool_output(client: Client):
+    """The rejected Native Output attempt fails its activity once, and workflow code attempts the request in Tool
+    Output in another activity."""
+    _schema_too_complex_modes.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[SchemaTooComplexDurableAgentWorkflow],
+        plugins=[AgentPlugin(schema_too_complex_durable_agent)],
+    ):
+        wf = await client.start_workflow(
+            SchemaTooComplexDurableAgentWorkflow.run,
+            args=['hello'],
+            id=SchemaTooComplexDurableAgentWorkflow.__name__,
+            task_queue=TASK_QUEUE,
+        )
+        output = await wf.result()
+        history = await wf.fetch_history()
+    assert output == 'answered'
+    assert _schema_too_complex_modes == ['native', 'tool']
     assert _scheduled_activity_count(history) == 2
 
 
@@ -1777,6 +1848,138 @@ async def test_durability_non_retryable_error_subclasses(
     assert _subclass_attempts == [kind]
 
 
+# --- A usage limit a tool's delegate trips inside its activity isn't retried ---
+
+
+_delegation_attempts: list[str] = []
+_delegate_agent = Agent(TestModel(), name='durability_usage_limit_delegate')
+
+
+async def delegate(ctx: RunContext[None], query: str) -> str:
+    _delegation_attempts.append(query)
+    return (await _delegate_agent.run(query, usage=ctx.usage, usage_limits=ctx.usage_limits)).output
+
+
+def _delegating_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('delegate', {'query': 'pydantic'})])
+
+
+delegating_agent = Agent(
+    FunctionModel(_delegating_model_fn),
+    name='durability_delegated_usage_limit',
+    deps_type=type(None),
+    toolsets=[FunctionToolset(tools=[delegate], id='delegate_toolset')],
+    capabilities=[
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        )
+    ],
+)
+
+
+@workflow.defn
+class DelegatedUsageLimitWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            return (await delegating_agent.run('search', usage_limits=UsageLimits(request_limit=1))).output
+        except ActivityError as error:
+            application_error = error.cause
+            assert isinstance(application_error, ApplicationError)
+            return f'{application_error.type}: {application_error.message}'
+
+
+async def test_durability_delegated_usage_limit_is_not_retried(client: Client):
+    """A tool that delegates with the run's `usage` and `usage_limits` trips the limit inside its activity, which
+    fails on its first attempt: every retry would check the limit against the same usage.
+    """
+    _delegation_attempts.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[DelegatedUsageLimitWorkflow],
+        plugins=[AgentPlugin(delegating_agent)],
+    ):
+        output = await client.execute_workflow(
+            DelegatedUsageLimitWorkflow.run, id=DelegatedUsageLimitWorkflow.__name__, task_queue=TASK_QUEUE
+        )
+    assert output == snapshot(
+        'UsageLimitExceeded: The next request would exceed the request_limit of 1. Consider raising the limit, '
+        'or see the docs on usage limits for budget-aware patterns: '
+        'https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
+    )
+    assert _delegation_attempts == ['pydantic']
+
+
+# --- A usage limit the `XSearch` fallback subagent trips inside its activity isn't retried ---
+
+
+_x_search_fallback_attempts: list[str | None] = []
+
+
+def _x_search_fallback_model(ctx: RunContext[None]) -> Model:
+    _x_search_fallback_attempts.append(ctx.tool_name)
+    return TestModel(profile=ModelProfile(supported_native_tools=frozenset({XSearchTool})))
+
+
+def _x_search_calling_model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    return ModelResponse(parts=[ToolCallPart('x_search', {'query': 'pydantic'})])
+
+
+x_search_fallback_agent = Agent(
+    FunctionModel(_x_search_calling_model_fn, profile=ModelProfile(supported_native_tools=frozenset())),
+    name='durability_x_search_fallback_usage_limit',
+    deps_type=type(None),
+    capabilities=[
+        XSearch(fallback_subagent_model=_x_search_fallback_model),
+        TemporalDurability(
+            activity_config=ActivityConfig(
+                start_to_close_timeout=timedelta(seconds=60),
+                retry_policy=RetryPolicy(maximum_attempts=3, initial_interval=timedelta(milliseconds=10)),
+            ),
+        ),
+    ],
+)
+
+
+@workflow.defn
+class XSearchFallbackUsageLimitWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        try:
+            return (await x_search_fallback_agent.run('search', usage_limits=UsageLimits(request_limit=1))).output
+        except ActivityError as error:
+            application_error = error.cause
+            assert isinstance(application_error, ApplicationError)
+            non_retryable = error.retry_state is RetryState.NON_RETRYABLE_FAILURE
+            return f'{application_error.type} (non-retryable: {non_retryable}): {application_error.message}'
+
+
+async def test_durability_x_search_fallback_usage_limit_is_not_retried(client: Client):
+    """The `XSearch` fallback subagent runs under the run's usage limits, so a limit the run has used up stops the
+    subagent before its first request, inside the tool's activity. The activity fails on its first attempt.
+    """
+    _x_search_fallback_attempts.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[XSearchFallbackUsageLimitWorkflow],
+        plugins=[AgentPlugin(x_search_fallback_agent)],
+    ):
+        output = await client.execute_workflow(
+            XSearchFallbackUsageLimitWorkflow.run, id=XSearchFallbackUsageLimitWorkflow.__name__, task_queue=TASK_QUEUE
+        )
+    assert output == snapshot(
+        'UsageLimitExceeded (non-retryable: True): The next request would exceed the request_limit of 1. '
+        'Consider raising the limit, or see the docs on usage limits for budget-aware patterns: '
+        'https://pydantic.dev/docs/ai/core-concepts/agent/#usage-limits'
+    )
+    assert _x_search_fallback_attempts == ['x_search']
+
+
 # --- `ModelSettings['request_timeout']` runs on the workflow's clock ---
 
 
@@ -2861,6 +3064,7 @@ def test_durability_activity_config_not_mutated():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'UsageLimitExceeded',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -2908,6 +3112,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'UsageLimitExceeded',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -2927,6 +3132,7 @@ def test_durability_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'UsageLimitExceeded',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -2954,6 +3160,7 @@ def test_durability_event_stream_handler_activity_config_keeps_non_retryable_err
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'UsageLimitExceeded',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',

@@ -9,8 +9,9 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field
 from functools import partial
 from types import FunctionType, MethodType, NoneType
-from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_origin, overload
+from typing import TYPE_CHECKING, Any, Generic, Literal, Self, cast, get_args, get_origin, overload
 
+import pydantic_core
 from pydantic import BaseModel, Json, TypeAdapter, ValidationError, create_model
 from pydantic_core import (
     ErrorDetails,
@@ -118,13 +119,16 @@ def _build_output_handlers(
 
 
 def _isinstance_maybe_generic(value: Any, type_: type[Any]) -> bool:
-    """`isinstance(value, type_)` that also works for generics like `list[Bar]` and for `Annotated[Bar, ...]`.
+    """`isinstance(value, type_)` that also works for generics like `list[Bar]`, `Literal[...]` and `Annotated[Bar, ...]`.
 
     `isinstance(x, list[Bar])` raises `TypeError`; we fall back to the generic origin
     (here `list`), so union output resolution still matches the collection type when the
     element type can't be checked at runtime.
     """
     type_ = _utils.unwrap_annotated(type_)
+    if get_origin(type_) is Literal:
+        # `isinstance` can't check a `Literal`, nor its origin; a value matches it if it's one of its values.
+        return value in get_args(type_)
     try:
         return isinstance(value, type_)
     except TypeError:
@@ -138,6 +142,23 @@ def is_incomplete_json(error: BaseException | None) -> bool:
     A schema or an output validator rejecting JSON that parsed raises a different error, which keeps its retry.
     """
     return isinstance(error, ValidationError) and any(detail['type'] == 'json_invalid' for detail in error.errors())
+
+
+def are_tool_call_args_cut_off(call: _messages.ToolCallPart) -> bool:
+    """Whether the arguments of a tool call the token limit ended on were cut off before they were complete.
+
+    That's JSON that doesn't parse, or no arguments at all: Anthropic sends `{}` for a tool call it cut off,
+    and no input when streamed. JSON that parsed keeps its retry when the schema or an output validator rejects it.
+    """
+    args = call.args
+    if not args:
+        return True
+    if isinstance(args, str):
+        try:
+            pydantic_core.from_json(args)
+        except ValueError:
+            return True
+    return False
 
 
 def truncated_output_message(max_tokens: int | None) -> str:

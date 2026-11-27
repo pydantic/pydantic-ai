@@ -118,13 +118,16 @@ class TranscriptView(Widget):
         if not self._shown:
             return (False,)
         after = self._after(self._shown[-1])
+        positions = (*self._shown, *((after,) if after is not None else ()))
+        # Once per item, not per row: the panel reads them every paint, and an unfinished line wraps again each time.
+        flags = {
+            item: self.transcript.continued(item, width=self._width) for item in dict.fromkeys(i for i, _ in positions)
+        }
         # A part can change its rows between a paint and a click (one that ends renders again),
         # so a shown row may no longer exist; it joins nothing until the next paint.
-        return tuple(
-            row < len(flags) and flags[row]
-            for item, row in (*self._shown, *((after,) if after is not None else ()))
-            for flags in (self.transcript.continued(item, width=self._width),)
-        ) + ((False,) if after is None else ())
+        return tuple(row < len(flags[item]) and flags[item][row] for item, row in positions) + (
+            (False,) if after is None else ()
+        )
 
     def draw(self, region: Region, focused: bool) -> None:
         """Paint into `region`; `PromptSurface` shows `SCROLLED_HINT` while scrolled away from the newest output."""

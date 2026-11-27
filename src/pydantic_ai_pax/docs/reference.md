@@ -1329,7 +1329,11 @@ the full output of commands in place (see [How tool calls look](#how-tool-calls-
 Claude Code: the transcript is forgotten, but the conversation, your draft, and
 queued messages stay. During a turn, the response still streaming keeps showing.
 Use `/clear` to start a new conversation instead. Drag with the mouse to select
-text; releasing the button copies it to the clipboard and the footer says so.
+text, double-click to select a word, or triple-click to select a line; a line the panel
+wrapped counts as one, and its copy has no line break where it wrapped. Dragging after a
+double- or triple-click extends the selection by words or lines. Releasing the button
+copies the selection to the clipboard and the footer says so. A click on a URL opens it,
+and a double-click on one selects instead of opening it again.
 Locally Pax copies with `pbcopy` on macOS, PowerShell on Windows, and `wl-copy`,
 `xclip`, or `xsel` on Linux. Over SSH, or without one of those, it asks the
 terminal to copy with OSC 52, which some terminals need enabling first (iTerm2:
@@ -2251,8 +2255,9 @@ whole request, which the model is told so it can make a stated choice and carry
 on. Several questions show progress in the title. The tool's transcript line
 names the questions by header, not their raw JSON. The editor's draft is
 preserved, and the question and your picks are printed to the transcript afterwards.
-Drag over the question, its header, or an option to select text; releasing copies it
-to the clipboard without choosing an answer. Transcript text remains selectable too.
+Drag over the question, its header, or an option, or double- or triple-click one, to
+select text; releasing copies it to the clipboard without choosing an answer. Transcript
+text remains selectable too.
 
 The inline `ask_user_question` picker also offers `Other (type answer)`.
 Choose it to type your own answer instead of the suggested options, including for
@@ -3406,9 +3411,7 @@ many sessions run at once.
 
 ### Plugins
 
-Plugins import from `pydantic_ai_pax`. One that imports `pydantic_clai2`, the
-package's former name, loads only while the `pydantic-clai2` package is installed;
-under `pydantic-ai-pax` alone, change its imports to `pydantic_ai_pax`.
+Plugins import from `pydantic_ai_pax`.
 
 Everything beyond the prompt loop is a plugin, including the default coding
 tools. Any Pydantic AI capability is a plugin as it is; give the agent web
