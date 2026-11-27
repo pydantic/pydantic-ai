@@ -83,6 +83,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _output_validated: bool = field(default=False, init=False)
     """Whether `_cached_output` holds the validated final output, which can itself be `None`."""
 
+    # Acquiring this lock yields to the event loop, which gives other tasks one turn per event even when the
+    # model stream never awaits. The locks pulled underneath it use `fast_acquire` to skip their own yield.
     _anext_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
     _pull_scopes: set[anyio.CancelScope] = field(default_factory=lambda: set[anyio.CancelScope](), init=False)
 
@@ -90,7 +92,7 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _replacement_response: Callable[[], Awaitable[_messages.ModelResponse | None]] | None = field(
         default=None, init=False, repr=False
     )
-    _model_pull_lock: anyio.Lock = field(default_factory=anyio.Lock, init=False)
+    _model_pull_lock: anyio.Lock = field(default_factory=lambda: anyio.Lock(fast_acquire=True), init=False)
     _model_pull_scope: anyio.CancelScope | None = field(default=None, init=False)
     _model_stream_finished: bool = field(default=False, init=False)
 
