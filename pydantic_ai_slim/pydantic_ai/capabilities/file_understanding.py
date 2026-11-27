@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterator
+from contextlib import nullcontext
+from contextvars import ContextVar
 from dataclasses import KW_ONLY, dataclass, replace
 from typing import TYPE_CHECKING, TypeGuard, TypeVar
 
+import anyio
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai._file_input import SendableFile, inferred_media_type, unsupported_file_input
@@ -18,7 +21,13 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import KnownModelName, Model, download_item
+from pydantic_ai.models import (
+    KnownModelName,
+    Model,
+    _open_request_download_budget,  # pyright: ignore[reportPrivateUsage]
+    _request_download_budget,  # pyright: ignore[reportPrivateUsage]
+    download_item,
+)
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage
@@ -37,6 +46,10 @@ _FRAMEWORK_METADATA_KEY = '__pydantic_ai__'
 """The namespace in `metadata` reserved for framework state, which the UI adapters never send to or read from a client."""
 
 _NAMESPACE_KEY = 'file_understanding'
+
+# Serializes text DocumentUrl downloads within one FileUnderstanding pass so
+# >10 small URLs do not exhaust the 10-slot optimistic 50 MiB reservation cap.
+_download_serialize_lock: ContextVar[anyio.Lock | None] = ContextVar('_download_serialize_lock', default=None)
 
 _DEFAULT_INSTRUCTIONS = (
     'Describe this file in detail, so that someone who cannot see it can answer questions about it. '
@@ -194,7 +207,14 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
             if requests:
                 usage_limits.check_before_request(ctx.usage + RunUsage(requests=requests))
 
-        results = await gather(*(self._describe(item) for item in pending.values()))
+        has_budget = _request_download_budget.get() is not None
+        lock_token = _download_serialize_lock.set(anyio.Lock()) if _download_serialize_lock.get() is None else None
+        try:
+            with nullcontext() if has_budget else _open_request_download_budget():
+                results = await gather(*(self._describe(item) for item in pending.values()))
+        finally:
+            if lock_token is not None:
+                _download_serialize_lock.reset(lock_token)
         for identity, (description, usage) in zip(pending, results):
             # usage-attribution: ok, the run's total only; the describing run's own span reports these requests
             ctx.usage.incr(usage)
@@ -211,6 +231,10 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         from pydantic_ai.agent import Agent
 
         if isinstance(item, DocumentUrl) and _text_media_type(item) is not None:
+            lock = _download_serialize_lock.get()
+            if lock is not None:
+                async with lock:
+                    return (await download_item(item, data_format='text'))['data'], RunUsage()
             return (await download_item(item, data_format='text'))['data'], RunUsage()
 
         agent: Agent[None, str] = Agent(

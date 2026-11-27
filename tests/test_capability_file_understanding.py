@@ -42,6 +42,7 @@ from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .conftest import IsStr, try_import
+from .models.conftest import mock_downloads
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
@@ -288,6 +289,41 @@ a,b
         ]
     )
     assert describer.calls == 0
+
+
+async def test_text_document_urls_enforce_per_request_download_budget(monkeypatch: pytest.MonkeyPatch):
+    """Text DocumentUrl downloads inside FileUnderstanding share the per-request download budget."""
+    import httpx2
+
+    def handle_request(request: httpx2.Request) -> httpx2.Response:
+        return httpx2.Response(
+            200,
+            content=b'a' * 1024,
+            headers={'content-type': 'text/plain'},
+            request=request,
+        )
+
+    mock_downloads(monkeypatch, handle_request)
+
+    text_only = TestModel(profile=ModelProfile(supports_document_input=False))
+    agent = Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(Describer()))])
+
+    with (
+        patch('pydantic_ai.models._MAX_FILE_URL_DOWNLOAD_BYTES', 1024),
+        patch('pydantic_ai.models._MAX_REQUEST_FILE_URL_DOWNLOAD_BYTES', 1536),
+    ):
+        with pytest.raises(ValueError, match='exceed the total of 1536 bytes'):
+            await agent.run(
+                [
+                    DocumentUrl('https://93.184.215.14/one.txt', media_type='text/plain'),
+                    DocumentUrl('https://93.184.215.14/two.txt', media_type='text/plain'),
+                ]
+            )
+
+    # Under normal 500 MiB total, >10 small text URLs in one request all succeed cleanly.
+    urls = [DocumentUrl(f'https://93.184.215.14/small_{i}.txt', media_type='text/plain') for i in range(12)]
+    result = await agent.run(urls)
+    assert result.output is not None
 
 
 def _png(name: str) -> BinaryContent:
