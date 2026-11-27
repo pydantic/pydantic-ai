@@ -876,7 +876,7 @@ DURABLE_DBOS = Contract(
     applies=lambda _, case: case.calls is not None,
     exempt={
         'BrowserUse': Exempt(
-            f"its browser agent's model requests are no DBOS step, so recovery sends them again: {_ISSUES}14885"
+            f"its browser agent's model requests don't run in DBOS steps, so recovery sends them again: {_ISSUES}14885"
         ),
     },
 )
