@@ -13,8 +13,9 @@ request without it, and compares the two payloads.
 
 A feature with a profile flag is expected to be sent when the flag is on and to raise when it's off, so a class states
 what it supports by setting the flag, the same way for every class. `SENT_DESPITE_FLAG` lists the exceptions to that
-with their reasons. A feature without a flag is expected to be sent. Every `dropped` outcome needs its reason in
-`DROPPED_BECAUSE`: a documented filter, a deliberate skip, or a tracked gap.
+with their reasons. A feature without a flag is expected to be sent, and `RAISES_WITHOUT_FLAG` lists the ones that raise
+with their reasons. Every `dropped` outcome needs its reason in `DROPPED_BECAUSE`: a documented filter, a deliberate
+skip, or a tracked gap.
 
 `ToolDefinition.strict` is left out: a provider that drops it is handled by retrying on the invalid arguments, so it
 stays best-effort.
@@ -167,7 +168,7 @@ FEATURE_CASES = [case for case in CASES if case.id not in DECISION_MODELS]
 
 SENT_DESPITE_FLAG: dict[tuple[str, str], str] = {
     ('OpenAIChatModel', 'audio_input'): (
-        "documented: a file in a user prompt is sent as it is, whatever the model's flag says (`supports_image_input`)"
+        "documented: a file in a user prompt is sent as it is, whatever the model's flag says (`supports_audio_file_input`)"
     ),
     ('SnowflakeModel', 'function_tools'): (
         'tracked gap: only `GoogleModel` checks `supports_tools` for function tools, '
@@ -219,25 +220,32 @@ async def _outcome(case: Case, feature: Feature) -> tuple[Outcome, bool | None, 
     return ('dropped' if with_feature.payload == without.payload else 'sent'), flag, ''
 
 
-def _expected(case: Case, feature: Feature, flag: bool | None) -> Outcome:
+def _expected(case: Case, feature: Feature, flag: bool | None) -> str:
+    """The outcome the profile and the exception tables call for, or why an exception entry is stale."""
     key = (case.id, feature.id)
     if key in DROPPED_BECAUSE:
         return 'dropped'
+    if key in SENT_DESPITE_FLAG:
+        return 'sent' if not flag else 'no `SENT_DESPITE_FLAG` entry, as the flag is on'
     if flag is None:
         return 'raises' if key in RAISES_WITHOUT_FLAG else 'sent'
-    return 'sent' if flag or key in SENT_DESPITE_FLAG else 'raises'
+    return 'sent' if flag else 'raises'
 
 
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in FEATURE_CASES])
 async def test_request_features_match_the_profile(case: Case, allow_model_requests: None):
-    """A flagged feature is sent when its flag is on and raises when it's off; an unflagged one is sent."""
-    mismatches: list[str] = []
-    for feature in FEATURES:
-        outcome, flag, message = await _outcome(case, feature)
-        if outcome != (expected := _expected(case, feature, flag)):
-            flag_text = '' if feature.flag is None else f' with `{feature.flag}={flag}`'
-            mismatches.append(f'{feature.id}{flag_text}: expected {expected}, got {outcome} {message}'.rstrip())
-    assert not mismatches, f'{case.id}:\n' + '\n'.join(mismatches)
+    """A flagged feature is sent when its flag is on and raises when it's off; an unflagged one is sent.
+
+    Each exception table entry overrides that for its pair, and fails once it's no longer needed.
+    """
+    observed = {feature.id: (feature, *await _outcome(case, feature)) for feature in FEATURES}
+    outcomes = {feature_id: outcome for feature_id, (_, outcome, _, _) in observed.items()}
+    expected = {feature_id: _expected(case, feature, flag) for feature_id, (feature, _, flag, _) in observed.items()}
+    assert outcomes == expected, f'{case.id}:\n' + '\n'.join(
+        f'{feature_id} (`{feature.flag}={flag}`): expected {expected[feature_id]}, got {outcome} {message}'
+        for feature_id, (feature, outcome, flag, message) in observed.items()
+        if outcome != expected[feature_id]
+    )
 
 
 def test_exceptions_name_known_cases_and_features():
