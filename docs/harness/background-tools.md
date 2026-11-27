@@ -246,3 +246,9 @@ agent = Agent.from_file('agent.yaml', custom_capability_types=[BackgroundTools])
 
 - [Injecting messages during a run](../message-history.md#injecting-messages-mid-run)
 - [Pydantic AI capabilities](../capabilities/overview.md)
+
+## API reference
+
+::: pydantic_ai_harness.background_tools.BackgroundTools
+
+::: pydantic_ai_harness.background_tools.BackgroundToolResultPart
