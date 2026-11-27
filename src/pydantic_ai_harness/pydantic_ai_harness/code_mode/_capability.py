@@ -478,12 +478,15 @@ class CodeMode(AbstractCapability[AgentDepsT]):
                     external_modules=self.external_modules,
                 )
         except Exception as error:
-            # Temporal records an activity's failure, cause included, in workflow history, and a pool
+            # The engines record an activity's failure, cause included, in workflow history, and a pool
             # or connection error's text can carry the pool's URL or credentials, so only the type's
             # name is kept, and the retry policy matches it. A `UserError` stays one, which Temporal
             # does not retry; the `monty_sandbox` factory can raise one, so its text is dropped too.
             name = type(error).__name__
-            raise (UserError if isinstance(error, UserError) else redacted_error_type(name))(name) from None
+            redacted = (UserError if isinstance(error, UserError) else redacted_error_type(name))(name)
+        # Raised outside the `except` block, so it has no `__context__` at all: the Durable Task SDK records
+        # `__cause__ or __context__` and ignores the `__suppress_context__` that `raise ... from None` sets.
+        raise redacted
 
     @property
     def has_wrap_run_event_stream(self) -> bool:

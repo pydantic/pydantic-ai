@@ -4,12 +4,13 @@ from __future__ import annotations
 
 from collections.abc import Callable, Iterator
 from pathlib import Path
+from typing import Any
 
 import pytest
 
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import AbstractCapability, DynamicCapability
-from pydantic_ai.messages import ModelMessage, ModelResponse, RetryPromptPart, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 
 from ...conftest import try_import
@@ -54,7 +55,7 @@ def _model(*snippets: str) -> FunctionModel:
             part
             for message in messages
             for part in message.parts
-            if isinstance(part, ToolReturnPart | RetryPromptPart) and part.tool_name == 'run_code'
+            if isinstance(part, ToolReturnPart) and part.tool_name == 'run_code'
         ]
         if len(results) < len(snippets):
             code = snippets[len(results)]
@@ -72,6 +73,7 @@ def _make_agent(calls: list[tuple[int, int]], code_mode: AbstractCapability[None
 
     return Agent(
         _model(*snippets or (_CODE,)),
+        deps_type=type(None),
         name='code_mode',
         tools=[add],
         capabilities=[code_mode, AzureDurableTaskDurability()],
@@ -115,6 +117,31 @@ def test_remote_turns_run_as_activities_and_resume_from_history(durable_worker: 
     assert replacement.activity_calls == [turn, turn, add, turn, 'code_mode__model.request']
     # No Monty call ran in orchestrator code, so no portal was opened there.
     assert portal_threads() == []
+
+
+_SECRET = 'token-4d1f9c'
+
+
+def _refusing_pool() -> Any:
+    raise ConnectionRefusedError(f'the Monty server at https://user:{_SECRET}@monty.invalid refused the connection')
+
+
+def test_failed_turn_activity_records_only_the_error_type(durable_worker: InMemoryWorker) -> None:
+    """A turn activity's failure keeps only the error's type: a pool error's text, or its context, can carry
+    the pool's URL or credentials, and the Durable Task SDK records an error's context even after
+    `raise ... from None`.
+    """
+    agent = _make_agent([], CodeMode(monty_sandbox=_refusing_pool))
+    with registered_agent(durable_worker, agent):
+        instance_id = schedule_agent(durable_worker, agent, deps=None)
+        with pytest.raises(OrchestrationFailedError) as exc_info:
+            completed(durable_worker, instance_id)
+    assert 'ConnectionRefusedError' in str(exc_info.value)
+    instance = durable_worker.instances[instance_id]
+    recorded = [*instance.history, *instance.new_events]
+    assert any(event.HasField('taskFailed') for event in recorded)
+    assert _SECRET not in ''.join(str(event) for event in recorded)
+    assert _SECRET not in str(exc_info.value)
 
 
 def test_turn_activity_stops_a_snippet_that_computes_forever(durable_worker: InMemoryWorker) -> None:
