@@ -124,12 +124,16 @@ from ..span_utils import drop_fastmcp_client_spans
 
 try:
     from temporalio import activity, workflow
-    from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
+    from temporalio.activity import (
+        ActivityCancellationDetails,
+        _Definition as ActivityDefinition,  # pyright: ignore[reportPrivateUsage]
+    )
     from temporalio.api.history.v1 import ActivityTaskScheduledEventAttributes
     from temporalio.client import Client, WorkflowFailureError, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
     from temporalio.exceptions import ApplicationError, CancelledError as TemporalCancelledError
+    from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
 
@@ -150,6 +154,9 @@ try:
     from pydantic_ai.durable_exec.temporal._function_toolset import (
         TemporalFunctionToolset,
     )
+    from pydantic_ai.durable_exec.temporal._keep_partial import (
+        _marked as _keeps_partial_mark,  # pyright: ignore[reportPrivateUsage]
+    )
     from pydantic_ai.durable_exec.temporal._mcp_toolset import TemporalMCPToolset
     from pydantic_ai.durable_exec.temporal._model import TemporalModel
     from pydantic_ai.durable_exec.temporal._run_context import (
@@ -157,6 +164,9 @@ try:
         deserialize_run_context,
     )
     from pydantic_ai.durable_exec.temporal._toolset import CallToolParams
+    from pydantic_ai.durable_exec.temporal._transports import (
+        _RequestParams,  # pyright: ignore[reportPrivateUsage]
+    )
 
 except ImportError:  # pragma: lax no cover
     pytest.skip('temporal not installed', allow_module_level=True)
@@ -962,6 +972,64 @@ async def test_temporal_workflow_cancel_keeps_streamed_partial_response(client: 
 
     _assert_streamed_partial_kept(messages)
     await _replay_partial_cancellation(history)
+
+
+@pytest.mark.parametrize(
+    'details',
+    [
+        pytest.param(ActivityCancellationDetails(cancel_requested=True, timed_out=True), id='heartbeat-timeout'),
+        pytest.param(ActivityCancellationDetails(cancel_requested=True, worker_shutdown=True), id='worker-shutdown'),
+        pytest.param(ActivityCancellationDetails(cancel_requested=True, paused=True), id='paused'),
+        pytest.param(ActivityCancellationDetails(cancel_requested=True, reset=True), id='reset'),
+        pytest.param(ActivityCancellationDetails(cancel_requested=True), id='cancel-requested'),
+    ],
+)
+async def test_temporal_marked_stream_activity_keeps_partial_only_for_a_requested_cancel(
+    details: ActivityCancellationDetails,
+) -> None:
+    """A streamed model activity marked to keep its partial returns it only for a cancellation the workflow requested.
+
+    Ended by a heartbeat timeout, a worker shutting down, a pause or a reset, it still fails, so Temporal retries the
+    attempt, and the run records nothing the attempt streamed. The activity runs in an `ActivityEnvironment`, which
+    sets the cancellation details a real worker reports: reaching a heartbeat timeout or a worker shutdown through a
+    worker would take a stalled event loop or a second worker to retry on.
+    """
+    global _partial_cancellation_activity_started
+
+    durability = TemporalDurability.from_agent(_partial_cancellation_agents[True])
+    assert durability is not None
+    [registration] = [
+        registered
+        for registered in durability.temporal_activities
+        if ActivityDefinition.must_from_callable(registered).name.endswith('__model_request_stream')  # pyright: ignore[reportUnknownMemberType]
+    ]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='marked-stream-run')
+    params = _RequestParams(
+        messages=[ModelRequest(parts=[UserPromptPart('Write a reply.')])],
+        model_settings=None,
+        model_request_parameters=ModelRequestParameters(),
+        serialized_run_context=TemporalRunContext.serialize_run_context(ctx),
+    )
+
+    _partial_cancellation_activity_started = asyncio.Event()
+    env = ActivityEnvironment()
+    # The header the workflow schedules an opted-in stream's activity with, as the plugin's interceptor reads it.
+    token = _keeps_partial_mark.set(True)
+    try:
+        run = asyncio.create_task(env.run(registration, params, None))
+    finally:
+        _keeps_partial_mark.reset(token)
+    await _partial_cancellation_activity_started.wait()
+    env.cancel(cancellation_details=details)
+
+    if details.timed_out or details.worker_shutdown or details.paused or details.reset:
+        with pytest.raises(asyncio.CancelledError):
+            await run
+    else:
+        response = await run
+        assert isinstance(response, ModelResponse)
+        assert response.parts == [TextPart(content='The partial reply')]
+        assert response.state == 'interrupted'
 
 
 async def test_temporal_stream_cancellation_replays_history_recorded_without_the_partial(
