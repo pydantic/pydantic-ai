@@ -66,6 +66,7 @@ from ..native_tools import (
     ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
+    MCPServerTool,
     WebFetchTool,
     WebSearchTool,
 )
@@ -483,6 +484,16 @@ def _http_error(
     suggested_model_id = None
     if status == 'NOT_FOUND' and isinstance(message, str) and message.startswith(f'models/{model_name} is not found '):
         suggested_model_id = _suggest_known_model_id_from_provider_error(model_id_namespace, model_name)
+    hint = None
+    # The Gemini API rejects a model it serves only through Interactions, like `gemini-omni-1.1-flash`, with
+    # `400 INVALID_ARGUMENT`: "This model only supports Interactions API." (verified live 2026-11-26).
+    if (
+        status == 'INVALID_ARGUMENT'
+        and isinstance(message, str)
+        and 'only supports interactions api' in message.lower()
+    ):
+        # No `google-interactions:` prefix: it uses the Gemini API, and this function can't tell the client's transport.
+        hint = 'Use `GoogleInteractionsModel` for this model.'
     return _model_errors.google_status_error(
         model_name,
         status_code=status_code,
@@ -491,6 +502,7 @@ def _http_error(
         body=body,
         headers=headers,
         suggested_model_id=suggested_model_id,
+        hint=hint,
         in_stream=in_stream,
     )
 
@@ -832,6 +844,7 @@ class GoogleModel(Model[Client]):
                 f'`ImageGenerationTool` is not supported by model {self.model_name!r}. '
                 "Use a model with 'image' in the name, or `ImageGeneration(local=...)` for a local fallback."
             )
+        self._reject_mcp_server_tools(model_request_parameters)
         # Count only native tools this model supports, including the settings set on them.
         # `Model.prepare_request` swaps an unsupported one for its local fallback, drops it when
         # optional, or rejects it, so it never reaches the wire beside output tools. A supported one
@@ -857,6 +870,16 @@ class GoogleModel(Model[Client]):
                     'Use `output_type=PromptedOutput(...)` instead.'
                 )
         return super().prepare_request(model_settings, model_request_parameters)
+
+    def _reject_mcp_server_tools(self, params: ModelRequestParameters) -> None:
+        """Point a remote MCP server at the Interactions API, which serves it, before base validation rejects it."""
+        if _google_common.rejects_native_tool(self, params, MCPServerTool):
+            # The `google-interactions:` prefix uses the Gemini API, so a Google Cloud model isn't pointed at it.
+            prefix = '' if self._is_google_cloud else ', with the `google-interactions:` prefix,'
+            raise UserError(
+                f'`MCPServerTool` is not supported by `GoogleModel`. Use `GoogleInteractionsModel`{prefix} '
+                'or `MCP(local=True)` for a local fallback.'
+            )
 
     async def request(
         self,
