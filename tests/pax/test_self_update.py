@@ -573,6 +573,28 @@ async def test_command_refuses_once_another_process_replaced_the_install() -> No
     assert len(installs) == 1
 
 
+async def test_a_later_shell_compares_against_the_build_this_process_runs(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The web UI builds `Updates` per session: one built after another process replaced the install still knows
+    the build in memory, so its `/update` refuses instead of importing the new files' modules.
+    """
+    old, new = Installed(version='0.52.0', tool=True), Installed(version='0.53.0', tool=True)
+    on_disk = old
+    monkeypatch.setattr(self_update, 'installed', lambda: on_disk)
+    self_update.running.cache_clear()
+    try:
+        first = Updates(channel=lambda: 'stable', on_disk=lambda: on_disk)
+        on_disk = new
+        later = Updates(
+            channel=lambda: 'stable',
+            on_disk=lambda: on_disk,
+            fetch=lambda channel: pytest.fail('a replaced install checks nothing'),
+        )
+    finally:
+        self_update.running.cache_clear()
+    assert first.current == later.current == old
+    assert (await later.command([])).startswith('Not updating: another process installed Pax 0.53.0 in place of')
+
+
 def test_hold_environment_only_in_a_writable_uv_tool_environment(tmp_path: Path) -> None:
     assert self_update.hold_environment(tmp_path) is None, 'not a `uv tool` environment'
     (tmp_path / 'uv-receipt.toml').write_text('')

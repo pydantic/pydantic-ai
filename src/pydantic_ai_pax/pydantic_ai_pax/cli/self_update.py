@@ -23,7 +23,7 @@ import threading
 import time
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from dataclasses import dataclass, field
-from functools import partial
+from functools import cache, partial
 from importlib import metadata
 from pathlib import Path
 from typing import IO, TYPE_CHECKING, Annotated
@@ -121,6 +121,16 @@ def installed() -> Installed:
         commit=archive[1] if archive else None if vcs is None else vcs['commit_id'],
         tool=Path(sys.prefix, 'uv-receipt.toml').is_file(),
     )
+
+
+@cache
+def running() -> Installed:
+    """The build this process runs, read once: another process's `uv tool install` can replace the files later.
+
+    Each web UI session builds its own `Updates`, so reading `installed()` there would take a newer install's
+    metadata for the code still in memory.
+    """
+    return installed()
 
 
 def latest(channel: UpdateChannel, *, transport: 'httpx.BaseTransport | None' = None) -> str:
@@ -423,7 +433,7 @@ class Updates:
     """The footer's update notice, the update menu's status, and the `/update` install, for the channel the settings name."""
 
     channel: Callable[[], UpdateChannel]
-    current: Installed = field(default_factory=installed)
+    current: Installed = field(default_factory=running)
     fetch: Callable[[UpdateChannel], str] = latest
     spawn: Callable[[Callable[[], None]], None] = _in_thread
     """Runs the background check; tests run it inline."""

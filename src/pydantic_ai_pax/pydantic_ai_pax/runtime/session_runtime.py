@@ -583,6 +583,7 @@ def create_shell(
     # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
     updates.capture = lambda: web_serving(loader) is not None
     updates.serving = lambda: web_serving(loader)
+    # Deliberately no `--session-id` for an unsaved conversation, unlike `relaunch`: it has nothing to resume yet.
     updates.resume = lambda: _saved_id(shell.session)
     models.plugins = loader.model_providers
     models.logins = loader.logins
@@ -928,7 +929,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         summary = self.session.summary
         return Relaunch(
             executable=executable,
-            session_id=summary.id if summary.revision else None,
+            session_id=_saved_id(self.session),
             # A conversation named with `--session-id` keeps its ID until its first prompt saves it.
             new_session_id=summary.id if not summary.revision and self.sessions.chosen else None,
             web=web,
