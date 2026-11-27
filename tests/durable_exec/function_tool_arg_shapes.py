@@ -468,7 +468,7 @@ SHAPES = [
     ArgShape(model_post_init_runs, {'p': {'n': 1}, 'token': SECRET}, raw=False, in_process=False),
     ArgShape(custom_default_factory, {'k': {'n': 1}, 'token': SECRET}, raw=False, in_process=False),
     ArgShape(callable_discriminator, {'pet': {'kind': 'dog'}, 'token': SECRET}, raw=False, in_process=False),
-    ArgShape(enum_missing, {'color': 'red', 'token': SECRET}, raw=False, in_process=False),
+    ArgShape(enum_missing, {'color': 'crimson', 'token': SECRET}, raw=False, in_process=False),
     ArgShape(mutating_validator, {'filters': {'price': 3, 'qty': 2}}, raw=False),
     # A hook changed the arguments, so the call crosses as before: the tool gets the hook's value wherever the
     # dump keeps it, and the masked secret either way.
@@ -554,13 +554,14 @@ def check_shapes(
     engine: Engine, received: Mapping[str, str], in_process: Mapping[str, str], carried_raw: Mapping[str, bool]
 ) -> None:
     """Compare a durable run's results with a run without an engine, shape by shape."""
-    wrong: dict[str, str] = {}
-    for shape in SHAPES:
-        name = shape.tool.__name__
-        if carried_raw.get(name) is not shape.carries_raw(engine):
-            wrong[name] = f'raw_tool_args carried: {carried_raw.get(name)}, expected {shape.carries_raw(engine)}'
-        elif (received.get(name) == in_process[name]) is not shape.in_process:
-            wrong[name] = f'received {received.get(name)}, in process {in_process[name]}'
-        elif shape.hook_value is not None and shape.hook_value not in (received.get(name) or ''):
-            wrong[name] = f"received {received.get(name)}, missing the hook's {shape.hook_value}"
+    wrong = {
+        name: {'received': received.get(name), 'in process': in_process[name], 'carried raw': carried_raw.get(name)}
+        for shape in SHAPES
+        if (name := shape.tool.__name__)
+        and (
+            carried_raw.get(name) is not shape.carries_raw(engine)
+            or (received.get(name) == in_process[name]) is not shape.in_process
+            or (shape.hook_value is not None and shape.hook_value not in (received.get(name) or ''))
+        )
+    }
     assert wrong == {}

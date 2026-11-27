@@ -16,6 +16,7 @@ from pydantic import (
     AfterValidator,
     AliasChoices,
     AliasPath,
+    AnyUrl,
     BaseModel,
     Discriminator,
     Field,
@@ -33,7 +34,7 @@ from pydantic_core import to_jsonable_python
 from typing_extensions import TypedDict
 
 from pydantic_ai import Agent, RunContext, Tool
-from pydantic_ai.capabilities import Hooks, ValidatedToolArgs
+from pydantic_ai.capabilities import Hooks, RawToolArgs, ValidatedToolArgs
 from pydantic_ai.durable_exec import (
     JSON_CODEC,
     DurabilityEngineSpec,
@@ -578,14 +579,27 @@ async def test_raw_tool_args_for_unit_keeps_the_dump_when_a_check_raises():
 
 
 async def _validated_call(
-    tool: Tool[None], args: dict[str, Any], change: Callable[[ValidatedToolArgs], ValidatedToolArgs] | None = None
+    tool: Tool[None],
+    args: dict[str, Any],
+    change: Callable[[ValidatedToolArgs], ValidatedToolArgs] | None = None,
+    *,
+    repair: Callable[[RawToolArgs], RawToolArgs] | None = None,
 ) -> tuple[FunctionToolset[None], ToolsetCallToolParams]:
     """Run `tool` once, and return the parameters a durable engine's transport gets for the call.
 
-    `change` stands in for a hook that changes the validated arguments.
+    `change` stands in for a hook that changes the validated arguments, `repair` for one that changes the model's
+    arguments before validation.
     """
     calls: list[tuple[RunContext[None], ValidatedToolArgs]] = []
     hooks = Hooks[None]()
+
+    if repair is not None:
+
+        @hooks.on.before_tool_validate(tools=[tool.name])
+        async def fix(
+            ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: RawToolArgs
+        ) -> RawToolArgs:
+            return repair(args)
 
     @hooks.on.after_tool_validate(tools=[tool.name])
     async def capture(
@@ -702,6 +716,11 @@ class Tags(BaseModel):
     tags: list[str] = Field(default_factory=list)
 
 
+class Weights(BaseModel):
+    # Pydantic deep-copies this unhashable default, which holds only builtin data.
+    weights: dict[str, list[int]] = {'a': [1]}
+
+
 class Cached(BaseModel):
     n: int
     _cache: int = PrivateAttr(default=0)
@@ -712,6 +731,7 @@ def no_user_code(
     token: SecretStr,
     nums: Json[list[int]],
     tags: Tags,
+    weights: Weights,
     cached: Cached,
     hue: Hue,
     pet: Annotated[Cat | Dog, Field(discriminator='kind')],
@@ -811,6 +831,7 @@ GATE_CASES = [
             'token': 'hunter2',
             'nums': '[1, 2]',
             'tags': {},
+            'weights': {},
             'cached': {'n': 1},
             'hue': 'red',
             'pet': {'kind': 'dog'},
@@ -825,7 +846,7 @@ GATE_CASES = [
     GateCase(Tool(dataclass_post_init_runs), {'venue': VENUE, 't': {'n': 1}}, sent=False),
     GateCase(Tool(custom_init_runs), {'venue': VENUE, 'c': {'n': 1}}, sent=False),
     GateCase(Tool(callable_discriminator), {'venue': VENUE, 'pet': {'kind': 'dog'}}, sent=False),
-    GateCase(Tool(enum_missing), {'venue': VENUE, 'shade': 'red'}, sent=False),
+    GateCase(Tool(enum_missing), {'venue': VENUE, 'shade': 'crimson'}, sent=False),
     GateCase(Tool(copied_default), {'venue': VENUE, 'd': {}}, sent=False),
     GateCase(Tool(unhashable_validator), {'venue': VENUE, 'n': 3}, sent=False),
     GateCase(Tool(list_subclass_validator), {'venue': VENUE, 'n': 3}, sent=False),
@@ -940,6 +961,39 @@ async def test_raw_tool_args_for_unit_keeps_arguments_a_hook_changed_on_the_dump
     )
 
 
+def repaired(venue: Venue, n: int) -> None:
+    pass
+
+
+async def test_raw_tool_args_for_unit_keeps_the_dump_when_a_hook_repaired_the_model_arguments():
+    """Arguments a `before_tool_validate` hook repaired cross as their dump: the model's own don't validate.
+
+    Not a VCR test: the helper's decision is internal to a durable engine's transport, and no model request is
+    involved.
+    """
+    toolset, params = await _validated_call(
+        Tool(repaired),
+        {'venue': VENUE, 'n': 'three'},
+        repair=lambda args: {**args, 'n': 3} if isinstance(args, dict) else args,
+    )
+    assert params.tool_args['n'] == 3
+    assert raw_tool_args_for_unit(toolset, params, loaded_tool_args=_dumped_by_name(params.tool_args)) is None
+
+
+def linked(venue: Venue, url: AnyUrl) -> None:
+    pass
+
+
+async def test_raw_tool_args_for_unit_keeps_the_dump_for_a_type_it_cannot_compare():
+    """An argument of a type the comparison doesn't know, such as a URL, keeps the call on its dump.
+
+    Not a VCR test: the helper's decision is internal to a durable engine's transport, and no model request is
+    involved.
+    """
+    toolset, params = await _validated_call(Tool(linked), {'venue': VENUE, 'url': 'https://example.com/'})
+    assert raw_tool_args_for_unit(toolset, params, loaded_tool_args=_dumped_by_name(params.tool_args)) is None
+
+
 class Sparse(BaseModel):
     a: int
     b: int = 0
@@ -990,9 +1044,11 @@ async def test_raw_tool_args_for_unit_runs_no_validator_again_with_the_run_valid
     """
     toolset, params = await _validated_call(Tool(noted), {'venue': VENUE, 'q': {'n': 1}})
     writes = Writes()
+    Noted.model_validate({'n': 1}, context=writes)
+    assert writes.values == [1]
     params = replace(params, ctx=replace(params.ctx, validation_context=writes))
     assert raw_tool_args_for_unit(toolset, params, loaded_tool_args=_dumped_by_name(params.tool_args)) is None
-    assert writes.values == []
+    assert writes.values == [1]
 
 
 async def test_validation_context_rebuilt_on_a_shallow_copy_leaves_the_original_rebuildable():

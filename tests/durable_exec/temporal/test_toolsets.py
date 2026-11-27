@@ -15,7 +15,7 @@ from unittest.mock import patch
 
 import pytest
 from pydantic import BaseModel, ConfigDict, Field, Json, SecretStr, computed_field, model_validator
-from pydantic_core import PydanticSerializationError
+from pydantic_core import PydanticSerializationError, to_json
 from typing_extensions import TypedDict
 
 from pydantic_ai import (
@@ -75,9 +75,11 @@ from ..function_tool_arg_shapes import RECEIVED, TOOLS, check_shapes, shapes_hoo
 try:
     from temporalio import activity, workflow
     from temporalio.activity import _Definition as ActivityDefinition  # pyright: ignore[reportPrivateUsage]
+    from temporalio.api.common.v1 import Payload
     from temporalio.client import Client, WorkflowHistory
     from temporalio.common import RetryPolicy
     from temporalio.contrib.pydantic import pydantic_data_converter
+    from temporalio.converter import DataConverter, EncodingPayloadConverter
     from temporalio.testing import ActivityEnvironment
     from temporalio.worker import Replayer, UnsandboxedWorkflowRunner, Worker
     from temporalio.workflow import ActivityCancellationType, ActivityConfig
@@ -90,6 +92,7 @@ try:
     )
     from pydantic_ai.durable_exec.temporal import (
         AgentPlugin,
+        PydanticAIPayloadConverter,
         PydanticAIPlugin,
         TemporalAgent,  # pyright: ignore[reportDeprecated]
         TemporalDurability,
@@ -1593,6 +1596,93 @@ async def test_function_tool_argument_shapes_cross_the_activity_input(client: Cl
 
     inputs = _call_tool_activity_inputs(await handle.fetch_history())
     check_shapes('temporal', RECEIVED, in_process, {name: 'raw_tool_args' in params for name, params in inputs.items()})
+
+
+class _DictAsCustomJSON(EncodingPayloadConverter):
+    """Writes a dict under an encoding other than `json/plain`, as a custom payload converter can."""
+
+    @property
+    def encoding(self) -> str:
+        return 'json/custom'
+
+    def to_payload(self, value: object) -> Payload | None:
+        if type(value) is not dict:
+            return None
+        return Payload(metadata={'encoding': self.encoding.encode()}, data=to_json(value))
+
+    def from_payload(self, payload: Payload, type_hint: type | None = None) -> object:
+        return json.loads(payload.data)
+
+
+class DictAsCustomJSONPayloadConverter(PydanticAIPayloadConverter):
+    def __init__(self) -> None:
+        super().__init__()
+        self.converters = {b'json/custom': _DictAsCustomJSON(), **self.converters}
+
+
+_custom_dict_tokens: list[str] = []
+
+
+def _custom_dict_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    if len(messages) > 1:
+        return ModelResponse(parts=[TextPart('done')])
+    return ModelResponse(parts=[ToolCallPart('use_token', {'token': 'hunter2'}, tool_call_id='c1')])
+
+
+_custom_dict_agent = Agent(
+    FunctionModel(_custom_dict_model),
+    name='custom_dict_converter',
+    capabilities=[TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
+)
+
+
+@_custom_dict_agent.tool_plain
+def use_token(token: SecretStr) -> str:
+    _custom_dict_tokens.append(token.get_secret_value())
+    return 'used'
+
+
+@workflow.defn
+class CustomDictConverterWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        result = await _custom_dict_agent.run('go')
+        return result.output
+
+
+async def test_function_tool_arguments_cross_as_their_dump_under_a_converter_that_does_not_write_json(
+    temporal_target: str,
+):
+    """A payload converter that doesn't write the arguments as `json/plain` keeps every call on its dump.
+
+    Only JSON arguments can be checked against the model's, so the `SecretStr` arrives masked, as on `main`.
+    """
+    client = await Client.connect(
+        temporal_target,
+        data_converter=DataConverter(payload_converter_class=DictAsCustomJSONPayloadConverter),
+        plugins=[PydanticAIPlugin()],
+    )
+    _custom_dict_tokens.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[CustomDictConverterWorkflow],
+        plugins=[AgentPlugin(_custom_dict_agent)],
+    ):
+        handle = await client.start_workflow(
+            CustomDictConverterWorkflow.run,
+            id=f'{CustomDictConverterWorkflow.__name__}-{uuid.uuid4()}',
+            task_queue=TASK_QUEUE,
+            execution_timeout=timedelta(seconds=30),
+        )
+        assert await handle.result() == 'done'
+
+    converter = DictAsCustomJSONPayloadConverter()
+    [payload] = converter.to_payloads([{'token': '**********'}])
+    assert payload.metadata['encoding'] == b'json/custom'
+    assert converter.from_payloads([payload]) == [{'token': '**********'}]
+    assert _custom_dict_tokens == ['**********']
+    assert 'raw_tool_args' not in _call_tool_activity_inputs(await handle.fetch_history())['c1']
 
 
 class Folded(BaseModel):

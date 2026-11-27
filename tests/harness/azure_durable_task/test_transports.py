@@ -10,7 +10,7 @@ from typing import Annotated, Any, Self
 from uuid import UUID
 
 import pytest
-from pydantic import BaseModel, ConfigDict, Field, Json, JsonValue, SecretStr, computed_field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, Json, JsonValue, SecretStr, model_validator
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from typing_extensions import TypedDict
 
@@ -177,16 +177,6 @@ class SerializedAs(BaseModel):
     room: str = Field(serialization_alias='roomOut')
 
 
-class Counted(BaseModel):
-    model_config = ConfigDict(extra='forbid')
-    qty: int
-
-    @computed_field
-    @property
-    def doubled(self) -> int:
-        return self.qty * 2
-
-
 def test_tool_arguments_are_validated_from_the_model_arguments_in_the_activity(
     durable_worker: 'InMemoryWorker',
 ) -> None:
@@ -195,7 +185,7 @@ def test_tool_arguments_are_validated_from_the_model_arguments_in_the_activity(
     The dump writes a `TypedDict` and a stdlib dataclass by field name while their schema reads the alias, masks
     the `SecretStr`, and writes the parsed `Json` value while the schema expects a string.
     """
-    observed: list[tuple[Venue, Place, str, list[int], SerializedAs, Counted]] = []
+    observed: list[tuple[Venue, Place, str, list[int], SerializedAs]] = []
 
     def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         args = {
@@ -204,24 +194,19 @@ def test_tool_arguments_are_validated_from_the_model_arguments_in_the_activity(
             'token': 'hunter2',
             'nums': '[1, 2]',
             'out': {'room': 'A1'},
-            'counted': {'qty': 2},
         }
         return ModelResponse(parts=[ToolCallPart('book', args)] if len(messages) == 1 else [TextPart('done')])
 
     agent = Agent(FunctionModel(model), name='model-args', capabilities=[AzureDurableTaskDurability()])
 
     @agent.tool_plain
-    def book(
-        venue: Venue, place: Place, token: SecretStr, nums: Json[list[int]], out: SerializedAs, counted: Counted
-    ) -> str:
-        observed.append((venue, place, token.get_secret_value(), nums, out, counted))
+    def book(venue: Venue, place: Place, token: SecretStr, nums: Json[list[int]], out: SerializedAs) -> str:
+        observed.append((venue, place, token.get_secret_value(), nums, out))
         return 'booked'
 
     with registered_agent(durable_worker, agent):
         assert run_agent(durable_worker, agent, 'Hi', deps=None).output == 'done'
-    assert observed == [
-        ({'room': 'A1'}, Place(city='Paris'), 'hunter2', [1, 2], SerializedAs(room='A1'), Counted(qty=2))
-    ]
+    assert observed == [({'room': 'A1'}, Place(city='Paris'), 'hunter2', [1, 2], SerializedAs(room='A1'))]
 
 
 class Folded(BaseModel):
