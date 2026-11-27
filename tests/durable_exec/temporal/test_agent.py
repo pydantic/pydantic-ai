@@ -4537,21 +4537,21 @@ async def test_temporal_event_stream_handler_reads_dispatch_snapshots(client: Cl
     )
 
 
-def _in_flight_error(ctx: RunContext[Any]) -> str:
+def _in_flight_error(ctx: RunContext[None]) -> str:
     with pytest.raises(UserError) as exc_info:
         _ = ctx.in_flight
     return str(exc_info.value)
 
 
 @dataclass
-class _InFlightInWorkflowCode(AbstractCapability[Any]):
+class _InFlightInWorkflowCode(AbstractCapability[None]):
     """Reads `ctx.in_flight` from `before_run`, which runs in workflow code, and passes what it lists to the model."""
 
-    async def before_run(self, ctx: RunContext[Any]) -> None:
+    async def before_run(self, ctx: RunContext[None]) -> None:
         ctx.enqueue(f'live work: {len(ctx.in_flight.live())}')
 
 
-async def _in_flight_in_activity(ctx: RunContext[Any]) -> str:
+async def _in_flight_in_activity(ctx: RunContext[None]) -> str:
     """Runs in an activity, so its context holds the enqueue guard."""
     return _in_flight_error(ctx)
 
@@ -4559,6 +4559,7 @@ async def _in_flight_in_activity(ctx: RunContext[Any]) -> str:
 _in_flight_agent = Agent(
     TestModel(),
     name='temporal_in_flight',
+    deps_type=type(None),
     tools=[_in_flight_in_activity],
     capabilities=[_InFlightInWorkflowCode(), TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG)],
 )

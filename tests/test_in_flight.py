@@ -1091,6 +1091,48 @@ async def test_a_durable_wait_outside_a_run_has_no_work_to_apply():
         assert await wait_for_external_event('question', ask=ask) == 'answered token'
 
 
+async def test_durable_flag_reaches_handles_snapshots_and_events(emitted: _Emitted):
+    """`durable=True` on started and registered work is reported on the handle, in snapshots and in events."""
+    handles: dict[str, InFlightWork[None]] = {}
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='start', args={})])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn))
+
+    @agent.tool
+    async def start(ctx: RunContext) -> str:
+        async def work() -> None:
+            ctx.enqueue('result')
+
+        handles['started'] = ctx.in_flight.start(work, kind='test', name='started', id='started', durable=True)
+        handles['registered'] = ctx.in_flight.register(kind='test', name='registered', id='registered', durable=True)
+        ctx.in_flight.settle(handles['registered'])
+        return 'started'
+
+    await agent.run('go')
+
+    assert [handle.durable for handle in handles.values()] == [True, True]
+    assert [event.work for event in emitted.events if event.phase == 'started'] == [
+        (
+            InFlightWorkSnapshot(
+                id='started', kind='test', name='started', on_end='drain', durable=True, state='running'
+            ),
+        ),
+        (
+            InFlightWorkSnapshot(
+                id='registered', kind='test', name='registered', on_end='detach', durable=True, state='running'
+            ),
+        ),
+    ]
+    settled = {
+        snapshot.id: snapshot.durable for event in emitted.events if event.phase == 'settled' for snapshot in event.work
+    }
+    assert settled == {'started': True, 'registered': True}
+
+
 def test_in_flight_work_event_round_trips():
     event = InFlightWorkEvent(phase='started', work=(_snapshot('a', 'running'),), live=1)
     adapter = TypeAdapter[AgentStreamEvent](AgentStreamEvent)
