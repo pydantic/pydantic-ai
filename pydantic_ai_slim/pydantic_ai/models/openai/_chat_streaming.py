@@ -16,13 +16,7 @@ from pydantic import ValidationError
 
 from ... import ModelAPIError, _utils, usage
 from ..._utils import now_utc as _now_utc, number_to_datetime
-from ...messages import (
-    FinishReason,
-    ModelResponseStreamEvent,
-    PartStartEvent,
-    TextPart,
-    ThinkingPart,
-)
+from ...messages import FinishReason, ModelResponseStreamEvent, PartStartEvent, TextPart, ThinkingPart
 from ...profiles import DEFAULT_THINKING_TAGS
 from ...profiles.openai import OpenAIModelProfile
 from .. import StreamedResponse
@@ -40,9 +34,6 @@ from ._citations import (
     chat_citations_provider_details,
     jsonable_annotation,
     map_chat_citations,
-)
-from ._deepseek_web_tools import (
-    web_tool_usage,
 )
 from ._errors import map_api_errors
 from ._model_names import OpenAIModelName
@@ -207,11 +198,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         # Annotation positions count into the message's original text, so citations only go on a single text part that
         # still equals it: not split by reasoning, and not changed by removing thinking tags or whitespace.
         citations = (
-            map_chat_citations(
-                annotations,
-                part.content,
-                content_offsets=self._model_profile.get('openai_url_citation_content_offsets', False),
-            )
+            map_chat_citations(annotations, part.content)
             if len(text_part_ids) == 1 and part.content == self._raw_text_content
             else None
         )
@@ -420,15 +407,7 @@ class OpenAIStreamedResponse(StreamedResponse):
         return None
 
     def _map_usage(self, response: ChatCompletionChunk) -> usage.RequestUsage:
-        request_usage = map_usage(
-            response,
-            self._provider_name,
-            self._provider_url,
-            self.model_name,
-            web_tool_usage=web_tool_usage(response.usage)
-            if self._model_profile.get('openai_deepseek_web_tools', False)
-            else None,
-        )
+        request_usage = map_usage(response, self._provider_name, self._provider_url, self.model_name)
         if self._model_profile.get('openai_chat_completion_tokens_omit_reasoning', False):
             add_reasoning_tokens_omitted_from_completion_tokens(request_usage, response.usage)
         return request_usage

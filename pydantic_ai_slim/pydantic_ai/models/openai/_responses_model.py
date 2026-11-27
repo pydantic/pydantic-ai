@@ -745,7 +745,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         # Chat Completions endpoint rejects it, so the generic flag can only be raised per model class.
         if profile.get('openai_responses_supports_json_schema_output', False):
             profile = merge_profile(profile, ModelProfile(supports_json_schema_output=True))
-        if not profile.get('openai_deepseek_web_tools', False):
+        if not profile.get('openai_responses_deepseek_web_tools', False):
             tools = profile.get('supported_native_tools', self.supported_native_tools()) - {WebFetchTool}
             profile = merge_profile(profile, ModelProfile(supported_native_tools=tools))
         if isinstance(self._provider, OAuthCredentialsProvider):
@@ -806,7 +806,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
         """Return `native_tool`'s restricting settings that the Responses `web_search` tool doesn't take: `max_uses`."""
-        if self.profile.get('openai_deepseek_web_tools', False) and isinstance(
+        if self.profile.get('openai_responses_deepseek_web_tools', False) and isinstance(
             native_tool, WebSearchTool | WebFetchTool
         ):
             return native_tool.restricting_settings
@@ -1281,7 +1281,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 self._provider.base_url,
                 self.model_name,
                 web_tool_usage=web_tool_usage(response.usage)
-                if self.profile.get('openai_deepseek_web_tools', False)
+                if self.profile.get('openai_responses_deepseek_web_tools', False)
                 else None,
             ),
             model_name=response.model,
@@ -1298,7 +1298,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _map_web_search_call(
         self, item: responses.ResponseFunctionWebSearch
     ) -> tuple[NativeToolCallPart, NativeToolReturnPart]:
-        if self.profile.get('openai_deepseek_web_tools', False) and (parts := web_tool_parts(item, self.system)):
+        if self.profile.get('openai_responses_deepseek_web_tools', False) and (
+            parts := web_tool_parts(item, self.system)
+        ):
             return parts
         return map_web_search_tool_call(item, self.system)
 
@@ -1380,7 +1382,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             citations = map_responses_citations(
                 content.annotations,
                 content.text,
-                content_offsets=self.profile.get('openai_url_citation_content_offsets', False),
+                content_offsets=self.profile.get('openai_responses_url_citation_content_offsets', False),
             )
             part_provider_details: dict[str, Any] = {}
             if citations:
@@ -1519,8 +1521,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _is_websocket=is_websocket,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
             _process_provider_details=self._process_provider_details,
-            _citation_content_offsets=self.profile.get('openai_url_citation_content_offsets', False),
-            _deepseek_web_tools=self.profile.get('openai_deepseek_web_tools', False),
+            _citation_content_offsets=self.profile.get('openai_responses_url_citation_content_offsets', False),
+            _deepseek_web_tools=self.profile.get('openai_responses_deepseek_web_tools', False),
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         if tool_call_ids_are_response_scoped:
@@ -2509,7 +2511,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _get_native_tools(self, model_request_parameters: ModelRequestParameters) -> list[responses.ToolParam]:
         tools: list[responses.ToolParam] = []
         has_image_generating_tool = False
-        deepseek_web_tools = self.profile.get('openai_deepseek_web_tools', False)
+        deepseek_web_tools = self.profile.get('openai_responses_deepseek_web_tools', False)
         for tool in model_request_parameters.native_tools:
             match tool:
                 case WebSearchTool() | WebFetchTool() if deepseek_web_tools:
@@ -3095,7 +3097,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             same_endpoint=same_endpoint,
             response_start=len(context.openai_messages),
         )
-        if self.profile.get('openai_deepseek_web_tools', False):
+        if self.profile.get('openai_responses_deepseek_web_tools', False):
             response_context.deepseek_web_items = replayable_web_results(
                 part
                 for part in message.parts

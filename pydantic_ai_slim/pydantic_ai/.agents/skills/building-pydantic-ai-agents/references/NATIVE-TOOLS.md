@@ -22,11 +22,11 @@ For OpenAI web search, use the Responses API model prefix (`openai-responses:`),
 Set `external_web_access=False` on `WebSearch` or `WebSearchTool` to restrict OpenAI Responses web search to cached
 or indexed content.
 
-DeepSeek Flash supports native web search and fetch on Chat Completions and Responses. Pass the complete history to the same API to reuse signed page context.
+DeepSeek Flash supports native web search and fetch on the Responses API. Pass the complete history to the same API to reuse signed page context.
 
 Restricting settings (`allowed_domains`, `blocked_domains`, `max_uses`, and `external_web_access=False` on web search;
 the first three on web fetch) are not dropped silently. On a model whose native tool can't apply one that is set
-(Gemini and DeepSeek Flash apply none), the tool counts as unsupported: a local fallback runs in its place if one is configured, an
+(Gemini and DeepSeek Flash (Responses) apply none), the tool counts as unsupported: a local fallback runs in its place if one is configured, an
 `optional=True` tool is left out, and `UserError` is raised otherwise.
 
 ## Native Tool Defaults

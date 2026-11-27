@@ -1,0 +1,232 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.deepseek.com/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "270"
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    body:
+      type: json
+      content:
+        model: deepseek-flash
+        stream: true
+        input:
+        - role: user
+          content: >-
+            Read https://httpbin.org/json using the URL reading tool. Reply only READY,
+            without quoting the page.
+        reasoning:
+          effort: none
+        tool_choice: auto
+        tools:
+        - type: deepseek_read_url
+  response:
+    status: 200
+    headers:
+      access-control-allow-credentials:
+      - "true"
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      eo-cache-status:
+      - MISS
+      eo-log-uuid:
+      - "13791530562586044790"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - >-
+        accept-encoding,origin, access-control-request-method,
+        access-control-request-headers
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"10977393-20b5-4f28-82fb-f1831caff068","object":"response","created_at":1795749674,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-flash","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+        
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"10977393-20b5-4f28-82fb-f1831caff068","object":"response","created_at":1795749674,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-flash","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+        
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"type":"web_search_call","id":"srvtoolu_rl_00_6ec31bfd80cd4bdc93f549bf1eb0bbdf","status":"in_progress","kind":"read_link","action":{"type":"open_page","url":"https://httpbin.org/json"}},"output_index":0,"sequence_number":2}
+        
+        event: response.web_search_call.in_progress
+        data: {"type":"response.web_search_call.in_progress","item_id":"srvtoolu_rl_00_6ec31bfd80cd4bdc93f549bf1eb0bbdf","output_index":0,"sequence_number":3}
+        
+        event: response.web_search_call.searching
+        data: {"type":"response.web_search_call.searching","item_id":"srvtoolu_rl_00_6ec31bfd80cd4bdc93f549bf1eb0bbdf","output_index":0,"sequence_number":4}
+        
+        event: response.web_search_call.completed
+        data: {"type":"response.web_search_call.completed","item_id":"srvtoolu_rl_00_6ec31bfd80cd4bdc93f549bf1eb0bbdf","output_index":0,"sequence_number":5}
+        
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"srvtoolu_rl_00_6ec31bfd80cd4bdc93f549bf1eb0bbdf","status":"completed","kind":"read_link","action":{"type":"open_page","url":"https://httpbin.org/json"},"page":{"url":"https://httpbin.org/json","title":"","published_at":null},"signature":"bb0UgElVimSKavvVZO+sag7VKU4XEzUNF4jjZx9yXwxuA00nPSl/oiGLYStDCbgPJE2juDWN3+h+hyEx/U0inJULeT0nH47sRpU8Bgn9JyHTT9EQ1183OhtWpK7E7h0/dUQc31AJ5ApT0N4KFoFM4S8N54DyNj92BpNmIgEEAZzyZH6UemywKPO9CYyfvueWflUmFWrEykB8hfT1Z2oZai8ZUTmkWxbuyb2IZDxYIOFKTmFlul5hYIqF9sQUGjCN1+rzaER7DrSstLfB//29ND9dDVDNH97lBBJ5B8j62ubVynNNy5Jk9Oxck/t4COo4DGjwg9fIFJrzBg1rogzvt+NPs9S4DLj7z/m1wdz5P+wabmdDkshQLpS7RUxgac2ajmqyaj+T8+8QtYGZ2oYWICLT6hldu2FfsfdsXoATS9WyxBk83iW0aY98+OP8FQF1TkWgx8Gmbhe4kzEcxqrGG9bWZXTxMjIg8hUYZQECsP8s7TEiZ0d4SCVKtL6QBS4ntr3WGUsFf2XCLpamC9s3Z63C1vNeAVQwlU9Pa/seNh5sLVXS4D/veeJen2i5kV1l0RvkiTdC7jU3V8lniDQRpgmdlLmjjo9vu4Bp1SFVYt9LPcbL/naBi24rukDHKGDqvWixa7rgmVTqHGQRO5IQ95sKlhlG+55Dsqn8x45QehELxfTN2sf465v6W212NFH2wyHx9ARZKY7r98ejPmXw8H+G44O7+67MIIszQWmPbVuMRY4xShTVrGtRg9TiZ1PhANuv0EmKireWEk3GgTBwIQ=="},"output_index":0,"sequence_number":6}
+        
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"type":"message","id":"6185b710-a5db-4fc5-a0d0-5c7b032eb5f1","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":7}
+        
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"6185b710-a5db-4fc5-a0d0-5c7b032eb5f1","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":8}
+        
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"READ","item_id":"6185b710-a5db-4fc5-a0d0-5c7b032eb5f1","logprobs":[],"output_index":1,"sequence_number":9}
+        
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"Y","item_id":"6185b710-a5db-4fc5-a0d0-5c7b032eb5f1","logprobs":[],"output_index":1,"sequence_number":10}
+        
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"6185b710-a5db-4fc5-a0d0-5c7b032eb5f1","logprobs":[],"output_index":1,"sequence_number":11,"text":"READY"}
+        
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"6185b710-a5db-4fc5-a0d0-5c7b032eb5f1","output_index":1,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":"READY"},"sequence_number":12}
+        
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"type":"message","id":"6185b710-a5db-4fc5-a0d0-5c7b032eb5f1","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"READY"}],"phase":"final_answer","role":"assistant"},"output_index":1,"sequence_number":13}
+        
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"10977393-20b5-4f28-82fb-f1831caff068","object":"response","created_at":1795749674,"status":"completed","background":false,"completed_at":1795749676,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-flash","moderation":null,"output":[{"type":"web_search_call","id":"srvtoolu_rl_00_6ec31bfd80cd4bdc93f549bf1eb0bbdf","status":"completed","kind":"read_link","action":{"type":"open_page","url":"https://httpbin.org/json"},"page":{"url":"https://httpbin.org/json","title":"","published_at":null},"signature":"bb0UgElVimSKavvVZO+sag7VKU4XEzUNF4jjZx9yXwxuA00nPSl/oiGLYStDCbgPJE2juDWN3+h+hyEx/U0inJULeT0nH47sRpU8Bgn9JyHTT9EQ1183OhtWpK7E7h0/dUQc31AJ5ApT0N4KFoFM4S8N54DyNj92BpNmIgEEAZzyZH6UemywKPO9CYyfvueWflUmFWrEykB8hfT1Z2oZai8ZUTmkWxbuyb2IZDxYIOFKTmFlul5hYIqF9sQUGjCN1+rzaER7DrSstLfB//29ND9dDVDNH97lBBJ5B8j62ubVynNNy5Jk9Oxck/t4COo4DGjwg9fIFJrzBg1rogzvt+NPs9S4DLj7z/m1wdz5P+wabmdDkshQLpS7RUxgac2ajmqyaj+T8+8QtYGZ2oYWICLT6hldu2FfsfdsXoATS9WyxBk83iW0aY98+OP8FQF1TkWgx8Gmbhe4kzEcxqrGG9bWZXTxMjIg8hUYZQECsP8s7TEiZ0d4SCVKtL6QBS4ntr3WGUsFf2XCLpamC9s3Z63C1vNeAVQwlU9Pa/seNh5sLVXS4D/veeJen2i5kV1l0RvkiTdC7jU3V8lniDQRpgmdlLmjjo9vu4Bp1SFVYt9LPcbL/naBi24rukDHKGDqvWixa7rgmVTqHGQRO5IQ95sKlhlG+55Dsqn8x45QehELxfTN2sf465v6W212NFH2wyHx9ARZKY7r98ejPmXw8H+G44O7+67MIIszQWmPbVuMRY4xShTVrGtRg9TiZ1PhANuv0EmKireWEk3GgTBwIQ=="},{"type":"message","id":"6185b710-a5db-4fc5-a0d0-5c7b032eb5f1","status":"completed","content":[{"type":"output_text","annotations":[],"logprobs":[],"text":"READY"}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":"none","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":220,"input_tokens_details":{"cached_tokens":0},"output_tokens":2,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":222,"server_tool_use":{"tool_search":0,"tool_fetch":1,"tool_image_search":0}},"user":null,"metadata":{}},"sequence_number":14}
+        
+  recorded_at: 2026-11-27T03:21:15.995276+00:00
+- request:
+    method: POST
+    uri: https://api.deepseek.com/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1424"
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    body:
+      type: json
+      content:
+        model: deepseek-flash
+        stream: false
+        input:
+        - role: user
+          content: >-
+            Read https://httpbin.org/json using the URL reading tool. Reply only READY,
+            without quoting the page.
+        - type: web_search_call
+          id: srvtoolu_rl_00_6ec31bfd80cd4bdc93f549bf1eb0bbdf
+          kind: read_link
+          status: completed
+          action:
+            type: open_page
+            url: https://httpbin.org/json
+          page:
+            url: https://httpbin.org/json
+            title: ""
+            published_at: null
+          signature: >-
+            bb0UgElVimSKavvVZO+sag7VKU4XEzUNF4jjZx9yXwxuA00nPSl/oiGLYStDCbgPJE2juDWN3+h+hyEx/U0inJULeT0nH47sRpU8Bgn9JyHTT9EQ1183OhtWpK7E7h0/dUQc31AJ5ApT0N4KFoFM4S8N54DyNj92BpNmIgEEAZzyZH6UemywKPO9CYyfvueWflUmFWrEykB8hfT1Z2oZai8ZUTmkWxbuyb2IZDxYIOFKTmFlul5hYIqF9sQUGjCN1+rzaER7DrSstLfB//29ND9dDVDNH97lBBJ5B8j62ubVynNNy5Jk9Oxck/t4COo4DGjwg9fIFJrzBg1rogzvt+NPs9S4DLj7z/m1wdz5P+wabmdDkshQLpS7RUxgac2ajmqyaj+T8+8QtYGZ2oYWICLT6hldu2FfsfdsXoATS9WyxBk83iW0aY98+OP8FQF1TkWgx8Gmbhe4kzEcxqrGG9bWZXTxMjIg8hUYZQECsP8s7TEiZ0d4SCVKtL6QBS4ntr3WGUsFf2XCLpamC9s3Z63C1vNeAVQwlU9Pa/seNh5sLVXS4D/veeJen2i5kV1l0RvkiTdC7jU3V8lniDQRpgmdlLmjjo9vu4Bp1SFVYt9LPcbL/naBi24rukDHKGDqvWixa7rgmVTqHGQRO5IQ95sKlhlG+55Dsqn8x45QehELxfTN2sf465v6W212NFH2wyHx9ARZKY7r98ejPmXw8H+G44O7+67MIIszQWmPbVuMRY4xShTVrGtRg9TiZ1PhANuv0EmKireWEk3GgTBwIQ==
+        - role: assistant
+          content: READY
+        - role: user
+          content: What is the exact title of the first slide in the slideshow from that JSON page?
+        reasoning:
+          effort: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-credentials:
+      - "true"
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      eo-cache-status:
+      - MISS
+      eo-log-uuid:
+      - "17842472380656636688"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - >-
+        accept-encoding,origin, access-control-request-method,
+        access-control-request-headers
+    body:
+      type: json
+      content:
+        id: df93acb4-b199-4bd4-b828-0f8c09be0ec1
+        object: response
+        created_at: 1795749676
+        status: completed
+        background: false
+        completed_at: 1795749676
+        content_filters: null
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: deepseek-flash
+        moderation: null
+        output:
+        - type: message
+          id: aa787cd3-d558-4c56-88ab-aeda764e501b
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: "The exact title of the first slide is: **Wake up to WonderWidgets!**"
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: null
+        reasoning:
+          effort: none
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: false
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: null
+        tool_choice: auto
+        tools: []
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 217
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens: 18
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 235
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-27T03:21:16.661745+00:00
