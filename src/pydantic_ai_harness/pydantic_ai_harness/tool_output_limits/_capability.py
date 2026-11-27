@@ -18,7 +18,7 @@ from typing import Any, Literal
 from pydantic_ai import FunctionToolset, Tool, ToolKind
 from pydantic_ai._framing import second_model_prompt
 from pydantic_ai._utils import replace_no_init
-from pydantic_ai.capabilities import AbstractCapability, durable_operation
+from pydantic_ai.capabilities import AbstractCapability, durable_operation, tool_call_span
 from pydantic_ai.exceptions import ModelRetry, UserError
 from pydantic_ai.messages import (
     LoadCapabilityReturnPart,
@@ -30,7 +30,6 @@ from pydantic_ai.messages import (
     is_multi_modal_content,
 )
 from pydantic_ai.models import Model
-from pydantic_ai.telemetry import current_span
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
@@ -577,7 +576,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
         self, ctx: RunContext[AgentDepsT], unit: _Unit, original_size: int, reduction: _Reduction
     ) -> None:
         """Say on the call's `execute_tool` span how a unit was reduced, in the unit its band was measured in."""
-        span = current_span(ctx)
+        span = tool_call_span(ctx)
         if not span.is_recording():
             # Measuring the replacement can mean running a tokenizer.
             return
@@ -606,7 +605,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
 
     def _record_unreduced(self, ctx: RunContext[AgentDepsT], unit: _Unit, unreduced: _Unreduced) -> None:
         """Say on the call's `execute_tool` span that the band's action failed and the unit was kept as is."""
-        current_span(ctx).set_attribute(f'{unit.attribute_prefix}.fallback_from', unreduced.fallback_from)
+        tool_call_span(ctx).set_attribute(f'{unit.attribute_prefix}.fallback_from', unreduced.fallback_from)
 
     async def _reduce_content(
         self,
