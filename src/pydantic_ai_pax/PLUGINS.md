@@ -3121,6 +3121,14 @@ An entry may also be a function that takes a `RunContext` and returns a
 capability (or `None`), for tools that should only exist in some runs, or that
 read settings saved since the plugin loaded.
 
+Such a function may return a workspace of its own, such as a sandbox, so Pax
+lets a workspace it returns take over from the session's directory. If yours
+never does, you can say so by wrapping it in `WorkspacelessCapability` from
+`pydantic_ai_pax.runtime.session`. Pax then attaches the session's directory up
+front, and a run whose function returns a workspace anyway fails instead of
+running somewhere else. A plain function works too; the wrapper only rules that
+case out.
+
 Markdown in streamed answers and thinking uses OSC 8 hyperlinks for link labels
 when writing to a terminal. The URL is also shown as text. Transcript replay keeps
 hyperlinks after resize, but does not replay clipboard, title, or palette commands.
