@@ -180,15 +180,17 @@ def _require_render_cli() -> None:
     executable = shutil.which('render')
     if executable is None:
         pytest.fail('local Render Workflows runtime requires the `render` CLI')
+    # Not `--version`: after printing the version it asks the GitHub API for the latest release, with no timeout,
+    # so a slow API stalls it. The help header carries the same version without that request.
     completed = subprocess.run(
-        [executable, '--version'],
+        [executable, '--help'],
         check=False,
         capture_output=True,
         text=True,
         timeout=10,
         env=renderless_environment(),
     )
-    version_match = re.search(r'render v(\d+)\.(\d+)\.(\d+)', completed.stdout + completed.stderr)
+    version_match = re.search(r'Render CLI v(\d+)\.(\d+)\.(\d+)', completed.stdout + completed.stderr)
     if completed.returncode != 0 or version_match is None:
         pytest.fail(f'could not determine Render CLI version: {completed.stdout}{completed.stderr}'.strip())
     version = tuple(int(part) for part in version_match.groups())

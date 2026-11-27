@@ -40,6 +40,7 @@ if TYPE_CHECKING:
     from .current_time import CurrentTime
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
+    from .dbos import DBOSDurability
     from .deny_unanswered import DenyUnanswered
     from .detect_loops import DetectLoops
     from .docker_container import DockerContainer, DockerContainerBackend
@@ -83,6 +84,7 @@ if TYPE_CHECKING:
     from .pixeltable import Pixeltable
     from .planning import Planning
     from .posthog import PostHog
+    from .prefect import PrefectDurability
     from .prompt_injection_defender import PromptInjectionDefender
     from .pydantic_ai_docs import PydanticAIDocs
     from .pylon import Pylon
@@ -106,6 +108,7 @@ if TYPE_CHECKING:
     from .step_persistence import StepPersistence
     from .sub_agents import SubAgent, SubAgents
     from .system_reminders import SystemReminders
+    from .temporal import TemporalDurability
     from .tool_bridge import ToolBridge
     from .tool_budgets import ToolBudgets
     from .tool_call_judge import ToolCallJudge
@@ -150,6 +153,7 @@ __all__ = [
     'DayAI',
     'DaytonaSandbox',
     'DaytonaSandboxBackend',
+    'DBOSDurability',
     'DeduplicateFileReads',
     'DenyUnanswered',
     'DetectLoops',
@@ -198,6 +202,7 @@ __all__ = [
     'Pixeltable',
     'Planning',
     'PostHog',
+    'PrefectDurability',
     'PromptInjectionDefender',
     'PruneToolResults',
     'PydanticAIDocs',
@@ -234,6 +239,7 @@ __all__ = [
     'SubAgents',
     'SummarizingCompaction',
     'SystemReminders',
+    'TemporalDurability',
     'TieredCompaction',
     'ToolBridge',
     'ToolBudgets',
@@ -279,6 +285,7 @@ _LAZY_EXPORTS = {
     'DayAI': 'day_ai',
     'DaytonaSandbox': 'daytona_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',
+    'DBOSDurability': 'dbos',
     'DeduplicateFileReads': 'compaction',
     'DEFAULT_CROSS_MODEL_NOTICE': 'label_cross_model_history',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS': 'refine_output',
@@ -330,6 +337,7 @@ _LAZY_EXPORTS = {
     'Pixeltable': 'pixeltable',
     'Planning': 'planning',
     'PostHog': 'posthog',
+    'PrefectDurability': 'prefect',
     'PromptInjectionDefender': 'prompt_injection_defender',
     'PruneToolResults': 'compaction',
     'PydanticAIDocs': 'pydantic_ai_docs',
@@ -366,6 +374,7 @@ _LAZY_EXPORTS = {
     'SubAgents': 'sub_agents',
     'SummarizingCompaction': 'compaction',
     'SystemReminders': 'system_reminders',
+    'TemporalDurability': 'temporal',
     'TieredCompaction': 'compaction',
     'ToolBridge': 'tool_bridge',
     'ToolBudgets': 'tool_budgets',

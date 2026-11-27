@@ -340,7 +340,7 @@ def _batch_group(model: GoogleModel) -> str:
     # The SDK sends the API key as a header, which `http_options.headers` can override, and which joins the HTTP
     # client's own headers, so the credential is what those headers end up sending rather than the client's `api_key`.
     http_client = api_client._async_httpx_client  # pyright: ignore[reportPrivateUsage]
-    # google-genai 3 leaves it unset only on Google Cloud (mTLS over aiohttp), which has no batch API to reach here.
+    # google-genai leaves it unset only for Google Cloud over mTLS, which `_batch_client` refuses.
     assert http_client is not None
     client_headers = http_client.headers
     request_headers = (api_client._http_options.headers or {}).items()  # pyright: ignore[reportPrivateUsage]

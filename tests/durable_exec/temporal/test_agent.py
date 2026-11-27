@@ -3853,6 +3853,7 @@ async def test_temporal_run_context_subclass_with_its_own_field_set():
     assert sorted(field.name for field in fields(copied)) == snapshot(
         [
             '_anchored_evidence',
+            '_compaction_requests',
             '_dispatched_tool_name',
             '_durable_operations',
             '_run_capabilities_by_id',
@@ -4248,6 +4249,8 @@ def test_temporal_agent_retry_policy_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'UsageLimitExceeded',
+        'SuspendedResponseExpired',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',
@@ -4287,6 +4290,8 @@ def test_temporal_agent_custom_retry_policy_keeps_non_retryable_errors():
         'PydanticUserError',
         'UnexpectedModelBehavior',
         'FallbackExceptionGroup',
+        'UsageLimitExceeded',
+        'SuspendedResponseExpired',
         'WorkspaceTimeoutError',
         'WorkspaceOutputLimitError',
         'WorkspaceReadOnlyError',

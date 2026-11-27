@@ -37,6 +37,7 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     LocalWorkspace,
     ModelFallback,
+    NativeCompaction,
     NativeTool,
     PrefixTools,
     RaiseContentFilterError,
@@ -86,7 +87,7 @@ from .capability_models import (
     noop_greet as _noop_greet,
     registered_capability_context as _registered_capability_context,
 )
-from .conftest import IsStr, iter_message_parts, remove_schema_descriptions, try_import
+from .conftest import iter_message_parts, remove_schema_descriptions, try_import
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -118,6 +119,7 @@ def test_capability_types() -> None:
             'LocalWorkspace': LocalWorkspace,
             'MCP': MCP,
             'ModelFallback': ModelFallback,
+            'NativeCompaction': NativeCompaction,
             'PrefixTools': PrefixTools,
             'ReinjectSystemPrompt': ReinjectSystemPrompt,
             'RetryOnModelErrors': RetryOnModelErrors,
@@ -160,7 +162,7 @@ async def test_instrumentation_removes_binary_content_from_nested_lists(
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     tool_span = next(span for span in spans if span['name'] == 'execute_tool image_list')
     assert tool_span['attributes']['gen_ai.tool.call.result'] == snapshot(
-        [{'media_type': 'image/png', 'vendor_metadata': None, 'kind': 'binary', 'identifier': IsStr()}]
+        [{'type': 'blob', 'mime_type': 'image/png', 'modality': 'image'}]
     )
 
 
@@ -1411,6 +1413,7 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Thinking',
                         },
+                        'thinking_summary': {'title': 'Thinking Summary', 'type': 'boolean'},
                         'citations': {'title': 'Citations', 'type': 'boolean'},
                         'cache': {
                             'anyOf': [
@@ -1986,6 +1989,13 @@ def test_model_json_schema_with_capabilities():
                     'title': 'spec_ModelFallback',
                     'type': 'object',
                 },
+                'spec_NativeCompaction': {
+                    'additionalProperties': False,
+                    'properties': {'NativeCompaction': {'$ref': '#/$defs/spec_params_NativeCompaction'}},
+                    'required': ['NativeCompaction'],
+                    'title': 'spec_NativeCompaction',
+                    'type': 'object',
+                },
                 'spec_ImageGeneration': {
                     'additionalProperties': False,
                     'properties': {'ImageGeneration': {'$ref': '#/$defs/spec_params_ImageGeneration'}},
@@ -2209,6 +2219,7 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Effort',
                         },
+                        'summary': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Summary'},
                     },
                     'title': 'spec_params_Thinking',
                     'type': 'object',
@@ -2244,11 +2255,13 @@ def test_model_json_schema_with_capabilities():
                                         'ModelContextWindowExceededError',
                                         'ModelAuthenticationError',
                                         'ModelNotFoundError',
+                                        'ModelSchemaTooComplexError',
                                         'ModelRequestTimeout',
                                         'ModelEmptyResponseError',
                                         'ModelInvalidResponseError',
                                         'ContentFilterError',
                                         'OutputTokenLimitExceeded',
+                                        'UnsupportedSettingWarning',
                                     ],
                                     'type': 'string',
                                 },
@@ -2268,11 +2281,13 @@ def test_model_json_schema_with_capabilities():
                                             'ModelContextWindowExceededError',
                                             'ModelAuthenticationError',
                                             'ModelNotFoundError',
+                                            'ModelSchemaTooComplexError',
                                             'ModelRequestTimeout',
                                             'ModelEmptyResponseError',
                                             'ModelInvalidResponseError',
                                             'ContentFilterError',
                                             'OutputTokenLimitExceeded',
+                                            'UnsupportedSettingWarning',
                                         ],
                                         'type': 'string',
                                     },
@@ -2285,6 +2300,17 @@ def test_model_json_schema_with_capabilities():
                     },
                     'required': ['models'],
                     'title': 'spec_params_ModelFallback',
+                    'type': 'object',
+                },
+                'spec_params_NativeCompaction': {
+                    'additionalProperties': False,
+                    'properties': {
+                        'id': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Id'},
+                        'description': {'anyOf': [{'type': 'string'}, {'type': 'null'}], 'title': 'Description'},
+                        'defer_loading': {'title': 'Defer Loading', 'type': 'boolean'},
+                        'focus_as_system_prompt': {'title': 'Focus As System Prompt', 'type': 'boolean'},
+                    },
+                    'title': 'spec_params_NativeCompaction',
                     'type': 'object',
                 },
                 'spec_params_ImageGeneration': {
@@ -2485,6 +2511,7 @@ def test_model_json_schema_with_capabilities():
                                         'ModelContextWindowExceededError',
                                         'ModelAuthenticationError',
                                         'ModelNotFoundError',
+                                        'ModelSchemaTooComplexError',
                                         'ModelRequestTimeout',
                                         'ModelEmptyResponseError',
                                         'ModelInvalidResponseError',
@@ -2509,6 +2536,7 @@ def test_model_json_schema_with_capabilities():
                                             'ModelContextWindowExceededError',
                                             'ModelAuthenticationError',
                                             'ModelNotFoundError',
+                                            'ModelSchemaTooComplexError',
                                             'ModelRequestTimeout',
                                             'ModelEmptyResponseError',
                                             'ModelInvalidResponseError',
@@ -2559,6 +2587,8 @@ def test_model_json_schema_with_capabilities():
                                 {'$ref': '#/$defs/spec_MCP'},
                                 {'$ref': '#/$defs/short_spec_ModelFallback'},
                                 {'$ref': '#/$defs/spec_ModelFallback'},
+                                {'const': 'NativeCompaction', 'type': 'string'},
+                                {'$ref': '#/$defs/spec_NativeCompaction'},
                                 {'$ref': '#/$defs/spec_PrefixTools'},
                                 {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                                 {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},
@@ -2840,6 +2870,8 @@ def test_model_json_schema_with_capabilities():
                             {'$ref': '#/$defs/spec_MCP'},
                             {'$ref': '#/$defs/short_spec_ModelFallback'},
                             {'$ref': '#/$defs/spec_ModelFallback'},
+                            {'const': 'NativeCompaction', 'type': 'string'},
+                            {'$ref': '#/$defs/spec_NativeCompaction'},
                             {'$ref': '#/$defs/spec_PrefixTools'},
                             {'const': 'ReinjectSystemPrompt', 'type': 'string'},
                             {'$ref': '#/$defs/spec_ReinjectSystemPrompt'},

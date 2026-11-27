@@ -68,7 +68,7 @@ from pydantic_ai_harness.file_system._events import (
     FileWrittenEvent,
     SearchKind,
 )
-from pydantic_ai_harness.file_system._matching import glob_match, glob_parts, has_nested_quantifier, matching_lines
+from pydantic_ai_harness.file_system._matching import glob_match, glob_parts, linear_time_search, matching_lines
 from pydantic_ai_harness.file_system._ripgrep import Record, RipgrepNotFoundError, Unreadable, run_ripgrep
 from pydantic_ai_harness.file_system._tool_kinds import FILE_SYSTEM_TOOL_KINDS
 from pydantic_ai_harness.file_system._workspace_search import SEARCH_TIMEOUT, realpath_snippet
@@ -918,8 +918,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     ) -> str | list[str | BinaryContent]:
         """Read a file in `workspace` directly, outside an agent run.
 
-        An image or PDF comes back as its header followed by a `BinaryContent`;
-        everything else is text.
+        An image, PDF or video, recognized by its leading bytes, comes back as its header
+        followed by a `BinaryContent`; everything else is text.
 
         Args:
             path: File path relative to the working directory.
@@ -933,7 +933,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     async def _read_file_tool(
         self, ctx: RunContext[AgentDepsT], path: str, *, offset: int = 1, limit: int | None = None
     ) -> str | list[str | BinaryContent]:
-        """Read a text file with line numbers, or view an image or PDF.
+        """Read a text file with line numbers, or view an image, PDF or video.
 
         Args:
             ctx: The current agent run context.
@@ -942,9 +942,9 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             limit: Maximum number of lines to return; defaults to, and is capped at, the configured read limit.
 
         Returns:
-            File content with line numbers, plus metadata header. An image or PDF
-            is returned as the file itself; other binary files as their size,
-            media type and leading bytes in hex.
+            File content with line numbers, plus metadata header. An image, PDF or video
+            is returned as the file itself; other binary files as their size, media type
+            and leading bytes in hex.
         """
         return await self._read_file(
             await self._scope(ctx.workspace), event_ctx(ctx, 'FileSystem'), path, offset=offset, limit=limit
@@ -1006,7 +1006,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
     async def _read_binary(
         self, path: str, raw: bytes, media_type: str | None, content_hash: str
     ) -> str | list[str | BinaryContent]:
-        """An image or PDF as file content when it fits `MAX_MEDIA_BYTES`, anything else described in text.
+        """A recognized file as file content when it fits `MAX_MEDIA_BYTES`, anything else described in text.
 
         An image larger than `max_image_side` is downscaled first; the header still
         reports the size and hash of the file in the workspace.
@@ -1478,7 +1478,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # matched files are filtered per-entry below.
         resolved = await self._safe_resolve(scope, path, check_allowed=False)
         try:
-            compiled = re.compile(pattern)
+            re.compile(pattern)
         # A repeat count past the regex engine's limit, such as `a{99999999999}`, raises `OverflowError`.
         except (re.error, OverflowError) as exc:
             raise ValueError(f'Invalid regex pattern: {exc}') from exc
@@ -1488,12 +1488,8 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         # without commands, or when the command path itself fails.
         if entry is not None and await _searches_in_workspace(scope):
             return await self._command_search_files(scope, ctx, entry, resolved, pattern, include_glob)
-        if has_nested_quantifier(pattern, verbose=bool(compiled.flags & re.VERBOSE)):
-            raise ValueError(
-                'This regex repeats a group that itself repeats, such as `(a+)+`, which can take exponential time '
-                'in the Python regex engine this workspace searches with. Rewrite it without the nested '
-                'repetition, such as `a+`.'
-            )
+        # Searched here, the pattern is matched on the event loop, so it must run in linear time.
+        search = linear_time_search(pattern)
         include_hidden = bool(include_glob and _explicit_hidden(include_glob))
         files, walk_cut, hidden_count = await self._files_to_search(
             scope, entry, resolved, include_hidden=include_hidden
@@ -1509,7 +1505,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             if text is None:
                 continue
             matches, capped = matching_lines(
-                text, compiled, scope.relative(file.path, scope.bounds.cwd), self._max_search_results - len(results)
+                text, search, scope.relative(file.path, scope.bounds.cwd), self._max_search_results - len(results)
             )
             results.extend(matches)
             if capped:

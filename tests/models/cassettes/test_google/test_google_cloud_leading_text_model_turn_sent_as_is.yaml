@@ -1,0 +1,75 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: >-
+      https://aiplatform.googleapis.com/v1beta1/projects/pydantic-ai-dev/locations/global/publishers/google/models/gemini-3.8-flash:generateContent
+    headers:
+      accept:
+      - "*/*"
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "233"
+      content-type:
+      - application/json
+      host:
+      - aiplatform.googleapis.com
+    body:
+      type: json
+      content:
+        contents:
+        - parts:
+          - text: Hi! I can tell you about Paris.
+          role: model
+        - parts:
+          - text: What is its population? Answer in one sentence.
+          role: user
+        generationConfig:
+          responseModalities:
+          - TEXT
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=2592000,h3-29=":443"; ma=2592000
+      content-type:
+      - application/json; charset=UTF-8
+      transfer-encoding:
+      - chunked
+      vary:
+      - Origin
+      - X-Origin
+      - Referer
+    body:
+      type: json
+      content:
+        candidates:
+        - content:
+            role: model
+            parts:
+            - text: >-
+                As of recent estimates, the city proper of Paris has a population of
+                approximately 2.1 million people, with over 12 million living in its greater metropolitan
+                area.
+              thoughtSignature: >-
+                AY89a19G9MSjjrRJvivX2yzc3JSi77SnwXDEOaLCWOcPFnTzc+CZkcg7zMLxz05s2MlBt3dvUPR4HfXS2IXUhUKdA7XdKKyamd+jfc/W5T1udPx0Q0880d6kH1LfxWpqGEpIuoOYEmE4/Q64O8/CgFB60J6fLq7AXE9/tsqAPwTKXZ3KS3BA15rnXK/TcoWIrvRaYxJKVY1E2gdHHAF1AwG2tlRp/KI9pE6w4e2GeMTeE7eXcn4ZDGO5HvcP0C85422m71W8W6nesTPe9uvcyXRKklUMU9qZ63r/vonpZ2O33NBybHjRENWSIgFbyFY5vDMnD8KXZJux/q51/jWlYFhMxJsqDAV0Fe+v9h8plgiiQoTWiu1FQ0tDXC0dXxnJI0VYR2EYayKVMRvsR2yjcjL45w//uUI//9+ahC2CDU3mUcaT4Js4TCQzFUWxGJOoA9EArkGIbIlZ5LSWHNiARoQtK2/vBs2EpQgb1TECaYcmXaumQaZ+4OBovrOyfHRvXg8kSfcamLkhPPztcd/71T4OjKqNACnnnK/cn7FB7MCr6MaTvoO9dQnAwJ3BTu1ibKNa+xG32Rfns8Hu4QIzmcTFpneU0ZYn3FivLWVfKk2EI0lyPuZZw1+Fi6QA796patFcRgYjjBySSGZZYkKR+qd6uO+P096YFuuqi6rHxpzfdWsp7kJYVBCAv+x8PVP/Pmu+jULfqxdE1675l1g9UchhqXes76rgIJFoZZczk5rHzcTBNhLQVe3IeIChXh7hUSl2cMKD5hy8baTFdb6INbFWfpjktjOjamvSBQSOL49PGYRZvrQJRcBcXX5eQZL3/I/ROQvidsOL8V63TbQiX+0NCivTNQRzHHPbqvYg3M9Gt/x9OVD5JGg3JXIfhUe99GnFldMCNuX+SsMdIC5cOpKldQp4mmtlk+wR5eiyGel1560yBnx5IZI3lIleDLsmEigg2hb4reCSKxRGYZ6/Z6foacKS75F25OiGlbCGzB6n7kMNJighXv8ux9wO0TUipyovNfnOHRc7mcG/E1Tuz4Odv/m5FVTWT1JSCwmoJ3MhIQWF/Kfww3uRSPdzxT/keHrl4PnZF/hj00YA8UZ6X5CjctCTZEkWsHSKqq4N1JD8NTKKjFYeQu/VVG3tzFwm8MnEFdBR0Jo5071c3IzD25gYvUpO+hb1+0ZuR1GmidtJ788/jz6uVSmwMnbu/phaFjECwSFBrexB4MC+2c/Ji7Ad9gOexkiijDMFM8/DU0kl0OZPKOUXrpxwYGzqqKs0Zh/F0HO4GPWLF5tx7JK79D8DLcEv1EHg+t2cWBHiHogcvpzUKWC/2AYo4MAiiqbTeepzjBxYQBg2kwQP0JlAgq5sly27E1IPXhFLCs6JtxD9wzsyHvytvGjDYQ==
+          finishReason: STOP
+        usageMetadata:
+          promptTokenCount: 19
+          candidatesTokenCount: 35
+          totalTokenCount: 288
+          trafficType: ON_DEMAND
+          promptTokensDetails:
+          - modality: TEXT
+            tokenCount: 19
+          candidatesTokensDetails:
+          - modality: TEXT
+            tokenCount: 35
+          thoughtsTokenCount: 234
+        modelVersion: gemini-3.8-flash
+        createTime: 2026-11-26T22:43:31.358974Z
+        responseId: E7YIa770FaWK3dAPw4eJuQ8
+  recorded_at: 2026-11-26T22:43:33.864390+00:00

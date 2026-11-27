@@ -50,6 +50,7 @@ from ...messages import (
 from ...native_tools import (
     AbstractNativeTool,
     CodeExecutionTool,
+    ComputerTool,
     FileSearchTool,
     ImageGenerationTool,
     MCPServerTool,
@@ -60,6 +61,7 @@ from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ...profiles.google import GoogleModelProfile, google_interactions_model_profile
 from ...providers import Provider, infer_provider
 from ...settings import ModelSettings, ThinkingEffort
+from ...usage import RequestUsage
 from .. import (
     Model,
     ModelRequestParameters,
@@ -81,6 +83,7 @@ try:
 
     # Interactions uses separate compatibility errors that the public google.genai.errors does not export.
     from google.genai._gaos.lib.compat_errors import APIConnectionError, APIError, APIStatusError, APITimeoutError
+    from google.genai.errors import ContinuationInterruptedError
     from google.genai.types import MediaResolution
 except ImportError as _import_error:
     raise ImportError(
@@ -228,7 +231,16 @@ class GoogleInteractionsModel(Model[Client]):
         return self._provider._configured_model_profile(model_name) or {}  # pyright: ignore[reportPrivateUsage]
 
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
-        return merge_profile(profile, google_interactions_model_profile(self.model_name))
+        """Add the Interactions API's profile, and `deprecation` from the schedule of the API the client reaches.
+
+        `google_supports_computer_use` is turned off on Google Cloud, as `GoogleModel` turns it off there, so a
+        `ComputerTool` error names `GoogleModel` only where it sends the tool.
+        """
+        profile = merge_profile(profile, google_interactions_model_profile(self.model_name))
+        google_cloud = bool(self.client.vertexai)
+        if google_cloud:
+            profile = merge_profile(profile, GoogleModelProfile(google_supports_computer_use=False))
+        return _google_common.with_deprecation(self.model_name, profile, google_cloud=google_cloud)
 
     @cached_property
     def profile(self) -> GoogleModelProfile:
@@ -279,6 +291,39 @@ class GoogleInteractionsModel(Model[Client]):
     def unsupported_native_tool_settings(self, native_tool: AbstractNativeTool) -> frozenset[str]:
         """Return all of `native_tool`'s restricting settings, as Interactions' native tools apply none of them."""
         return native_tool.restricting_settings
+
+    def prepare_request(
+        self, model_settings: ModelSettings | None, model_request_parameters: ModelRequestParameters
+    ) -> tuple[ModelSettings | None, ModelRequestParameters]:
+        # Check before base validation so a computer use model points at `GoogleModel`, which sends the tool, not the
+        # generic error.
+        if self.profile.get('google_supports_computer_use', False) and _google_common.rejects_native_tool(
+            self, model_request_parameters, ComputerTool
+        ):
+            # The `google:` prefix uses the Gemini API, so a Google Cloud model isn't pointed at it.
+            prefix = '' if self.client.vertexai else ', with the `google:` prefix,'
+            raise UserError(
+                f'`ComputerTool` is not supported by `GoogleInteractionsModel`. Use `GoogleModel`{prefix} for computer '
+                f'use with {self.model_name!r}.'
+            )
+        return super().prepare_request(model_settings, model_request_parameters)
+
+    async def count_tokens(
+        self,
+        messages: list[ModelMessage],
+        model_settings: ModelSettings | None,
+        model_request_parameters: ModelRequestParameters,
+    ) -> RequestUsage:
+        raise NotImplementedError(
+            'Token counting ahead of the request is not supported by `GoogleInteractionsModel`, as the Interactions '
+            'API has no token-counting endpoint. Use `GoogleModel` to count tokens.'
+        )
+
+    def _no_batch_api_message(self) -> str:
+        return (
+            f'`GoogleInteractionsModel` {self.model_name!r} has no batch API: batch it with `GoogleModel` through the '
+            'Gemini API, with the `google:` provider.'
+        )
 
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         overrides: list[str] = []
@@ -358,18 +403,24 @@ class GoogleInteractionsModel(Model[Client]):
     def _map_api_errors(self) -> Generator[None]:
         try:
             yield
-        except APITimeoutError as exc:
-            raise _model_errors.connection_error(self.model_name, str(exc), exc, timeout=True) from exc
-        except APIConnectionError as exc:
-            if isinstance(exc.__cause__, httpx.HTTPStatusError | httpx2.HTTPStatusError):
-                response = exc.__cause__.response
-                body, _, text = _model_errors.transport_error_body(response)
-                raise self._status_error(response.status_code, body, dict(response.headers), text) from exc
-            raise _model_errors.connection_error(self.model_name, str(exc), exc, timeout=False) from exc
-        except APIStatusError as exc:
-            raise self._status_error(exc.response.status_code, exc.body, dict(exc.response.headers), str(exc)) from exc
-        except APIError as exc:
-            raise _model_errors.stream_error(self.model_name, str(exc), exc.body) from exc
+        except (APIError, ContinuationInterruptedError) as exc:
+            # A request that fails after google-genai continued a long decode raises `ContinuationInterruptedError`,
+            # with the request's own error as its cause.
+            error = exc.__cause__ if isinstance(exc, ContinuationInterruptedError) else exc
+            if isinstance(error, APITimeoutError):
+                raise _model_errors.connection_error(self.model_name, str(error), error, timeout=True) from exc
+            elif isinstance(error, APIConnectionError):
+                if isinstance(error.__cause__, httpx.HTTPStatusError | httpx2.HTTPStatusError):
+                    response = error.__cause__.response
+                    body, _, text = _model_errors.transport_error_body(response)
+                    raise self._status_error(response.status_code, body, dict(response.headers), text) from exc
+                raise _model_errors.connection_error(self.model_name, str(error), error, timeout=False) from exc
+            elif isinstance(error, APIStatusError):
+                headers = dict(error.response.headers)
+                raise self._status_error(error.response.status_code, error.body, headers, str(error)) from exc
+            elif isinstance(error, APIError):
+                raise _model_errors.stream_error(self.model_name, str(error), error.body) from exc
+            raise
 
     def _status_error(
         self, status_code: int, body: object, headers: dict[str, str], fallback_message: str
@@ -400,21 +451,21 @@ class GoogleInteractionsModel(Model[Client]):
         headers = dict(settings.get('extra_headers', {}))
         # The SDK sends its own lowercase `user-agent` and merges per-request headers by exact name, so only a
         # lowercase line replaces it; any other spelling would go out as a second `User-Agent` line.
-        # An empty value sends the client's `user-agent` without our label, as `GoogleModel` does. Not the SDK's
-        # own label: google-genai 3 swaps that value for the client's `user-agent`, which carries ours.
         caller_user_agents = [headers.pop(name) for name in [*headers] if name.lower() == 'user-agent']
-        client_user_agent = (self.client._api_client._http_options.headers or {}).get('user-agent', '')  # pyright: ignore[reportPrivateUsage]
+        sdk_user_agent = self.client.aio.interactions.sdk_configuration.user_agent
         headers['user-agent'] = (
-            ' '.join(filter(None, caller_user_agents)).strip() or client_user_agent.removesuffix(f' {get_user_agent()}')
+            ' '.join(filter(None, caller_user_agents)).strip() or sdk_user_agent
             if caller_user_agents
-            else f'{self.client.aio.interactions.sdk_configuration.user_agent} {get_user_agent()}'
+            else f'{sdk_user_agent} {get_user_agent()}'
         )
         # The Interactions SDK never sends `X-Server-Timeout`, so without this a long decode is cut off mid-stream.
         _google_common.set_server_timeout(headers, self.client._api_client._http_options.timeout)  # pyright: ignore[reportPrivateUsage]
         options: _HttpOptions = {'extra_headers': headers}
         if (timeout := settings.get('timeout')) is not None:
+            # google-genai applies an `httpx.Timeout` to each request it continues a long decode in. A number would bound
+            # the whole call instead, and a stream would check it before each event.
             options['timeout'] = (
-                timeout
+                httpx.Timeout(timeout)
                 if isinstance(timeout, (int, float))
                 else httpx.Timeout(connect=timeout.connect, read=timeout.read, write=timeout.write, pool=timeout.pool)
             )
@@ -870,4 +921,4 @@ class _FunctionResultStep(TypedDict):
 class _HttpOptions(TypedDict, total=False):
     extra_headers: dict[str, str]
     extra_body: Mapping[str, object]
-    timeout: float | httpx.Timeout
+    timeout: httpx.Timeout

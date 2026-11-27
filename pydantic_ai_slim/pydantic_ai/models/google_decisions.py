@@ -191,7 +191,7 @@ class GoogleDecisionsModel(DecisionModel[Client]):
             'questions': {key: _question(request.questions[name]) for key, name in names.items()},
         }
         try:
-            # google-genai's method for this endpoint needs 3.2, above the `google` extra's floor of 2.30, so the
+            # google-genai's method for this endpoint needs 3.2, above the `google` extra's floor of 2.34, so the
             # request goes through the client's own API client, with the provider's credentials, URL, API version,
             # headers and retries.
             response = await self.client._api_client.async_request(  # pyright: ignore[reportPrivateUsage]

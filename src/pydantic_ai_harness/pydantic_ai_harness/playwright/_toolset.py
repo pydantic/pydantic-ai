@@ -1478,12 +1478,19 @@ class PlaywrightBrowserSession:
 
         Registering any handler takes Playwright out of its auto-dismiss mode and
         leaves the page blocked until the dialog is answered, so every path here
-        answers. The default is to dismiss, which is what Playwright does on its
-        own: the cancelling branch of a `confirm`, and an empty `prompt`.
+        answers. A `beforeunload` is accepted, as it is by Playwright on its own,
+        so the navigation that raised it goes through. Every other dialog is
+        dismissed unless `handle_next_dialog` armed an accepting decision:
+        `alert` and `confirm` take the cancelling branch, and a `prompt` is left
+        empty. A `beforeunload` does not consume that decision; it stays armed for
+        the next `alert`, `confirm` or `prompt`.
         """
-        decision = self.dialog_decision
-        self.dialog_decision = None
-        accepted = decision is not None and decision.accept
+        if dialog.type == 'beforeunload':
+            accepted, prompt_text = True, None
+        else:
+            decision, self.dialog_decision = self.dialog_decision, None
+            accepted = decision is not None and decision.accept
+            prompt_text = decision.prompt_text if decision is not None else None
         self.record(
             BrowserEvent(
                 kind='dialog',
@@ -1491,13 +1498,13 @@ class PlaywrightBrowserSession:
                 message=f'{dialog.type} {"accepted" if accepted else "dismissed"}: {dialog.message}',
             )
         )
-        self._spawn(self._answer_dialog(dialog, decision))
+        self._spawn(self._answer_dialog(dialog, accepted, prompt_text))
 
-    async def _answer_dialog(self, dialog: _Dialog, decision: _DialogDecision | None) -> None:
+    async def _answer_dialog(self, dialog: _Dialog, accepted: bool, prompt_text: str | None) -> None:
         """Accept or dismiss a dialog. Errors are swallowed: the page may already be gone."""
         try:
-            if decision is not None and decision.accept:
-                await dialog.accept(decision.prompt_text)
+            if accepted:
+                await dialog.accept(prompt_text)
             else:
                 await dialog.dismiss()
         except PlaywrightError:
@@ -1591,6 +1598,18 @@ class PlaywrightBrowserSession:
             except Exception:
                 if exc_type is None:
                     raise
+
+
+async def _moved_through_history(page: _Page, traverse: Callable[[], Awaitable[object]]) -> bool:
+    """Run a `go_back`/`go_forward` traversal, and say whether it moved the page.
+
+    Playwright returns `None` both when there is no history entry and after a same-document traversal, such as a
+    `history.pushState` route or a `#hash` entry, since only a new document has a response. So a `None` result counts
+    as no move only when the URL didn't change either. `traverse` starts the traversal only once the URL before it
+    has been read.
+    """
+    before = page.url
+    return await traverse() is not None or page.url != before
 
 
 class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
@@ -2262,7 +2281,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         """
 
         async def _go_back(page: _Page, deadlines: _Deadlines) -> str:
-            if await page.go_back(timeout=deadlines.navigation) is None:
+            if not await _moved_through_history(page, lambda: page.go_back(timeout=deadlines.navigation)):
                 return self._truncate_output('No previous page in browser history.')
             if (blocked := await self._settle(page, 'go_back', deadlines)) is not None:
                 return blocked
@@ -2284,7 +2303,7 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         """
 
         async def _go_forward(page: _Page, deadlines: _Deadlines) -> str:
-            if await page.go_forward(timeout=deadlines.navigation) is None:
+            if not await _moved_through_history(page, lambda: page.go_forward(timeout=deadlines.navigation)):
                 return self._truncate_output('No next page in browser history.')
             if (blocked := await self._settle(page, 'go_forward', deadlines)) is not None:
                 return blocked
@@ -2559,8 +2578,10 @@ class PlaywrightBrowserToolset(FunctionToolset[AgentDepsT]):
         branch of a `confirm`, and an empty `prompt` -- so this is how the
         accepting branch of a delete confirmation or a prompt is reached.
 
-        The decision covers one dialog. Anything the page opens after that is
-        dismissed again unless this is called once more.
+        The decision covers one `alert`, `confirm` or `prompt` dialog. Anything
+        the page opens after that is dismissed again unless this is called once
+        more. A `beforeunload` dialog is accepted automatically so navigation
+        proceeds, and does not consume the armed decision.
 
         Args:
             accept: Take the OK branch when `True`, the Cancel branch when `False`.

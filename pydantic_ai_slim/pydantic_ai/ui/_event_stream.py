@@ -194,12 +194,15 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     part is open at a time — a part's end is emitted before the next part's start begins — so a single
     slot covers text, thinking, function/output tool-call, and native tool-call parts alike.
 
-    The error path closes it — emitting its `*-end` event via `handle_part_end` — before `on_error`,
-    mirroring how `_pending_tool_calls` closes dangling dispatched tool calls. Otherwise a client that
-    aborts at the error chunk (like the AI SDK) leaves the part stuck in a streaming state.
+    When the native stream leaves it open, `_end_open_part` closes it, emitting its `*-end` event via
+    `handle_part_end`, so the client never sees the part stuck in a streaming state:
+    - on error, before `on_error`, mirroring how `_pending_tool_calls` closes dangling dispatched tool
+      calls, as a client that aborts at the error chunk (like the AI SDK) otherwise keeps it streaming;
+    - on a republished `PartStartEvent` (e.g. from a retried durable activity) that arrives before the
+      open part's end, before the new part's start is emitted.
     """
     _open_part_index: int = 0
-    """The index of the part tracked by `_open_part`, used to reconstruct its `PartEndEvent` on error."""
+    """The index of the part tracked by `_open_part`, used to reconstruct its synthetic `PartEndEvent`."""
     _open_part_deltas: list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta] = field(
         default_factory=list[TextPartDelta | ThinkingPartDelta | ToolCallPartDelta]
     )
@@ -373,6 +376,9 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
         """Fire the turn hooks `event` implies, and record what the error path needs, before `handle_event` sees it."""
         match event:
             case PartStartEvent():
+                # A republished start (e.g. a retried durable activity) can arrive while the previous part is still open.
+                async for e in self._end_open_part():
+                    yield e
                 async for e in self._turn_to('response'):
                     yield e
                 self._record_canonical_system(event)
@@ -427,18 +433,28 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
             self._open_part_index = event.index
             self._open_part_deltas.clear()
 
+    async def _end_open_part(self) -> AsyncGenerator[EventT, None]:
+        """End the message part tracked as open, if any, with a synthetic `PartEndEvent`.
+
+        Used when the native stream left the part open: the stream errored mid-part, or a part's
+        start was republished (e.g. by a retried durable activity) before the open part's end.
+        """
+        if (part := self._open_part) is None:
+            return
+        part = self._apply_open_part_deltas(part)
+        self._open_part = None
+        self._open_part_deltas.clear()
+        async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
+            yield e
+
     async def _close_interrupted(self, *, cancelled: bool) -> AsyncGenerator[EventT, None]:
         """Close the open part and the pending tool calls that the stream's error interrupted."""
         # Close the open message part before emitting the error, so a client that aborts at the
         # error chunk (like the AI SDK) doesn't leave it stuck in a streaming state. This comes
         # first: it's a response-side event, whereas the tool-call cleanup below turns to the
         # request side, and everything after the error chunk is dropped.
-        if (part := self._open_part) is not None:
-            part = self._apply_open_part_deltas(part)
-            self._open_part = None
-            self._open_part_deltas.clear()
-            async for e in self.handle_part_end(PartEndEvent(index=self._open_part_index, part=part)):
-                yield e
+        async for e in self._end_open_part():
+            yield e
 
         # Close any pending tool calls before emitting the error,
         # so the UI doesn't show them as still running.
@@ -465,7 +481,7 @@ class UIEventStream(ABC, Generic[RunInputT, EventT, AgentDepsT, OutputDataT]):
     def _apply_open_part_deltas(
         self, part: TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart
     ) -> TextPart | ThinkingPart | ToolCallPart | NativeToolCallPart:
-        """`part` brought up to date with the recorded deltas, for the synthetic end event the error path emits."""
+        """`part` brought up to date with the recorded deltas, for the synthetic end event `_end_open_part` emits."""
         for delta in self._open_part_deltas:
             # Synthetic cleanup must not replace the original stream error.
             try:

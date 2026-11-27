@@ -215,7 +215,7 @@ def run_case(
     for key, value in explicit.items():
         command += ['-e', f'{key}={value}']
     # exec eliminates the intermediate shell that would retain the capture fd.
-    inner = f'exec {shlex.quote(str(node))} {shlex.quote(str(helpers / "pydantic-ai_harness.cjs"))} clai2 --database {shlex.quote(str(workspace / "settings.db"))}'
+    inner = f'exec {shlex.quote(str(node))} {shlex.quote(str(helpers / "pydantic-ai_harness.cjs"))} pax --database {shlex.quote(str(workspace / "settings.db"))}'
     command += ['--', '/bin/bash', '-c', inner]
     case_env = {**env, 'COMPOSE_PROJECT_NAME': project}
     (case_evidence / 'command.json').write_text(json.dumps(command, indent=2) + '\n')
@@ -471,7 +471,7 @@ Run the deterministic recorder fixture.
             '--target',
             str(packages),
             f'pydantic-ai-harness[coder]=={engine_version}',
-            f'pydantic-clai2=={engine_version}',
+            f'pydantic-ai-pax=={engine_version}',
             f'pydantic-ai-slim[anthropic,openai,mcp,spec]>={slim_version}',
             f'cryptography>={cryptography_version}',
             'logfire>=4.39.0',

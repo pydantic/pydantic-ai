@@ -234,7 +234,7 @@ agent = Agent(
 
 Key parameters: `source` (required; a `HistorySource`), `scope` (`'conversation'` or `'all'`),
 `max_matches=10`, `context_lines=5`, `bm25_k1=1.5`, `bm25_b=0.75`, `add_instructions=True`,
-`tool_id='conversation-search'`.
+`tool_id='conversation-search'`, `max_scanned_messages=2000` (keyword-only).
 
 Gotchas:
 - Always set `scope` explicitly. Unset resolves to `'conversation'` and emits a
@@ -253,6 +253,9 @@ Gotchas:
 - Recovery of compaction-dropped messages depends on pre-compaction snapshots still being
   retained (`max_snapshots_per_run` can prune them). The corpus is rebuilt on every call, so cost
   grows with in-scope history.
+- One search scores only the newest `max_scanned_messages` in-scope messages and says so in its
+  result when it skipped older ones; a `run_id` search reaches an older run. Queries over 1,000
+  characters or 32 unique terms raise `ModelRetry`.
 - History a run inherits through `message_history` is indexed under the run that first
   persisted it; a request a later run adds an instruction change to is indexed again with that
   change, so its other parts can match twice. Excerpts are clipped to 500 characters; when the matched term lies past the cutoff,
@@ -282,14 +285,15 @@ agent = Agent(
 )
 ```
 
-Signature: `Skills(directories, *, include=None, exclude=None, missing_directories='error',
+Signature: `Skills(directories, *, include=None, exclude=None, missing_directories='skip',
 duplicate_names='error', unknown_names='error', workspace=None)`. `directories` is one path or a sequence of library
 directories (not individual skill folders), in precedence order.
 
-To layer project and personal libraries as coding agents do, pass
-`missing_directories='skip'` (absent folders are left out quietly; a file, or a skill package, in
-their place is left out with a `UserWarning`) and `duplicate_names='keep_first'` (the earlier directory's valid skill wins, the other is skipped with
-a `UserWarning`).
+Missing libraries are skipped by default (`missing_directories='skip'`: absent folders are left out quietly; a
+file, a skill package, or a directory the workspace raises `PermissionError` for, in their place, is left out with a
+`UserWarning`; pass `'error'` to fail the run instead). To layer project and personal libraries as coding agents do,
+also pass `duplicate_names='keep_first'` (the earlier directory's valid skill wins, the other is skipped with a
+`UserWarning`).
 
 A host that lets a person invoke a skill (a `/code-review src/app.py` command) reads the catalog
 with `catalog = await skills.load(LocalWorkspaceBackend('.'))` and sends
@@ -297,7 +301,9 @@ with `catalog = await skills.load(LocalWorkspaceBackend('.'))` and sends
 `ARGUMENTS: ...` is appended (indexed forms like `$0` and `$ARGUMENTS[0]` are left as-is).
 `catalog.skipped` lists the `SKILL.md` files and library paths left out as `SkippedSkill(path,
 reason, message)`, `reason` one of `'invalid'`, `'duplicate_name'`, `'not_a_directory'`,
-`'skill_package'`, for the host to show; `load` emits no warnings itself.
+`'skill_package'`, `'unreadable'`, `'flagged'` (the `scanner=` skip), for the host to show; `load` emits no warnings itself.
+`catalog.advice` holds the run's other warnings (overlong descriptions, unimplemented
+frontmatter fields), for a host that hides warnings to show.
 
 Frontmatter `disable-model-invocation: true` keeps a skill out of the model's catalog
 (`SkillDefinition.model_invocable` is `False`) but `load` still returns it, for a host command.

@@ -9,7 +9,7 @@ what exists once on the first and what each session has on the second (see "Per 
 
 | File | Holds |
 |---|---|
-| `cli/cli.py` | argument parsing, startup, `--agent`, `--update` / `update`, `--version`, `sessions` |
+| `cli/cli.py` | argument parsing, startup, `--agent`, `-x` / `--plugin`, `--update` / `update`, `--version`, `sessions` |
 | `cli/install.py` | which package installed the running Pax (`pydantic-ai-pax`, or the `pydantic-clai2` shim in a `uv tool` environment under that name) and so which command starts it, `pax` or `clai2` |
 | `cli/agent_import.py` | resolves `--agent MODULE:ATTR` to an agent instance |
 | `cli/self_update.py` | `/update now`, `pax --update`, the update menu's check (`Updates.check`), and the status-row notice: PyPI (`stable`) or the `clai2-bleeding` GitHub release (`main`: sdists built from the `main` branch by `.github/workflows/clai2-bleeding.yml` with `scripts/build_bleeding.sh`, installed with `--overrides`, no git or GitHub API; `CLAI_BLEEDING_URL` points it elsewhere), reinstalled with `uv tool install --force --compile-bytecode`, refused while another `pax` holds a lock in the environment's `clai2-running` folder (`hold_environment`, `running_elsewhere`); `InstallProgress` tells plugins how the install goes, and `Relaunch` carries a `WebHandoff` so the new build serves the web UI again |
@@ -112,7 +112,7 @@ what exists once on the first and what each session has on the second (see "Per 
 | `ui/prompt/prompt_buffer.py` | pure draft editing, undo/redo steps (word- and run-grouped, capped, reset on submit), history navigation, search and cell-width wrapping |
 | `ui/prompt/prompt_completion.py` | bounded daemon completion worker; no terminal ownership |
 | `ui/prompt/prompt_keys.py` | prompt-toolkit input attachment and paste, CSI-u, Kitty alternate-key and xterm report normalization, including Super (Cmd) for `super-z`; `PromptSurface` enables and releases xterm `CSI >4;1m` and Kitty `CSI >5u`; no prompt-toolkit renderer |
-| `ui/prompt/prompt_selection.py` | SGR mouse report decoding and left-button drag selection over painted transcript and question-widget cells: highlight and text; `paint_row`, which records the cells each `http(s)` OSC 8 hyperlink in a pinned row covers as it paints it, since termflow's cells drop them, and `link_at`/`url_at` for clicks |
+| `ui/prompt/prompt_selection.py` | SGR mouse report decoding and left-button drag, double-click (word), and triple-click (line) selection over painted transcript and question-widget cells: highlight and text; `paint_row`, which records the cells each `http(s)` OSC 8 hyperlink in a pinned row covers as it paints it, since termflow's cells drop them, and `link_at`/`url_at` for clicks |
 | `ui/prompt/text_clipboard.py` | copying text out: the local clipboard command on one background worker where the newest copy wins, or OSC 52 over SSH or without one |
 | `ui/browser.py` | `open_browser`: every sign-in or link opens through it; a `$BROWSER` or `xdg-open` command runs with its output discarded so it cannot print over the display |
 | `paths.py` | `config_dir()`, `$XDG_CONFIG_HOME/pydantic-ai-pax/`, and `state_dir()`, `$XDG_STATE_HOME/pydantic-ai-pax/`, for state that is not a preference (`aoe`, `workspaces`, `live`); each moves its folder from the old `pydantic-clai2` name once per process and leaves a symlink there. Import-light, as the entry point reads it before the splash |

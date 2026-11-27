@@ -36,6 +36,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
+from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import (
@@ -66,6 +67,7 @@ from pydantic_ai_harness.file_system._toolset import (
     _sanitize_recoverable_error,  # pyright: ignore[reportPrivateUsage]
 )
 from pydantic_ai_harness.shell._toolset import ShellToolset
+from tests.harness.conftest import IsStr
 
 from ...workspace_fakes import RunOnlyWorkspaceBackend
 from .._tool_calls import call_tool, call_tools
@@ -833,9 +835,18 @@ class TestReadFile:
             (b'RIFF\x24\x00\x00\x00WEBPVP8 ', 'image/webp'),
             # A PDF often has no null byte near the start, so it is recognized by its signature, not as binary.
             (b'%PDF-1.7\n%\xe2\xe3\xcf\xd3\n1 0 obj\n', 'application/pdf'),
+            (b'\x00\x00\x00\x18ftypisom', 'video/mp4'),
+            (b'\x00\x00\x00\x14ftypqt  ', 'video/quicktime'),
+            (b'\x00\x00\x00\x14ftyp3gp4', 'video/3gpp'),
+            (b'\x1a\x45\xdf\xa3\x9fB\x86\x81\x01B\x82\x84webm', 'video/webm'),
+            (b'FLV\x01\x05\x00', 'video/x-flv'),
+            (b'\x00\x00\x01\xba\x44\x00', 'video/mpeg'),
+            (bytes.fromhex('3026b2758e66cf11a6d900aa0062ce6c'), 'video/x-ms-wmv'),
         ],
     )
-    async def test_read_image_or_pdf_returns_the_file(self, tmp_path: Path, data: bytes, media_type: str) -> None:
+    async def test_read_a_file_the_model_can_be_sent_returns_the_file(
+        self, tmp_path: Path, data: bytes, media_type: str
+    ) -> None:
         # The bytes decide the media type, not the extension.
         (tmp_path / 'upload.bin').write_bytes(data)
         toolset = _unhashed_toolset()
@@ -844,6 +855,34 @@ class TestReadFile:
             f'[upload.bin | {media_type} | {len(data)} bytes]\n',
             BinaryContent(data=data, media_type=media_type),
         ]
+
+    @pytest.mark.parametrize(
+        'data',
+        [
+            pytest.param(b'\x1a\x45\xdf\xa3\x9fB\x82\x88matroska\x00\x00', id='matroska'),
+            pytest.param(b'\x00\x00\x00\x20ftypM4A \x00\x00', id='m4a'),
+            pytest.param(b'\x00\x00\x00\x18ftypheic\x00\x00', id='heic'),
+            pytest.param(b'\x00\x00\x00\x1cftypavif\x00\x00', id='avif'),
+            pytest.param(b'fLaC\x00\x00\x00\x22', id='flac'),
+            pytest.param(b'PK\x03\x04\x14\x00\x00\x00', id='office'),
+        ],
+    )
+    async def test_a_format_that_stays_described(self, tmp_path: Path, data: bytes) -> None:
+        """Local byte sniffing with no model request, so a unit test: a recording would add nothing."""
+        # Only video `ftyp` brands on the allowlist and WebM's EBML DocType are sent as files, so Matroska and
+        # the M4A, HEIC and AVIF `ftyp` brands are described. Audio and Office documents aren't sniffed at all:
+        # some models whose profile admits the kind reject them, so FLAC and a ZIP guard that deferral.
+        (tmp_path / 'clip').write_bytes(data)
+        result = await _unhashed_toolset().read_file('clip', workspace=LocalWorkspaceBackend(tmp_path))
+        assert isinstance(result, str)
+        assert 'Binary file; the first bytes in hex:' in result
+
+    @pytest.mark.parametrize('text', ['RIFF notes, not a WEBP.\n', '%PDF is a prefix.\n'])
+    async def test_text_that_starts_like_a_signature_is_read_as_text(self, tmp_path: Path, text: str) -> None:
+        """Local byte sniffing with no model request, so a unit test: a recording would add nothing."""
+        (tmp_path / 'notes.md').write_text(text)
+        result = await _unhashed_toolset().read_file('notes.md', workspace=LocalWorkspaceBackend(tmp_path))
+        assert result == f'[notes.md | 1 lines]\n     1\t{text}'
 
     async def test_read_oversized_image_is_described(self, tmp_path: Path) -> None:
         (tmp_path / 'big.png').write_bytes(b'\x89PNG\r\n\x1a\n' + bytes(5_000_000))
@@ -1782,72 +1821,55 @@ class TestSearchFiles:
         )
 
     @pytest.mark.parametrize(
-        ('pattern', 'refused'),
+        ('pattern', 'line'),
         [
-            ('(a+)+$', True),
-            ('(a*)*b', True),
-            ('(?:x|a{2,})+', True),
-            ('((a+)b)*', True),
-            (r'(\w+\s?)*$', True),
-            ('(a+){1,30}$', True),
-            ('(.*a){12}$', True),
-            ('(a{2})+', True),
-            (r'(?:\d{1,3}\.){3}\d{1,3}', False),
-            (r'(?:\d{4}){2}', False),
-            ('(?:[A-Fa-f0-9]{2}){1,8}', False),
-            ('(a{1,2}){50}$', True),
-            (r'((\d{1,3}){3}){3}', True),
-            ('(a{2}|a){3}', True),
-            (r'(\d{1,3}){1000}', True),
-            (r'(?:a{1,2}){10}(?:a{1,2}){10}$', True),
-            (r'(a{1,2}){10}$', True),
-            (r'(?:\d{1,3}\.){3}(?:\d{1,3}\.){1}\d', False),
-            ('(a+){0,1}', False),
-            ('(a+){1}', False),
-            ('(a?)+', True),
-            ('(a?b?)+$', True),
-            ('^(a{0,1}){100}a{100}$', True),
-            ('^(?:(?:a?){2}){40}b$', True),
-            ('^(?:a{2}a?){40}$', True),
-            ('(?:a+?)+$', True),
-            ('(?:ab)?c(?:de)?', False),
-            ('(?P<word>foo|bar)+', False),
-            ('(?:foo|bar)+?x', False),
-            ('colou?r', False),
-            ('(ab)+c*', False),
-            ('(?x) needle # trailing )', False),
-            ('(?x)(a+) +$', True),
-            ('(?x)(a+) # one or more\n +$', True),
-            ('(?x: (a+) + )$', True),
-            ('(?x) ( a + )', False),
-            ('(?i-x: (a+) + )', False),
-            ('(?x:(a+) # c\n)+', True),
-            ('[(?x]#(a+)+$', True),
-            (r'\(?x#(a+)+$', True),
-            ('(?x:a)#(a+)+$', True),
-            ('(?#[ comment )(a+)+$', True),
-            (r'(?#\))needle', False),
-            (r'(a+(?#\))b)+$', True),
-            ('(a+)(?#c)+$', True),
-            ('(?x)(a+) (?#c) +$', True),
-            (r'\(a+\)+', False),
-            ('([+*])+', False),
-            ('([]+)])+', False),
-            ('([^]+])+', False),
-            (r'([\]+])+', False),
+            pytest.param('(a+)+$', 'a' * 5000 + '!', id='nested-repetition'),
+            pytest.param('a*a*a*a*b', 'a' * 5000, id='adjacent-quantifiers'),
+            pytest.param('(a|a)*b', 'a' * 5000, id='overlapping-alternatives'),
+            pytest.param('.*.*.*.*x', 'a' * 5000, id='polynomial'),
         ],
     )
-    async def test_nested_repetition_is_refused_when_searching_in_python(
-        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend, pattern: str, refused: bool
+    async def test_backtracking_patterns_search_in_linear_time_in_python(
+        self, fs_root: Path, ws: LocalWorkspaceBackend, monkeypatch: pytest.MonkeyPatch, pattern: str, line: str
     ) -> None:
-        # Python's backtracking `re` can take exponential time on `(a+)+$` and has no timeout, and it
-        # runs on the event loop, so one model call would stall every run sharing it.
-        walked = ReadOnlyWorkspace(Workspace(ws))
-        if refused:
-            with pytest.raises(ModelRetry, match='repeats a group that itself repeats'):
-                await toolset.search_files(pattern, workspace=walked)
-        else:
-            assert 'repeats a group' not in await toolset.search_files(pattern, workspace=walked)
+        # The search runs on the event loop, so it must not use Python's backtracking `re`, which can take
+        # exponential or high polynomial time on these patterns and has no timeout. Patterns `re` compiles
+        # here fail the test if they're used to search.
+        class UnsearchablePattern:
+            def search(self, *args: object) -> None:  # pragma: no cover
+                raise AssertionError('searched with Python `re`')
+
+        def compile_without_search(pattern: str, flags: int = 0) -> UnsearchablePattern:
+            re.compile(pattern, flags)  # keep the invalid-pattern check
+            return UnsearchablePattern()
+
+        guarded_re = SimpleNamespace(
+            **{name: getattr(re, name) for name in dir(re) if not name.startswith('__')},
+        )
+        guarded_re.compile = compile_without_search
+        monkeypatch.setattr('pydantic_ai_harness.file_system._toolset.re', guarded_re)
+
+        (fs_root / 'long.txt').write_text(line + '\n')
+        toolset = FileSystem[None](root_dir=fs_root).get_toolset()
+        assert isinstance(toolset, FileSystemToolset)
+        result = await toolset.search_files(pattern, path='long.txt', workspace=ReadOnlyWorkspace(Workspace(ws)))
+        assert result == 'No matches found.'
+
+    @pytest.mark.parametrize('pattern', ['foo(?=bar)', 'foo(?!bar)', '(?<=x)foo', r'(foo)\1'])
+    async def test_patterns_the_linear_engine_cannot_compile_are_refused_in_python(
+        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend, pattern: str
+    ) -> None:
+        with pytest.raises(
+            ModelRetry, match="syntax the linear-time engine this workspace searches with doesn't support"
+        ):
+            await toolset.search_files(pattern, workspace=ReadOnlyWorkspace(Workspace(ws)))
+
+    async def test_previously_refused_nested_groups_search_in_python(
+        self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend
+    ) -> None:
+        # The old heuristic refused harmless patterns like this one; the linear-time engine searches them.
+        result = await toolset.search_files('(li(ne)+)+[0-9]', workspace=ReadOnlyWorkspace(Workspace(ws)))
+        assert 'multi.txt' in result
 
     async def test_search_basic(self, toolset: FileSystemToolset[None], ws: LocalWorkspaceBackend) -> None:
         result = await toolset.search_files('Hello', workspace=ws)
@@ -3257,6 +3279,48 @@ class TestUsedAsAToolset:
 
 
 class TestReadFileInARun:
+    async def test_a_video_reaches_a_model_that_reads_video_in_the_tool_result(self, tmp_path: Path) -> None:
+        mp4 = b'\x00\x00\x00\x18ftypisom\x00\x00\x02\x00'
+        (tmp_path / 'demo.mp4').write_bytes(mp4)
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'demo.mp4'})])
+            return ModelResponse(parts=[TextPart('seen')])
+
+        agent = Agent(FunctionModel(model), capabilities=[LocalWorkspace(tmp_path), FileSystem[object]()])
+        result = await agent.run('watch the demo')
+        request = result.all_messages()[2]
+        assert isinstance(request, ModelRequest)
+        tool_return = request.parts[0]
+        assert isinstance(tool_return, ToolReturnPart)
+        assert tool_return.files == [BinaryContent(data=mp4, media_type='video/mp4')]
+
+    async def test_a_file_the_model_cannot_read_becomes_a_note(self, tmp_path: Path) -> None:
+        mp4 = b'\x00\x00\x00\x18ftypisom\x00\x00\x02\x00'
+        (tmp_path / 'demo.mp4').write_bytes(mp4)
+        sent: list[object] = []
+
+        def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart('read_file', {'path': 'demo.mp4'})])
+            request = messages[-1]
+            assert isinstance(request, ModelRequest)
+            sent.extend(part.content for part in request.parts if isinstance(part, ToolReturnPart))
+            return ModelResponse(parts=[TextPart('noted')])
+
+        agent = Agent(
+            FunctionModel(model, profile=ModelProfile(supports_video_input=False)),
+            capabilities=[LocalWorkspace(tmp_path), FileSystem[object]()],
+        )
+        result = await agent.run('watch the demo')
+        assert result.output == 'noted'
+        [content] = sent
+        assert content == [
+            IsStr(regex=r'\[demo\.mp4 \| video/mp4 \| 16 bytes.*\]\n'),
+            IsStr(regex=r'File .* \(video/mp4, 16 bytes\) was not sent: this model cannot read video\.'),
+        ]
+
     async def test_an_image_reaches_the_model_in_the_tool_result(self, tmp_path: Path) -> None:
         png = b'\x89PNG\r\n\x1a\n\x00\x00\x00\rIHDR'
         (tmp_path / 'chart.png').write_bytes(png)

@@ -37,6 +37,7 @@ with try_import() as imports_successful:
     from openai.types import responses
 
     from pydantic_ai.models.bedrock_mantle import BedrockMantleResponsesModel
+    from pydantic_ai.models.deepseek import DeepSeekResponsesModel
     from pydantic_ai.models.openai import OpenAIResponsesModel
     from pydantic_ai.models.openai_codex import OpenAICodexModel
     from pydantic_ai.providers.azure import AzureProvider
@@ -84,7 +85,7 @@ def _model(interaction: dict[str, Any], client: AsyncOpenAI) -> OpenAIResponsesM
     if host.startswith('bedrock-mantle.'):
         return BedrockMantleResponsesModel(model_name, provider=BedrockMantleProvider(openai_client=client))
     if host == 'api.deepseek.com':
-        return OpenAIResponsesModel(model_name, provider=DeepSeekProvider(openai_client=client))
+        return DeepSeekResponsesModel(model_name, provider=DeepSeekProvider(openai_client=client))
     if host == 'api.meta.ai':
         return OpenAIResponsesModel(model_name, provider=MetaProvider(openai_client=client))
     if host.endswith('.openai.azure.com') or (host == 'gateway.pydantic.info' and url.path.startswith('/proxy/azure/')):

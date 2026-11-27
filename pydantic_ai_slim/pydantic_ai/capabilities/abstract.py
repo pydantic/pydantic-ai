@@ -51,6 +51,7 @@ from ._on_event import collect_on_event_methods, marked_listens_to
 if TYPE_CHECKING:
     from pydantic_ai import _agent_graph
     from pydantic_ai.agent.abstract import AbstractAgent, AgentModelSettings
+    from pydantic_ai.capabilities.compaction import CompactionRequest, CompactionResult
     from pydantic_ai.capabilities.prefix_tools import PrefixTools
     from pydantic_ai.models import (
         KnownModelName,
@@ -158,6 +159,7 @@ _REALTIME_UNCALLED_HOOKS: tuple[str, ...] = (
     'after_model_request',
     'wrap_model_request',
     'on_model_request_error',
+    'compact_history',
     'get_wrapper_model',
     'before_output_validate',
     'after_output_validate',
@@ -329,6 +331,14 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     A first-class extension point that derives this from a capability's overridden
     hooks (so third-party capabilities don't need to set a flag manually) is tracked
     in [#5477](https://github.com/pydantic/pydantic-ai/issues/5477).
+    """
+
+    _durable_unsupported_reason: ClassVar[str | None] = None
+    """Why this capability cannot run under durable execution, or `None` when it can.
+
+    Internal, in-tree only. A capability that sets it refuses a durability capability in its own
+    `for_agent`. The deprecated wrapper agents (`TemporalAgent`, `DBOSAgent`, `PrefectAgent`) add no
+    durability capability for it to find, so they read this to refuse the capability when they wrap the agent.
     """
 
     @property
@@ -512,6 +522,17 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     @property
     def _has_prepare_model_request(self) -> bool:
         return type(self).prepare_model_request is not AbstractCapability.prepare_model_request
+
+    @property
+    def _has_compact_history(self) -> bool:
+        return type(self).compact_history is not AbstractCapability.compact_history
+
+    def _handles_compact_history(self, ctx: RunContext[AgentDepsT]) -> bool:
+        """Whether a `compact_history` hook can run in this run: one is overridden and, if deferred, loaded.
+
+        The agent only retries a context overflow with compaction, and primes streamed requests for it, when one can.
+        """
+        return self._has_compact_history
 
     @property
     def has_wrap_run_event_stream(self) -> bool:
@@ -1068,6 +1089,9 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
         For a realtime session, the result is produced when the session closes; a transformed result
         becomes `session.result` before the caller leaves the `async with` boundary.
+
+        A [`compact_history()`][pydantic_ai.agent.AbstractAgent.compact_history] run ends after its compaction
+        step without a model response, so its result's `output` is `None`, whatever the agent's `output_type`.
         """
         return result
 
@@ -1081,6 +1105,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
         `handler()` runs `before_run`, the run body with `on_run_error` recovery, and
         `after_run`. Returning without calling `handler()` skips that lifecycle.
+
+        The result `handler()` returns for a
+        [`compact_history()`][pydantic_ai.agent.AbstractAgent.compact_history] run has an `output` of `None`,
+        whatever the agent's `output_type`: that run ends after its compaction step without a model response.
 
         If `handler()` raises and this method catches the exception and returns a result instead,
         the error is suppressed and the recovery result is used directly without `after_run`.
@@ -1303,8 +1331,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
     ) -> ModelRequestContext:
         """Called before each *attempt* at a model request, once the serving model is known.
 
-        This is the hook for work that depends on which model is about to run: compaction,
-        context-window fitting, per-profile message translation. Unlike
+        This is the hook for work that depends on which model is about to run: context-window fitting,
+        per-profile message translation. Compaction has a hook of its own,
+        [`compact_history`][pydantic_ai.capabilities.AbstractCapability.compact_history], which runs after this one.
+        Unlike
         [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request],
         which runs once per request step while the model may still change,
         `request_context.model` here is the model that will actually serve the request, and
@@ -1318,7 +1348,9 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
 
         Changes to `request_context` shape the request that goes on the wire for this attempt and are
         not persisted to the agent's message history; the next attempt starts again from what
-        `before_model_request` produced. Changes made through
+        `before_model_request` produced, also when the attempt compacts the history: see
+        [request-only changes and compaction](../capabilities/custom.md#request-only-changes-and-compaction).
+        Changes made through
         [`RunContext.messages`][pydantic_ai.tools.RunContext.messages], the run's persistent history,
         do persist, and are not rolled back for a further attempt. Use them for state that doesn't
         depend on the attempt, such as a record an attempt makes that later requests and turns should
@@ -1367,6 +1399,10 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         Raise [`ModelRetry`][pydantic_ai.exceptions.ModelRetry] to skip `on_model_request_error`
         and directly retry the model request with a retry prompt. If the handler was called,
         the model response is preserved in history for context (same as `after_model_request`).
+
+        In a [`compact_history()`][pydantic_ai.agent.AbstractAgent.compact_history] run, the handler compacts the
+        history and then ends the run without sending the request, by raising a `BaseException` that isn't an
+        `Exception`. Let it propagate: `except Exception` doesn't catch it, and a `try`/`finally` sees it.
         """
         return await handler(request_context)
 
@@ -1397,6 +1433,41 @@ class AbstractCapability(_CapabilityAuthority, ABC, Generic[AgentDepsT]):
         or [`ModelRetry`][pydantic_ai.exceptions.ModelRetry].
         """
         raise error
+
+    async def compact_history(self, ctx: RunContext[AgentDepsT], request: CompactionRequest) -> CompactionResult | None:
+        """Compact the message history for the model that will serve the next request, or return `None` to leave it to the next capability.
+
+        Called for an attempt at a model request when compaction was asked for with
+        [`RunContext.request_compaction`][pydantic_ai.tools.RunContext.request_compaction], or with reason
+        `'context_overflow'` when the model rejected the attempt for exceeding its context window, to send it to
+        that model once more. It runs after the
+        [`prepare_model_request`][pydantic_ai.capabilities.AbstractCapability.prepare_model_request] hooks, with
+        [`request.conversation_request.model`][pydantic_ai.capabilities.CompactionModelRequest.model] set to the
+        model about to serve the attempt. Capabilities are asked in order and the first result is used, so
+        capability order is the fallback chain: a capability that can't compact for this model, or this request,
+        returns `None`.
+
+        The returned [`CompactionResult.messages`][pydantic_ai.capabilities.CompactionResult.messages] are sent in
+        place of [`request.messages`][pydantic_ai.capabilities.CompactionRequest.messages], and replace the run's
+        message history once a response to them is accepted. What's committed has the persistent originals of the
+        messages it kept, and what's sent has this request's own changes to them; see
+        [`CompactionRequest.messages`][pydantic_ai.capabilities.CompactionRequest.messages]. A compaction for a model
+        that then fails is discarded, and its usage is counted like a failed attempt's. A
+        [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] raised here fails the attempt like an error from the
+        model itself, so it reaches
+        [`on_model_request_error`][pydantic_ai.capabilities.AbstractCapability.on_model_request_error] and
+        [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] can move on to another model.
+
+        Core emits the [`CompactionStartEvent`][pydantic_ai.messages.CompactionStartEvent] and
+        [`CompactionEndEvent`][pydantic_ai.messages.CompactionEndEvent] around the hooks, and checks the result:
+        it has to contain its [`part`][pydantic_ai.capabilities.CompactionResult.part], with a summary or a
+        provider's encrypted content, and end with the request being answered. A summary in a `ModelRequest` has to
+        come after the standing system prompt the history it was given opens with, which the result keeps first.
+        Under durable execution this runs in workflow code; requests through
+        `request.conversation_request.model` are durable model operations, and other I/O belongs in a
+        [`durable_operation`][pydantic_ai.capabilities.durable_operation].
+        """
+        return None
 
     # --- Tool validate lifecycle hooks ---
 

@@ -123,6 +123,7 @@ from .conftest import (
     IsSameStr,
     IsStr,
     conversation_view,
+    history_with_server_system_prompts,
     iter_message_parts,
     legacy_retry_prompt_part,
     message,
@@ -170,6 +171,7 @@ with try_import() as imports_successful:
     from pydantic_ai.ui import (
         DEFAULT_ALLOWED_CONTENT_TYPES,
         SSE_CONTENT_TYPE,
+        NativeEvent,
         OnCompleteFunc,
         StateDeps,
         ag_ui as ag_ui_package,
@@ -825,6 +827,136 @@ async def test_run_stream_error_closes_open_tool_call() -> None:
             'RUN_ERROR',
         ]
     )
+
+
+async def _encode_restarted_part(events: AsyncIterator[NativeEvent]) -> list[dict[str, Any]]:
+    """AG-UI events for a republished part, without timestamps.
+
+    Pinned to the declared floor, so the thinking envelope is the same on every installed SDK.
+    """
+    event_stream = AGUIEventStream[None, str](thread_id='thread_1', run_id='run_1', ag_ui_version='0.1.10')
+    return [
+        {k: v for k, v in json.loads(event.removeprefix('data: ')).items() if k != 'timestamp'}
+        async for event in event_stream.encode_stream(event_stream.transform_stream(events))
+    ]
+
+
+async def test_restarted_part_ends_open_text() -> None:
+    """A republished `PartStartEvent` ends the open text message before the new one starts. #11734
+
+    A retried durable activity republishes the model events it already published, so the client sees the first
+    attempt's partial message as its own, ended message, followed by the retry's full message.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo'))
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo, world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello, world'))
+
+    events = await _encode_restarted_part(event_generator())
+
+    assert events == snapshot(
+        [
+            {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1'},
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (first_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': first_id, 'delta': 'Hel'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': first_id, 'delta': 'lo'},
+            {'type': 'TEXT_MESSAGE_END', 'messageId': first_id},
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (second_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': second_id, 'delta': 'Hel'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': second_id, 'delta': 'lo, world'},
+            {'type': 'TEXT_MESSAGE_END', 'messageId': second_id},
+            {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1'},
+        ]
+    )
+    assert len({e['messageId'] for e in events if 'messageId' in e}) == 2
+
+
+async def test_restarted_part_ends_open_thinking() -> None:
+    """A republished `PartStartEvent` ends the open thinking message before the new one starts. #11734"""
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo'))
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo, world'))
+        yield PartEndEvent(index=0, part=ThinkingPart(content='Hello, world'))
+
+    events = await _encode_restarted_part(event_generator())
+
+    assert events == snapshot(
+        [
+            {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1'},
+            {'type': 'THINKING_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Hel'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'lo'},
+            {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_END'},
+            {'type': 'THINKING_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Hel'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'lo, world'},
+            {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_END'},
+            {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1'},
+        ]
+    )
+
+
+async def test_restarted_part_ends_open_tool_call() -> None:
+    """A republished `PartStartEvent` ends the open tool call before the new one starts. #11734"""
+
+    def call_part(args: str) -> ToolCallPart:
+        return ToolCallPart(tool_name='get_time', args=args, tool_call_id='call_0')
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=call_part('{"tz": '))
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"U'))
+        yield PartStartEvent(index=0, part=call_part('{"tz": '))
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}'))
+        yield PartEndEvent(index=0, part=call_part('{"tz": "UTC"}'))
+        yield FunctionToolCallEvent(part=call_part('{"tz": "UTC"}'), args_valid=True)
+        yield FunctionToolResultEvent(part=ToolReturnPart(tool_name='get_time', tool_call_id='call_0', content='12:00'))
+
+    events = await _encode_restarted_part(event_generator())
+
+    assert events == snapshot(
+        [
+            {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1'},
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (parent_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_END', 'messageId': parent_id},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'call_0',
+                'toolCallName': 'get_time',
+                'parentMessageId': parent_id,
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"tz": '},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '"U'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'call_0',
+                'toolCallName': 'get_time',
+                'parentMessageId': parent_id,
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"tz": '},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '"UTC"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': IsSameStr(),
+                'toolCallId': 'call_0',
+                'content': '12:00',
+                'role': 'tool',
+            },
+            {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1'},
+        ]
+    )
+    assert len({e['messageId'] for e in events if 'messageId' in e}) == 2
 
 
 async def test_ag_ui_id_only_tool_call_delta_emits_no_args_fragment() -> None:
@@ -12264,6 +12396,65 @@ async def test_server_message_history_drops_a_tool_result_for_no_pending_call():
     assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
 
 
+@pytest.mark.parametrize('held', ['message_history', 'server message_history', 'conversation_store'])
+async def test_server_system_prompt_keeps_trusted_history_system_prompts(held: str):
+    """`manage_system_prompt='server'` replaces only the stale prompt opening the trusted history (#13768).
+
+    The server's other system prompts reach the model, and the client's is still stripped.
+    """
+    agent, requests, _ = server_history_agent(system_prompt='Server prompt')
+    stored = history_with_server_system_prompts()
+    run_input = create_input(
+        SystemMessage(id='s1', content='Client prompt'), UserMessage(id='u2', content='and now?'), thread_id='chat'
+    )
+    message_history: list[ModelMessage] | None = stored
+    if held == 'conversation_store':
+        store = InMemoryConversationStore()
+        await store.save(Conversation(messages=stored, conversation_id='chat'))
+        adapter = AGUIAdapter(agent, run_input, conversation_store=store)
+        message_history = None
+    elif held == 'server message_history':
+        adapter = AGUIAdapter(agent, run_input, manage_message_history='server')
+    else:
+        adapter = AGUIAdapter(agent, run_input)
+    results: list[AgentRunResult[Any]] = []
+
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
+        async for _ in adapter.run_stream(message_history=message_history, on_complete=results.append):
+            pass
+
+    [result] = results
+    assert conversation_view(requests[-1]) == snapshot(
+        [
+            'system-prompt: Server prompt',
+            'user-prompt: where am I?',
+            'call loc-1',
+            'return loc-1: Paris',
+            'user-prompt: <system>Enqueued in an earlier run</system>',
+            'text: ok',
+            'user-prompt: <system>Server context</system>',
+            'user-prompt: hi',
+            'text: ok',
+            'user-prompt: and now?',
+        ]
+    )
+    assert conversation_view(result.all_messages()) == snapshot(
+        [
+            'system-prompt: Server prompt',
+            'user-prompt: where am I?',
+            'call loc-1',
+            'return loc-1: Paris',
+            'system-prompt: Enqueued in an earlier run',
+            'text: ok',
+            'system-prompt: Server context',
+            'user-prompt: hi',
+            'text: ok',
+            'user-prompt: and now?',
+            'text: ok',
+        ]
+    )
+
+
 async def test_server_message_history_frontend_tool_result():
     """`@ag-ui/client` sends its whole history, a frontend tool's result included, on every run."""
     agent, requests, _ = server_history_agent()
@@ -12416,6 +12607,68 @@ async def test_conversation_store_rejects_a_resume_for_a_call_not_pending():
     assert [event.message for event in events if isinstance(event, RunErrorEvent)] == snapshot(
         [
             "The request answers 1 tool call(s) that the stored conversation is not waiting on: 'del-2'. An approval, denial or deferred tool result can only answer a tool call that is still waiting for that kind of answer at the end of the stored conversation. If the conversation changed since the client loaded it, reload it from the server."
+        ]
+    )
+
+
+async def test_conversation_store_saves_each_tool_return_once_after_a_frontend_tool_result():
+    """A response calls a server tool and a frontend tool; the store gets each return once after the client sends the frontend result.
+
+    See https://github.com/pydantic/pydantic-ai/issues/13547.
+    """
+    requests: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], _info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        requests.append(messages)
+        if len(requests) == 1:
+            yield {0: DeltaToolCall(name='lookup', json_args='{}', tool_call_id='srv-1')}
+            yield {1: DeltaToolCall(name='pick_file', json_args='{}', tool_call_id='front-1')}
+        else:
+            yield 'ok'
+
+    agent: Agent[None, str | DeferredToolRequests] = Agent(
+        FunctionModel(stream_function=stream_function), output_type=[str, DeferredToolRequests]
+    )
+
+    @agent.tool_plain
+    def lookup() -> str:
+        return 'server value'
+
+    store = InMemoryConversationStore()
+    tools = [Tool(name='pick_file', description='Pick a file.', parameters={'type': 'object', 'properties': {}})]
+    await _stored_turn(agent, store, create_input(UserMessage(id='u1', content='go'), tools=tools, thread_id='thread'))
+    called = AssistantMessage(
+        id='a1', tool_calls=[ToolCall(id='front-1', function=FunctionCall(name='pick_file', arguments='{}'))]
+    )
+    picked = ToolMessage(id='t1', tool_call_id='front-1', content='a.txt')
+    await _stored_turn(agent, store, create_input(called, picked, tools=tools, thread_id='thread'))
+
+    conversation = await store.load('thread')
+    assert conversation is not None
+    assert conversation_view(conversation.messages) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: ok',
+        ]
+    )
+
+    await _stored_turn(
+        agent, store, create_input(UserMessage(id='u2', content='and now?'), tools=tools, thread_id='thread')
+    )
+
+    assert conversation_view(requests[-1]) == snapshot(
+        [
+            'user-prompt: go',
+            'call srv-1',
+            'call front-1',
+            'return srv-1: server value',
+            'return front-1: a.txt',
+            'text: ok',
+            'user-prompt: and now?',
         ]
     )
 

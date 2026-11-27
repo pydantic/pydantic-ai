@@ -40,6 +40,7 @@ from pydantic_ai import (
     CapabilityEvent,
     CapabilityInstructionSource,
     CapabilityLoadDeltaPart,
+    CompactionPart,
     CustomEvent,
     ExternalToolset,
     FinalResultEvent,
@@ -52,6 +53,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseOrigin,
     ModelSettings,
     PartDeltaEvent,
     PartEndEvent,
@@ -73,6 +75,8 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     BatchModelRequests,
     Capability,
+    CompactionRequest,
+    CompactionResult,
     DynamicCapability,
     Hooks,
     Instrumentation,
@@ -106,12 +110,15 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelAPIError,
     ModelHTTPError,
     ModelRequestTimeout,
     ModelRetry,
     RunCancelled,
+    SuspendedResponseExpired,
     ToolFailed,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -563,6 +570,50 @@ async def test_prefect_agent_rejects_model_wrappers() -> None:
         await agent.run('hello')
 
 
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+@pytest.mark.parametrize('flow_retries', [0, 1], ids=['first-attempt', 'retried'])
+async def test_prefect_agent_compact_history_compacts_in_its_flow(blockbuster_enabled: bool, flow_retries: int) -> None:
+    """`PrefectAgent.compact_history()` runs through the wrapper's run flow and ends after compacting, also when retried.
+
+    Prefect retries a flow in the context it ran in, so the run claims the compaction-only flag only until it ends:
+    the retry's run is compaction-only too. Blockbuster is off as for the other tests that start a `PrefectAgent`
+    flow from async code: `@flow` inspects the decorated function's source file.
+    """
+    from prefect.settings import PREFECT_FLOWS_DEFAULT_RETRIES, temporary_settings
+
+    assert blockbuster_enabled is False
+    calls: list[str] = []
+
+    class Summarize(AbstractCapability[None]):
+        async def compact_history(self, ctx: RunContext[None], request: CompactionRequest) -> CompactionResult | None:
+            flow_run = FlowRunContext.get()
+            calls.append(f'compact in {flow_run.flow.name if flow_run is not None and flow_run.flow else None}')
+            if len(calls) <= flow_retries:
+                raise RuntimeError('compaction failed')
+            part = CompactionPart(content='a summary')
+            return CompactionResult(messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='s')
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('model request')  # pragma: no cover
+        return ModelResponse(parts=[TextPart('answered')])  # pragma: no cover
+
+    agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
+        Agent(
+            FunctionModel(answer),
+            name='prefect_compact_history',
+            instructions='Be brief.',
+            deps_type=type(None),
+            capabilities=[Summarize()],
+        )
+    )
+    with temporary_settings({PREFECT_FLOWS_DEFAULT_RETRIES: flow_retries}):
+        result = await agent.compact_history(
+            [ModelRequest(parts=[UserPromptPart('Hello')]), ModelResponse(parts=[TextPart('Hello!')])]
+        )
+    assert calls == ['compact in prefect_compact_history Run'] * (flow_retries + 1)
+    assert result.all_messages() == [ModelRequest(parts=[CompactionPart(content='a summary')])]
+
+
 async def test_simple_agent_run_in_flow(allow_model_requests: None) -> None:
     """Test that a simple agent can run in a Prefect flow."""
 
@@ -599,6 +650,49 @@ async def test_prefect_durability_model_error_reaches_flow_with_its_type() -> No
         return (await agent.run('Hello Prefect')).output
 
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
+
+
+async def test_prefect_durability_retried_model_task_streams_a_later_execution() -> None:
+    """A model task that fails after it streamed runs again as a later execution of the same response."""
+    executions = 0
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal executions
+        executions += 1
+        if executions == 1:
+            yield 'Hel'
+            raise RuntimeError('connection lost')
+        yield 'Hello'
+
+    origins: list[ModelResponseOrigin | None] = []
+
+    async def handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            if isinstance(event, PartStartEvent):
+                origins.append(event.origin)
+
+    agent = Agent(
+        FunctionModel(stream_function=stream),
+        name='prefect_durability_retried_stream',
+        deps_type=type(None),
+        capabilities=[
+            PrefectDurability(
+                event_stream_handler=handler, model_task_config=TaskConfig(retries=1, retry_delay_seconds=0)
+            )
+        ],
+    )
+
+    @flow(name='test_prefect_durability_retried_model_task_streams_a_later_execution')
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello Prefect')).output
+
+    assert await run_durable_agent() == 'Hello'
+
+    first, second = origins
+    assert first is not None and second is not None
+    assert (first.execution_attempt, second.execution_attempt) == (1, 2)
+    assert first.response_id == second.response_id
+    assert second.supersedes(first)
 
 
 @pytest.mark.parametrize('where', ['tool-task', 'user-task', 'flow-code'])
@@ -3049,6 +3143,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'capabilities',  # live capability objects, not hashable run state
         'root_capability',  # live capability tree (static config); run-varying loaded state is projected via loaded_capability_ids/discovered_tool_names
         'pending_messages',  # live run queue, not hashable run state
+        '_compaction_requests',  # live run state; a request made inside a task raises, so it's never a task input
         'trace_include_content',  # tracing config, fixed for the agent rather than varying per run
         'instrumentation_version',  # tracing config, fixed for the agent rather than varying per run
         'partial_output',  # only set for output validators, which run in flow code, never inside a task
@@ -4771,6 +4866,30 @@ async def test_prefect_durability_runtime_registered_model() -> None:
     assert await run_by_instance() == 'alt-response'
 
 
+class _IgnoresStopSequences(FunctionModel):
+    unsupported_settings = frozenset({'stop_sequences'})
+
+
+async def test_prefect_durability_fallback_on_unsupported_setting_warning() -> None:
+    """A model that would ignore a setting the request relies on is moved on from inside a Prefect flow too."""
+    agent = Agent(
+        _IgnoresStopSequences(_prefect_alt_model_fn, model_name='primary'),
+        name='durability_unsupported_setting_fallback',
+        model_settings={'stop_sequences': ['STOP']},
+        capabilities=[
+            ModelFallback('alt', fallback_on=(ModelAPIError, UnsupportedSettingWarning)),
+            PrefectDurability(models={'alt': _prefect_alt_model}),
+        ],
+    )
+
+    @flow
+    async def run_agent() -> tuple[str | None, list[str]]:
+        result = await agent.run('hello')
+        return result.response.model_id, [f'{a.model_name} {a.outcome}' for a in result.response.failed_attempts or []]
+
+    assert await run_agent() == ('alt', ['primary error'])
+
+
 class _BehaviorChangingWrapper(WrapperModel):
     async def request(
         self,
@@ -5973,6 +6092,8 @@ async def test_prefect_with_non_retryable_errors_condition() -> None:
     assert await condition(None, None, _State(UserError('bad config'))) is False
     assert await condition(None, None, _State(PydanticUserError('bad schema', code=None))) is False
     assert await condition(None, None, _State(UnexpectedModelBehavior('bad response'))) is False
+    assert await condition(None, None, _State(UsageLimitExceeded('over the limit'))) is False
+    assert await condition(None, None, _State(SuspendedResponseExpired('expired'))) is False
     for error in (
         WorkspaceTimeoutError('slow'),
         WorkspaceOutputLimitError('loud', limit=1),

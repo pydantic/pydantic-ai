@@ -576,6 +576,37 @@ async def test_interrupted_response_starts_a_new_thread(allow_model_requests: No
     assert _user_texts(api.bodies[1]) == ['Hi', 'OK', 'Again']
 
 
+async def test_cut_off_stream_starts_a_new_thread(allow_model_requests: None):
+    """A stream that ended before `message_delta` and `message_stop` isn't continued, like an interrupted response."""
+    message: dict[str, Any] = {
+        'id': 'msg_1',
+        'type': 'message',
+        'role': 'assistant',
+        'model': 'claude-sonnet-4-5',
+        'content': [],
+        'stop_reason': None,
+        'usage': {'input_tokens': 5, 'output_tokens': 1},
+    }
+    events: list[dict[str, Any]] = [
+        {'type': 'message_start', 'message': message},
+        {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+        {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'Hel'}},
+    ]
+    body = ''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events)
+    cut_off = httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=body.encode())
+    api = _Api(replies=[cut_off], stream=True)
+    async with _model(api) as model:
+        agent = Agent(model, model_settings=_SETTINGS)
+        first = await _run(agent, 'Hi', [], stream=True)
+        await _run(agent, 'Again', first, stream=True)
+
+    assert api.bodies[1]['thread'] == {'type': 'create'}
+    assert _user_texts(api.bodies[1]) == ['Hi', 'Hel', 'Again']
+    response = first[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'incomplete'
+
+
 async def test_changed_skills_start_a_new_thread(allow_model_requests: None):
     """`container.skills` is fixed for a thread, so changing it creates a new thread."""
     api = _Api()

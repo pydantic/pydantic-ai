@@ -10,6 +10,7 @@ import anyio
 from pydantic import BaseModel, Field
 
 from pydantic_ai import Agent
+from pydantic_ai._framing import second_model_prompt
 from pydantic_ai.exceptions import UsageLimitExceeded
 from pydantic_ai.framing import register_tag, wrap
 from pydantic_ai.models import KnownModelName, Model
@@ -278,7 +279,7 @@ class LoopJudge(LoopDetector[AgentDepsT]):
         text = sample.text[-self.max_chars :]
         prompt = wrap(_SAMPLE_TAG, text, channel=sample.channel, tool_name=sample.tool_name)
         try:
-            with anyio.fail_after(self.timeout):
+            with anyio.fail_after(self.timeout), second_model_prompt():
                 result = await self._judge.run(
                     prompt,
                     output_type=_Verdict,

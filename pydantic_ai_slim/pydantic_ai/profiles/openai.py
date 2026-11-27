@@ -469,9 +469,12 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     When enabled, `OpenAIChatModel` raises a `ModelRequestRejectedError` for a request that sends tools, output tools
     included, with reasoning on, before anything is sent: the API rejects the combination with a 400 pointing at
-    `/v1/responses` or `reasoning_effort='none'`. `OpenAIProvider` enables it for the GPT-6 families (verified live on
-    gpt-6-luna, gpt-6-sol, gpt-6.1-terra, gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra). `openai_model_profile` leaves it off,
-    because the restriction is unverified on the OpenAI-compatible endpoints that share that profile.
+    `/v1/responses` or `reasoning_effort='none'`. `OpenAIProvider` enables it for the GPT-5.4, GPT-5.6 and GPT-6
+    families (verified live on gpt-5.4, gpt-5.4-mini, gpt-5.4-nano, gpt-5.6, gpt-5.6-sol, gpt-5.6-luna,
+    gpt-5.6-terra, gpt-6-luna, gpt-6-sol, gpt-6.1-terra, gpt-6-astra, gpt-6.1-sol, gpt-6.2-sol and gpt-6.2-astra).
+    GPT-5.4 reasons only when asked, so its tool requests are rejected only with reasoning turned on.
+    `openai_model_profile` leaves it off, because the restriction is unverified on the OpenAI-compatible endpoints
+    that share that profile.
     `OpenAIProvider(base_url=...)` keeps the flag, as a proxy to OpenAI should; for another server that serves
     these model names, pass `profile=OpenAIModelProfile(openai_chat_function_tools_require_reasoning_off=False)`.
     On models that pin `openai_reasoning_efforts` (e.g. gpt-6-astra), `thinking=False` maps to the lowest
@@ -486,6 +489,14 @@ class OpenAIModelProfile(ModelProfile, total=False):
     `{'thinking': {'type': 'disabled'}}` on Kimi K2.5 and K2.6, and to `{'reasoning_effort': 'low'}` on Kimi K3,
     which always reasons. The fields go out through `extra_body`, where keys the caller set in `extra_body` win,
     and nothing is added when `openai_reasoning_effort` is set explicitly."""
+
+    openai_chat_thinking_summary_false_body: dict[str, Any]
+    """Request body fields that unified `thinking_summary=False` sends on the Chat Completions API, to ask it not to
+    return the model's thinking. Default: unset.
+
+    Unset for an API with no such switch, where `thinking_summary=False` is ignored. Set by OpenAI-compatible
+    providers that have one, such as vLLM (`{'include_reasoning': False}`). The fields go out through `extra_body`,
+    where keys the caller set in `extra_body` win."""
 
     openai_responses_supports_max_reasoning_effort: bool
     """Whether the Responses API accepts `reasoning.effort='max'` for this model. Default: `False`.
@@ -529,6 +540,14 @@ class OpenAIModelProfile(ModelProfile, total=False):
 
     Translated (with a deprecation warning) whenever profiles are merged; an explicit
     `tool_call_ids_are_response_scoped` in the same profile wins.
+    """
+
+    openai_responses_url_citation_content_offsets: bool
+    """Whether a Responses `url_citation` annotation's offsets span the cited text. Default: `False`.
+
+    OpenAI's offsets span the citation marker the model wrote, such as a Markdown link, so they map to a
+    [`MarkerCitationAnchor`][pydantic_ai.messages.MarkerCitationAnchor]. With `True`, they map to a
+    [`ContentCitationAnchor`][pydantic_ai.messages.ContentCitationAnchor], as DeepSeek's do.
     """
 
     openai_responses_supports_interleaved_function_calls: bool
