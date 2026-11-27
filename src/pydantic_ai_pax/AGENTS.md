@@ -443,7 +443,8 @@ which older builds sharing the database still import. The keyring service and th
 name so existing installs keep their data. The config and state folders moved to `pydantic-ai-pax`: `paths.py` moves a
 `pydantic-clai2` folder on first use and leaves a symlink, so older builds still share it. `/update` in a
 `pydantic-clai2` `uv tool` environment installs `pydantic-ai-pax` as its own tool, at the running version when nothing is newer, and restarts as `pax`, leaving
-the old environment and its `clai2` command in place, so the shim needs no release after V1.
+the old environment and its `clai2` command in place, so the shim needs no release after V1. Where another `clai2`
+session already moved, so that environment's metadata names the same build, it restarts into that `pax` without installing.
 
 ## File map
 

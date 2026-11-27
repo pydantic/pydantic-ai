@@ -9,7 +9,8 @@ serving its web UI again on the same port with the same token when one ran.
 The install replaces the environment's files, so it is refused while another `pax` process runs from it; one
 started while uv installs is not covered. A `uv tool` environment installed as `pydantic-clai2`, Pax's former name,
 gets `pydantic-ai-pax` as a tool of its own instead: that replaces nothing the `clai2` processes running from the
-old environment use, and Pax restarts as `pax`.
+old environment use, and Pax restarts as `pax`; once another `clai2` session has moved, it restarts into that
+`pax` without installing.
 On Windows, which locks the files of a running program, the install runs in a new PowerShell window after
 Pax exits.
 """
@@ -113,7 +114,10 @@ def installed() -> Installed:
 
     The commit comes from a `main` sdist or archive URL, or from a `git+` install made by hand.
     """
-    distribution = metadata.distribution(DISTRIBUTION)
+    return _installed(metadata.distribution(DISTRIBUTION), Path(sys.prefix))
+
+
+def _installed(distribution: metadata.Distribution, prefix: Path) -> Installed:
     text = distribution.read_text('direct_url.json')
     direct_url = _DIRECT_URL.validate_json(text) if text else _DirectURL()
     archive = _COMMIT_ARCHIVE.fullmatch(direct_url.get('url', ''))
@@ -121,8 +125,13 @@ def installed() -> Installed:
     return Installed(
         version=distribution.version,
         commit=archive[1] if archive else None if vcs is None else vcs['commit_id'],
-        tool=Path(sys.prefix, 'uv-receipt.toml').is_file(),
+        tool=(prefix / 'uv-receipt.toml').is_file(),
     )
+
+
+def _runs(current: Installed, channel: UpdateChannel, target: str) -> bool:
+    """Whether `current` is `target`: its commit on `main`; on `stable`, its version, from a release, not Git."""
+    return current.commit == target if channel == 'main' else current.commit is None and current.version == target
 
 
 def latest(channel: UpdateChannel, *, transport: 'httpx.BaseTransport | None' = None) -> str:
@@ -195,8 +204,7 @@ def find_update(channel: UpdateChannel, current: Installed, target: str) -> Upda
     A `pydantic-clai2` environment is offered what runs too, as a move to `pax`: its package has no releases
     after the last one that moves it.
     """
-    newest = current.commit == target if channel == 'main' else current.commit is None and current.version == target
-    if not newest:
+    if not _runs(current, channel, target):
         return Update(channel=channel, target=target)
     return Update(channel=channel, target=target, move=True) if tool_distribution() == LEGACY_DISTRIBUTION else None
 
@@ -316,6 +324,23 @@ async def tool_executable(uv: str) -> str | None:
     directory = await _tool_dir(uv, '--bin')
     path = None if directory is None else directory / COMMAND
     return str(path) if path is not None and await to_thread.run_sync(path.is_file) else None
+
+
+def _environment_build(environment: Path) -> Installed | None:
+    """The Pax installed in the `uv tool` environment `environment`, read from its metadata, not by running it."""
+    # `lib/pythonX.Y/site-packages` on POSIX, `Lib/site-packages` on Windows.
+    path = [
+        str(folder)
+        for folder in (*environment.glob('lib/python*/site-packages'), environment / 'Lib' / 'site-packages')
+    ]
+    found = next(iter(metadata.distributions(name=DISTRIBUTION, path=path)), None)
+    return None if found is None else _installed(found, environment)
+
+
+async def tool_build(uv: str) -> Installed | None:
+    """The Pax in the `pydantic-ai-pax` `uv tool` environment, if one is installed; nothing in it runs."""
+    directory = await _tool_dir(uv)
+    return None if directory is None else await to_thread.run_sync(_environment_build, directory / DISTRIBUTION)
 
 
 RUNNING = 'clai2-running'
@@ -492,6 +517,8 @@ class Updates:
     """Finds the installed `pax` from the uv executable."""
     others: Callable[[str], Awaitable[list[str]]] = sibling_processes
     """Finds the other `pax` processes the install would break, from the uv executable."""
+    tool: Callable[[str], Awaitable[Installed | None]] = tool_build
+    """Reads the Pax a `uv tool` environment of its own holds, from the uv executable."""
     restart_required: bool = False
     """Set after a successful install: the running environment was replaced, so the shell exits."""
     relaunch: str | None = None
@@ -514,6 +541,36 @@ class Updates:
             f'Not {f"moving to {COMMAND}" if update.move else f"updating to {update.label}"}: other {COMMAND} processes run from the install it would replace, '
             f'and would break (PID {", ".join(others)}). Quit them, then update again.'
         )
+
+    async def _instead_of_installing(self, uv: str | None, update: Update) -> str | None:
+        """What `command` says when it does not install `update` now; `None` to go on and install it.
+
+        A `clai2` restarts into the `pax` another session moved to; other `pax` processes refuse an install.
+        """
+        if update.move and uv is not None and await self._moved_already(uv, update):
+            return await self._restart_into_moved(uv, update)
+        return await self._in_use(uv, update)
+
+    async def _moved_already(self, uv: str, update: Update) -> bool:
+        """Whether another `clai2` session already installed the `pax` that `update` moves to."""
+        moved = await self.tool(uv)
+        return moved is not None and _runs(moved, update.channel, update.target)
+
+    async def _restart_into_moved(self, uv: str, update: Update) -> str:
+        """Restart into the `pax` another `clai2` session moved to, as the move would after installing it.
+
+        Installing it again would replace the environment that `pax` runs from, which is refused while it runs.
+        """
+        self.restart_required = True
+        self.relaunch = await self.locate(uv)
+        self.web = self.serving() if self.relaunch is not None else None
+        if (report := self.report()) is not None:
+            stage: UpdateStage = 'installed' if self.relaunch is None else 'restarting'
+            await report(InstallProgress(stage=stage, target=update.label))
+        done = f'{COMMAND} {update.label} ({update.channel}) is installed already.'
+        if self.relaunch is None:
+            return _with_notice(f'{done} Exiting; start {COMMAND} to use it.')
+        return f'{done} Restarting...'
 
     def segment(self) -> str:
         """A status-row hint once a background check finds an update; checks again on a channel change or after an hour.
@@ -575,8 +632,8 @@ class Updates:
         if update is None:
             return f'Pax {self.current.label} is the newest on the {channel} channel.'
         uv = await to_thread.run_sync(self.find_uv)
-        if (refusal := await self._in_use(uv, update)) is not None:
-            return refusal
+        if (instead := await self._instead_of_installing(uv, update)) is not None:
+            return instead
         overrides = await to_thread.run_sync(_write_overrides, update.overrides()) if channel == 'main' else None
         command = update.command(uv=uv or 'uv', overrides=overrides)
         if uv is None:

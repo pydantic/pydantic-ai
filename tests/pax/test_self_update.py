@@ -51,6 +51,7 @@ from pydantic_ai_pax.cli.self_update import (
     installed,
     latest,
     powershell,
+    tool_build,
     tool_executable,
 )
 from pydantic_ai_pax.commands import set_completions
@@ -318,6 +319,7 @@ def _updates(
         hand_off=lambda script: pytest.fail('only Windows hands the install off'),
         locate=locate,
         others=AsyncMock(return_value=[]),
+        tool=AsyncMock(return_value=None),
     )
     return updates, ran
 
@@ -865,6 +867,62 @@ async def test_a_pydantic_clai2_environment_on_the_newest_version_moves_to_pax(
         'clai2 moves itself to pax only when uv is on PATH. To move it by hand, run:\n'
         'uv tool install --force --compile-bytecode pydantic-ai-pax==0.53.0'
     )
+
+
+async def test_a_pydantic_clai2_session_restarts_into_the_pax_another_one_moved_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Once one `clai2` session has moved, `/update` in another restarts into that `pax` rather than install it again,
+    which the moved `pax` running from it would refuse. Any other build there is installed over as before.
+    """
+    _in_environment(monkeypatch, tmp_path, 'pydantic-clai2')
+    stable = Installed(version='0.53.0', tool=True)
+    cases: list[tuple[UpdateChannel, Installed, str, str]] = [
+        ('stable', stable, '0.53.0', '0.53.0'),
+        ('main', TOOL, SHA, SHA[:9]),
+    ]
+    for channel, current, target, label in cases:
+        moved, ran = _updates([channel], current=current, fetch=lambda _, target=target: target)
+        moved.tool = AsyncMock(return_value=current)
+        moved.others = AsyncMock(return_value=['4545'])
+        assert await moved.command([]) == f'pax {label} ({channel}) is installed already. Restarting...'
+        assert (ran, moved.restart_required, moved.relaunch) == ([], True, '/tools/pax')
+    notice = MOVED.format(', and resume a conversation with pax --resume <ID>.')
+    not_restarting, ran = _updates(['stable'], current=stable, fetch=lambda _: '0.53.0', executable=None)
+    not_restarting.tool = AsyncMock(return_value=stable)
+    heard: list[InstallProgress] = []
+
+    async def hear(progress: InstallProgress) -> None:
+        heard.append(progress)
+
+    not_restarting.report = lambda: hear
+    assert await not_restarting.command([]) == (
+        f'pax 0.53.0 (stable) is installed already. Exiting; start pax to use it.\n{notice}'
+    )
+    assert (ran, heard) == ([], [InstallProgress(stage='installed', target='0.53.0')])
+    # A `pax` from another build, or from Git on `stable`, is not the one this session would move to.
+    for other in (Installed(version='0.52.0', tool=True), Installed(version='0.53.0', commit=SHA, tool=True)):
+        replaced, ran = _updates(['stable'], current=stable, fetch=lambda _: '0.53.0')
+        replaced.tool = AsyncMock(return_value=other)
+        assert await replaced.command([]) == 'Moved clai2 to pax 0.53.0 (stable). Restarting...'
+        assert [command[-1] for command in ran] == ['pydantic-ai-pax==0.53.0']
+
+
+async def test_tool_build_reads_the_pax_environment_without_running_it(tmp_path: Path) -> None:
+    tools = tmp_path / 'tools'
+    uv = tmp_path / 'uv'
+    uv.write_text(f'#!/bin/sh\n[ "$*" = "tool dir" ] && echo {tools}\n')
+    uv.chmod(0o755)
+    assert await tool_build(str(uv)) is None, 'no `pydantic-ai-pax` environment'
+    environment = tools / 'pydantic-ai-pax'
+    info = environment / 'lib' / 'python3.13' / 'site-packages' / 'pydantic_ai_pax-0.53.0.dev1.dist-info'
+    info.mkdir(parents=True)
+    (info / 'METADATA').write_text('Metadata-Version: 2.1\nName: pydantic-ai-pax\nVersion: 0.53.0.dev1\n')
+    (info / 'direct_url.json').write_text(json.dumps({'url': f'{BLEEDING_URL}/pydantic_ai_pax-{SHA}.tar.gz'}))
+    (environment / 'uv-receipt.toml').write_text('[tool]\n')
+    assert await tool_build(str(uv)) == Installed(version='0.53.0.dev1', commit=SHA, tool=True)
+    uv.write_text('#!/bin/sh\nexit 2\n')
+    assert await tool_build(str(uv)) is None
 
 
 async def _relaunch_after(

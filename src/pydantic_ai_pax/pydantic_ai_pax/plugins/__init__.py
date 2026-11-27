@@ -701,7 +701,8 @@ class InstallProgress:
 
     `installing` comes first, then `output` for each line uv prints, then one of `failed` when uv fails,
     `installed` when Pax must be started again by hand, or `restarting` when Pax is about to exit and
-    start the new build in its place.
+    start the new build in its place. A `clai2` moving to a `pax` another session already installed
+    skips straight to `installed` or `restarting`.
     """
 
     stage: UpdateStage
