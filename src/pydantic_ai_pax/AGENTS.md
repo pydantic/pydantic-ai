@@ -523,6 +523,25 @@ PYRIGHT_PYTHON_IGNORE_WARNINGS=1 uv run --no-sync pyright src/pydantic_ai_pax te
 uv run --no-sync pytest -p no:cacheprovider tests/pax
 ```
 
+## Screenshots in PRs
+
+A Pax PR that changes anything you can see shows it in a screenshot in the PR description. That covers the
+terminal UI, the web UI, a menu, a status or footer field, and a plugin's own panels, renderers, or messages.
+A plugin with any visual part counts too. Reviewers judge a UI change by looking at it, not by reading the diff.
+
+- Render it with `scripts/screenshots/capture.sh` (VHS, fixed terminal size, a throwaway home, and the scripted
+  `demo:tour` model, so nothing private appears). Use the tape that already shows the feature, or add one under
+  `scripts/screenshots/tapes/` and to the tape list in `capture.sh` when none does. For the web UI, a browser
+  screenshot of `pax --web` against the same demo setup works too.
+- Show the change itself: the new field, the menu state, the before and after when the PR changes something
+  existing.
+- The PR description must be able to show the image without the PNG being in the PR's diff, unless a docs page
+  uses it. GitHub strips inline `data:` images, so commit the PNG to the shared `pr-assets` branch, in a folder
+  named after the PR number (`14730/picker.png` on `pr-assets`), and link it from the description as
+  `https://raw.githubusercontent.com/pydantic/pydantic-ai/<that commit's SHA>/<PR number>/<file>`. Pin the
+  commit SHA, not the branch, so a later push to `pr-assets` can't change what the PR shows.
+- A PR with no visible change says so in one line instead ("No visible change.").
+
 ## Docs parity
 
 `README.md` is the product tour, `docs/reference.md` is the user reference,

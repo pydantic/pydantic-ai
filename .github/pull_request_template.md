@@ -17,6 +17,8 @@
 <!-- > -->
 <!-- > **Migration:** ... -->
 
+<!-- Changing something you can see in Pax (the terminal or web UI, or a plugin's UI)? Include a screenshot; see src/pydantic_ai_pax/AGENTS.md. -->
+
 <!-- Adding a capability? Most capabilities belong in Pydantic AI Harness, not here. -->
 <!-- See: https://pydantic.dev/docs/ai/harness/#when-do-you-need-the-harness -->
 
