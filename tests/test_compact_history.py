@@ -45,8 +45,6 @@ from pydantic_ai.usage import RequestUsage
 
 from ._inline_snapshot import snapshot
 
-pytestmark = pytest.mark.anyio
-
 COMPACTION_USAGE = RequestUsage(input_tokens=1000, output_tokens=50)
 
 
