@@ -71,6 +71,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `-m`, `--model MODEL` | Use this model for this run, without saving it |
 | `-p`, `--prompt TEXT` | Run one prompt without interaction and print only the answer; see [Headless mode](#headless-mode) |
 | `-a`, `--agent MODULE:ATTR` | Chat with your own Pydantic AI agent; see [Your own agent](#your-own-agent) |
+| `-x`, `--plugin NAME` | Load this plugin for this launch only, even if disabled, without saving it; repeatable; see [Plugins for one launch](#plugins-for-one-launch) |
 | `--resume [SESSION-ID]` | Restore a saved session; no ID opens the browser |
 | `-c`, `--continue` | Restore the most recent saved session in this directory; see [Saved sessions](#saved-sessions-and-resume) |
 | `--resume-claude [SESSION-ID]`, `--resume-codex [SESSION-ID]` | Import and restore a Claude Code or Codex session |
@@ -3493,6 +3494,28 @@ only from its settings menu or its `login` command, and Esc cancels the wait. Se
 default, and opens its settings menu (`/plugins configure linear` reopens it). The
 key is picked from `/keys` by name (a new one is saved there as `LINEAR_API_KEY`),
 or choose browser sign-in. See [PLUGINS.md](../PLUGINS.md#linear-issues-and-projects).
+
+### Plugins for one launch
+
+```sh
+pax -x web -x workspaces
+pax -x github -p "Summarize my open pull requests"
+```
+
+`-x NAME` (long form `--plugin NAME`, repeatable) loads a plugin for this launch
+only, even when it is disabled. It works in the terminal, with `-p`, and with
+`--web`, where every session the browser opens loads it too. `NAME` is a plugin
+`/plugins` lists as built in, added, or a drop-in file; an unknown one fails
+before the first prompt, listing the ones there are. A plugin the project's
+`.clai/settings.json` declares isn't loaded this way: approve it with
+`/plugins enable NAME`, as usual.
+
+Nothing saved changes: `/plugins list` shows a disabled plugin as `disabled,
+loaded for this launch`, and the next `pax` without `-x` leaves it off, even if
+the plugin saved its settings meanwhile. `/plugins disable NAME` or
+`/plugins remove NAME` turns it off for the rest of the launch, also through
+`/reload` and `/update`, and is saved as usual. `-x` can't be combined with
+`--agent`, which loads no plugins.
 
 ### Built-in plugins at a glance
 

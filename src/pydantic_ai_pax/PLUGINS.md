@@ -1070,6 +1070,11 @@ this directory is an executable startup configuration, not a sandbox. The defaul
 Coder runs as your OS user and can modify it, just as it can modify your shell
 startup files. Use a separate OS identity or sandbox for untrusted agent work.
 
+`pax -x NAME` loads a plugin for one launch even when its declaration says
+`enabled: false`. Such a plugin sees itself in `host.plugins` as `on`, listed as
+`disabled, loaded for this launch`, and `host.save_settings` keeps its saved
+enabled flag as it was, so the next `pax` without `-x` leaves it off.
+
 Three ways to install one:
 
 1. Drop a `.py` file (or a package folder) into

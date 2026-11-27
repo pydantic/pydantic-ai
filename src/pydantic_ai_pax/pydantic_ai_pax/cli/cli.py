@@ -16,7 +16,7 @@ from pydantic_ai_pax.ui.rendering.splash import Splash
 from pydantic_ai_pax.ui.stderr_relay import relay_stderr
 
 if TYPE_CHECKING:
-    from collections.abc import Callable, Generator
+    from collections.abc import Callable, Generator, Sequence
 
     from pydantic_ai_pax.cli.self_update import Relaunch, WebHandoff
     from pydantic_ai_pax.config import Settings, UpdateChannel
@@ -100,6 +100,14 @@ def run(*, splash: Splash | None = None) -> None:
         ),
     )
     parser.add_argument('-m', '--model', help='Provider-qualified model name')
+    parser.add_argument(
+        '-x',
+        '--plugin',
+        action='append',
+        default=[],
+        metavar='NAME',
+        help='Load this plugin for this launch only, even if it is disabled; repeat for more; nothing is saved',
+    )
     parser.add_argument(
         '-p', '--prompt', metavar='TEXT', help='Run one prompt without interaction and print only the answer'
     )
@@ -206,6 +214,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                         agent=agent,
                         session_id=args.session_id,
                         fork_session=args.fork_session,
+                        launch_plugins=args.plugin,
                     )
                 )
             )
@@ -227,6 +236,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                     port=args.port,
                     token=None if args.token_file is None else read_token(args.token_file),
                     restart=served,
+                    launch_plugins=args.plugin,
                 )
             )
             return
@@ -251,6 +261,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
                     worktree=worktree,
                     web=served,
                     settings_for=settings_for,
+                    launch_plugins=args.plugin,
                 )
             )
             offer_worktree_cleanup(worktree=launched, read_remove_commands=store.worktree_remove_commands, store=store)
@@ -310,6 +321,7 @@ def _relaunch(args: argparse.Namespace, relaunch: 'Relaunch', *, launched: 'Work
         executable=relaunch.executable,
         session_id=relaunch.session_id,
         new_session_id=relaunch.new_session_id,
+        launch_plugins=relaunch.launch_plugins,
     )
     _remember_worktree(launched)
     if relaunch.web is not None:
@@ -460,12 +472,18 @@ def _remember_worktree(worktree: 'Worktree | None') -> None:
 
 
 def relaunch_argv(
-    args: argparse.Namespace, *, executable: str, session_id: str | None, new_session_id: str | None = None
+    args: argparse.Namespace,
+    *,
+    executable: str,
+    session_id: str | None,
+    new_session_id: str | None = None,
+    launch_plugins: 'Sequence[str]' = (),
 ) -> list[str]:
     """The launch options to restart with after `/update`, resuming `session_id` instead of any `--resume`.
 
     An unsaved conversation started with `--session-id` restarts under `new_session_id`. The token
-    `--token-file` names stays in its file.
+    `--token-file` names stays in its file. `launch_plugins` are the `-x` plugins the launch still loads,
+    read from the process rather than `args.plugin`, so one disabled or removed meanwhile stays off.
     """
     argv = [executable]
     if args.web:
@@ -480,6 +498,8 @@ def relaunch_argv(
         argv += ['--model', args.model]
     if args.request_limit is not None:
         argv += ['--request-limit', str(args.request_limit)]
+    for name in launch_plugins:
+        argv += ['--plugin', name]
     if args.database is not None:
         argv += ['--database', str(args.database)]
     if session_id is not None:
@@ -594,11 +614,15 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         or args.agent is not None
         or args.session_id is not None
         or args.fork_session
+        or args.plugin
     ):
         parser.error(
-            '--resume, --continue, --session-id, --fork-session, --worktree, and --agent cannot be combined with'
-            ' config, plugins, or sessions'
+            '--resume, --continue, --session-id, --fork-session, --worktree, --agent, and --plugin cannot be combined'
+            ' with config, plugins, or sessions'
         )
+    if args.agent is not None and args.plugin:
+        # `--agent` loads no plugins; giving its agent some needs a check that their tools don't clash with its own.
+        parser.error('--plugin cannot be combined with --agent')
     if args.update and (
         args.command
         or args.prompt is not None
@@ -610,10 +634,11 @@ def _validate_args(args: argparse.Namespace, parser: argparse.ArgumentParser) ->
         or args.worktree is not None
         or args.model is not None
         or args.request_limit is not None
+        or args.plugin
     ):
         parser.error(
             '--update cannot be combined with config, plugins, sessions, --prompt, --web, --resume, --continue, '
-            '--session-id, --agent, --worktree, --model, or --request-limit'
+            '--session-id, --agent, --worktree, --model, --request-limit, or --plugin'
         )
     # `--continue` resumes the session it finds at startup, so it is checked as a `--resume` would be.
     resume = '' if args.continue_session else args.resume
