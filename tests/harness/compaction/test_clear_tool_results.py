@@ -122,6 +122,45 @@ class TestClearToolResultsTargeting:
         cleared = await ClearToolResults[None](max_tokens=1, keep_pairs=1, tools=['search']).compact(messages, _ctx())
         assert _contents(cleared) == {'a': CLEARED, 'b': 'b result', 'c': 'c result'}
 
+    async def test_tools_with_keep_pairs_clears_by_position_when_an_id_is_reused(self):
+        """A later turn reusing a listed tool's id keeps its own result; only the older pair is cleared, once."""
+        calls: list[str] = []
+
+        def placeholder(part: ToolReturnPart) -> str:
+            calls.append(str(part.content))
+            return _first_line(part)
+
+        messages: list[ModelMessage] = [
+            _user('one'),
+            _call('search', 'call_0'),
+            _return('search', 'call_0', 'id=old\nbody'),
+            _user('two'),
+            _call('search', 'call_0'),
+            _return('search', 'call_0', 'id=new\nbody'),
+            _call('lookup', 'call_1'),
+            _return('lookup', 'call_1', 'price\n19.90'),
+            _call('lookup', 'call_2'),
+            _return('lookup', 'call_2', 'price\n29.90'),
+        ]
+        cap = ClearToolResults[None](max_tokens=1, keep_pairs=1, tools=['search'], placeholder=placeholder)
+        cleared = await cap.compact(messages, _ctx())
+        contents = [
+            (part.tool_call_id, str(part.content))
+            for message in cleared
+            if isinstance(message, ModelRequest)
+            for part in message.parts
+            if isinstance(part, ToolReturnPart)
+        ]
+        assert contents == [
+            ('call_0', 'id=old'),
+            ('call_0', 'id=new\nbody'),
+            ('call_1', 'price\n19.90'),
+            ('call_2', 'price\n29.90'),
+        ]
+        assert calls == ['id=old\nbody']
+        assert await cap.compact(cleared, _ctx()) == cleared
+        assert calls == ['id=old\nbody']
+
     async def test_keep_pairs_window_is_shared_across_the_listed_tools(self):
         messages: list[ModelMessage] = [
             _user('go'),

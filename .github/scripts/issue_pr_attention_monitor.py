@@ -21,7 +21,7 @@ from pathlib import Path
 # scripts: pydantic, the typed boundary in `triage_models`. The repo-wide ban
 # on `typing.TypedDict` exists for pydantic validation on Python 3.11;
 # these scripts only run on the newer runner Python.
-from typing import Annotated, Any, Literal, TypedDict, cast  # noqa: TID251
+from typing import Annotated, Any, Literal, TypedDict, cast, get_args  # noqa: TID251
 
 from pydantic import BaseModel, BeforeValidator, ConfigDict, Field, TypeAdapter, ValidationError, field_validator
 from triage_models import AgentItem, IssueEvent, agent_items, item_labels, parse_time, snapshot_candidates
@@ -48,6 +48,20 @@ _REMINDER_SLAS = {
     'p:2-high': dt.timedelta(days=5),
 }
 _SLA_MARK_LIMIT = 10
+# The `priority-sla` mode comments once per window on an open priority issue that sat
+# that long without moving. These windows are its own, not the reminder lane's above.
+_PRIORITY_SLA_WINDOWS = {
+    'p:1-highest': dt.timedelta(days=3),
+    'p:2-high': dt.timedelta(days=7),
+}
+_PrioritySlaOutcome = Literal['due', 'active', 'commented', 'owner_skipped', 'unknown']
+_PRIORITY_SLA_MARKER = '<!-- pydantic-ai-priority-sla:v1 '
+# A comment this mode posted is its mentions and one line of text, then its marker, and nothing
+# else. Other workflows post as the same bot and can quote issue text, so a marker inside other
+# text never counts as a comment.
+_PRIORITY_SLA_COMMENT = re.compile(
+    rf'(?:@[\w-]+ )+this `[^`\r\n]+` issue [^\r\n]+\r?\n\r?\n{re.escape(_PRIORITY_SLA_MARKER)}label=\S+ since=\S+ -->'
+)
 _RESURFACE_AFTER = dt.timedelta(days=7)
 _RECENT_ACTIVITY_WINDOW = dt.timedelta(days=45)
 _CANDIDATE_LIMIT = 10
@@ -300,9 +314,11 @@ class GitHubClient:
                     Mapping[str, object], self.get(f'/repos/{repo}/collaborators/{encoded}/permission')
                 ).get('permission')
             except urllib.error.HTTPError as exc:
-                exc.close()
+                # Re-raise an open error: a closed one has no body, and the body alone can name
+                # a secondary rate limit. The caller closes it.
                 if exc.code != 404:
                     raise
+                exc.close()
                 permission = None
             self._maintainers[key] = login if permission in _MAINTAINER_PERMISSIONS else None
         return self._maintainers[key]
@@ -2149,6 +2165,191 @@ def finalize_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRe
     return lines
 
 
+def _rate_limited(exc: Exception) -> bool:
+    """Whether GitHub refused a request for the token's primary or secondary rate limit.
+
+    GitHub answers every further request the same until the limit resets, and warns that
+    requests sent meanwhile can get the integration banned, so a sweep stops at the first one.
+    A secondary limit can come as a 403 with requests left and no `retry-after`, named only by
+    its error message, so call this before closing `exc`: a closed error has no body to read.
+    """
+    return isinstance(exc, urllib.error.HTTPError) and (
+        exc.code == 429
+        or (
+            exc.code == 403
+            and (
+                exc.headers.get('x-ratelimit-remaining') == '0'
+                or 'retry-after' in exc.headers
+                or b'rate limit' in exc.read(_RESPONSE_LIMIT).lower()
+            )
+        )
+    )
+
+
+def _priority_sla_decision(
+    client: GitHubClient, repo: str, issue: Mapping[str, Any], label: str, *, now: dt.datetime
+) -> tuple[_PrioritySlaOutcome, str]:
+    """Decide one open priority issue, with the comment to post when it is due one.
+
+    The issue last moved when its priority label was applied, a maintainer acted, or an open
+    pull request in this repository that references it was updated. Title edits, bots and the
+    passive `mentioned`/`subscribed` events never count; an assignment counts as the assignee's,
+    as in `_owner_quiet_since`.
+
+    The whole timeline is read, oldest first: on a longer one the newest marker or linked pull
+    request could lie past the pages fetched, so the issue is left `unknown` rather than pinged.
+    It is also `unknown` when the timeline holds no such moment, or the maintainer lookups ran
+    out before ruling an actor out.
+    """
+    # Only this author's comments count, so pasting one cannot suppress a comment.
+    author = 'github-actions[bot]'
+    # Never mentioned: an issue only they own is counted and skipped, because a comment
+    # without a mention still notifies every assignee. Casefolded.
+    silent_owners = frozenset({'dsfaccini'})
+    number = int(issue['number'])
+    timeline, whole = client.first_pages(f'/repos/{repo}/issues/{number}/timeline', count=_EVENT_PAGE_LIMIT)
+    if not whole:
+        return 'unknown', ''
+    # An open pull request linked to the issue counts as movement only while it is this fresh.
+    pull_freshness = dt.timedelta(days=7)
+    probe = _MaintainerProbe(client, repo)
+    # Only the priority label and maintainers open a new window; a pull request's update can
+    # hold one off, but never opens one.
+    resets: list[dt.datetime] = []
+    pulls: list[dt.datetime] = []
+    for value in timeline:
+        if (when := _event_time(value)) is None:
+            continue
+        event = IssueEvent.model_validate(value)
+        linked = event.source.issue
+        if event.event == 'labeled' and event.label.name == label:
+            resets.append(when)
+        if (
+            event.event == 'cross-referenced'
+            and linked.pull_request is not None
+            and linked.repository_url.casefold() == f'{_API}/repos/{repo}'.casefold()
+            and linked.state == 'open'
+            and linked.updated_at
+            and now - (updated := parse_time(linked.updated_at)) <= pull_freshness
+        ):
+            pulls.append(updated)
+        if (
+            event.event not in _NON_ACK_EVENTS
+            and event.event != 'renamed'
+            and not _is_bot(value)
+            and probe.login(_actor(value))
+        ):
+            resets.append(when)
+    if probe.exhausted or (since := max(resets + pulls, default=None)) is None:
+        return 'unknown', ''
+    window = _PRIORITY_SLA_WINDOWS[label]
+    if now - since <= window:
+        return 'active', ''
+    # A comment newer than the last reset covers every window until a maintainer acts again, so
+    # neither a pull request's later update nor its closing brings a second comment.
+    reset = max(resets, default=None)
+    if any(
+        event.get('event') == 'commented'
+        and _actor(event) == author
+        and _PRIORITY_SLA_COMMENT.fullmatch(str(event.get('body') or ''))
+        and (when := _event_time(event)) is not None
+        and (reset is None or when > reset)
+        for event in timeline
+    ):
+        return 'commented', ''
+    owners = _maintainer_assignees(client, repo, issue) or [_FALLBACK_OWNER]
+    mentions = [owner for owner in owners if owner.casefold() not in silent_owners]
+    if not mentions:
+        return 'owner_skipped', ''
+    # A pull request's update counts only while fresh, so `since` can be older than the last one,
+    # and the text claims no update only within the freshness span.
+    days = (now - since).days
+    body = (
+        f'{" ".join(f"@{login}" for login in mentions)} this `{label}` issue has had no maintainer activity for '
+        f'{days} days and no open linked pull request updated in the last {min(days, pull_freshness.days)} days; '
+        f'the window for its priority is {window.days}. Could you post a next step, or change its priority?\n\n'
+        f'{_PRIORITY_SLA_MARKER}label={label} since={since.strftime("%Y-%m-%dT%H:%M:%SZ")} -->'
+    )
+    return 'due', body
+
+
+def priority_sla(
+    client: GitHubClient, repo: str, *, now: dt.datetime, post: bool
+) -> tuple[list[int], list[str], list[str]]:
+    """List the priority issues due a comment, and record the run; `post_priority_sla` posts them."""
+    page_limit = 5
+    counts: dict[_PrioritySlaOutcome, int] = dict.fromkeys(get_args(_PrioritySlaOutcome), 0)
+    due: list[int] = []
+    lines: list[str] = []
+    failures: list[str] = []
+    seen: set[int] = set()
+    truncated = limited = False
+    # Tightest window first, so an issue carrying both labels is judged once, by P1.
+    for label in sorted(_PRIORITY_SLA_WINDOWS, key=_PRIORITY_SLA_WINDOWS.__getitem__):
+        if limited:
+            break
+        path = f'/repos/{repo}/issues?state=open&labels={urllib.parse.quote(label)}'
+        issues, whole = client.first_pages(path, count=page_limit)
+        truncated = truncated or not whole
+        for issue in issues:
+            if 'pull_request' in issue or (number := int(issue['number'])) in seen:
+                continue
+            seen.add(number)
+            try:
+                outcome, body = _priority_sla_decision(client, repo, issue, label, now=now)
+            except (urllib.error.URLError, RuntimeError, ValueError) as exc:
+                limited = _rate_limited(exc)
+                if isinstance(exc, urllib.error.HTTPError):
+                    exc.close()
+                failures.append(f'#{number} priority SLA: {type(exc).__name__}: {exc}')
+                if limited:
+                    failures.append('priority SLA: rate limited, stopped before the remaining issues')
+                    break
+                continue
+            counts[outcome] += 1
+            if outcome == 'due':
+                due.append(number)
+                action = 'will comment' if post else 'dry run, would comment'
+                flat = body.replace('\n', ' ')
+                lines.append(f'#{number}: {action}: {flat}')
+    if truncated:
+        failures.append(f'priority SLA: more than {page_limit * 100} issues for one label')
+    _emit_event('priority_sla.run', repo=repo, post=post, truncated=truncated, failures=len(failures), **counts)
+    lines.append(', '.join(f'{outcome}: {count}' for outcome, count in counts.items()))
+    return due, lines, failures
+
+
+def post_priority_sla(
+    client: GitHubClient, repo: str, numbers: Sequence[int], *, now: dt.datetime
+) -> tuple[list[str], list[str]]:
+    """Post the planned comments, deciding each issue again on its live state first."""
+    lines: list[str] = []
+    failures: list[str] = []
+    for number in numbers:
+        try:
+            issue: dict[str, Any] = client.get(f'/repos/{repo}/issues/{number}')
+            labels = item_labels(issue)
+            label = min(labels.intersection(_PRIORITY_SLA_WINDOWS), key=_PRIORITY_SLA_WINDOWS.__getitem__, default=None)
+            if str(issue.get('state') or '').casefold() != 'open' or label is None or 'pull_request' in issue:
+                lines.append(f'#{number}: no longer an open priority issue')
+                continue
+            outcome, body = _priority_sla_decision(client, repo, issue, label, now=now)
+            if outcome != 'due':
+                lines.append(f'#{number}: no longer due a comment ({outcome})')
+                continue
+            client.post(f'/repos/{repo}/issues/{number}/comments', {'body': body})
+            lines.append(f'#{number}: commented')
+        except (urllib.error.URLError, RuntimeError, ValueError) as exc:
+            limited = _rate_limited(exc)
+            if isinstance(exc, urllib.error.HTTPError):
+                exc.close()
+            failures.append(f'#{number} priority SLA comment: {type(exc).__name__}: {exc}')
+            if limited:
+                failures.append('priority SLA: rate limited, stopped before the remaining comments')
+                break
+    return lines, failures
+
+
 def _write_summary(lines: Sequence[str]) -> None:
     if path := os.environ.get('GITHUB_STEP_SUMMARY'):
         with Path(path).open('a', encoding='utf-8') as summary:
@@ -2157,10 +2358,46 @@ def _write_summary(lines: Sequence[str]) -> None:
             summary.write('\n')
 
 
+def _notice_input(parser: argparse.ArgumentParser) -> list[NoticeRef]:
+    source = os.environ.get('ATTENTION_NOTICES')
+    if source is None:
+        parser.error('ATTENTION_NOTICES is required')
+    return _notice_refs(json.loads(source))
+
+
+def _run_priority_sla(
+    client: GitHubClient, repo: str, mode: Literal['priority-sla', 'priority-sla-post'], *, now: dt.datetime
+) -> tuple[list[str], list[str]]:
+    if mode == 'priority-sla-post':
+        issue_numbers: TypeAdapter[list[int]] = TypeAdapter(list[Annotated[int, Field(strict=True, gt=0)]])
+        numbers = issue_numbers.validate_json(os.environ.get('PRIORITY_SLA_ITEMS') or '')
+        return post_priority_sla(client, repo, numbers, now=now)
+    # Anything but an explicit `true` is a dry run, which only lists the comments.
+    post = os.environ.get('PRIORITY_SLA_POST') == 'true'
+    due, lines, failures = priority_sla(client, repo, now=now, post=post)
+    if output_path := os.environ.get('GITHUB_OUTPUT'):
+        with Path(output_path).open('a', encoding='utf-8') as output:
+            output.write(f'items={json.dumps(due)}\npost={str(post).lower()}\n')
+    return lines, failures
+
+
 def main() -> int:
     """Build a snapshot, apply decisions, or reconcile reminders."""
     parser = argparse.ArgumentParser()
-    parser.add_argument('mode', choices=['snapshot', 'apply', 'reconcile', 'prepare', 'finalize', 'census', 'weekly'])
+    parser.add_argument(
+        'mode',
+        choices=[
+            'snapshot',
+            'apply',
+            'reconcile',
+            'prepare',
+            'finalize',
+            'census',
+            'weekly',
+            'priority-sla',
+            'priority-sla-post',
+        ],
+    )
     parser.add_argument('--snapshot-path', default='attention-candidates.json')
     parser.add_argument('--agent-output', default=os.environ.get('GH_AW_AGENT_OUTPUT'))
     args = parser.parse_args()
@@ -2183,10 +2420,7 @@ def main() -> int:
         lines, failures = reconcile(client, repo, now=now, notices=notices)
         _write_notices(repo, notices, failures)
     elif args.mode == 'prepare':
-        source = os.environ.get('ATTENTION_NOTICES')
-        if source is None:
-            parser.error('ATTENTION_NOTICES is required')
-        notices = prepare_notices(client, repo, _notice_refs(json.loads(source)), now=now)
+        notices = prepare_notices(client, repo, _notice_input(parser), now=now)
         _write_notices(repo, notices, failures)
         lines = [f'prepared {len(notices)} current attention notice(s)']
     elif args.mode == 'census':
@@ -2203,11 +2437,10 @@ def main() -> int:
         report = weekly_digest(client, repo, now=now)
         _write_slack_payload(report)
         lines = [report]
+    elif args.mode in ('priority-sla', 'priority-sla-post'):
+        lines, failures = _run_priority_sla(client, repo, args.mode, now=now)
     else:
-        source = os.environ.get('ATTENTION_NOTICES')
-        if source is None:
-            parser.error('ATTENTION_NOTICES is required')
-        lines = finalize_notices(client, repo, _notice_refs(json.loads(source)), now=now)
+        lines = finalize_notices(client, repo, _notice_input(parser), now=now)
     _write_summary(lines + [f'failed: {failure}' for failure in failures])
     for line in lines:
         print(line)

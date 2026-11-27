@@ -877,11 +877,22 @@ class TestWaitRetryAfter:
         assert result == 1.0
         fallback.assert_called_once_with(retry_state)
 
-    @pytest.mark.parametrize('retry_after', ['invalid-value', '-1', 'Wed, 21 Oct 999999999999 07:28:00 GMT'])
-    def test_invalid_retry_after_uses_fallback(self, retry_after: str):
-        """Invalid `Retry-After` values fall back locally without a provider request."""
+    @pytest.mark.parametrize(
+        ('retry_after', 'max_wait'),
+        [
+            ('invalid-value', 300),
+            ('-1', 300),
+            ('Wed, 21 Oct 999999999999 07:28:00 GMT', 300),
+            pytest.param('1' + '0' * 309, float('inf'), id='huge-uncapped'),
+        ],
+    )
+    def test_invalid_retry_after_uses_fallback(self, retry_after: str, max_wait: float):
+        """Invalid `Retry-After` values fall back locally without a provider request.
+
+        An integer too large for a float is invalid when `max_wait` does not cap it to one.
+        """
         fallback = Mock(return_value=4.0)
-        wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=300)
+        wait_func = wait_retry_after(fallback_strategy=fallback, max_wait=max_wait)
 
         request = httpx.Request('GET', 'https://example.com')
         response = Mock(spec=httpx.Response)

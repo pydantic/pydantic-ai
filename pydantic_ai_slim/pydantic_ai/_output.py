@@ -26,6 +26,7 @@ from typing_extensions import TypedDict, TypeForm, TypeVar
 from pydantic_ai._utils import get_function_type_hints
 
 from . import _function_schema, _utils, messages as _messages
+from ._json_schema_validation import VALIDATING_PARTIAL_OUTPUT
 from ._run_context import AgentDepsT, RunContext
 from .exceptions import ModelRetry, ToolRetryError, UnexpectedModelBehavior, UserError
 from .output import (
@@ -1144,14 +1145,18 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
         if isinstance(data, str):
             data = _utils.strip_markdown_fences(data)
         pyd_allow_partial: Literal['off', 'trailing-strings'] = 'trailing-strings' if allow_partial else 'off'
-        if isinstance(data, str):
-            return self.validator.validate_json(
-                data or '{}', allow_partial=pyd_allow_partial, context=validation_context
-            )
-        else:
-            return self.validator.validate_python(
-                data or {}, allow_partial=pyd_allow_partial, context=validation_context
-            )
+        token = VALIDATING_PARTIAL_OUTPUT.set(allow_partial)
+        try:
+            if isinstance(data, str):
+                return self.validator.validate_json(
+                    data or '{}', allow_partial=pyd_allow_partial, context=validation_context
+                )
+            else:
+                return self.validator.validate_python(
+                    data or {}, allow_partial=pyd_allow_partial, context=validation_context
+                )
+        finally:
+            VALIDATING_PARTIAL_OUTPUT.reset(token)
 
     async def call(
         self,
