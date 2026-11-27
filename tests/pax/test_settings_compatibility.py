@@ -1517,6 +1517,60 @@ async def test_a_workspace_kind_keeps_the_model_older_builds_saved() -> None:
     assert models == ['openai:gpt-5'] * 3
 
 
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-stale-files'])
+async def test_saved_report_stale_files_loads_in_builds_with_and_without_the_feature(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
+) -> None:
+    """A `coder` saved before `report_stale_files` existed has it off; a menu save tags it for older builds."""
+    from pydantic_ai_pax.builtin_plugins.coder import CoderSource
+
+    store = SettingsStore(tmp_path / 'settings.db')
+    with closing(sqlite3.connect(store.path)) as connection, connection:
+        connection.execute(
+            'INSERT INTO plugins VALUES (?, ?)',
+            (
+                'coder',
+                '{"id": "coder", "factory": "pydantic_clai2.builtin_plugins.coder", "enabled": true, '
+                '"settings": {"repo_context": false, "skill_folders": []}}',
+            ),
+        )
+
+    def loader() -> PluginLoader[None]:
+        return PluginLoader(
+            store=store,
+            console=Console(file=io.StringIO(), width=200),
+            commands=Commands(),
+            session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        )
+
+    first = loader()
+    await first.load_all()
+    [entry] = [entry for entry in first.entries() if entry.name == 'coder']
+    assert entry.loaded is not None
+    assert entry.loaded.plugin.host.settings(CoderSettings).report_stale_files is False
+    source = CoderSource(entry.loaded.plugin.host)
+    source.apply(next(row for row in source.rows() if row.key == 'report_stale_files'), 'true')
+    await first.close('exit')
+    requirements = store.plugin_requirements('coder')
+    assert isinstance(requirements, dict) and requirements['report_stale_files'] == ['coder-report-stale-files']
+
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'coder-report-stale-files'})
+    saved = store.plugins()
+    second = loader()
+    await second.load_all()
+    [entry] = [entry for entry in second.entries() if entry.name == 'coder']
+    assert entry.loaded is not None
+    assert entry.loaded.plugin.host.settings(CoderSettings).report_stale_files is supported
+    assert entry.ignored == (
+        None
+        if supported
+        else 'coder: ignored saved report_stale_files (needs coder-report-stale-files); using defaults.'
+    )
+    assert store.plugins() == saved
+    await second.close('exit')
+
+
 @pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'older-build'])
 @pytest.mark.parametrize('review_supported', [True, False])
 async def test_delegate_models_survive_feature_downgrade_and_unrelated_edits(

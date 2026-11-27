@@ -1290,6 +1290,13 @@ tagged `coder-delegate-models` and `coder-review-agent`, so older builds ignore 
 deleting them. The [reference](docs/reference.md#delegate-models-and-review-directory) covers directory
 selection and saved model chains.
 
+`report_stale_files=true` adds harness `ReportStaleFiles` beside `Coder`, so the model is told
+before a request when a file it read or wrote since changed or was deleted, such as by your own
+edits. It is off by default, and with it off the requests are unchanged. The setting is tagged
+`coder-report-stale-files`, so older builds ignore it without deleting it. The
+[reference](docs/reference.md#files-you-edit-alongside-the-agent) covers what is recorded and the
+notice the model gets.
+
 `agent_folders` is stored as a JSON list of folder names or paths for disk-defined
 agents (Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
 `.claude/<name>`, and `.codex/<name>` in the project, then your home directory;
