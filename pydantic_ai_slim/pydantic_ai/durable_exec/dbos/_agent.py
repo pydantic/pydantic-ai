@@ -18,11 +18,13 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
+from pydantic_ai._compaction_requests import compaction_only_run
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import (
     AbstractAgent,
     AgentRun,
     AgentRunResult,
+    CompactionRunResult,
     EventStreamHandler,
     ParallelExecutionMode,
     WrapperAgent,
@@ -325,6 +327,53 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
 
         self.dbos_wrapped_run_sync_workflow = wrapped_run_sync_workflow
 
+        # A workflow of its own, rather than the `.run` one: recovery calls a workflow with its recorded arguments,
+        # so only a workflow whose body makes the run compaction-only keeps it that way when it's recovered.
+        @DBOS.workflow(name=f'{self._name}.compact_history')
+        async def wrapped_compact_history_workflow(
+            message_history: Sequence[_messages.ModelMessage],
+            *,
+            focus: str | None = None,
+            reason: _messages.CompactionReason = 'manual',
+            conversation_id: str | None = None,
+            run_id: str | None = None,
+            model: models.Model | models.KnownModelName | str | None = None,
+            instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+            deps: AgentDepsT,
+            model_settings: AgentModelSettings[AgentDepsT] | None = None,
+            usage_limits: _usage.UsageLimits | None = None,
+            usage: _usage.RunUsage | None = None,
+            metadata: AgentMetadata[AgentDepsT] | None = None,
+            toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+            event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+            capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+            spec: dict[str, Any] | AgentSpec | None = None,
+        ) -> AgentRunResult[Any]:
+            compact: CompactionOptions = {'reason': reason}
+            if focus is not None:
+                compact['focus'] = focus
+            with self._dbos_overrides(toolsets, event_stream_handler=event_stream_handler), compaction_only_run():
+                return await super(WrapperAgent, self).run(
+                    message_history=message_history,
+                    conversation_id=conversation_id,
+                    run_id=run_id,
+                    model=model,
+                    instructions=instructions,
+                    deps=deps,
+                    model_settings=model_settings,
+                    usage_limits=usage_limits,
+                    usage=usage,
+                    metadata=metadata,
+                    infer_name=False,
+                    toolsets=toolsets,
+                    # `event_stream_handler` is not forwarded, as for the `.run` workflow: `_dbos_overrides` stashed it.
+                    capabilities=capabilities,
+                    compact=compact,
+                    spec=spec,
+                )
+
+        self.dbos_wrapped_compact_history_workflow = wrapped_compact_history_workflow
+
     @property
     def name(self) -> str | None:
         return self._name
@@ -578,6 +627,65 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             compact=compact,
             spec=spec,
         )
+
+    async def compact_history(
+        self,
+        message_history: Sequence[_messages.ModelMessage],
+        *,
+        focus: str | None = None,
+        reason: _messages.CompactionReason = 'manual',
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
+        usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
+    ) -> CompactionRunResult:
+        """Compact a message history without continuing the conversation, in a DBOS workflow of its own.
+
+        See [`AbstractAgent.compact_history`][pydantic_ai.agent.AbstractAgent.compact_history]. The workflow makes
+        the run compaction-only itself, so a recovered workflow compacts again rather than continuing the
+        conversation. As for [`run()`][pydantic_ai.durable_exec.dbos.DBOSAgent.run], passing `cancellation_token`,
+        `timeout` or a model that isn't a DBOS model raises `UserError`.
+        """
+        reject_cancellation_token(cancellation_token, engine='DBOS')
+        reject_run_timeout(timeout, wrapper='DBOSAgent', capability='DBOSDurability')
+        if model is not None and not isinstance(model, DBOSModel):
+            raise UserError(
+                'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
+            )
+        self._reject_unsupported_runtime_toolsets(toolsets)
+        # The agent's name is fixed when it's wrapped, so there's nothing to infer.
+        del infer_name
+        run_result = await self.dbos_wrapped_compact_history_workflow(
+            message_history,
+            focus=focus,
+            reason=reason,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            model=model,
+            instructions=instructions,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            metadata=metadata,
+            toolsets=toolsets,
+            event_stream_handler=event_stream_handler,
+            capabilities=capabilities,
+            spec=spec,
+        )
+        return CompactionRunResult._of(run_result)  # pyright: ignore[reportPrivateUsage]
 
     @overload
     def run_sync(

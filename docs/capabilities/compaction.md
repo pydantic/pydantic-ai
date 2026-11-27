@@ -72,7 +72,7 @@ async def main():
     result = await agent.run('Which database do we use?', message_history=compacted.all_messages())
 ```
 
-It's a run that ends after its compaction step: the history is compacted before the run's first model request, as with `compact=`, and the run then ends instead of sending that request. Its whole lifecycle runs, `after_run` gets its result with an `output` of `None`, the [compaction events](#compaction-events) fire, and under [durable execution](../durable_execution/overview.md) the compaction is a durable model operation like any other. `after_model_request` hooks don't run, as no request is sent.
+It's a run that ends after its compaction step: the history is compacted before the run's first model request, as with `compact=`, and the run then ends instead of sending that request. Its whole lifecycle runs, `after_run` gets its result with an `output` of `None`, the [compaction events](#compaction-events) fire, and under [durable execution](../durable_execution/overview.md) the compaction is a durable model operation like any other: a workflow that's recovered or replayed calls `compact_history()` again, so it compacts again rather than continuing the conversation. The deprecated `DBOSAgent` runs it in a `<name>.compact_history` workflow of its own, for the same reason. `after_model_request` hooks don't run, as no request is sent.
 
 - [`all_messages()`][pydantic_ai.agent.CompactionRunResult.all_messages] is the compacted history, to continue the conversation with.
 - [`new_messages()`][pydantic_ai.agent.CompactionRunResult.new_messages] are the messages the compaction wrote, up to its record's [`kept_from`][pydantic_ai.messages.CompactionRecord.kept_from]; the rest is the end of the history it was given.

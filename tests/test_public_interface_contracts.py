@@ -278,6 +278,8 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     ('DBOSAgent', 'run'): frozenset({'cancellation_token', 'timeout'}),
     ('DBOSAgent', 'run_sync'): frozenset({'cancellation_token', 'timeout'}),
     ('DBOSAgent', 'run_stream'): frozenset({'cancellation_token', 'timeout'}),
+    # Also `infer_name`: the wrapper's name is fixed when it's built, so there's nothing to infer.
+    ('DBOSAgent', 'compact_history'): frozenset({'cancellation_token', 'timeout', 'infer_name'}),
     ('PrefectAgent', 'run'): frozenset({'cancellation_token', 'timeout'}),
     ('PrefectAgent', 'run_sync'): frozenset({'cancellation_token', 'timeout'}),
     ('PrefectAgent', 'run_stream'): frozenset({'cancellation_token', 'timeout'}),

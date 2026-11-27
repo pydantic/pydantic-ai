@@ -40,6 +40,7 @@ from pydantic_ai import (
     CapabilityEvent,
     CapabilityInstructionSource,
     CapabilityLoadDeltaPart,
+    CompactionPart,
     CustomEvent,
     ExternalToolset,
     FinalResultEvent,
@@ -73,6 +74,8 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     BatchModelRequests,
     Capability,
+    CompactionRequest,
+    CompactionResult,
     DynamicCapability,
     Hooks,
     Instrumentation,
@@ -561,6 +564,44 @@ async def test_prefect_agent_rejects_model_wrappers() -> None:
     )
     with pytest.raises(UserError, match='`PrefectAgent` does not support capabilities that wrap the model'):
         await agent.run('hello')
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+async def test_prefect_agent_compact_history_compacts_in_its_flow(blockbuster_enabled: bool) -> None:
+    """`PrefectAgent.compact_history()` runs through the wrapper's run flow and ends after compacting.
+
+    The flow is defined and called within the call, in the caller's context, so the run is compaction-only there.
+    Blockbuster is off as for the other tests that start a `PrefectAgent` flow from async code: `@flow` inspects
+    the decorated function's source file.
+    """
+    assert blockbuster_enabled is False
+    calls: list[str] = []
+
+    class Summarize(AbstractCapability[None]):
+        async def compact_history(self, ctx: RunContext[None], request: CompactionRequest) -> CompactionResult | None:
+            flow_run = FlowRunContext.get()
+            calls.append(f'compact in {flow_run.flow.name if flow_run is not None and flow_run.flow else None}')
+            part = CompactionPart(content='a summary')
+            return CompactionResult(messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='s')
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('model request')  # pragma: no cover
+        return ModelResponse(parts=[TextPart('answered')])  # pragma: no cover
+
+    agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
+        Agent(
+            FunctionModel(answer),
+            name='prefect_compact_history',
+            instructions='Be brief.',
+            deps_type=type(None),
+            capabilities=[Summarize()],
+        )
+    )
+    result = await agent.compact_history(
+        [ModelRequest(parts=[UserPromptPart('Hello')]), ModelResponse(parts=[TextPart('Hello!')])]
+    )
+    assert calls == ['compact in prefect_compact_history Run']
+    assert result.all_messages() == [ModelRequest(parts=[CompactionPart(content='a summary')])]
 
 
 async def test_simple_agent_run_in_flow(allow_model_requests: None) -> None:
