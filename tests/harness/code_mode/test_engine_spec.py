@@ -12,6 +12,7 @@ import threading
 import pytest
 
 from pydantic_ai import Agent
+from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai_harness.code_mode import CodeMode, CodeModeResourceLimits
@@ -114,13 +115,18 @@ class TestCodeModeEngineSpec:
         assert (part.outcome == 'retried') is time_limited
 
     @pytest.mark.parametrize('passed_for_run', [pytest.param(False, id='on-agent'), pytest.param(True, id='for-run')])
-    async def test_an_engine_passed_for_the_run_runs_turns_as_activities(self, passed_for_run: bool) -> None:
-        """A durability capability passed with `run(capabilities=...)` decides how snippets run, as one on the agent does.
+    @pytest.mark.parametrize('wrapped', [pytest.param(False, id='bare'), pytest.param(True, id='wrapped')])
+    async def test_an_engine_passed_for_the_run_runs_turns_as_activities(
+        self, passed_for_run: bool, wrapped: bool
+    ) -> None:
+        """A durability capability decides how snippets run on the agent or for the run, bare or wrapped.
 
         In an engine that replays code it doesn't stop when it blocks, each turn must run as a durable
         operation, where `max_duration_seconds` applies, instead of in workflow code with no limit.
         """
         durability = UnboundedReplayingDurability()
+        # `ctx.capabilities` lists a wrapper such as `prefix_tools()`; the engine inside still binds operations.
+        engine: AbstractCapability[object] = durability.prefix_tools('p') if wrapped else durability
 
         def model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
             if len(messages) == 1:
@@ -132,7 +138,7 @@ class TestCodeModeEngineSpec:
             FunctionModel(model),
             name='engine_spec',
             deps_type=type(None),
-            capabilities=[code_mode] if passed_for_run else [code_mode, durability],
+            capabilities=[code_mode] if passed_for_run else [code_mode, engine],
         )
 
         @agent.tool_plain
@@ -142,7 +148,7 @@ class TestCodeModeEngineSpec:
 
         SERVER.reset()
         try:
-            result = await agent.run('go', capabilities=[durability] if passed_for_run else None)
+            result = await agent.run('go', capabilities=[engine] if passed_for_run else None)
         finally:
             SERVER.reset()
 

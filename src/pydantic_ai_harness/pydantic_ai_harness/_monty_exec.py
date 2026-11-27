@@ -33,6 +33,7 @@ from typing_extensions import TypeVarTuple, Unpack
 
 from pydantic_ai import RunContext
 from pydantic_ai._utils import is_async_callable, run_in_executor
+from pydantic_ai.capabilities import WrapperCapability
 from pydantic_ai.durable_exec import BaseDurabilityCapability, DurabilityEngineSpec
 from pydantic_ai_harness._typeguards import is_object_tuple, is_str_keyed_dict
 
@@ -107,16 +108,16 @@ def _durability_spec(ctx: RunContext[object]) -> DurabilityEngineSpec | None:
     """The spec of the run's durability capability whose durable container is running, or `None`.
 
     Read from `ctx.capabilities`, so a capability passed with `agent.run(capabilities=[...])` counts
-    as one attached to the agent does.
+    as one attached to the agent does. A wrapper around a single capability, such as
+    `prefix_tools()`, is listed there instead of what it wraps, so it is unwrapped as
+    `BaseDurabilityCapability.from_agent` does: the wrapped engine still binds its durable operations.
     """
-    return next(
-        (
-            capability.engine_spec
-            for capability in ctx.capabilities.values()
-            if isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context
-        ),
-        None,
-    )
+    for capability in ctx.capabilities.values():
+        while isinstance(capability, WrapperCapability):
+            capability = capability.wrapped
+        if isinstance(capability, BaseDurabilityCapability) and capability.in_durable_context:
+            return capability.engine_spec
+    return None
 
 
 def durable_engine_spec(ctx: RunContext[object]) -> DurabilityEngineSpec | None:
