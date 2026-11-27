@@ -199,7 +199,6 @@ class PromptKeys:
         """Translate decoder tokens into editor actions and literal paste payloads."""
         if key.key == Keys.CPRResponse:
             # Ignore a late response left over from a previous renderer/menu.
-            self.unknown(key.data)
             return
         if key.key == Keys.BracketedPaste:
             self._escape = False

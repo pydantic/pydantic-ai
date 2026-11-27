@@ -1424,7 +1424,7 @@ changing delivery order. The draft stays intact and the held edit stays non-runn
   Earlier queued entries keep their after-turn timing; this explicitly bypasses them.
 - `q` **Keep queue position** chooses after-turn delivery, or a separate turn if
   work has already ended. A saved edit retains its stable ID and reserved slot.
-- Esc or Ctrl-C cancels the delivery choice, preserving the draft/edit. Cancelling
+- Esc or Ctrl+C cancels the delivery choice, preserving the draft/edit. Cancelling
   the edit itself is a separate Esc action after closing this choice.
 
 If steering is unavailable, the draft and choice remain; nothing silently changes
