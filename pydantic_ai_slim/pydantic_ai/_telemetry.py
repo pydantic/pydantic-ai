@@ -18,7 +18,8 @@ from opentelemetry.trace import INVALID_SPAN, NoOpTracer, Span, Tracer
 from opentelemetry.util.types import AttributeValue
 
 from ._durable_replay import start_as_current_span
-from ._instrumentation import exception_type_name, record_uncaught_errors
+from ._instrumentation import exception_type_name, record_exception, set_error_status
+from .exceptions import ApprovalRequired, CallDeferred, SkipModelRequest, SkipToolExecution
 
 if TYPE_CHECKING:
     from ._run_context import RunContext
@@ -81,7 +82,8 @@ def open_span(
     Logfire's console and pending spans show them. An uncaught `Exception` marks the span ERROR, sets
     `error.type` to the exception's type, and is recorded by its type only, unless the run captures
     content, as its message can quote content. A cancellation is not an error, as in OpenTelemetry's own
-    spans: it leaves the status unset. In a Temporal workflow, from `wrap_run` on, a span that covered only
+    spans, and neither is a deferral, an approval request or a skip (`CallDeferred`, `ApprovalRequired`,
+    `SkipToolExecution`, `SkipModelRequest`): they leave the status unset. In a Temporal workflow, from `wrap_run` on, a span that covered only
     replayed work is not exported again.
     """
     with _open_span(_traced_run_of(ctx), name, attributes=attributes, content=content) as span:
@@ -99,22 +101,28 @@ def _open_span(
     if traced_run is None:
         yield INVALID_SPAN
         return
-    with (
-        start_as_current_span(
-            traced_run.tracer,
-            name,
-            attributes=_with_content(traced_run, attributes, content),
-            record_exception=False,
-            set_status_on_exception=False,
-        ) as span,
-        record_uncaught_errors(span, include_content=traced_run.include_content),
-    ):
+    with start_as_current_span(
+        traced_run.tracer,
+        name,
+        attributes=_with_content(traced_run, attributes, content),
+        record_exception=False,
+        set_status_on_exception=False,
+    ) as span:
         try:
             yield span
+        except _CONTROL_FLOW:
+            raise
         except Exception as error:
             # The type never quotes content, so it is set whether or not the run captures content.
             span.set_attribute('error.type', exception_type_name(error))
+            record_exception(span, error, include_content=traced_run.include_content, escaped=False)
+            set_error_status(span, error, include_content=traced_run.include_content)
             raise
+
+
+# Raised to defer, skip or replace a call, not because it failed. `Instrumentation` doesn't mark its own spans
+# ERROR for them either.
+_CONTROL_FLOW = (CallDeferred, ApprovalRequired, SkipToolExecution, SkipModelRequest)
 
 
 def record_decision(
