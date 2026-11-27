@@ -973,6 +973,12 @@ class TestParsePermissionRule:
     def test_a_path_of_only_dot_slash_is_everything(self, rule: str) -> None:
         assert parse_permission_rule(rule, 'deny').args == {'path': '**'}
 
+    @pytest.mark.parametrize('rule', ['read_file(./)', 'read_file(path=./)', 'read_file(././)'])
+    def test_an_allow_of_only_dot_slash_raises(self, rule: str) -> None:
+        """`**` would allow `/etc/passwd` and `../secret` too, far more than the working directory the string names."""
+        with pytest.raises(UserError, match='which would allow every path, not only the working directory'):
+            parse_permission_rule(rule, 'allow')
+
     @pytest.mark.parametrize(
         ('rule', 'hint'),
         [
