@@ -701,10 +701,11 @@ class TestWorkspaceMount:
             (PermissionRule('deny', args={'path': '*/.pax/*'}), 'FileNotFoundError FileNotFoundError'),
             (PermissionRule('deny', tools=['read_file']), 'FileNotFoundError FileNotFoundError'),
             (PermissionRule('ask', tools=['write_file']), 'original PermissionError'),
+            (PermissionRule('deny', tools=['create_directory']), 'original PermissionError'),
             (PermissionRule('ask', tools=['send_email']), 'original'),
             (PermissionRule('deny', command='curl'), 'original'),
         ],
-        ids=['deny_path', 'deny_read', 'ask_write', 'other_tool', 'command_only'],
+        ids=['deny_path', 'deny_read', 'ask_write', 'deny_mkdir', 'other_tool', 'command_only'],
     )
     async def test_a_managed_rule_about_files_limits_the_mount(
         self, tmp_path: Path, rule: PermissionRule[object], seen: str
