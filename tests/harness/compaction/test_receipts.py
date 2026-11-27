@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+from dataclasses import replace
+
 import pytest
 
 from pydantic_ai import Agent
@@ -23,9 +25,11 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai_harness.compaction import (
     CompactionReceiptPart,
+    CompactOnRequest,
     RelevanceCompaction,
     SlidingWindowCompaction,
     SummarizingCompaction,
+    TieredCompaction,
 )
 
 _MARKER = '[History before this point'
@@ -159,7 +163,7 @@ def _strategy(name: str) -> tuple[AbstractCapability[None], list[ModelMessage]]:
 async def test_receipt_is_an_operator_capability_part(name: str) -> None:
     strategy, history = _strategy(name)
     recorder = _Recorder()
-    agent = Agent(recorder.model, deps_type=type(None), capabilities=[strategy])
+    agent = Agent(recorder.model, deps_type=type(None), capabilities=[replace(strategy, id=name)])
 
     result = await agent.run('next please', message_history=history)
 
@@ -169,7 +173,7 @@ async def test_receipt_is_an_operator_capability_part(name: str) -> None:
     assert receipt.source == OperatorSource()
     assert receipt.scope == 'conversation'
     assert receipt.kind == 'compaction.receipt'
-    assert receipt.capability_id is not None
+    assert receipt.capability_id == name
     # Stored at the cut point in a request of its own, and nothing in the user's voice carries it.
     [receipt_request] = [message for message in messages if receipt in message.parts]
     assert receipt_request.parts == [receipt]
@@ -178,6 +182,34 @@ async def test_receipt_is_an_operator_capability_part(name: str) -> None:
     [sent] = recorder.sent
     assert [text for text in _system_texts(sent) if text.startswith(_MARKER)] == [receipt.content]
     assert not any(_MARKER in text for text in _user_texts(sent))
+
+
+@pytest.mark.parametrize('registration', ['direct', 'compact_on_request', 'tiered'])
+async def test_receipt_records_the_strategy_that_wrote_it(registration: str) -> None:
+    """The receipt names the registered capability that wrote it: the strategy, or the one it's composed into."""
+    strategy = SlidingWindowCompaction(max_messages=3, keep_messages=1, receipts=True)
+    responses = [_assistant('ok')]
+    if registration == 'direct':
+        capability: AbstractCapability[None] = replace(strategy, id='window')
+        expected = 'window'
+    elif registration == 'compact_on_request':
+        capability = CompactOnRequest(strategy, id='on_request')
+        expected = 'on_request'
+        # The model asks for the compaction, which runs before its next request.
+        responses.insert(0, ModelResponse(parts=[ToolCallPart('compact_context', {})]))
+    else:
+        capability = TieredCompaction(tiers=[strategy], target_tokens=100, id='tiers')
+        expected = 'tiers'
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return responses.pop(0)
+
+    agent = Agent(FunctionModel(respond), deps_type=type(None), capabilities=[capability])
+
+    result = await agent.run('next', message_history=_long_history())
+
+    [receipt] = _receipts(result.all_messages())
+    assert receipt.capability_id == expected
 
 
 @pytest.mark.parametrize('legacy', [False, True])

@@ -203,6 +203,10 @@ def _make_ctx(
         def enqueue(self, *content: Any) -> None:
             self.enqueued.extend(content)
 
+        def _calling_capability_id(self) -> str | None:
+            # As outside any capability's hook: a strategy called directly runs under none.
+            return None
+
     return _FakeCtx(usage=usage, messages=list(messages or ()), usage_limits=usage_limits)
 
 

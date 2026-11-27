@@ -59,8 +59,8 @@ from pydantic_ai_harness.compaction._receipts import (
     is_receipt_message,
     is_receipt_part,
     make_receipt_part,
+    receipt_capability_id,
     record_receipt,
-    registered_id,
 )
 from pydantic_ai_harness.compaction._shared import (
     compact_if_smaller,
@@ -1051,7 +1051,7 @@ class SummarizingCompaction(AbstractCapability[AgentDepsT]):
             handle=handle,
             has_summary=True,
         )
-        receipt_message = ModelRequest(parts=[make_receipt_part(text, capability_id=registered_id(ctx, self))])
+        receipt_message = ModelRequest(parts=[make_receipt_part(text, capability_id=receipt_capability_id(ctx, self))])
         anchor = deduped.index(summary_message)
         return [*deduped[: anchor + 1], receipt_message, *deduped[anchor + 1 :]]
 

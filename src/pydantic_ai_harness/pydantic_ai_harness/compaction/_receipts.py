@@ -112,7 +112,7 @@ class CompactionReceiptPart(InstructionCapabilityPart, namespace='compaction', n
 def make_receipt_part(text: str, *, capability_id: str | None) -> CompactionReceiptPart:
     """Wrap receipt *text*, from `format_receipt`, for placement in the surviving history.
 
-    *capability_id* is the run id of the strategy that wrote it, when it's registered on the run.
+    *capability_id* is the run id of the capability that wrote it, from `receipt_capability_id`.
     """
     return CompactionReceiptPart(
         # The capability's own wording, with only config and counts filled in.
@@ -123,9 +123,19 @@ def make_receipt_part(text: str, *, capability_id: str | None) -> CompactionRece
     )
 
 
-def registered_id(ctx: RunContext[AgentDepsT], capability: AbstractCapability[AgentDepsT]) -> str | None:
-    """The run id *capability* is registered under, or `None` when it isn't, such as a tier of `TieredCompaction`."""
-    return next((run_id for run_id, registered in ctx.capabilities.items() if registered is capability), None)
+def receipt_capability_id(ctx: RunContext[AgentDepsT], capability: AbstractCapability[AgentDepsT]) -> str | None:
+    """The run id of the capability a receipt *capability* writes is attributed to.
+
+    That's *capability* itself when it's registered on the run. A strategy composed into another capability, such as a
+    tier of `TieredCompaction` or the strategy of `CompactOnRequest`, isn't registered, so its receipt is attributed to
+    the registered capability whose hook ran it. `None` only outside any capability's hook, as when the application
+    calls `compact_now`: then the application wrote it.
+    """
+    own = next((run_id for run_id, registered in ctx.capabilities.items() if registered is capability), None)
+    if own is not None:
+        return own
+    calling = ctx._calling_capability_id()  # pyright: ignore[reportPrivateUsage]
+    return calling if calling in ctx.capabilities else None
 
 
 def is_receipt_part(part: object) -> bool:
