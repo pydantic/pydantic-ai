@@ -54,7 +54,8 @@ class _Load:
 def _loads(messages: Sequence[ModelMessage]) -> dict[str, _Load]:
     """The capabilities loaded in the post-compaction window of *messages*, in load order, with the tools each revealed.
 
-    A load is the model's `load_capability` exchange or a `CapabilityLoadDeltaPart`. A model's load reveals its
+    A load is the model's `load_capability` exchange or a `CapabilityLoadDeltaPart`, and one that a later
+    `CapabilityLoadDeltaPart` unloads is left out. A model's load reveals its
     tools in a `ToolAvailabilityDeltaPart` with its call's `tool_call_id`, and a load from code in the one right
     after its delta with the same `tool_call_id`: that of the tool call it was made in, or `None`. A load
     without tools leaves no reveal, so adjacency alone would credit it with someone else's.
@@ -66,6 +67,8 @@ def _loads(messages: Sequence[ModelMessage]) -> dict[str, _Load]:
     for part, previous in _parts_with_previous(post_compaction_window(messages)):
         if isinstance(part, ToolAvailabilityDeltaPart) and (owner := _reveal_owner(part, previous, calls)):
             loads[owner] = _Load(owner, part.tools_added)
+        for capability_id in exchanges.unloads(part):
+            loads.pop(capability_id)
         for capability_id in exchanges.loads(part):
             # Moved to the end, so a capability loaded again keeps its latest place in the load order.
             loads.pop(capability_id, None)

@@ -67,6 +67,7 @@ from pydantic_ai._utils import (
 )
 from pydantic_ai._uuid import uuid7
 from pydantic_ai.capabilities._deferred_capability_loader import DeferredCapabilityLoader
+from pydantic_ai.capabilities._dynamic import has_per_step_capabilities, refresh_per_step_capabilities
 from pydantic_ai.capabilities.abstract import AbstractCapability, ModelSelector
 from pydantic_ai.models import (
     CompletedStreamedResponse,
@@ -1476,6 +1477,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             retry=ctx.state.output_retries_used,
             max_retries=ctx.deps.tool_manager.default_max_retries,
         )
+        await refresh_per_step_capabilities(run_context)
         ctx.deps.tool_manager = await ctx.deps.tool_manager.for_run_step(run_context)
         return response, run_context
 
@@ -3491,6 +3493,8 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         await _select_model(ctx)
 
+        await _refresh_per_step_capabilities(ctx)
+
         _refresh_loaded_capability_ids(ctx)
 
         _refresh_discovered_tool_names(ctx)
@@ -3620,6 +3624,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
 
         ctx.state.run_step += 1
 
+        await _refresh_per_step_capabilities(ctx)
         _refresh_loaded_capability_ids(ctx)
         _refresh_discovered_tool_names(ctx)
 
@@ -3900,6 +3905,7 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
         update_lowered_instruction_history(
             messages, loaded_parts, self._lowered_authorities, recording_targets, loaded=loaded
         )
+        _record_capability_unloads(ctx, recording_targets)
         # A hook that rewrote the history (`ctx.messages[:] = ...`) with a copy of this request left
         # `self.request` out of it, so the instructions sent are recorded where the history now holds them.
         instruction_targets = (
@@ -5310,6 +5316,27 @@ def _deliver_capability_loads(
     return loads
 
 
+def _record_capability_unloads(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]], targets: Sequence[_messages.ModelRequest]
+) -> None:
+    """Unload the capabilities history loads that a per-step `DynamicCapability` no longer returns, on `targets`.
+
+    A `CapabilityLoadDeltaPart` naming them in `unloaded`, on the request of the step they left at, so a capability
+    returned again later has to be loaded again. Recorded after the withdrawal of their instructions, which the
+    unload takes out of scope. Read from history, so a retried request or a durable replay finds the unload it
+    already recorded, and a step that sends no request leaves it to the next one.
+    """
+    if not has_per_step_capabilities(ctx.deps.capabilities.values()):
+        return
+    unloaded = sorted(parse_loaded_capabilities(ctx.state.message_history) - ctx.deps.capabilities.keys())
+    if not unloaded:
+        return
+    part = _messages.CapabilityLoadDeltaPart(unloaded=unloaded)
+    for target in targets:
+        target.parts = [*target.parts, part]
+    ctx.state.event_stream_buffer.append(_messages.CapabilityLoadDeltaEvent(part=part))
+
+
 def _reveal_tools_of_loads_before_run(
     ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]],
     request: _messages.ModelRequest,
@@ -5358,6 +5385,16 @@ def _with_reveals(
     return result
 
 
+async def _refresh_per_step_capabilities(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
+    """Call the factories of the run's per-step `DynamicCapability`s for the step being prepared.
+
+    Before the loaded capability ids are refreshed, which only count capabilities the registry holds, and before the
+    tools are resolved, which reads the step's capabilities through the `DynamicCapability`'s toolset.
+    """
+    if has_per_step_capabilities(ctx.deps.capabilities.values()):
+        await refresh_per_step_capabilities(build_run_context(ctx))
+
+
 def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT, Any]]) -> None:
     """Refresh the history-derived loaded capability ids from the current graph state."""
     # The `load_capability` tool (and therefore any `LoadCapability*` history parts) only exists
@@ -5366,7 +5403,10 @@ def _refresh_loaded_capability_ids(ctx: GraphRunContext[GraphAgentState, GraphAg
     # (`discovered_tool_names` has no equally-cheap guard: tool search is auto-injected and its trigger
     # is "deferred tools exist", which isn't known without resolving toolsets, so its refresh stays
     # unconditional.)
-    if not any(capability.defer_loading is True for capability in ctx.deps.capabilities.values()):
+    # A per-step `DynamicCapability` can also remove the last one, whose load then stops counting.
+    if not ctx.deps.loaded_capability_ids and not any(
+        capability.defer_loading is True for capability in ctx.deps.capabilities.values()
+    ):
         return
 
     loaded_capability_ids = registered_loaded_capability_ids(ctx.state.message_history, ctx.deps.capabilities.keys())

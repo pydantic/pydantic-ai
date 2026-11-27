@@ -12437,13 +12437,14 @@ def test_tool_availability_delta_ui_round_trip():
 
 
 def test_capability_load_record_ui_round_trip():
-    """A capability loaded from code keeps its record through the UI, with or without tools."""
+    """A capability loaded from code keeps its record through the UI, with or without tools, and so does an unload."""
     messages = [
         ModelRequest(
             parts=[
                 CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='open'),
                 ToolAvailabilityDeltaPart(tools_added=['refund_status'], tool_call_id='open'),
                 CapabilityLoadDeltaPart(loaded=['policy'], tool_call_id='open'),
+                CapabilityLoadDeltaPart(unloaded=['refunds']),
             ]
         )
     ]

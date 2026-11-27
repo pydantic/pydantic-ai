@@ -548,6 +548,9 @@ CASES: dict[str, CapabilityCase] = {
         build=lambda _: DynamicCapability(lambda ctx: Thinking()),
     ),
     'ResolvedDynamicCapability': CapabilityCase(Anonymous('the resolved form of a `DynamicCapability`')),
+    'PerStepDynamicCapability': CapabilityCase(
+        Anonymous('the resolved form of a `DynamicCapability(per_run_step=True)`')
+    ),
     'NativeTool': CapabilityCase(
         Anonymous('one per native tool'),
         build=lambda _: NativeTool(CodeExecutionTool()),

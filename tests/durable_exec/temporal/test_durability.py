@@ -129,7 +129,7 @@ from pydantic_ai.images import (
     ImageGenerationSettings,
     TestImageGenerationModel,
 )
-from pydantic_ai.messages import ModelRequestAttempt, UploadedFile
+from pydantic_ai.messages import CapabilityLoadDeltaPart, ModelRequestAttempt, UploadedFile
 from pydantic_ai.models import (
     Model,
     ModelRequestContext,
@@ -6099,6 +6099,165 @@ async def test_durability_dynamic_capability_tool_runs_in_activity(client: Clien
             task_queue=TASK_QUEUE,
         )
     assert output == '{"dynamic_capability_tool":"called in activity"}'
+
+
+_temporal_per_step_tools_seen: list[list[str]] = []
+
+
+def _temporal_refund_status() -> str:
+    assert activity.in_activity()
+    return 'refund issued'
+
+
+def _temporal_per_step_factory(ctx: RunContext[object]) -> AbstractCapability[object] | None:
+    if ctx.run_step < 2:
+        return None
+    return Capability[object](
+        id='refunds', description='Refund tools.', tools=[_temporal_refund_status], defer_loading=True
+    )
+
+
+def _temporal_per_step_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    revealed = info.model_request_parameters.revealed_tool_names
+    _temporal_per_step_tools_seen.append(
+        sorted(
+            tool_def.name for tool_def in info.function_tools if not tool_def.defer_loading or tool_def.name in revealed
+        )
+    )
+    step = sum(isinstance(message, ModelResponse) for message in messages)
+    if step == 0:
+        return ModelResponse(parts=[ToolCallPart('_temporal_ping', {}, tool_call_id='ping')])
+    if step == 1:
+        return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'refunds'}, tool_call_id='load')])
+    if step == 2:
+        return ModelResponse(parts=[ToolCallPart('_temporal_refund_status', {}, tool_call_id='status')])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+def _temporal_ping() -> str:
+    return 'pong'
+
+
+_temporal_per_step_capability_agent = Agent(
+    FunctionModel(_temporal_per_step_model),
+    name='temporal_per_step_capability_agent',
+    tools=[_temporal_ping],
+    capabilities=[
+        DynamicCapability(_temporal_per_step_factory, id='dyn_per_step', per_run_step=True),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class TemporalPerStepCapabilityWorkflow:
+    @workflow.run
+    async def run(self) -> str:
+        return (await _temporal_per_step_capability_agent.run('Refund my order')).output
+
+
+async def test_durability_per_step_dynamic_capability_appearing_mid_run(client: Client):
+    """An on-demand capability a per-step factory first returns mid-run stays hidden until loaded, then runs in an activity."""
+    _temporal_per_step_tools_seen.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalPerStepCapabilityWorkflow],
+        plugins=[AgentPlugin(_temporal_per_step_capability_agent)],
+    ):
+        output = await client.execute_workflow(
+            TemporalPerStepCapabilityWorkflow.run,
+            id='test_temporal_per_step_capability',
+            task_queue=TASK_QUEUE,
+        )
+    assert output == 'done'
+    # The model is offered the tools it can call: `_temporal_refund_status` only once `refunds` is loaded.
+    assert _temporal_per_step_tools_seen == snapshot(
+        [
+            ['_temporal_ping', 'load_capability'],
+            ['_temporal_ping', 'load_capability'],
+            ['_temporal_ping', '_temporal_refund_status', 'load_capability'],
+            ['_temporal_ping', '_temporal_refund_status', 'load_capability'],
+        ]
+    )
+
+
+def _temporal_leaving_factory(ctx: RunContext[object]) -> AbstractCapability[object] | None:
+    if ctx.run_step == 4:
+        return None
+    return Capability[object](
+        id='refunds', description='Refund tools.', tools=[_temporal_refund_status], defer_loading=True
+    )
+
+
+def _temporal_leaving_model(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    revealed = info.model_request_parameters.revealed_tool_names
+    _temporal_per_step_tools_seen.append(
+        sorted(
+            tool_def.name for tool_def in info.function_tools if not tool_def.defer_loading or tool_def.name in revealed
+        )
+    )
+    step = sum(isinstance(message, ModelResponse) for message in messages)
+    if step in (0, 4):
+        return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'refunds'}, tool_call_id=f'load-{step}')])
+    if step in (1, 5):
+        return ModelResponse(parts=[ToolCallPart('_temporal_refund_status', {}, tool_call_id=f'status-{step}')])
+    if step in (2, 3):
+        return ModelResponse(parts=[ToolCallPart('_temporal_ping', {}, tool_call_id=f'ping-{step}')])
+    return ModelResponse(parts=[TextPart('done')])
+
+
+_temporal_leaving_capability_agent = Agent(
+    FunctionModel(_temporal_leaving_model),
+    name='temporal_leaving_capability_agent',
+    tools=[_temporal_ping],
+    capabilities=[
+        DynamicCapability(_temporal_leaving_factory, id='dyn_leaving', per_run_step=True),
+        TemporalDurability(activity_config=BASE_ACTIVITY_CONFIG),
+    ],
+)
+
+
+@workflow.defn
+class TemporalLeavingCapabilityWorkflow:
+    @workflow.run
+    async def run(self) -> list[str]:
+        result = await _temporal_leaving_capability_agent.run('Refund my order')
+        return [
+            f'message {index}: unloaded {part.unloaded}'
+            for index, message in enumerate(result.all_messages())
+            for part in message.parts
+            if isinstance(part, CapabilityLoadDeltaPart)
+        ]
+
+
+@pytest.mark.moves_cache_prefix(reason='a loaded capability that leaves mid-run takes its tools out of the request')
+async def test_durability_per_step_dynamic_capability_leaving_is_unloaded(client: Client):
+    """A loaded capability a per-step factory stops returning is unloaded at that step, and loaded again on return."""
+    _temporal_per_step_tools_seen.clear()
+    async with Worker(
+        client,
+        task_queue=TASK_QUEUE,
+        workflows=[TemporalLeavingCapabilityWorkflow],
+        plugins=[AgentPlugin(_temporal_leaving_capability_agent)],
+    ):
+        unloads = await client.execute_workflow(
+            TemporalLeavingCapabilityWorkflow.run,
+            id='test_temporal_per_step_capability_leaving',
+            task_queue=TASK_QUEUE,
+        )
+    assert unloads == snapshot(["message 6: unloaded ['refunds']"])
+    assert _temporal_per_step_tools_seen == snapshot(
+        [
+            ['_temporal_ping', 'load_capability'],
+            ['_temporal_ping', '_temporal_refund_status', 'load_capability'],
+            ['_temporal_ping', '_temporal_refund_status', 'load_capability'],
+            ['_temporal_ping', 'load_capability'],
+            ['_temporal_ping', 'load_capability'],
+            ['_temporal_ping', '_temporal_refund_status', 'load_capability'],
+            ['_temporal_ping', '_temporal_refund_status', 'load_capability'],
+        ]
+    )
 
 
 def test_durability_dynamic_capability_requires_id() -> None:

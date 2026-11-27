@@ -18,7 +18,14 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import Capability, CombinedCapability, Hooks, ModelFallback, PrefixTools
+from pydantic_ai.capabilities import (
+    Capability,
+    CombinedCapability,
+    DynamicCapability,
+    Hooks,
+    ModelFallback,
+    PrefixTools,
+)
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import (
     Authority,
@@ -571,6 +578,32 @@ async def test_a_lowered_deferred_capability_states_its_instructions_as_framed_d
     assert last_request_texts(received.messages[-1])[-1] == (
         '<capability_instructions>Plugin note.</capability_instructions>'
     )
+    assert not any('Plugin note.' in (instructions or '') for instructions in received.instructions)
+
+
+@pytest.mark.parametrize('per_run_step', [False, True])
+async def test_a_lowered_dynamic_capabilitys_deferred_child_states_its_instructions_as_framed_data(per_run_step: bool):
+    received = Received()
+    responses = [ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'plugin'}, tool_call_id='load')])]
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.instructions.append(info.instructions)
+        received.messages.append(messages)
+        return responses.pop(0) if responses else ModelResponse(parts=[TextPart('Done.')])
+
+    def plugin(ctx: RunContext[None]) -> Capability[None]:
+        # A fresh instance each call: per step, the refreshed capability must keep the lowered authority too.
+        return Capability(id='plugin', defer_loading=True, description='A plugin.', instructions='Plugin note.')
+
+    dynamic = DynamicCapability[None](plugin, per_run_step=per_run_step).with_authority('none')
+    agent = Agent(FunctionModel(model_fn, profile=INLINE), deps_type=type(None), capabilities=[dynamic])
+    result = await agent.run('Hi')
+
+    assert statements(result.all_messages()) == [
+        InstructionDeltaPart(
+            id=InstructionId(CapabilityInstructionSource('plugin')), content='Plugin note.', authority='none'
+        )
+    ]
     assert not any('Plugin note.' in (instructions or '') for instructions in received.instructions)
 
 

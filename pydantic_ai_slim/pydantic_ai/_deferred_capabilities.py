@@ -160,7 +160,10 @@ def registered_loaded_capability_ids(messages: Sequence[ModelMessage], capabilit
 def _parse_loaded_capabilities(messages: Sequence[ModelMessage]) -> set[str]:
     """Parse capability-load evidence from an already-selected message window."""
     exchanges = LoadExchanges()
-    return {capability_id for message in messages for part in message.parts for capability_id in exchanges.loads(part)}
+    for message in messages:
+        for part in message.parts:
+            exchanges.loads(part)
+    return exchanges.loaded
 
 
 @dataclass
@@ -172,6 +175,9 @@ class LoadExchanges:
     [`RunContext.load_capability`][pydantic_ai.tools.RunContext.load_capability] records without a call. A return
     loads the capability its call named, when the call was seen first and its arguments parsed. A failed load is a
     plain `ToolReturnPart`, so it loads nothing.
+
+    A `CapabilityLoadDeltaPart` can also unload a capability, in its `unloaded`, after which a load of it counts as
+    a load again.
 
     A capability loads once: a later load of a capability an earlier part already loaded loads nothing. The
     no-op return for an already-active capability still confirms the load to the model, but counting it as a
@@ -198,9 +204,26 @@ class LoadExchanges:
                 return capability_id
         return None
 
+    @property
+    def loaded(self) -> set[str]:
+        """The capabilities loaded by the parts folded in so far."""
+        return set(self._loaded)
+
+    def unloads(self, part: ModelRequestPart | ModelResponsePart) -> list[str]:
+        """Fold in the unloads `part` records, returning the loaded capabilities it unloads, in order.
+
+        `loads` folds them in too, so a caller that needs to know which capabilities `part` unloads calls this first.
+        """
+        if not isinstance(part, CapabilityLoadDeltaPart):
+            return []
+        unloaded = [capability_id for capability_id in dict.fromkeys(part.unloaded) if capability_id in self._loaded]
+        self._loaded.difference_update(unloaded)
+        return unloaded
+
     def loads(self, part: ModelRequestPart | ModelResponsePart) -> list[str]:
         """Fold in `part`, returning the capabilities it loads, in order."""
         if isinstance(part, CapabilityLoadDeltaPart):
+            self.unloads(part)
             fresh = [capability_id for capability_id in part.loaded if capability_id not in self._loaded]
             self._loaded.update(fresh)
             return fresh

@@ -2462,6 +2462,24 @@ def test_cache_policy_keys_for_unset_ui_visibility_are_pinned():
     assert key_for(stamped_history) != key_for(history)
 
 
+def test_cache_policy_keys_for_an_empty_unloaded_are_pinned():
+    """An empty `CapabilityLoadDeltaPart.unloaded` stays out of the key, so a flow retried across the upgrade that added it hits.
+
+    The digests were computed before the field existed. An unload stays in the key.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    load = CapabilityLoadDeltaPart(loaded=['refunds'], tool_call_id='load')
+    history: list[ModelMessage] = [ModelResponse(parts=[TextPart('hi')]), ModelRequest(parts=[load])]
+
+    def key_for(value: CapabilityLoadDeltaPart | list[ModelMessage]) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    assert key_for(load) == snapshot('9ae38b6fa104f2d29261acaeba06bfd4')
+    assert key_for(history) == snapshot('7ea0fd75bd622bad710f9378c64e65fe')
+    assert key_for(replace(load, unloaded=['refunds'])) != key_for(load)
+
+
 def test_cache_policy_normalizes_only_framework_tool_call_ids():
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
@@ -4448,6 +4466,50 @@ async def test_prefect_durability_dynamic_capability_tool_runs_as_task() -> None
     assert calls == ['called']
     assert len(task_run_names) == 1
     assert task_run_names[0].startswith('Call Tool: dynamic_tool')
+
+
+async def test_prefect_durability_per_step_dynamic_capability_appearing_mid_run() -> None:
+    """An on-demand capability a per-step factory first returns mid-run loads, and its tool runs as a Prefect task."""
+    task_run_names: list[str] = []
+
+    def refund_status() -> str:
+        task_run_context = TaskRunContext.get()
+        assert task_run_context is not None
+        task_run_names.append(task_run_context.task_run.name)
+        return 'refund issued'
+
+    def factory(ctx: RunContext[object]) -> Capability[object] | None:
+        if ctx.run_step < 2:
+            return None
+        return Capability[object](id='refunds', description='Refund tools.', tools=[refund_status], defer_loading=True)
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        step = sum(isinstance(message, ModelResponse) for message in messages)
+        if step == 0:
+            return ModelResponse(parts=[ToolCallPart('ping', {}, tool_call_id='ping')])
+        if step == 1:
+            return ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'refunds'}, tool_call_id='load')])
+        if step == 2:
+            return ModelResponse(parts=[ToolCallPart('refund_status', {}, tool_call_id='status')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    def ping() -> str:
+        return 'pong'
+
+    agent = Agent(
+        FunctionModel(model_fn),
+        name='prefect_per_step_capability',
+        tools=[ping],
+        capabilities=[DynamicCapability(factory, id='dyn_per_step', per_run_step=True), PrefectDurability()],
+    )
+
+    @flow
+    async def run_agent() -> str:
+        return (await agent.run('Refund my order')).output
+
+    assert await run_agent() == 'done'
+    assert len(task_run_names) == 1
+    assert task_run_names[0].startswith('Call Tool: refund_status')
 
 
 @pytest.mark.parametrize('variant', VARIANTS)

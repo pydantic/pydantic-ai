@@ -5,13 +5,14 @@
 -    "unstated_loads": true
 -   },
 +   {},
-@@ -38,14 +35,0 @@
+@@ -38,15 +35,0 @@
 -    },
 -    {
 -     "kind": "capability-load-delta",
 -     "loaded": [
 -      "refunds"
 -     ],
+-     "unloaded": [],
 -     "tool_call_id": "open-1"
 -    },
 -    {
@@ -20,18 +21,19 @@
 -      "refund_status"
 -     ],
 -     "tool_call_id": "open-1"
-@@ -186,3 +170 @@
+@@ -187,3 +170 @@
 -   {
 -    "unstated_loads": true
 -   },
 +   {},
-@@ -196,14 +177,0 @@
+@@ -197,15 +177,0 @@
 -    },
 -    {
 -     "kind": "capability-load-delta",
 -     "loaded": [
 -      "refunds"
 -     ],
+-     "unloaded": [],
 -     "tool_call_id": "open-7"
 -    },
 -    {

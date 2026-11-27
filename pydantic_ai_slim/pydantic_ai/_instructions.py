@@ -555,6 +555,12 @@ class LoadedInstructionValues:
                     self._unstated.pop(capability_id, None)
                     # The load no longer owns the block, so a later load of the capability counts again.
                     self._loads.forget(capability_id)
+        for capability_id in self._loads.unloads(part):
+            # The block leaves scope with the load, its withdrawal recorded ahead of the unload, so a later load of
+            # the capability states its instructions afresh.
+            self.values.pop(capability_id, None)
+            self._changed.discard(capability_id)
+            self._unstated.pop(capability_id, None)
         loaded = self._loads.loads(part)
         for capability_id in loaded:
             # Moved to the end, so the values stay in load order.

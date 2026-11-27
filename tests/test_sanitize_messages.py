@@ -1052,6 +1052,9 @@ POLICY: dict[type, Fields | Dropped] = {
                 'Loads on-demand capabilities, which a client could equally do by fabricating the `load_capability` '
                 'exchange. The request holding it is marked so its instructions are stated again (`ModelRequest.metadata`).'
             ),
+            'unloaded': Keep(
+                'Unloads on-demand capabilities, which is less than a client could do by leaving out their loads.'
+            ),
             'tool_call_id': _CONVERSATION,
             'part_kind': _KIND,
         }
@@ -1345,7 +1348,7 @@ _SURVIVAL_HISTORY: list[ModelMessage] = [
             RetryFeedbackPart('Fix it.', retry=RetryInfo('validation_error', attempt=2, max_retries=3), timestamp=_T),
             legacy_retry_prompt_part('Try again.', tool_name='look', tool_call_id='call-1', timestamp=_T),
             ToolAvailabilityDeltaPart(tools_added=['look'], tool_call_id='call-2'),
-            CapabilityLoadDeltaPart(loaded=['skills'], tool_call_id='call-3'),
+            CapabilityLoadDeltaPart(loaded=['skills'], unloaded=['styles'], tool_call_id='call-3'),
             ModelSettingsDeltaPart(settings={'thinking': 'high'}, top_level=True),
         ],
         timestamp=_T,

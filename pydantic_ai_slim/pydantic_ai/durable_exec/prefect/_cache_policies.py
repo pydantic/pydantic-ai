@@ -17,6 +17,7 @@ from pydantic_ai.messages import (
     BaseToolCallPart,
     BaseToolReturnPart,
     CapabilityInstructionSource,
+    CapabilityLoadDeltaPart,
     CapabilityPart,
     CapabilitySource,
     RunInstructionSource,
@@ -241,6 +242,9 @@ def _excluded_fields(obj: object, *, is_framework: bool) -> frozenset[str]:
         # Left out while unset, so keys stay what they were before the field was added; a set stamp stays in the key,
         # since the model task's cached response carries it.
         excluded_fields |= {'ui_visibility'}
+    elif isinstance(obj, CapabilityLoadDeltaPart) and not obj.unloaded:
+        # Left out while empty, so a load's key stays what it was before the field was added.
+        excluded_fields |= {'unloaded'}
     return excluded_fields
 
 
