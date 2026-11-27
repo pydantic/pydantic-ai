@@ -30,7 +30,7 @@ from weakref import ReferenceType, ref
 
 import anyio
 from opentelemetry.trace import get_current_span
-from pydantic_core import PydanticSerializationError
+from pydantic_core import PydanticSerializationError, to_json
 
 from pydantic_ai import FunctionToolset, ToolsetTool
 from pydantic_ai._instrumentation import ContentPolicy, open_request_policy, request_policy_scope
@@ -288,14 +288,16 @@ _PENDING_EVENT_DISPATCH: ContextVar[_BatchedEventDispatch | None] = ContextVar(
 """The batched event dispatch whose pulled events a model request in this task waits for."""
 
 
-async def _await_pending_event_dispatch() -> None:
+async def _await_pending_event_dispatch(run_id: str | None) -> None:
     """Let every workflow-side event pulled before a model request reach the handler before that request does.
 
     A model-request unit hands its events to the handler live, so under batched dispatch it would otherwise start
     while an earlier event's handler unit is still in flight, and the handler would see the events out of order.
     Raises when one of those earlier units failed, so the request doesn't run after events the handler never saw.
+    Only a request of the run whose stream is dispatched waits: tasks the stream starts, like tools, inherit the
+    dispatch, and an agent such a tool delegates to must not wait for the delegating run's events.
     """
-    if (dispatch := _PENDING_EVENT_DISPATCH.get()) is None:
+    if (dispatch := _PENDING_EVENT_DISPATCH.get()) is None or dispatch.run_id != run_id:
         return
     await dispatch.drain()
     if (error := dispatch.dispatch_error) is not None:
@@ -305,6 +307,14 @@ async def _await_pending_event_dispatch() -> None:
 
 
 _DispatchItem = tuple[AgentStreamEvent, 'asyncio.Future[None]']
+
+_MAX_EVENT_BURST_BYTES = 512 * 1024
+"""The most serialized event data one burst carries, beyond its first event.
+
+Temporal's server warns about payloads over 512 KiB and rejects blobs over 2 MB by default, and each event fit in
+its own unit before batching, so a burst must not add up to more than one event would. The size is a function of
+the events alone, so where a burst splits is as deterministic as the events.
+"""
 
 
 class _BatchedEventDispatch:
@@ -320,8 +330,11 @@ class _BatchedEventDispatch:
         self,
         dispatch_events: Callable[[list[AgentStreamEvent]], Awaitable[None]],
         stream: AsyncIterable[AgentStreamEvent],
+        run_id: str | None,
     ) -> None:
         self._dispatch_events = dispatch_events
+        self.run_id = run_id
+        """The run whose model requests wait for this dispatch; see `_await_pending_event_dispatch`."""
         self._stream = stream
         self._ready: list[_DispatchItem] = []
         self._available = asyncio.Event()  # noqa: TID251  (runs on Temporal's deterministic workflow event loop)
@@ -411,8 +424,20 @@ class _BatchedEventDispatch:
             elif self._producer_done:
                 return
 
+    def _take_burst(self) -> list[_DispatchItem]:
+        """The ready events that fit in one unit, at least one; see `_MAX_EVENT_BURST_BYTES`."""
+        size = 0
+        count = 0
+        for event, _ in self._ready:
+            size += len(to_json(event, serialize_unknown=True))
+            if count and size > _MAX_EVENT_BURST_BYTES:
+                break
+            count += 1
+        burst, self._ready = self._ready[:count], self._ready[count:]
+        return burst
+
     async def _dispatch_ready(self) -> None:
-        burst, self._ready = self._ready, []
+        burst = self._take_burst()
         try:
             await self._dispatch_events([event for event, _ in burst])
         except BaseException as exc:
@@ -1174,7 +1199,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
     def _batched_event_stream(
         self, ctx: RunContext[AgentDepsT], stream: AsyncIterable[AgentStreamEvent]
     ) -> AsyncIterator[AgentStreamEvent]:
-        return _BatchedEventDispatch(partial(self._dispatch_event_stream_events, ctx), stream).events()
+        return _BatchedEventDispatch(partial(self._dispatch_event_stream_events, ctx), stream, ctx.run_id).events()
 
     @property
     @abstractmethod
@@ -1992,7 +2017,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
         )
 
         async def request_segment(request: ModelRequestContext) -> ModelResponse:
-            await _await_pending_event_dispatch()
+            await _await_pending_event_dispatch(ctx.run_id)
             return await operations.request(
                 ModelRequestParams(
                     model_id,
@@ -2004,7 +2029,7 @@ class BaseDurabilityCapability(AbstractCapability[AgentDepsT]):
             )
 
         async def request_stream_segment(request: ModelRequestContext) -> StreamedModelRequestResult:
-            await _await_pending_event_dispatch()
+            await _await_pending_event_dispatch(ctx.run_id)
             return await operations.request_stream(
                 ModelRequestParams(
                     model_id,

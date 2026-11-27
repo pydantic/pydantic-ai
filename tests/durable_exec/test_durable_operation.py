@@ -578,18 +578,88 @@ async def test_model_request_waits_for_events_pulled_before_it() -> None:
 
     async def stream() -> AsyncIterator[AgentStreamEvent]:
         # Nothing pulled yet, so there is nothing to wait for.
-        await _await_pending_event_dispatch()
+        await _await_pending_event_dispatch(ctx.run_id)
         yield event
         await asyncio.sleep(0)
         ordering.append('model request waiting')
         finish_dispatch.set()
-        await _await_pending_event_dispatch()
+        await _await_pending_event_dispatch(ctx.run_id)
         ordering.append('model request started')
         # The pulled event is recorded by now.
-        await _await_pending_event_dispatch()
+        await _await_pending_event_dispatch(ctx.run_id)
 
     assert [item async for item in durability.wrap_run_event_stream(ctx, stream=stream())] == [event]
     assert ordering == ['dispatch started', 'model request waiting', 'dispatch finished', 'model request started']
+
+
+async def test_a_delegated_run_does_not_wait_for_the_delegating_run_s_dispatch() -> None:
+    """A tool the stream starts inherits the dispatch, but a model request of the agent it delegates to starts at once."""
+    dispatch_started = asyncio.Event()
+    finish_dispatch = asyncio.Event()
+    ordering: list[str] = []
+
+    class BlockingJournalDurability(BatchingJournalDurability):
+        async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
+            dispatch_started.set()
+            await finish_dispatch.wait()
+            ordering.append('delegating run dispatch finished')
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass  # pragma: no cover
+
+    durability = BlockingJournalDurability(event_stream_handler=handler)
+    event = _tool_events(1)[0]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), run_id='delegating')
+
+    async def delegated_model_request() -> None:
+        await _await_pending_event_dispatch('delegate')
+        ordering.append('delegate model request started')
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        yield event
+        await dispatch_started.wait()
+        # Like a tool task the stream starts, the delegate's task inherits the dispatch through its context.
+        await asyncio.create_task(delegated_model_request())
+        finish_dispatch.set()
+
+    assert [item async for item in durability.wrap_run_event_stream(ctx, stream=stream())] == [event]
+    assert ordering == ['delegate model request started', 'delegating run dispatch finished']
+
+
+async def test_a_burst_splits_before_it_carries_more_than_one_large_event() -> None:
+    """Events that each fit in a unit don't add up to a burst over the payload budget; small ones still batch."""
+    first_dispatch_started = asyncio.Event()
+    finish_first_dispatch = asyncio.Event()
+    batches: list[list[AgentStreamEvent]] = []
+
+    class BlockingJournalDurability(BatchingJournalDurability):
+        async def _dispatch_event_stream_events(self, ctx: RunContext[Any], events: list[AgentStreamEvent]) -> None:
+            batches.append(events)
+            if len(batches) == 1:
+                first_dispatch_started.set()
+                await finish_first_dispatch.wait()
+
+    async def handler(ctx: RunContext[None], stream: AsyncIterable[AgentStreamEvent]) -> None:
+        pass  # pragma: no cover
+
+    def result(tool_call_id: str, size: int) -> AgentStreamEvent:
+        return FunctionToolResultEvent(ToolReturnPart('tool', 'x' * size, tool_call_id))
+
+    durability = BlockingJournalDurability(event_stream_handler=handler)
+    first = _tool_events(1)[0]
+    large = [result('large-1', 300_000), result('large-2', 300_000)]
+    small = [result('small-1', 10), result('small-2', 10)]
+    ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage())
+
+    async def stream() -> AsyncIterator[AgentStreamEvent]:
+        yield first
+        await first_dispatch_started.wait()
+        for event in [*large, *small]:
+            yield event
+        finish_first_dispatch.set()
+
+    assert [event async for event in durability.wrap_run_event_stream(ctx, stream=stream())] == [first, *large, *small]
+    assert batches == [[first], [large[0]], [large[1], *small]]
 
 
 @pytest.mark.parametrize('count', [1, 2], ids=['failed-event', 'event-after-the-failed-one'])
@@ -613,7 +683,7 @@ async def test_model_request_after_a_failed_dispatch_does_not_start(count: int) 
 
     async def wait_like_a_model_request() -> None:
         waiting.set()
-        await _await_pending_event_dispatch()
+        await _await_pending_event_dispatch(ctx.run_id)
 
     async def stream() -> AsyncIterator[AgentStreamEvent]:
         for event in events:
@@ -655,7 +725,7 @@ async def test_model_request_wait_propagates_its_own_cancellation() -> None:
         yield event
         await dispatch_started.wait()
         waiting.set()
-        await _await_pending_event_dispatch()
+        await _await_pending_event_dispatch(ctx.run_id)
         resumed = True  # pragma: no cover
 
     async def consume() -> None:
