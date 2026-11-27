@@ -1487,6 +1487,27 @@ class TestProtectedCommandWords:
     async def test_windows_spellings(self, command: str) -> None:
         assert await _held(_command(command), workspace=_WindowsRepo()) == [command]
 
+    async def test_a_script_a_shell_or_eval_runs_is_checked(self) -> None:
+        commands = [
+            "sh -c 'echo x > .pax/settings.json'",
+            'bash -lc "echo x > .pax/settings.json"',
+            'sh -c "sh -c \'echo x > .pax/settings.json\'"',
+            "env /bin/sh -c 'echo x > .pax/settings.json'",
+            "eval 'echo x > .pax/settings.json'",
+            "sh -c 'pax config set model x'",
+            'eval eval eval eval echo hi',
+            "bash -c -- 'echo x > .pax/settings.json'",
+            "sh -e -c 'echo x > .pax/settings.json'",
+            "bash -o pipefail -c 'echo x > .pax/settings.json'",
+            "bash --norc -c 'echo x > .pax/settings.json'",
+            "bash -c -e 'echo x > .pax/settings.json'",
+            "sh -c 'echo hi'",
+            "bash -c -- 'echo hi'",
+            'eval eval eval echo hi',
+            'sh notes.sh',
+        ]
+        assert await _held(*map(_command, commands), commands=['pax config']) == commands[:12]
+
     async def test_a_quoted_path_is_one_word(self) -> None:
         commands = ['echo x > "my dir/.pax/x"', 'echo x > my dir/.pax/x', 'tool --out=my/a']
         assert await _held(*map(_command, commands), paths=['my dir/.pax/*', 'my/a']) == [commands[0], commands[2]]
