@@ -40,6 +40,7 @@ def json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, A
         base_validator.check_schema(json_schema)
     except SchemaValidationError as e:
         raise exceptions.UserError(f'`StructuredDict(validate=True)` got an invalid JSON schema: {e.message}') from e
+    _refuse_unsafe_schema(json_schema)
     matchers = _compile_schema_patterns(json_schema)
     # `pattern` checks use pydantic-core's linear-time regex engine rather than Python's backtracking `re`, so
     # crafted model output can't stall the event loop on a pattern like `^(a+)+$`.
@@ -123,16 +124,12 @@ _PatternMatchers = dict[str, Callable[[str], bool]]
 """Matchers for every pattern in a schema, compiled with pydantic-core's linear-time regex engine."""
 
 
-def _compile_schema_patterns(json_schema: JsonSchemaValue) -> _PatternMatchers:
-    """Compile every `pattern` and `patternProperties` key in `json_schema` with pydantic-core's Rust regex engine.
-
-    Raises a `UserError` naming the pattern when the engine can't compile it, such as a lookaround or a backreference,
-    and when `unevaluatedProperties` is used with `patternProperties`, which `jsonschema` matches with Python's `re`.
-    """
-    matchers: _PatternMatchers = {pattern: _compile_pattern(pattern) for pattern in _schema_patterns(json_schema)}
-    if matchers and _uses_keyword(json_schema, 'unevaluatedProperties'):
+def _refuse_unsafe_schema(json_schema: JsonSchemaValue) -> None:
+    """Raise a `UserError` for schema shapes that `jsonschema` would check with Python's backtracking `re`."""
+    if _uses_keyword(json_schema, 'patternProperties') and _uses_keyword(json_schema, 'unevaluatedProperties'):
+        # `jsonschema` matches `patternProperties` keys with `re.search` when it works out evaluated properties.
         raise exceptions.UserError(
-            '`StructuredDict(validate=True)` does not support `unevaluatedProperties` together with `pattern` or '
+            '`StructuredDict(validate=True)` does not support `unevaluatedProperties` together with '
             '`patternProperties`, because it could not check their property names in linear time.'
         )
     if any(_uses_keyword(subschema, '$schema') for subschema in _subschemas(json_schema)):
@@ -140,7 +137,14 @@ def _compile_schema_patterns(json_schema: JsonSchemaValue) -> _PatternMatchers:
         raise exceptions.UserError(
             '`StructuredDict(validate=True)` supports `$schema` only at the top level of the schema, not in a subschema.'
         )
-    return matchers
+
+
+def _compile_schema_patterns(json_schema: JsonSchemaValue) -> _PatternMatchers:
+    """Compile every `pattern` and `patternProperties` key in `json_schema` with pydantic-core's Rust regex engine.
+
+    Raises a `UserError` naming the pattern when the engine can't compile it, such as a lookaround or a backreference.
+    """
+    return {pattern: _compile_pattern(pattern) for pattern in _schema_patterns(json_schema)}
 
 
 def _compile_pattern(pattern: str) -> Callable[[str], bool]:

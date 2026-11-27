@@ -3195,6 +3195,25 @@ def test_output_type_structured_dict_accepts_output_matching_patterns():
     assert agent.run_sync('Record').output == output
 
 
+def test_output_type_structured_dict_checks_patterns_with_unevaluated_properties():
+    """A plain `pattern` with `unevaluatedProperties` is allowed and still checked; only `patternProperties` is refused.
+
+    It feeds deliberately invalid output, which no provider sends on demand, so this is a unit test.
+    """
+    Code = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {'code': {'type': 'string', 'pattern': '^[A-Z]+$'}},
+            'unevaluatedProperties': False,
+        },
+        validate=True,
+    )
+    agent = Agent(TestModel(custom_output_args={'code': 'abc'}), output_type=Code, retries=0)
+
+    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
+        agent.run_sync('Code')
+
+
 @pytest.mark.parametrize(
     ('schema', 'match'),
     [
@@ -3205,7 +3224,7 @@ def test_output_type_structured_dict_accepts_output_matching_patterns():
         ),
         pytest.param(
             {'type': 'object', 'patternProperties': {'^x+$': True}, 'unevaluatedProperties': False},
-            'does not support `unevaluatedProperties` together with `pattern`',
+            'does not support `unevaluatedProperties` together with `patternProperties`',
             id='unevaluated-properties-with-patterns',
         ),
         pytest.param(

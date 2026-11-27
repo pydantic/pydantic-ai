@@ -581,7 +581,7 @@ Values aren't converted: the output holds exactly the JSON the model sent, so `"
 - String `format`s aren't checked.
 - [Streamed](#streaming-structured-output) partial outputs aren't checked, since a partial object rarely meets the schema yet; the final output is.
 - References inside the schema are resolved, but a remote `$ref` is never fetched.
-- `pattern` and `patternProperties` are checked with a linear-time regex engine, so crafted output can't stall a run. A pattern that uses lookarounds or backreferences, which that engine doesn't support, raises a `UserError` when the `StructuredDict` is created, as do `unevaluatedProperties` combined with patterns, and a `$schema` in a subschema.
+- `pattern` and `patternProperties` are checked with a linear-time regex engine, so crafted output can't stall a run. A pattern that uses lookarounds or backreferences, which that engine doesn't support, raises a `UserError` when the `StructuredDict` is created, as do `unevaluatedProperties` combined with `patternProperties`, and a `$schema` in a subschema.
 
 Along with the JSON schema, you can optionally pass `name` and `description` arguments to provide additional context to the model:
 
