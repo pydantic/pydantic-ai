@@ -509,8 +509,10 @@ Gotchas:
 - Sequential tools and realtime sessions run normally. Do not call `ctx.enqueue()` inside a durable
   activity.
 - A run that executes tools sequentially (AWS Lambda in every durable run, Absurd and pgtask by default,
-  DBOS with a workspace attached) runs background tools in the foreground, gives the model no background
-  instructions, and emits one `UserWarning` per run naming the affected tools.
+  DBOS with a workspace attached and no child-workflow toolsets) runs background tools in the foreground,
+  gives the model no background instructions, and emits one `UserWarning` per run naming the affected tools.
+  With DBOS child-workflow toolsets, every other tool is marked `sequential` and runs in the foreground with
+  no warning.
 
 ## See also
 
