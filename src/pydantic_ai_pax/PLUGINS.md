@@ -1178,6 +1178,7 @@ settings using the former import paths are redirected to the new modules.
 | `persistence` | `pydantic_ai_pax.runtime.sessions` | `{}` | Harness step checkpoints for interrupted session recovery |
 | `compaction` | `pydantic_ai_pax.builtin_plugins.compaction` | `{}` | automatic summarisation with a truncation fallback, `/compact`, and the context warning |
 | `refinement` | `pydantic_ai_pax.builtin_plugins.refinement` | `{}` | `/refine`: the model reviews and revises its last answer |
+| `planning` (off until enabled) | `pydantic_ai_pax.builtin_plugins.planning` | `{}` | harness `Planning`: a todo plan the model keeps per saved conversation, in `plan.db` beside `sessions.db`, drawn under each plan tool call that changes it; see [Planning](docs/reference.md#planning-a-todo-plan-per-conversation) |
 | `hooks` | `pydantic_ai_pax.builtin_plugins.hooks` | `{}` | runs your commands before and after tool calls and turns; see [lifecycle hooks](#lifecycle-hooks-commands-from-settings) |
 | `sandbox` | `pydantic_ai_pax.builtin_plugins.sandbox` | `{}` | `/sandbox`: runs a new conversation in a sandbox, a VM on this machine (`local smol` or `local boxlite`) or a cloud one, signed in to GitHub as your `gh` login; `/computer-use` lets the model use its desktop; see [Sandboxes](docs/reference.md#sandboxes-sandbox) and [Computer use](docs/reference.md#computer-use-computer-use) |
 | `slack` (off until enabled) | `pydantic_ai_pax.builtin_plugins.slack` | `{}` | Slack's hosted tools as you, read-only by default; see [below](#slack-your-slack-workspace-as-you) |

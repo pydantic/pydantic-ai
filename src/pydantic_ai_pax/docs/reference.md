@@ -2306,6 +2306,22 @@ sub-agent, or a delegation to `self` from an agent you supply (`pax --agent`), w
 per run rather than bound to the agent. The model is told to do the work itself instead. Outside `full` the model also gets no
 [`computer`](#computer-use-computer-use) tool.
 
+### Planning: a todo plan per conversation
+
+The built-in `planning` plugin is off by default: `/plugins enable planning` turns it on. It binds harness
+[`Planning`](../../../docs/harness/planning.md), which gives the model plan tools (`write_plan`, `read_plan`,
+`add_task`, `update_task_status`, `update_task_statuses`, and `remove_task`) and a short note in its instructions,
+so every request carries them; that is why it starts off. Each plan tool that changes the plan returns it, so the
+model sees its latest plan in the conversation.
+
+The plan belongs to the saved conversation. Pax keeps it in `plan.db`, beside `sessions.db`, so `/resume` and
+`--resume` bring it back. `/new` starts with no plan, and so does a fork (`/fork`, `--fork-session`, or a busy
+conversation resumed as a copy); the model is told on its next request that it has no plan. A run under another
+conversation, such as a delegated task, keeps its plan in memory for that run only.
+
+After a plan tool changes the plan, Pax draws it under the tool's row: `✓` done, `◼` in progress (by the step's
+present-tense label when it has one), `◻` pending, `✗` cancelled, and `!` blocked. The web UI does not draw it yet.
+
 ### Compacting the conversation
 
 The built-in `compaction` plugin is on by default, with or without `coder`.
