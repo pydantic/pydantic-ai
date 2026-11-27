@@ -123,6 +123,9 @@ below that floor can't be reached. The outermost chain then logs a warning on ea
 the history changes; a no-op has no span, only the warning. The logger is
 `pydantic_ai_harness.compaction._tiered_compaction`. Use `preserve_first_user_message=False` on tiers
 that may drop or summarize the first user message.
+Under durable execution, tiers with durable operations (a summarizer) run as the `compact` operation
+of `TieredCompaction`, under the default `id='tiered_compaction'`; `FallbackCompaction` does the same
+for its chain under `id='fallback_compaction'`. Keep those ids fixed once a workflow is live.
 
 ## The individual strategies
 

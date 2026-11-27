@@ -22,6 +22,7 @@ from dataclasses import dataclass
 
 from pydantic_ai._deferred_capabilities import LoadExchanges
 from pydantic_ai._utils import is_str_dict
+from pydantic_ai.durable_exec import DurableRunContext
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
     CompactionPart,
@@ -104,7 +105,11 @@ def deferred_capability_ids(ctx: RunContext[AgentDepsT]) -> set[str] | None:
 
     Outside a run, as with `compact_now`, there is no registry to ask; core ignores a load of a capability
     the next run doesn't register. A stand-in context without a registry at all counts as outside a run.
+    Inside a durable unit the registry doesn't cross the boundary, so the ids serialized with the context
+    at dispatch answer instead, as they do for `RunContext.is_tool_available`.
     """
+    if isinstance(ctx, DurableRunContext):
+        return ctx._deferred_capability_ids  # pyright: ignore[reportPrivateUsage]
     capabilities = getattr(ctx, 'capabilities', None)
     if not capabilities:
         return None

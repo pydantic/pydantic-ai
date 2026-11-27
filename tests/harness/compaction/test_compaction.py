@@ -2858,35 +2858,68 @@ class TestTieredCompaction:
         with pytest.raises(ValueError, match='skip_on must contain only Exception subclasses'):
             TieredCompaction(tiers=[ClearToolResults()], target_tokens=10, skip_on=(BaseException,))  # pyright: ignore[reportArgumentType]
 
-    def test_apply_visits_capability_tiers_only(self):
-        non_capability_tier = _RecordingTier('non-capability', [])
-        capability_tier = ClearToolResults()
-        cap = TieredCompaction(tiers=[non_capability_tier, capability_tier], target_tokens=1)
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_two_summarizer_tiers_escalate_cheap_to_strong_on_an_agent(self):
+        """Two tiers sharing `SummarizingCompaction`'s default `id` stay two tiers, and the failing one is skipped."""
+        calls: list[str] = []
 
-        visited: list[AbstractCapability[Any]] = []
-        cap.apply(visited.append)
+        def cheap(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append('cheap')
+            raise ModelAPIError('cheap', 'unavailable')
 
-        assert visited == [capability_tier]
+        def strong(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append('strong')
+            return ModelResponse(parts=[TextPart('strong summary')])
 
-    def test_visit_and_replace_preserves_non_capability_tiers(self):
-        non_capability_tier = _RecordingTier('non-capability', [])
-        tier = ClearToolResults()
-        cap = TieredCompaction(tiers=[non_capability_tier, tier], target_tokens=1)
+        def main(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append('main')
+            return ModelResponse(parts=[TextPart('done')])
 
-        assert cap.visit_and_replace(lambda capability: capability) is cap
+        tiered = TieredCompaction(
+            tiers=[
+                SummarizingCompaction(model=FunctionModel(cheap), keep_messages=1),
+                SummarizingCompaction(model=FunctionModel(strong), keep_messages=1),
+            ],
+            target_tokens=1,
+        )
+        agent = Agent(FunctionModel(main), capabilities=[tiered])
 
-        replacement = ClearToolResults(max_messages=1)
-        replaced = cap.visit_and_replace(lambda _: replacement)
-        assert isinstance(replaced, TieredCompaction)
-        assert replaced.tiers == [non_capability_tier, replacement]
-        assert cap.tiers == [non_capability_tier, tier]
+        result = await agent.run('next', message_history=[_user('first'), ModelResponse(parts=[TextPart('reply')])])
 
-        surviving = cap.visit_and_replace(lambda _: None)
-        assert isinstance(surviving, TieredCompaction)
-        assert surviving.tiers == [non_capability_tier]
+        assert calls == ['cheap', 'strong', 'main']
+        assert result.output == 'done'
 
-        removed = TieredCompaction(tiers=[tier], target_tokens=1).visit_and_replace(lambda _: None)
-        assert removed is None
+    @pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY)
+    async def test_summarizer_tier_runs_beside_a_top_level_summarizer(self):
+        """A top-level `SummarizingCompaction` shares the tier's default `id`, and neither replaces the other."""
+        calls: list[str] = []
+
+        def summarizer(label: str) -> FunctionModel:
+            def summarize(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+                calls.append(label)
+                return ModelResponse(parts=[TextPart(f'{label} summary')])
+
+            return FunctionModel(summarize)
+
+        def main(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            calls.append('main')
+            return ModelResponse(parts=[TextPart('done')])
+
+        agent = Agent(
+            FunctionModel(main),
+            capabilities=[
+                TieredCompaction(
+                    tiers=[ClearToolResults(), SummarizingCompaction(model=summarizer('tier'), keep_messages=1)],
+                    target_tokens=1,
+                ),
+                SummarizingCompaction(model=summarizer('direct'), max_messages=1000),
+            ],
+        )
+
+        result = await agent.run('next', message_history=[_user('first'), ModelResponse(parts=[TextPart('reply')])])
+
+        assert calls == ['tier', 'main']
+        assert result.output == 'done'
 
     async def test_programming_error_in_a_tier_propagates(self):
         cap = TieredCompaction(tiers=[_FailingTier(RuntimeError('bug'))], target_tokens=1)

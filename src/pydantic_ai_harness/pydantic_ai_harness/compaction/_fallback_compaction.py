@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any
 
 from opentelemetry.trace import NoOpTracer
 
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UserError
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import AbstractModel, Model
@@ -28,6 +28,7 @@ from pydantic_ai_harness.compaction._shared import (
     context_for_request,
     estimate_context_tokens,
     estimate_token_count,
+    has_durable_operations,
     record_compaction_reclaim,
     resolve_token_trigger,
     validate_token_trigger,
@@ -57,6 +58,14 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
     programming errors pass through. The last matching exception is re-raised if every strategy
     fails. Entries must derive from `Exception`, so cancellation and other `BaseException`
     subclasses are never caught.
+
+    Under durable execution, when a strategy has durable operations of its own (the summary call
+    of `SummarizingCompaction`), the chain runs as this capability's `compact` operation, because
+    a strategy in the chain is not registered on the agent and its own operations do not bind.
+    Under Temporal that is an activity, whose context omits `tracer` and `capabilities`, so a
+    strategy that reads them (`RelevanceCompaction`, or `receipts=True` on a summarizing or
+    sliding-window strategy) fails there. A chain without durable operations runs in workflow
+    code, as before.
     """
 
     fallback_chain: Sequence[CompactionStrategy[AgentDepsT]]
@@ -90,6 +99,9 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
     call `discard_background_compaction()` when a conversation ends and `aclose()` when the agent is done
     with this instance. Not supported under durable execution.
     """
+
+    # Override the inherited default ID because durable-operation recovery needs a stable identity.
+    id: str | None = field(default='fallback_compaction', kw_only=True)
 
     _background: dict[str | None, BackgroundCompaction] = field(
         default_factory=dict[str | None, BackgroundCompaction], init=False, repr=False, compare=False
@@ -188,6 +200,25 @@ class FallbackCompaction(AbstractCapability[AgentDepsT]):
         return await self._compact(messages, ctx)
 
     async def _compact(
+        self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT], *, smaller_only: bool = False
+    ) -> list[ModelMessage]:
+        if any(has_durable_operations(strategy) for strategy in self.fallback_chain):
+            return await self._run_chain_durably(ctx, messages, smaller_only)
+        return await self._run_chain(messages, ctx, smaller_only=smaller_only)
+
+    @durable_operation('compact')
+    async def _run_chain_durably(
+        self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage], smaller_only: bool
+    ) -> list[ModelMessage]:
+        """The chain's result, as a durable operation of this capability.
+
+        A strategy in the chain is not registered on the agent, so a durable operation of its own
+        (the summary call of `SummarizingCompaction`) does not bind; this one does, and the chain
+        runs inline within it, so a replay reuses the recorded history instead of calling a model again.
+        """
+        return await self._run_chain(messages, ctx, smaller_only=smaller_only)
+
+    async def _run_chain(
         self, messages: list[ModelMessage], ctx: RunContext[AgentDepsT], *, smaller_only: bool = False
     ) -> list[ModelMessage]:
         """The first successful compaction result; with *smaller_only*, a summary that isn't smaller falls through.

@@ -11,12 +11,15 @@ import string
 from collections.abc import Awaitable, Callable, Mapping, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, replace
+from functools import cache
 from json import dumps
 from typing import TYPE_CHECKING, Literal, Protocol, Self, TypeAlias, TypeGuard, assert_never, runtime_checkable
 
 from pydantic_ai._context_size import context_input_tokens, context_tokens
 from pydantic_ai._instructions import instruction_window_start, is_loaded_block, window_boundary_index
 from pydantic_ai._utils import is_str_dict
+from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.durable_exec._capability_operation import get_durable_operation_marker
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
@@ -847,6 +850,27 @@ class CompactionStrategy(Protocol[AgentDepsT]):
         messages: list[ModelMessage],
         ctx: RunContext[AgentDepsT],
     ) -> list[ModelMessage]: ...  # pragma: no cover
+
+
+def has_durable_operations(strategy: object) -> bool:
+    """Whether *strategy* is a capability with `@durable_operation` methods of its own.
+
+    Those operations bind only on a capability registered on the agent, and a strategy nested in
+    another one is not. A composing strategy that calls such a strategy therefore runs it inside a
+    durable operation of its own, so the nested model call is recorded instead of running in
+    workflow code.
+    """
+    return _declares_durable_operations(type(strategy))
+
+
+@cache
+def _declares_durable_operations(cls: type) -> bool:
+    # Base hooks carry a marker on `AbstractCapability` itself; only methods a class marks count.
+    return issubclass(cls, AbstractCapability) and any(
+        (marker := get_durable_operation_marker(member)) is not None and not marker.base_hook
+        for klass in cls.__mro__
+        for member in vars(klass).values()
+    )
 
 
 # ---------------------------------------------------------------------------

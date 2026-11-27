@@ -8,9 +8,7 @@ from contextvars import ContextVar
 from dataclasses import dataclass, field, replace
 from typing import TYPE_CHECKING
 
-from typing_extensions import TypeIs
-
-from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.capabilities import AbstractCapability, durable_operation
 from pydantic_ai.exceptions import FallbackExceptionGroup, ModelAPIError, UnexpectedModelBehavior
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.tools import AgentDepsT, RunContext
@@ -29,6 +27,7 @@ from pydantic_ai_harness.compaction._shared import (
     context_for_request,
     estimate_context_tokens,
     estimate_token_count,
+    has_durable_operations,
     record_compaction_reclaim,
     record_failed_compaction,
     record_span_attributes,
@@ -41,17 +40,6 @@ if TYPE_CHECKING:
 
 _logger = logging.getLogger(__name__)
 _escalating: ContextVar[bool] = ContextVar('pydantic_ai_harness.compaction.escalating', default=False)
-
-
-def is_capability_tier(
-    tier: CompactionStrategy[AgentDepsT] | AbstractCapability[AgentDepsT],
-) -> TypeIs[AbstractCapability[AgentDepsT]]:
-    """Whether a strategy is itself a capability, and so participates in capability-tree walks.
-
-    The union input lets the guard narrow to a bound `AbstractCapability[AgentDepsT]`; a plain
-    `isinstance` on `CompactionStrategy` alone loses the type parameter to `Unknown`.
-    """
-    return isinstance(tier, AbstractCapability)
 
 
 @dataclass
@@ -69,6 +57,13 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
     On its own trigger, a tier that raises a `skip_on` exception is skipped and escalation
     moves on to the next tier; other exceptions propagate. A direct `compact` call lets
     every exception propagate.
+
+    Under durable execution, when a tier has durable operations of its own (the summary call of
+    `SummarizingCompaction`), the tiers run as this capability's `compact` operation, because a
+    tier is not registered on the agent and its own operations do not bind. Under Temporal that
+    is an activity, whose context omits `tracer` and `capabilities`, so a tier that reads them
+    (`RelevanceCompaction`, or `receipts=True` on a summarizing or sliding-window tier) fails
+    there. Tiers without durable operations run in workflow code, as before.
 
     Example:
         ```python
@@ -141,6 +136,9 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
     tier can still shrink the history without that tier's model.
     """
 
+    # Override the inherited default ID because durable-operation recovery needs a stable identity.
+    id: str | None = field(default='tiered_compaction', kw_only=True)
+
     def __post_init__(self) -> None:
         if not self.tiers:
             raise ValueError('tiers must not be empty.')
@@ -169,46 +167,6 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
             tiers=[tier.with_focus(focus) if isinstance(tier, SupportsFocus) else tier for tier in self.tiers],
         )
 
-    def apply(self, visitor: Callable[[AbstractCapability[AgentDepsT]], None]) -> None:
-        """Visit each tier that is itself a capability, so capability-tree walks see through this composite.
-
-        A durability engine binds a tier's `durable_operation` methods by walking the capability tree;
-        with the leaf default, a `SummarizingCompaction` nested as a tier never registers its operations
-        and runs its model I/O inside the workflow sandbox instead of as an activity.
-        """
-        for tier in self.tiers:
-            if is_capability_tier(tier):
-                tier.apply(visitor)
-
-    def visit_and_replace(
-        self, visitor: Callable[[AbstractCapability[AgentDepsT]], AbstractCapability[AgentDepsT] | None]
-    ) -> AbstractCapability[AgentDepsT] | None:
-        """Visit each capability tier, rebuilding from the survivors.
-
-        Like `CombinedCapability`, the composite is defined by its tiers: only they are visited,
-        and the composite itself is not offered to the visitor. A tier the visitor removes is
-        dropped; when no tier survives, this composite contributes nothing and is removed too.
-        Non-capability tiers pass through untouched, preserving order.
-        """
-        new_tiers: list[CompactionStrategy[AgentDepsT]] = []
-        unchanged = True
-        for tier in self.tiers:
-            if not is_capability_tier(tier):
-                new_tiers.append(tier)
-                continue
-            new_tier = tier.visit_and_replace(visitor)
-            if new_tier is not tier:
-                unchanged = False
-            if new_tier is not None:
-                # Visitors only see this composite's tiers, which are both capabilities and
-                # compaction strategies; the strategy side of the result is invisible to pyright.
-                new_tiers.append(new_tier)  # pyright: ignore[reportArgumentType]
-        if unchanged:
-            return self
-        if not new_tiers:
-            return None
-        return replace(self, tiers=new_tiers)
-
     def _target(self, model: AbstractModel | str) -> int | None:
         """Absolute token target, resolved against *model* when expressed as a fraction.
 
@@ -230,7 +188,6 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         skip_on: tuple[type[Exception], ...] = (),
     ) -> list[ModelMessage]:
         """Apply tiers in order until the history fits *target* or tiers run out, skipping any raising *skip_on*."""
-        original = messages
         # The usage anchor describes the request as it was sent, so a tier's rewrite of older
         # messages is invisible to re-anchoring. Subtract the estimated tokens of the text a
         # tier removed from the anchored baseline instead: the reclaim is measured only on
@@ -238,9 +195,54 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
         # never treated as compacted away. On content the estimator undercounts, this
         # understates the reclaim and escalates a tier early -- the cheap direction.
         baseline = estimate_context_tokens(messages, self.tokenizer, model_request_parameters=model_request_parameters)
+        nested = _escalating.get()
+        if any(has_durable_operations(tier) for tier in self.tiers):
+            messages, estimate = await self._run_tiers_durably(ctx, messages, target, baseline, bool(skip_on))
+        else:
+            messages, estimate = await self._run_tiers(messages, ctx, target, baseline, skip_on)
+        if estimate > target and not nested:
+            # Every tier ran and the history is still over target: what the tiers keep (a `keep_tokens`
+            # floor, the first user message, the current turn) costs more than the target allows.
+            record_span_attributes(
+                {
+                    'compaction.target_unreached': True,
+                    'compaction.target_tokens': target,
+                    'compaction.estimate': estimate,
+                }
+            )
+            _logger.warning(
+                '`TieredCompaction` ran every tier and left the history at an estimated %d tokens, above its '
+                'target of %d. The messages its tiers keep cost more than the target.',
+                estimate,
+                target,
+            )
+        return messages
+
+    @durable_operation('compact')
+    async def _run_tiers_durably(
+        self, ctx: RunContext[AgentDepsT], messages: list[ModelMessage], target: int, baseline: int, skip: bool
+    ) -> tuple[list[ModelMessage], int]:
+        """The tiers' result and its estimate, as a durable operation of this capability.
+
+        A tier is not registered on the agent, so a durable operation of its own (the summary call
+        of `SummarizingCompaction`) does not bind; this one does, and the tiers run inline within
+        it, so a replay reuses the recorded history instead of calling a model again. *skip*
+        selects `skip_on`, which is not serializable, as the exceptions to skip a tier on.
+        """
+        return await self._run_tiers(messages, ctx, target, baseline, self.skip_on if skip else ())
+
+    async def _run_tiers(
+        self,
+        messages: list[ModelMessage],
+        ctx: RunContext[AgentDepsT],
+        target: int,
+        baseline: int,
+        skip_on: tuple[type[Exception], ...],
+    ) -> tuple[list[ModelMessage], int]:
+        """Apply tiers in order until the estimate fits *target*, returning the history and its estimate."""
+        original = messages
         heuristic_baseline = estimate_token_count(messages, self.tokenizer)
         estimate = baseline
-        nested = _escalating.get()
         token = _escalating.set(True)
         try:
             for tier in self.tiers:
@@ -261,23 +263,7 @@ class TieredCompaction(AbstractCapability[AgentDepsT]):
                 estimate = max(baseline - reclaimed, after)
         finally:
             _escalating.reset(token)
-        if estimate > target and not nested:
-            # Every tier ran and the history is still over target: what the tiers keep (a `keep_tokens`
-            # floor, the first user message, the current turn) costs more than the target allows.
-            record_span_attributes(
-                {
-                    'compaction.target_unreached': True,
-                    'compaction.target_tokens': target,
-                    'compaction.estimate': estimate,
-                }
-            )
-            _logger.warning(
-                '`TieredCompaction` ran every tier and left the history at an estimated %d tokens, above its '
-                'target of %d. The messages its tiers keep cost more than the target.',
-                estimate,
-                target,
-            )
-        return messages
+        return messages, estimate
 
     async def _run_tier(
         self,
