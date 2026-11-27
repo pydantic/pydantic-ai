@@ -48,7 +48,7 @@ Update this table whenever a change to `aliases.json` fills, opens, or moves a g
 | Alias | Model | Reason |
 |---|---|---|
 | `openai:large`, `openai:xlarge` | `gpt-6-astra` | Astra is Fable-priced. `gpt-6.1-sol` replaced the Opus-priced GPT-5.4 to 5.6 models at a lower price, so `large` takes Astra, the nearest model above. |
-| `google:large`, `google:xlarge` | `gemini-4-argon` | Opus-priced: `genai-prices` has it at $20 output from December 2026, after an introductory $10. `gemini-4-carbon` costs the same but has no `genai-prices` price yet; repoint both aliases to it when it does. Google has no Fable-priced model, so `xlarge` takes the nearest model below. |
+| `google:large`, `google:xlarge` | `gemini-4-argon` | Opus-priced: `genai-prices` has it at $20 output from December 2026, after an introductory $10. Google has no Fable-priced model, so `xlarge` takes the nearest model below. Whether `gemini-4-carbon` or `gemini-4-neon` replaces it is open in [#14890](https://github.com/pydantic/pydantic-ai/issues/14890). |
 | `google:medium` | `gemini-4-hydrogen` | Sonnet-priced: `genai-prices` has it at $7.50 output. Google recommends it as the upgrade from `gemini-3.8-flash`, which it replaces. |
 | `google:small` | `gemini-3.1-flash-lite` | Haiku-priced, and Google's newest model at that price. `gemini-3.5-flash-lite` is Sonnet-priced by output, so it can't replace it. |
 | `xai:small` | `grok-4.3` | xAI's cheapest general chat model. Its output price is nearer Sonnet's than Haiku's, so `small` takes it as the nearest model above. |
