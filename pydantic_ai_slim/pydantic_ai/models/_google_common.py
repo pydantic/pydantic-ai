@@ -94,12 +94,6 @@ GEMINI_API_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ..
     # accept them) and 2026-11-19 on `/interactions` with `store=false`.
     # https://ai.google.dev/gemini-api/docs/image-generation
     ('gemini-3.1-flash-image', frozenset(('MINIMAL', 'HIGH'))),
-    # The Gemini API 400s `Thinking level MINIMAL is not supported for this model` and accepts the rest: verified
-    # live 2026-11-18 on GenerateContent and 2026-11-19 on `/interactions`. Vertex is not probed and its thinking
-    # table doesn't list the model.
-    # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
-    # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
-    ('gemini-4-neon', frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH'))),
 )
 
 

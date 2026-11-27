@@ -282,6 +282,12 @@ _MODEL_THINKING_LEVELS: tuple[tuple[str, frozenset[GoogleThinkingLevel]], ...] =
     # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
     # https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking
     ('gemini-4-hydrogen', frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH'))),
+    # Both APIs reject `MINIMAL` and accept `LOW` through `XHIGH`: the Gemini API 400s `Thinking level MINIMAL is not
+    # supported for this model` (verified live 2026-11-18 on GenerateContent and 2026-11-19 on `/interactions`), and
+    # Vertex 400s `Thinking level is unsupported: THINKING_LEVEL_MINIMAL` (verified live 2026-11-27 through the
+    # Gateway's Google Cloud route, which accepted `LOW` and `XHIGH`).
+    # https://ai.google.dev/gemini-api/docs/thinking#thinking-levels
+    ('gemini-4-neon', frozenset(('LOW', 'MEDIUM', 'HIGH', 'XHIGH'))),
     # Verified live 2026-11-15 against the Gemini API on `gemma-4-31b-it` and `gemma-4-26b-a4b-it`: `MINIMAL` and
     # `HIGH` are accepted, `LOW`, `MEDIUM` and `XHIGH` return 400 `Thinking level is not supported for this model`.
     ('gemma-4', frozenset(('MINIMAL', 'HIGH'))),

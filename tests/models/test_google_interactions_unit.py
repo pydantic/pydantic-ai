@@ -210,7 +210,8 @@ async def test_no_server_timeout_without_a_client_timeout(allow_model_requests: 
     ('model_name', 'google_cloud', 'profile', 'expected'),
     [
         pytest.param('gemini-4-neon', False, None, ('low', 'xhigh'), id='neon-gemini-api'),
-        pytest.param('gemini-4-neon', True, None, ('minimal', 'high'), id='neon-google-cloud'),
+        # Vertex rejects `MINIMAL` on Neon too, so its levels are the same on both transports.
+        pytest.param('gemini-4-neon', True, None, ('low', 'xhigh'), id='neon-google-cloud'),
         pytest.param(
             'gemini-4-neon',
             False,
@@ -225,7 +226,7 @@ async def test_no_server_timeout_without_a_client_timeout(allow_model_requests: 
 def test_gemini_api_thinking_levels_follow_the_client_transport(
     model_name: str, google_cloud: bool, profile: GoogleModelProfile | None, expected: tuple[str, str]
 ):
-    """Models whose thinking levels `GoogleModel` applies on the Gemini API only get them on Interactions there too.
+    """Interactions sends the levels `GoogleModel` would: per transport for Flash Image, the same on both for Neon.
 
     `thinking=False` and a deeper effort (`xhigh` on Neon, `medium` on Flash Image) pin each side. Not a VCR test:
     the level is decided before the request is built; the body-matched `google-interactions-*` cases in

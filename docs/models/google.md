@@ -568,19 +568,17 @@ agent = Agent(model, model_settings=model_settings)
 ```
 
 Pydantic AI resolves each model's supported levels from Google's documented thinking table and snaps a
-requested effort to the nearest supported level. `gemini-3.1-flash-image` and `gemini-4-neon` are the exceptions:
-Pydantic AI applies their levels only when the client talks to the Gemini API, and Vertex AI keeps the default
-levels. Google [documents](https://ai.google.dev/gemini-api/docs/image-generation) `minimal, high` for
-`gemini-3.1-flash-image`, but only the Gemini API enforces them, and
-[Vertex's thinking table](https://docs.cloud.google.com/gemini-enterprise-agent-platform/models/thinking) doesn't
-list `gemini-4-neon` yet. For a model id the table doesn't cover, declare its
+requested effort to the nearest supported level. `gemini-3.1-flash-image` is the exception: Pydantic AI applies its
+levels only when the client talks to the Gemini API, and Vertex AI keeps the default levels. Google
+[documents](https://ai.google.dev/gemini-api/docs/image-generation) `minimal, high` for `gemini-3.1-flash-image`, but
+only the Gemini API enforces them. For a model id the table doesn't cover, declare its
 levels with [`GoogleModelProfile.google_thinking_levels`][pydantic_ai.profiles.google.GoogleModelProfile.google_thinking_levels]
 (default: every level but `xhigh`); unsupported efforts resolve to the nearest supported level.
 
-`gemini-4-argon`, `gemini-4-carbon` and `gemini-4-hydrogen`, and `gemini-4-neon` on the Gemini API, support the
-`low`, `medium` and `high` levels, so `thinking=False` and `'minimal'` resolve to `low`. `gemini-4-hydrogen` and, on
-the Gemini API, `gemini-4-neon` also support `xhigh`, their deepest reasoning, which `thinking='xhigh'` and `'max'`
-select; on models without it, they resolve to `high`. On Google Cloud, `gemini-4-neon` keeps the default levels. The
+`gemini-4-argon`, `gemini-4-carbon`, `gemini-4-hydrogen` and `gemini-4-neon` support the `low`, `medium` and `high`
+levels, so `thinking=False` and `'minimal'` resolve to `low`. `gemini-4-hydrogen` and `gemini-4-neon` also support
+`xhigh`, their deepest reasoning, which `thinking='xhigh'` and `'max'` select; on models without it, they resolve to
+`high`. The
 `google-genai` SDK's `ThinkingLevel` enum doesn't list `XHIGH` yet, so the SDK warns
 `XHIGH is not a valid ThinkingLevel` and sends the level anyway.
 
