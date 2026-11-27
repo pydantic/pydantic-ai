@@ -319,7 +319,7 @@ MODEL_CONFIGS: dict[ProviderName, tuple[str, Any]] = {
     'openai_responses': ('gpt-5-mini', openai_available),
     'groq': ('meta-llama/llama-4-maverick-17b-128e-instruct', groq_available),
     'mistral': ('mistral-medium-latest', mistral_available),
-    'xai': ('grok-4-1-fast-non-reasoning', xai_available),
+    'xai': ('grok-4.3', xai_available),
 }
 
 
