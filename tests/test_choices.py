@@ -129,6 +129,13 @@ def test_a_whole_number_pick_is_the_number():
     assert agent.run_sync('The invoice run failed.').output == 1
 
 
+def test_a_whole_number_key_can_stand_for_an_action():
+    agent = Agent(
+        pick(1), output_type=Choices({0: 'Do nothing.', 1: Choice('Retry the run.', value=lambda: 'retried')})
+    )
+    assert agent.run_sync('The invoice run failed.').output == 'retried'
+
+
 def test_a_pick_is_the_key():
     agent = Agent(pick('replace'), output_type=Choices(INTENTS))
     assert agent.run_sync('My blender arrived in pieces.').output == 'replace'

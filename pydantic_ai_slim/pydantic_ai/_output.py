@@ -1028,7 +1028,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
     outer_typed_dict_key: str | None = None
     validator: SchemaValidator
     _function_schema: _function_schema.FunctionSchema | None = None
-    _choice_values: Mapping[str, Any] | None = None
+    _choice_values: Mapping[str | int, Any] | None = None
     """What each key of a `Choices` set with callable values stands for, resolved by `call()`."""
 
     def __init__(
@@ -1172,7 +1172,7 @@ class ObjectOutputProcessor(BaseObjectOutputProcessor[OutputDataT]):
             )
         elif self._choice_values is not None and not run_context.partial_output:
             # Until the pick is final the key stands in for itself: an action runs once, for the final output.
-            value = self._choice_values[cast(str, output)]
+            value = self._choice_values[cast('str | int', output)]
             output = await execute_choice_action(value) if callable(value) else value
 
         return output
