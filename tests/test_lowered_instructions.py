@@ -18,7 +18,14 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import Capability, CombinedCapability, Hooks, ModelFallback, PrefixTools
+from pydantic_ai.capabilities import (
+    Capability,
+    CombinedCapability,
+    DynamicCapability,
+    Hooks,
+    ModelFallback,
+    PrefixTools,
+)
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import (
     Authority,
@@ -503,6 +510,34 @@ async def test_a_wrapped_lowered_capability_states_its_instructions_in_history(n
         deps_type=Notes,
         instructions='Be brief.',
         capabilities=[PrefixTools(wrapped=wrapped, prefix='n')],
+    )
+    result = await agent.run('Hi', deps=Notes())
+
+    assert received.instructions == ['Be brief.']
+    assert statements(result.all_messages()) == [
+        InstructionDeltaPart(id=NOTES_ID, content='Static note.\n\nThe count is 1.', authority='none')
+    ]
+
+
+@pytest.mark.parametrize('nested', [False, True])
+async def test_a_dynamic_capabilitys_ceiling_lowers_the_instructions_it_returns(nested: bool):
+    """A `DynamicCapability` applies its `with_authority` ceiling to the capability its factory returns."""
+    received = Received()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.instructions.append(info.instructions)
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    def factory(ctx: RunContext[Notes]) -> Capability[Notes]:
+        if nested:
+            return CombinedCapability([notes_capability()])
+        return notes_capability()
+
+    agent = Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=Notes,
+        instructions='Be brief.',
+        capabilities=[DynamicCapability(factory).with_authority('none')],
     )
     result = await agent.run('Hi', deps=Notes())
 

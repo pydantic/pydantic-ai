@@ -10,8 +10,12 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from .abstract import AbstractCapability, CapabilityOrdering
-from .wrapper import WrapperCapability
+from .abstract import (
+    AbstractCapability,
+    CapabilityOrdering,
+    _LoweredInstructionSource,  # pyright: ignore[reportPrivateUsage]
+)
+from .wrapper import WrapperCapability, _registers_children  # pyright: ignore[reportPrivateUsage]
 
 CapabilityFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT]],
@@ -98,6 +102,7 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
             capability = await capability
         if capability is None:
             return None
+        capability = self._keep_authority(capability)
         assert ctx.agent is not None, 'CapabilityFunc requires an agent run context'
         # The factory's capability keeps its own authority through its lifecycle hooks, as any other does.
         capability = capability._keep_authority(capability.for_agent(ctx.agent))
@@ -123,6 +128,15 @@ class ResolvedDynamicCapability(WrapperCapability[AgentDepsT]):
 
     def get_toolset(self) -> DynamicToolset[AgentDepsT]:
         return self.dynamic_toolset
+
+    def _lowered_instruction_sources(self) -> list[_LoweredInstructionSource[AgentDepsT]]:
+        # A wrapper over a leaf stands in for it. When the factory returns a container, keep the resolved
+        # tree's lowered blocks and ids instead of grouping them under this wrapper.
+        wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
+        self.wrapped.apply(wrapped_capabilities.append)
+        if _registers_children(self.wrapped, wrapped_capabilities):
+            return self.wrapped._lowered_instruction_sources()
+        return super()._lowered_instruction_sources()
 
     def get_ordering(self) -> CapabilityOrdering | None:
         # `CombinedCapability.for_run` re-sorts its (replaced) capabilities, so the resolved
