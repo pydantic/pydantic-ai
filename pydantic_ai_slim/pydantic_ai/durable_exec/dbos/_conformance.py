@@ -13,7 +13,7 @@ from .._support import Recovery, Support
 __all__ = ('RECOVERY', 'SUPPORT')
 
 _WAIT_REFUSED = 'does not support waiting for external events yet'
-_IN_UNIT = 'is not supported inside a durable'
+_ENQUEUE_IN_UNIT_MATCH = r'`ctx\.enqueue\(\)` is not supported inside a durable'
 
 RECOVERY = Recovery()
 """DBOS recovers a workflow by replaying its recorded steps."""
@@ -40,7 +40,7 @@ SUPPORT: Mapping[str, Support] = {
     'RunContext.enqueue_in_unit': Support(
         'refused',
         'a durable unit replays from its record without running the code again, so an enqueued message would be lost',
-        match=_IN_UNIT,
+        match=_ENQUEUE_IN_UNIT_MATCH,
         issue=7971,
     ),
 }
