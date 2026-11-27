@@ -42,6 +42,7 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 
+from ._model_errors import retry_policy_type
 from ._run_context import TemporalRunContext
 
 if TYPE_CHECKING:
@@ -174,7 +175,6 @@ NON_RETRYABLE_ERRORS: tuple[type[Exception], ...] = (
     UserError,
     PydanticUserError,
     UnexpectedModelBehavior,
-    FallbackExceptionGroup,
     # Every attempt of an activity or tool child workflow checks the limit against the usage it was started with.
     UsageLimitExceeded,
     # Every attempt looks up the same suspended job, which the provider no longer has.
@@ -186,7 +186,35 @@ NON_RETRYABLE_ERRORS: tuple[type[Exception], ...] = (
     WorkspaceReadOnlyError,
     WorkspaceUnavailableError,
 )
-"""The errors a retry can't fix, which `with_non_retryable_errors` adds to a retry policy, subclasses included."""
+"""The errors a retry can't fix, which `with_non_retryable_errors` adds to a retry policy, subclasses included.
+
+A `FallbackExceptionGroup` isn't listed: it's retried unless every error in it is one a retry can't fix, see
+`is_non_retryable`.
+"""
+
+
+def is_non_retryable(
+    error: BaseException,
+    non_retryable_model_errors: tuple[type[Exception], ...] = (),
+    retry_policy: RetryPolicy | None = None,
+    policy_type: Callable[[BaseException], str] = retry_policy_type,
+) -> bool:
+    """Whether a retry can't fix `error`.
+
+    That's one of `NON_RETRYABLE_ERRORS` or `non_retryable_model_errors`, or an error whose `policy_type`, the type
+    its `ApplicationError` would report on its own, `retry_policy` names in its `non_retryable_error_types`. A
+    `FallbackExceptionGroup` from a `FallbackModel` whose models all failed counts only when every error in it does,
+    so a chain that ran into rate limits or outages is still retried, and one whose errors the retry policy names on
+    their own isn't.
+    """
+    if isinstance(error, FallbackExceptionGroup):
+        return all(
+            is_non_retryable(member, non_retryable_model_errors, retry_policy, policy_type)
+            for member in error.exceptions
+        )
+    if isinstance(error, NON_RETRYABLE_ERRORS + non_retryable_model_errors):
+        return True
+    return retry_policy is not None and policy_type(error) in (retry_policy.non_retryable_error_types or ())
 
 
 def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
@@ -207,7 +235,9 @@ def with_non_retryable_errors(retry_policy: RetryPolicy | None) -> RetryPolicy:
 
 
 @contextmanager
-def non_retryable_subclasses_as_application_errors() -> Generator[None]:
+def non_retryable_subclasses_as_application_errors(
+    non_retryable_model_errors: tuple[type[Exception], ...] = (),
+) -> Generator[None]:
     """Raise a subclass of one of `NON_RETRYABLE_ERRORS` as a non-retryable `ApplicationError`.
 
     A retry policy's `non_retryable_error_types` matches the exact name of the error's class, so naming
@@ -215,11 +245,20 @@ def non_retryable_subclasses_as_application_errors() -> Generator[None]:
     application's own subclass of it. The `ApplicationError` keeps the error's class name and message, which is
     what Temporal reports for an exception it converts, and has the error as its cause. An error of a listed class
     itself is raised unchanged, as the policy already names it.
+
+    A `FallbackExceptionGroup` is raised as a non-retryable `ApplicationError` when every error in it is
+    non-retryable, counting `non_retryable_model_errors` and the activity's retry policy, and unchanged, so the retry
+    policy retries it, otherwise.
     """
     try:
         yield
     except NON_RETRYABLE_ERRORS as error:
         if type(error) in NON_RETRYABLE_ERRORS:
+            raise
+        raise ApplicationError(str(error), type=type(error).__name__, non_retryable=True) from error
+    except FallbackExceptionGroup as error:
+        retry_policy = activity.info().retry_policy if activity.in_activity() else None
+        if not is_non_retryable(error, non_retryable_model_errors, retry_policy):
             raise
         raise ApplicationError(str(error), type=type(error).__name__, non_retryable=True) from error
 

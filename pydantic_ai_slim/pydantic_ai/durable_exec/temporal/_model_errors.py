@@ -224,6 +224,15 @@ _ERROR_CATEGORIES = (
 )
 
 
+def retry_policy_type(error: BaseException) -> str:
+    """The `ApplicationError` type a retry policy's `non_retryable_error_types` matches for `error` from an activity.
+
+    That's `_retry_policy_type` for a model error, which `model_errors_as_application_errors` stamps, and the class name
+    Temporal uses for any other exception.
+    """
+    return _retry_policy_type(error) if isinstance(error, ModelAPIError) else type(error).__name__
+
+
 def _retry_policy_type(error: ModelAPIError) -> str:
     """The `ApplicationError` type for `error`, which a retry policy's `non_retryable_error_types` matches.
 
