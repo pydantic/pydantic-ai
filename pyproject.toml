@@ -283,7 +283,8 @@ dev = [
     # Serves the gRPC stream `pydantic_monty.AsyncMontyRemote` dials in `tests/harness/code_mode/grpc_relay.py`.
     # Pure Python, so unlike `grpcio` it installs on every supported Python without a source build.
     "grpclib>=0.4.7",
-    # Validates walked schemas and `TestModel` arguments against their schemas in the conformance tests.
+    # Validates walked schemas, `TestModel` arguments, and the agent spec and dataset instances
+    # `tests/spec_conformance.py` builds against their schemas.
     "jsonschema>=4.25.1",
 ]
 # `strict-no-cover` is only invoked by the final coverage audit, which runs on a GitHub-hosted

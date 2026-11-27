@@ -40,6 +40,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import (
     Advisor,
+    AnnounceWorkingDirectory,
     ApprovalReviewer,
     AskUser,
     BackgroundTools,
@@ -364,6 +365,10 @@ def _check_benchmark_instructions(merged: BenchmarkInstructions[None]) -> None:
     assert merged.id == 'benchmark_instructions'
 
 
+def _check_working_directory(merged: AnnounceWorkingDirectory[None]) -> None:
+    assert merged.id == 'announce_working_directory'
+
+
 def _check_current_time(merged: CurrentTime[None]) -> None:
     assert (merged.timezone, merged.precision) == ('Asia/Tokyo', 'hour')
 
@@ -622,6 +627,13 @@ CASES: dict[str, CapabilityCase] = {
             'one fixed text; two would state it twice',
             lambda: (BenchmarkInstructions[None](), BenchmarkInstructions[None]()),
             _check_benchmark_instructions,
+        )
+    ),
+    'AnnounceWorkingDirectory': CapabilityCase(
+        Combines(
+            'one fixed line; `Shell` and `FileSystem` each bring a copy, which must state it once',
+            lambda: (AnnounceWorkingDirectory[None](), AnnounceWorkingDirectory[None]()),
+            _check_working_directory,
         )
     ),
     'CurrentTime': CapabilityCase(

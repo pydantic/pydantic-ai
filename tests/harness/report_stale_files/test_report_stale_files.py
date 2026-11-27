@@ -498,6 +498,9 @@ These files you read or wrote were deleted from the workspace:
         result = await agent.run('again', message_history=first.all_messages())
         assert _notices(result.all_messages()) == [[], [], [f'{CHANGED}\n- `config.py`']]
 
+    @pytest.mark.moves_cache_prefix(
+        reason='the conversation moves to another workspace, so the working-directory line names a new directory'
+    )
     async def test_conversation_continued_in_another_workspace_is_not_checked(self, tmp_path: Path) -> None:
         """A file recorded in the first workspace isn't checked from a run in the second, even after it changes."""
         first_dir, second_dir = tmp_path / 'first', tmp_path / 'second'
@@ -585,7 +588,7 @@ async def _enqueued(
     ctx = _ctx(tmp_path, conversation_id)
     run = await capability.for_run(ctx)
     enqueued: list[object] = []
-    ctx.enqueue = lambda *content, priority='asap': enqueued.extend(content)
+    ctx.enqueue = lambda *content, priority='asap', placement='append': enqueued.extend(content)
     request_context = ModelRequestContext(
         model=TestModel(), messages=messages, model_settings=None, model_request_parameters=ModelRequestParameters()
     )

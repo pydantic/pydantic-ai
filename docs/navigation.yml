@@ -435,6 +435,9 @@ navigation:
           - page: "Shell"
             path: "harness/shell.md"
             slug: "harness/shell"
+          - page: "Announce Working Directory"
+            path: "harness/announce-working-directory.md"
+            slug: "harness/announce-working-directory"
       - section: "Tools & Native Abilities"
         slug: ""
         contents:
@@ -771,10 +774,15 @@ navigation:
     slug: ""
     contents:
       - page: "Overview"
-        path: "harness/clai2.md"
+        path: "harness/pax.md"
         slug: "pax"
         aliases:
           - "harness/pax"
+      - page: "Legacy CLI"
+        path: "cli.md"
+        slug: "integrations/cli"
+        aliases:
+          - "cli"
   - section: "Realtime (speech-to-speech)"
     slug: ""
     contents:
@@ -856,11 +864,6 @@ navigation:
           - page: "Vercel AI"
             path: "ui/vercel-ai.md"
             slug: "integrations/ui/vercel-ai"
-      - page: "Command Line Interface (CLI)"
-        path: "cli.md"
-        slug: "integrations/cli"
-        aliases:
-          - "cli"
       - page: "GitHub Agentic Workflows"
         path: "harness/gh-aw.md"
         slug: "harness/gh-aw"

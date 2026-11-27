@@ -36,7 +36,7 @@ description: "How Python does AI: agents, realtime voice, image generation, embe
   Agents, realtime voice, image generation, embeddings. Every model, every interface, typed end to end.
 </p>
 
-**Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop with [every model](models/overview.md) a string swap away, and [another one to fall back to](capabilities/model-fallback.md) when a provider fails. The same agent [runs everywhere you need it](interfaces.md): behind a [web frontend](ui/overview.md), in the [terminal](cli.md), on a [voice call](realtime/overview.md), on a [durable background queue](durable_execution/overview.md), in [GitHub Actions](https://pydantic.dev/docs/ai/harness/gh-aw/), or as a plain object you call [`run()`](agent.md#running-agents) on. [Image generation](image-generation.md) and [embeddings](embeddings.md) come in the same box.
+**Pydantic AI** is the Python AI SDK: a typed, [extensible](extensibility.md) agent loop with [every model](models/overview.md) a string swap away, and [another one to fall back to](capabilities/model-fallback.md) when a provider fails. The same agent [runs everywhere you need it](interfaces.md): behind a [web frontend](ui/overview.md), in the [terminal](harness/pax.md), on a [voice call](realtime/overview.md), on a [durable background queue](durable_execution/overview.md), in [GitHub Actions](https://pydantic.dev/docs/ai/harness/gh-aw/), or as a plain object you call [`run()`](agent.md#running-agents) on. [Image generation](image-generation.md) and [embeddings](embeddings.md) come in the same box.
 
 **[Pydantic AI Harness](https://pydantic.dev/docs/ai/harness/)** has everything an agent needs for complex, long-running work, snapped on as [capabilities](capabilities/overview.md), from [memory](https://pydantic.dev/docs/ai/harness/memory/), [guardrails](https://pydantic.dev/docs/ai/harness/guardrails/), and [sub-agents](https://pydantic.dev/docs/ai/harness/subagents/) to [planning](https://pydantic.dev/docs/ai/harness/planning/), [context management](https://pydantic.dev/docs/ai/harness/compaction/), and [persistence](persistence.md), up to a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/).
 
@@ -81,7 +81,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
     ]
     ```
 
-    Run the file and you're chatting with the agent in your terminal. To use a coding agent rather than build one, run [Pax](harness/clai2.md), the coding-agent TUI built on the Harness. It runs `Coder` by default, and your own agent with `--agent`:
+    Run the file and you're chatting with the agent in your terminal. To use a coding agent rather than build one, run [Pax](harness/pax.md), the coding-agent TUI built on the Harness. It runs `Coder` by default, and your own agent with `--agent`:
 
     ```bash
     uv tool install pydantic-ai-pax
@@ -250,7 +250,7 @@ From simple typed data extraction to complex, long-running multi-agent collabora
 
 - **Batteries, composably.** One primitive, the [capability](capabilities/overview.md), bundles [tools](tools.md), [instructions](agent.md#instructions), [hooks](hooks.md), and [model settings](agent.md#model-run-settings) into reusable units. Core ships fundamentals like [MCP](capabilities/mcp.md) and [web search](capabilities/web-search.md), the [Harness](https://pydantic.dev/docs/ai/harness/) ships everything else, and complete agents like [Coder](https://pydantic.dev/docs/ai/harness/coder/) and [Researcher](https://pydantic.dev/docs/ai/harness/researcher/) are just capabilities composed: they come apart the way they went together. Or skip code entirely with [YAML/JSON agent specs](agent-spec.md).
 
-- **[Every interface](interfaces.md).** One agent definition runs as a [CLI](cli.md), a [built-in web chat](web.md), or [realtime speech](realtime/overview.md); [UI event streams](ui/overview.md) (AG-UI, Vercel AI) connect it to your own frontend or anything else; [ACP](https://pydantic.dev/docs/ai/harness/acp/) serves it as an editor agent; and [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs it headless on issues, pull requests or a schedule.
+- **[Every interface](interfaces.md).** One agent definition runs in [Pax](harness/pax.md), the terminal TUI that also has a headless mode (`pax -p "..."`), a [built-in web chat](web.md), or [realtime speech](realtime/overview.md); [UI event streams](ui/overview.md) (AG-UI, Vercel AI) connect it to your own frontend or anything else; [ACP](https://pydantic.dev/docs/ai/harness/acp/) serves it as an editor agent; and [GitHub Agentic Workflows](https://pydantic.dev/docs/ai/harness/gh-aw/) runs it headless on issues, pull requests or a schedule.
 
 - **Durable execution.** [Durable execution](durable_execution/overview.md) on ten engines: Temporal, DBOS, Prefect, Restate, AWS Lambda, Hatchet, Airflow, Absurd, pgtask, and Azure Durable Task, the first five co-maintained with the vendor teams. Agents survive restarts and run for days on the engine you already operate, with [human-in-the-loop approval](deferred-tools.md#human-in-the-loop-tool-approval) built in.
 
@@ -461,7 +461,7 @@ As of today, these files are not automatically leveraged by IDEs or coding agent
 
 ## Next steps
 
-**Run something right now.** [Pax](harness/clai2.md), the coding-agent TUI built on the Harness, puts a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in your terminal:
+**Run something right now.** [Pax](harness/pax.md), the coding-agent TUI built on the Harness, puts a complete [coding agent](https://pydantic.dev/docs/ai/harness/coder/) in your terminal:
 
 ```bash
 uv tool install pydantic-ai-pax
