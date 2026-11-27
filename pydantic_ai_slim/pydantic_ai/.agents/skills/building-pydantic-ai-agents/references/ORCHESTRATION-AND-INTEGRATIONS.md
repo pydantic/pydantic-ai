@@ -105,7 +105,7 @@ To delegate to a nested durable agent under Temporal, run the delegating async f
 
 Under DBOS, use `metadata={'dbos': {'child_workflow': ChildWorkflowConfig(...)}}` (from `pydantic_ai.durable_exec.dbos`, or through `SetToolMetadata`) on an async tool in a `FunctionToolset` with a unique `id`, set before the agent is constructed (not with a later `@agent.tool`). The child's inputs (tool arguments, serialized run context, `deps`) must be serializable.
 
-When a durable engine owns model request retries, set `model_settings={'max_retries': 0}` so the provider SDK doesn't retry inside the durable unit. A model error's `retry_after` (a provider's `Retry-After`) is then waited durably before the engine's next attempt, capped: on Temporal by the retry policy's `maximum_interval`, on DBOS (with `model_step_config` retries) by the step's backoff or a minute, whichever is longer; on Hatchet (with `model_task_config` retries) by a minute. Prefect applies `retry_delay_seconds` whatever the provider asked for.
+When a durable engine owns model request retries, set `model_settings={'max_retries': 0}` so the provider SDK doesn't retry inside the durable unit. A model error's `retry_after` (a provider's `Retry-After`) is then waited durably before the engine's next attempt, capped: on Temporal by the retry policy's `maximum_interval`, on DBOS (with `model_step_config` retries) by the step's backoff or a minute, whichever is longer; on Hatchet (with model request task `retries`, engine v0.111.0 or later) by a minute. Prefect applies `retry_delay_seconds` whatever the provider asked for.
 
 `TemporalAgent`, `DBOSAgent`, and `PrefectAgent` are deprecated wrapper agents.
 

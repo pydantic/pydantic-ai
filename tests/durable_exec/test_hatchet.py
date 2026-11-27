@@ -154,6 +154,13 @@ class StreamScenario:
 
 
 @dataclass
+class RetriedScenario(StreamScenario):
+    """A `StreamScenario` whose tool records each attempt of the durable task that reached it."""
+
+    attempts: list[int]
+
+
+@dataclass
 class App:
     hatchet: Hatchet
     calls: Calls
@@ -173,7 +180,7 @@ class App:
     cancelling: StreamScenario
     parallel: StreamScenario
     unretryable: Scenario
-    retried_run: StreamScenario
+    retried_run: RetriedScenario
 
 
 def _build_app(hatchet: Hatchet) -> tuple[App, list[Any]]:
@@ -427,7 +434,7 @@ def _build_unretryable(hatchet: Hatchet) -> Scenario:
     return Scenario(run=run, calls=tool_calls, workflows=[run, *durability.workflows])
 
 
-def _build_retried_run(hatchet: Hatchet) -> StreamScenario:
+def _build_retried_run(hatchet: Hatchet) -> RetriedScenario:
     """A durable task Hatchet retries, whose first attempt's run fails in a tool running in the durable task."""
     attempts: list[int] = []
     durability = HatchetDurability[Any](hatchet, event_stream=True)
@@ -445,7 +452,7 @@ def _build_retried_run(hatchet: Hatchet) -> StreamScenario:
         result = await agent.run(input.prompt)
         return {'output': result.output}
 
-    return StreamScenario(run=run, durability=durability, workflows=[run, *durability.workflows])
+    return RetriedScenario(run=run, durability=durability, workflows=[run, *durability.workflows], attempts=attempts)
 
 
 def _build_cancelling(hatchet: Hatchet) -> StreamScenario:
@@ -697,6 +704,7 @@ async def test_event_stream_of_cancelled_run(app: App):
 
 async def test_event_stream_of_retried_run_ends_with_its_result(app: App):
     """A failed attempt that Hatchet retries publishes no error, so subscribers get the retry's result."""
+    app.retried_run.attempts.clear()
     ref = await app.retried_run.run.aio_run(Prompt(prompt='hi'), wait_for_result=False)
     with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         await ref.aio_result()
@@ -704,6 +712,7 @@ async def test_event_stream_of_retried_run_ends_with_its_result(app: App):
         events = app.retried_run.durability.stream_agent_events(ref.workflow_run_id)
         async for _event in events:
             pass
+    assert app.retried_run.attempts == [0, 1]
     assert events.error is None
     assert events.result is not None
 
@@ -769,6 +778,7 @@ async def test_engine_without_durable_event_log_is_refused(app: App, monkeypatch
 
 async def test_unserializable_tool_result_is_not_retried(app: App):
     """A tool result that can't be serialized fails the run with a `UserError`, without running the tool again."""
+    app.unserializable.calls.clear()
     with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         output = await app.unserializable.run.aio_run(Prompt(prompt='hi'))
     assert 'failed to be serialized' in output['error']

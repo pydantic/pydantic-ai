@@ -540,7 +540,8 @@ class HatchetDurability(BaseDurabilityCapability[AgentDepsT]):
         topic keeps its messages after the run, so a consumer can subscribe late, or again.
 
         A run that times out or cancels itself ends the iterator like any failed run. A run that fails while the
-        durable task has retries left publishes no error, as the retry's run publishes the outcome. A durable task that Hatchet
+        durable task has retries left publishes no error, as the retry's run publishes the outcome. If the durable
+        task catches that error instead, the iterator goes on to the task's next agent run, if any. A durable task that Hatchet
         cancels publishes no terminal event, because Hatchet stops a task it evicts the same way and an evicted task's
         run continues once it's restored. A consumer that has to notice a cancelled run checks the workflow run's
         status, e.g. with `hatchet.runs.aio_get_status(workflow_run_id)`.
