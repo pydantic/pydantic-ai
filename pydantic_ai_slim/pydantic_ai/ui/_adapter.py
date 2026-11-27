@@ -1483,7 +1483,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         saved = replace(conversation, messages=[*turn.history, *added], new_message_index=None)
         entries = await store.save(saved, scope=self.conversation_scope)
         assert saved.revision is not None
-        result._conversation_saved(saved.revision)  # pyright: ignore[reportPrivateUsage]
+        result._conversation_saved(saved.revision, saved.messages)  # pyright: ignore[reportPrivateUsage]
         return entries
 
     def _conversation_saved_events(self, conversation_id: str, entries: Sequence[ConversationEntry]) -> list[EventT]:

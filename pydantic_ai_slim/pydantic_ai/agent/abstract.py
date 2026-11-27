@@ -1129,6 +1129,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             yielded = True
 
                             messages = graph_ctx.state.message_history.copy()
+                            logged_from = graph_ctx.state.conversation_log.logged()
 
                             async def on_complete() -> None:
                                 """Called when the stream has completed.
@@ -1205,6 +1206,7 @@ class AbstractAgent(Generic[AgentDepsT, OutputDataT], ABC):
                             streamed_result._settled_from = (  # pyright: ignore[reportPrivateUsage]
                                 graph_ctx.state,
                                 len(messages),
+                                logged_from,
                             )
                             yield streamed_result
                             # Note: wrap_node_run/after_node_run are intentionally skipped here.

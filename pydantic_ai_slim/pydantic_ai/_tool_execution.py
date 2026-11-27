@@ -1350,8 +1350,8 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             ],
         )
         history[index] = shown
-        # The run's `conversation` is built from its own record of the messages it appended, so it gets the copy too.
-        self.ctx.state.appended_messages.replace(response, shown)
+        # The run's `conversation` is built from its log of the messages, so it gets the copy too.
+        self.ctx.state.conversation_log.replace(response, shown)
 
     async def _resolve_deferred_calls(self) -> AsyncGenerator[_messages.AgentStreamEvent, None]:
         """Resolve collected deferred calls via capability handlers, else set the `DeferredToolRequests` result."""

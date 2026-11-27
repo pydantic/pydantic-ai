@@ -5,7 +5,7 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from pydantic_ai._agent_graph import ModelRequestNode, mark_deferred_pause
-from pydantic_ai._appended_messages import append_to_history
+from pydantic_ai._conversation_log import append_to_history
 from pydantic_ai._enqueue import (
     PendingMessage,
     deliver_asap_messages,

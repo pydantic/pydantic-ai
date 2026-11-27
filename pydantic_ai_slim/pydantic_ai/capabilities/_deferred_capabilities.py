@@ -5,7 +5,7 @@ from __future__ import annotations
 from dataclasses import replace
 from typing import TYPE_CHECKING
 
-from .._appended_messages import append_to_history
+from .._conversation_log import append_to_history
 from .._run_context import AgentDepsT, RunContext
 from ..messages import ModelRequest, ToolAvailabilityDeltaPart
 from ..toolsets._capability_owned import tool_defs_from_pre_definition_load_returns

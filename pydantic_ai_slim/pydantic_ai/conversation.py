@@ -116,21 +116,20 @@ class Conversation:
     new_message_index: int | None = dataclasses.field(default=None, compare=False)
     """Where the messages the store doesn't have yet start in `messages`, or `None` if that isn't known.
 
-    `load` sets it to the end of the messages it loaded, and a run sets it on its result's
-    `conversation` to where the messages it added start. So a
+    `load` sets it to the end of the messages it loaded, and a run carries it to its
+    result's `conversation`, whose messages start with the ones it was given, as given. So a
     [`ConversationStore`][pydantic_ai.conversation_store.ConversationStore]'s `save` appends just the
-    messages from this index on, even when a capability trimmed or rewrote the history the run was
-    sent: the stored conversation only ever grows. When it's `None`, `save` compares `messages`
+    messages from this index on, even when a capability trimmed or rewrote the history the run sent
+    the model: the stored conversation only ever grows. When it's `None`, `save` compares `messages`
     with the stored history instead, and stores what differs as a branch.
 
     Messages added to the end of a loaded conversation before a run, like a user's new turn, are
     carried through the run and saved with it. If a message before the index may have changed,
-    because one was removed, inserted or replaced, or the conversation was serialized, `save`
-    compares the messages before the index with the last as many stored ones, or with the stored
-    ones a run cleaned into them, say by merging adjacent requests, and stores what differs as a
-    branch, so no message is dropped. A message changed in place isn't noticed, so replace it with
-    an edited copy instead. It's bookkeeping about what's stored, so two conversations compare
-    equal whatever it is.
+    because one was removed, inserted or replaced, the run changed a stored one, or the
+    conversation was serialized, `save` compares the messages before the index with the last as
+    many stored ones and stores what differs as a branch, so no message is dropped. A message
+    changed in place isn't noticed, so replace it with an edited copy instead. It's bookkeeping
+    about what's stored, so two conversations compare equal whatever it is.
     """
 
 

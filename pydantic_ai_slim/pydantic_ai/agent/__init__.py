@@ -82,6 +82,7 @@ from .._cancel import (
     provide_run_deadline,
     take_run_binding,
 )
+from .._conversation_log import ConversationLog
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions, lowered_block_id
 from .._output import OutputToolset
@@ -1623,7 +1624,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         Returns:
             The result of the run.
         """
-        message_history, usage, conversation_id, conversation_revision, conversation_unsaved, conversation_unchecked = (
+        message_history, usage, conversation_id, conversation_revision, conversation_stored, conversation_unchecked = (
             _agent_graph.resolve_conversation(
                 conversation, message_history=message_history, usage=usage, conversation_id=conversation_id
             )
@@ -1639,7 +1640,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             deferred_tool_results=deferred_tool_results,
             conversation_id=conversation_id,
             conversation_revision=conversation_revision,
-            conversation_unsaved=conversation_unsaved,
+            conversation_stored=conversation_stored,
             conversation_unchecked=conversation_unchecked,
             conversation_deferred_tool_requests=conversation.deferred_tool_requests if conversation else None,
             run_id=run_id,
@@ -1670,7 +1671,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         deferred_tool_results: DeferredToolResults | None = None,
         conversation_id: str | None = None,
         conversation_revision: str | None = None,
-        conversation_unsaved: list[_messages.ModelMessage] | None = None,
+        conversation_stored: int | None = None,
         conversation_unchecked: bool = False,
         conversation_deferred_tool_requests: DeferredToolRequests | None = None,
         run_id: str | None = None,
@@ -1844,9 +1845,13 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
                 default=bootstrap_capability.get_default_conversation_id(resolved_run_id),
             ),
             conversation_revision=conversation_revision,
-            conversation_unsaved=conversation_unsaved,
-            conversation_unchecked=conversation_unchecked,
             conversation_deferred_tool_requests=conversation_deferred_tool_requests,
+        )
+        state.conversation_log = ConversationLog(
+            list(state.message_history),
+            run_start=len(state.message_history),
+            stored=conversation_stored,
+            checked=not conversation_unchecked,
         )
 
         # The deadline is absolute wall-clock time. Inside a durable workflow or flow, the durability

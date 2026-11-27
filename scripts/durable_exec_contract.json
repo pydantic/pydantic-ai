@@ -512,19 +512,6 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_cache_policies.py::_project_run_context"
       ]
     },
-    "RunContext._appended_messages": {
-      "engines": [
-        "durable_exec"
-      ],
-      "kinds": [
-        "attribute_read"
-      ],
-      "sites": [
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
-        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field"
-      ]
-    },
     "RunContext._cancellation": {
       "engines": [
         "durable_exec"
@@ -550,6 +537,19 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::_as_capability",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::call_declaration",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field"
+      ]
+    },
+    "RunContext._conversation_log": {
+      "engines": [
+        "durable_exec"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext.__init__",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::DurableRunContext._expose_field"
