@@ -11,14 +11,14 @@ from pydantic_ai.messages import Citation, FileCitationSource, MarkerCitationAnc
 
 _CODE_OR_LINK = re.compile(
     r'(?m)'
-    r'(?P<code>^[ \t]*+(?P<fence>`{3,}|~{3,})[\s\S]*?(?:\n[ \t]*+(?P=fence)[ \t]*+$|\Z)|`[^`\n]++`)'
+    r'(?P<code>^[ \t]*+(?P<fence>`{3,}|~{3,})[\s\S]*?(?:\n[ \t]*+(?P=fence)(?:(?<=`)`*+|(?<=~)~*+)[ \t]*+$|\Z)|`[^`\n]++`)'
     r'|!?\[(?P<title>[^\[\]\n]*+)\]\(\s*+'
     r'(?:<sandbox:(?P<bracketed>[^\[<>\n]++)>|sandbox:(?P<bare>(?:[^\[\s()<>]|\([^\[\s()<>]*+\))++))'
     r'(?:[ \t]++"[^\["\n]*+")?[ \t]*+\)'
 )
 """A fenced code block or inline code span, which is skipped, or a Markdown link or image to a `sandbox:` path:
 `[name](sandbox:/report(1).csv)`, `![chart](<sandbox:/a b.png>)`. A fence opens only at the start of a line, and
-may be indented, as in a list.
+may be indented, as in a list. It closes on a line holding only a run of its character at least as long.
 
 The text is model output, which fetched content can steer, so matching must stay linear. Every part of a link
 stops at the next `[`, so an attempt that fails scans no further than where the next one starts. A fence either
