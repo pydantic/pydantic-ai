@@ -76,6 +76,10 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     _event_stream_buffer_getter: Callable[[], list[AgentStreamEvent]] = field(default=list, repr=False)
     _max_tokens_getter: Callable[[], int | None] = field(default=lambda: None, repr=False)
     """The `max_tokens` the request was made with, for the error raised when the token limit cut off the output."""
+    _attempt: int = field(default=1, repr=False)
+    """The attempt at the request step that the stream came from, which its events' `origin` records."""
+    _origin: _messages.ModelResponseOrigin | None = field(default=None, init=False, repr=False)
+    """The origin the events of the current attempt are stamped with, built on its first event."""
 
     _events_iterator: AsyncIterator[AgentStreamEvent] | None = field(default=None, init=False)
     _initial_run_ctx_usage: RunUsage = field(init=False)
@@ -316,61 +320,53 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
         output_tool_name = final_result_event.tool_name
 
         try:
-            if self._output_schema.toolset and output_tool_name is not None:
-                tool_call = next(
-                    (part for part in message.tool_calls if part.tool_name == output_tool_name),
-                    None,
-                )
-                if tool_call is None:
-                    raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                        f'Invalid response, unable to find tool call for {output_tool_name!r}'
-                    )
-                return await self._validate_tool_output(
-                    tool_call,
-                    # As in `CallToolsNode`, only the tool call the response ended on can have been cut off.
-                    cut_off=message.finish_reason == 'length' and message.parts[-1] is tool_call,
-                    allow_partial=allow_partial,
-                )
-            elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
-                if not self._output_schema.allows_deferred_tools:
-                    raise exceptions.UserError(
-                        'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
-                    )
-                return cast(OutputDataT, deferred_tool_requests)
-            elif self._output_schema.allows_image and message.images:
-                return await self._validate_image_output(message.images[0], allow_partial=allow_partial)
-            elif text_processor := self._output_schema.text_processor:
-                text = ''
-                text_before_native_tool_call = ''
-                for part in message.parts:
-                    if isinstance(part, _messages.TextPart):
-                        text += part.content
-                    elif isinstance(part, _messages.NativeToolCallPart):
-                        # Text parts before a built-in tool call are essentially thoughts,
-                        # not part of the final result output, so we reset the accumulated text
-                        text_before_native_tool_call = text or text_before_native_tool_call
-                        text = ''
-                # Unless no text or function tool call follows the last native tool call (see `CallToolsNode`).
-                if not message.tool_calls:
-                    text = text or text_before_native_tool_call
-
-                return await self._validate_text_output(
-                    text_processor,
-                    text,
-                    # Only text parsed against a schema, as for `NativeOutput` and `PromptedOutput`, names the limit.
-                    cut_off=message.finish_reason == 'length' and isinstance(text_processor, BaseObjectOutputProcessor),
-                    allow_partial=allow_partial,
-                )
-            else:
-                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
-                    'Invalid response, unable to process text output'
-                )
+            return await self._validate_output(message, output_tool_name, allow_partial=allow_partial)
         except (ValidationError, exceptions.ModelRetry) as e:
             if not allow_partial:
                 raise exceptions.UnexpectedModelBehavior(
                     'Output validation failed during streaming, and retries are not supported in `run_stream()`'
                 ) from e
             raise
+
+    async def _validate_output(
+        self, message: _messages.ModelResponse, output_tool_name: str | None, *, allow_partial: bool
+    ) -> OutputDataT:
+        """Validate `message` as the output kind it holds: an output tool call, deferred tool calls, an image or text."""
+        if self._output_schema.toolset and output_tool_name is not None:
+            tool_call = next(
+                (part for part in message.tool_calls if part.tool_name == output_tool_name),
+                None,
+            )
+            if tool_call is None:
+                raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                    f'Invalid response, unable to find tool call for {output_tool_name!r}'
+                )
+            return await self._validate_tool_output(
+                tool_call,
+                # As in `CallToolsNode`, only the tool call the response ended on can have been cut off.
+                cut_off=message.finish_reason == 'length' and message.parts[-1] is tool_call,
+                allow_partial=allow_partial,
+            )
+        elif deferred_tool_requests := _get_deferred_tool_requests(message.tool_calls, self._tool_manager):
+            if not self._output_schema.allows_deferred_tools:
+                raise exceptions.UserError(
+                    'A deferred tool call was present, but `DeferredToolRequests` is not among output types. To resolve this, add `DeferredToolRequests` to the list of output types for this agent.'
+                )
+            return cast(OutputDataT, deferred_tool_requests)
+        elif self._output_schema.allows_image and message.images:
+            return await self._validate_image_output(message.images[0], allow_partial=allow_partial)
+        elif text_processor := self._output_schema.text_processor:
+            return await self._validate_text_output(
+                text_processor,
+                _output_text(message),
+                # Only text parsed against a schema, as for `NativeOutput` and `PromptedOutput`, names the limit.
+                cut_off=message.finish_reason == 'length' and isinstance(text_processor, BaseObjectOutputProcessor),
+                allow_partial=allow_partial,
+            )
+        else:
+            raise exceptions.UnexpectedModelBehavior(  # pragma: no cover
+                'Invalid response, unable to process text output'
+            )
 
     async def _validate_tool_output(
         self, tool_call: _messages.ToolCallPart, *, cut_off: bool, allow_partial: bool
@@ -431,45 +427,8 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
     ) -> AsyncIterator[str]:
         """Stream the response as an async iterable of text."""
 
-        # Define a "merged" version of the iterator that will yield items that have already been retrieved
-        # and items that we receive while streaming. We define a dedicated async iterator for this so we can
-        # pass the combined stream to the group_by_temporal function within `_stream_text_deltas` below.
-        async def _stream_text_deltas_ungrouped() -> AsyncIterator[tuple[str, int]]:
-            # yields tuples of (text_content, part_index)
-            # we don't currently make use of the part_index, but in principle this may be useful
-            # so we retain it here for now to make possible future refactors simpler
-            msg = self.response
-            for i, part in enumerate(msg.parts):
-                if isinstance(part, _messages.TextPart) and part.content:
-                    yield part.content, i
-
-            last_text_index: int | None = None
-            async for event in self:
-                if (
-                    isinstance(event, _messages.PartStartEvent)
-                    and isinstance(event.part, _messages.TextPart)
-                    and event.part.content
-                ):
-                    last_text_index = event.index
-                    yield event.part.content, event.index
-                elif (
-                    isinstance(event, _messages.PartDeltaEvent)
-                    and isinstance(event.delta, _messages.TextPartDelta)
-                    and event.delta.content_delta
-                ):
-                    last_text_index = event.index
-                    yield event.delta.content_delta, event.index
-                elif (
-                    isinstance(event, _messages.PartStartEvent)
-                    and isinstance(event.part, _messages.NativeToolCallPart)
-                    and last_text_index is not None
-                ):
-                    # Text parts that are interrupted by a built-in tool call should not be joined together directly
-                    yield '\n\n', event.index
-                    last_text_index = None
-
         async def _stream_text_deltas() -> AsyncGenerator[str, None]:
-            async with _utils.group_by_temporal(_stream_text_deltas_ungrouped(), debounce_by) as group_iter:
+            async with _utils.group_by_temporal(self._stream_text_deltas_ungrouped(), debounce_by) as group_iter:
                 async for items in group_iter:
                     # Note: we are currently just dropping the part index on the group here
                     yield ''.join([content for content, _ in items])
@@ -491,6 +450,44 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                         # The model stream was replaced mid-stream (see `_abandon_model_stream`), voiding its text.
                         parts = self.response.parts
                         yield ''.join(part.content for part in parts if isinstance(part, _messages.TextPart))
+
+    async def _stream_text_deltas_ungrouped(self) -> AsyncIterator[tuple[str, int]]:
+        """A "merged" iterator of the text already retrieved and the text received while streaming.
+
+        `_stream_response_text` passes it to `_utils.group_by_temporal`.
+        """
+        # yields tuples of (text_content, part_index)
+        # we don't currently make use of the part_index, but in principle this may be useful
+        # so we retain it here for now to make possible future refactors simpler
+        msg = self.response
+        for i, part in enumerate(msg.parts):
+            if isinstance(part, _messages.TextPart) and part.content:
+                yield part.content, i
+
+        last_text_index: int | None = None
+        async for event in self:
+            if (
+                isinstance(event, _messages.PartStartEvent)
+                and isinstance(event.part, _messages.TextPart)
+                and event.part.content
+            ):
+                last_text_index = event.index
+                yield event.part.content, event.index
+            elif (
+                isinstance(event, _messages.PartDeltaEvent)
+                and isinstance(event.delta, _messages.TextPartDelta)
+                and event.delta.content_delta
+            ):
+                last_text_index = event.index
+                yield event.delta.content_delta, event.index
+            elif (
+                isinstance(event, _messages.PartStartEvent)
+                and isinstance(event.part, _messages.NativeToolCallPart)
+                and last_text_index is not None
+            ):
+                # Text parts that are interrupted by a built-in tool call should not be joined together directly
+                yield '\n\n', event.index
+                last_text_index = None
 
     def __aiter__(self) -> AsyncIterator[AgentStreamEvent]:
         """Stream [`AgentStreamEvent`][pydantic_ai.messages.AgentStreamEvent]s, interleaving events emitted into the run's event buffer."""
@@ -555,8 +552,18 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
                 pass
         return True
 
+    def _with_origin(self, event: ModelResponseStreamEvent) -> ModelResponseStreamEvent:
+        """The event, stamped with the origin of the response it came from."""
+        if (origin := self._origin) is None:
+            run_id = self._run_ctx.run_id
+            assert run_id is not None, 'An agent run always has a `run_id`.'
+            origin = self._origin = _messages.ModelResponseOrigin(
+                run_id=run_id, run_step=self._run_ctx.run_step, attempt=self._attempt
+            )
+        return replace(event, origin=origin)
+
     async def _model_events(self) -> AsyncIterator[ModelResponseStreamEvent]:
-        """The model stream's events, followed by its replacement's if the stream was abandoned."""
+        """The model stream's events, followed by its replacement's if the stream was abandoned, stamped with their origin."""
         events = aiter(self._raw_stream_response)
         while self._replacement_response is None:
             event: ModelResponseStreamEvent | None = None
@@ -571,15 +578,18 @@ class AgentStream(Generic[AgentDepsT, OutputDataT]):
             if event is None:
                 self._model_stream_finished = True
                 return
-            yield event
+            yield self._with_origin(event)
 
         response = await self._replacement_response()
         if response is not None:
+            # The replacement is another response at the request step, streamed as its next attempt.
+            self._attempt += 1
+            self._origin = None
             self._raw_stream_response = models.CompletedStreamedResponse(
                 response, model_request_parameters=self._model_request_parameters, replay_events=True
             )
             async for event in self._raw_stream_response:
-                yield event
+                yield self._with_origin(event)
 
     async def _pull_shared(self, events_iterator: AsyncIterator[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
         # Serialize access to the shared iterator. An early break from stream_text() can leave a
@@ -1397,3 +1407,21 @@ def _get_deferred_tool_requests(
         return None
 
     return DeferredToolRequests(calls=calls, approvals=approvals)
+
+
+def _output_text(message: _messages.ModelResponse) -> str:
+    """The text of a streamed response that `AgentStream.validate_response_output` validates as output."""
+    text = ''
+    text_before_native_tool_call = ''
+    for part in message.parts:
+        if isinstance(part, _messages.TextPart):
+            text += part.content
+        elif isinstance(part, _messages.NativeToolCallPart):
+            # Text parts before a built-in tool call are essentially thoughts,
+            # not part of the final result output, so we reset the accumulated text
+            text_before_native_tool_call = text or text_before_native_tool_call
+            text = ''
+    # Unless no text or function tool call follows the last native tool call (see `CallToolsNode`).
+    if not message.tool_calls:
+        text = text or text_before_native_tool_call
+    return text

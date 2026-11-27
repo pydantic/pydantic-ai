@@ -54,6 +54,7 @@ from pydantic_ai.toolsets.function import FunctionToolsetTool
 from ._operation import ToolsetCallToolParams
 
 if TYPE_CHECKING:
+    from pydantic_ai._function_schema import FunctionSchema
     from pydantic_ai.agent.abstract import AbstractAgent
     from pydantic_ai.mcp import MCPToolset
 
@@ -578,14 +579,46 @@ def revalidate_function_args(
     toolset: FunctionToolset[Any], tool: ToolsetTool[Any], tool_args: dict[str, Any], *, context: Any = None
 ) -> dict[str, Any]:
     """Validate a function tool's already-validated arguments again after they crossed a durable boundary as JSON."""
+    if (function_schema := _validating_function_schema(toolset, tool)) is not None:
+        return function_schema.revalidate(tool_args, context=context)
+    return tool.args_validator.validate_python(tool_args, context=context)
+
+
+def dump_json_function_args(
+    toolset: FunctionToolset[Any],
+    tool: ToolsetTool[Any],
+    tool_args: dict[str, Any],
+    *,
+    by_alias: bool | None,
+    round_trip: bool = False,
+) -> dict[str, Any]:
+    """Prepare a function tool's validated arguments to cross a durable boundary as JSON.
+
+    A validated `Json` value is the parsed value, which the tool's schema rejects when
+    `revalidate_function_args` validates it again. So each argument whose parameter takes a `Json`
+    value is dumped by that parameter's schema in JSON mode, with those values as JSON strings again.
+    Pass the `by_alias` and `round_trip` the engine dumps the arguments with, so the rest of the
+    argument dumps as it did. Every other argument is returned as it is, so what the engine journals
+    for it doesn't change.
+    """
+    function_schema = _validating_function_schema(toolset, tool)
+    return (
+        tool_args
+        if function_schema is None
+        else function_schema.dump_json_parameters(tool_args, by_alias=by_alias, round_trip=round_trip)
+    )
+
+
+def _validating_function_schema(toolset: FunctionToolset[Any], tool: ToolsetTool[Any]) -> FunctionSchema | None:
+    """The function schema whose validator produced `tool`'s arguments, if `tool` is one of `toolset`'s functions."""
     if (
         isinstance(tool, FunctionToolsetTool)
         and (source := toolset.tools.get(tool.original_name or tool.tool_def.name)) is not None
         # Only the source's own validator produced arguments in the shape `revalidate` expects.
         and tool.args_validator is source.function_schema.validator
     ):
-        return source.function_schema.revalidate(tool_args, context=context)
-    return tool.args_validator.validate_python(tool_args, context=context)
+        return source.function_schema
+    return None
 
 
 @dataclass

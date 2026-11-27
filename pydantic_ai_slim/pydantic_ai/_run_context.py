@@ -1585,3 +1585,26 @@ def set_current_run_context(run_context: RunContext[Any]) -> Generator[None]:
         yield
     finally:
         _CURRENT_RUN_CONTEXT.reset(token)
+
+
+_CURRENT_REQUEST_ATTEMPT: ContextVar[int] = ContextVar('pydantic_ai.current_request_attempt', default=1)
+"""The [`attempt`][pydantic_ai.models.ModelRequestContext.attempt] at the request step a model is called for.
+
+A model's `request` and `request_stream` don't take the request context, so the agent graph sets this around
+calling it, for a model that needs the attempt, like a durable model that carries it into its durable unit.
+"""
+
+
+def get_current_request_attempt() -> int:
+    """The attempt at the request step the current model call is for, `1` outside an agent run's request."""
+    return _CURRENT_REQUEST_ATTEMPT.get()
+
+
+@contextmanager
+def set_current_request_attempt(attempt: int) -> Generator[None]:
+    """Make `attempt` the attempt at the request step that `get_current_request_attempt` returns."""
+    token = _CURRENT_REQUEST_ATTEMPT.set(attempt)
+    try:
+        yield
+    finally:
+        _CURRENT_REQUEST_ATTEMPT.reset(token)
