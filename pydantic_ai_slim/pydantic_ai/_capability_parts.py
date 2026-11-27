@@ -514,9 +514,9 @@ Shorter text, such as a one-word tool result, can turn up in the framework's own
 
 
 def _texts_of(content: object) -> list[str]:
-    """The text in `content`: a string, or the strings and `TextContent` in a sequence of user content."""
-    if isinstance(content, str):
-        return [content]
+    """The text in `content`: a string or `TextContent`, or the strings and `TextContent` in a sequence of user content."""
+    if isinstance(content, str | TextContent):
+        return [content if isinstance(content, str) else content.content]
     if isinstance(content, Sequence):
         items: Sequence[object] = content  # pyright: ignore[reportUnknownVariableType]
         return [
@@ -528,7 +528,8 @@ def _texts_of(content: object) -> list[str]:
 def _authored_texts(part: ModelRequestPart) -> list[str]:
     """The text `part` carries as its author wrote it, for finding it again after rendering."""
     if isinstance(part, ToolReturnPart):
-        return [part.model_response_str(wrap_if_error=False)]
+        # Item by item, as a renderer sends the items beside a file: a list dumped whole can fail to serialize.
+        return [item for item in part.content_items(mode='str', wrap_if_error=False) if isinstance(item, str)]
     if isinstance(part, RetryFeedbackPart) and not isinstance(part.content, str):
         # Validation errors, which reach the model as the text that lists them.
         return [part.model_response()]

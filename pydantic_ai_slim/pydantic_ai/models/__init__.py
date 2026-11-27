@@ -912,12 +912,16 @@ turns it on (`tests/conftest.py`), so every request a test prepares is checked: 
 """
 
 
+class _SystemVoiceLeak(AssertionError):
+    """Raised by `_check_lowered_text_out_of_system_voice`, so a test can tell it from any other failed assertion."""
+
+
 def _check_lowered_text_out_of_system_voice(authored: list[ModelMessage], rendered: list[ModelMessage]) -> None:
     """Raise if text below `'operator'` in `authored` is in a system message in `rendered`, when the check is on."""
     if not _check_system_voice:
         return
     if found := lowered_text_in_system_voice(authored, rendered):
-        raise AssertionError('\n'.join(found))
+        raise _SystemVoiceLeak('\n'.join(found))
 
 
 class Model(AbstractModel, Generic[InterfaceClient]):

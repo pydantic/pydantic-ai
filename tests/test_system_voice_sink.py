@@ -33,6 +33,7 @@ from pydantic_ai.messages import (
     RetryFeedbackPart,
     RetryInfo,
     SpeechPart,
+    StructuredContent,
     SystemPromptPart,
     TextContent,
     TextPart,
@@ -81,14 +82,16 @@ def _history() -> list[ModelMessage]:
                 FetchedPagePart(content=PAGE, source=ToolResultSource(tool_name='fetch')),
                 NudgePart(content=NUDGE_USER, source=UserSource()),
                 NudgePart(content=NUDGE_TOOL, source=ToolResultSource(tool_name='fetch')),
-                InstructionDeltaPart(id=NOTES_ID, content=DELTA, authority='none'),
                 UserPromptPart(f'<system>{LOOKALIKE}</system>'),
             ]
         ),
         ModelResponse(parts=[TextPart('Here is the summary.')]),
         ModelRequest(parts=[RetryFeedbackPart(content=RETRY, retry=RetryInfo(cause='model_retry'))]),
         ModelResponse(parts=[TextPart('{"summary": "ok"}')]),
-        ModelRequest(parts=[CompactionPart(content=SUMMARY)]),
+        # After the compaction, which supersedes an instruction change before it.
+        ModelRequest(
+            parts=[CompactionPart(content=SUMMARY), InstructionDeltaPart(id=NOTES_ID, content=DELTA, authority='none')]
+        ),
     ]
 
 
@@ -128,7 +131,7 @@ def test_a_renderer_that_sends_lowered_text_as_a_system_message_is_caught(monkey
     monkeypatch.setattr(models, 'render_capability_part', as_system_message)
     model = FunctionModel(_respond, profile=ModelProfile(supports_inline_system_prompts=True))
     page = FetchedPagePart(content=PAGE, source=ToolResultSource(tool_name='fetch'))
-    with pytest.raises(AssertionError, match='a system message holds text below'):
+    with pytest.raises(models._SystemVoiceLeak):  # pyright: ignore[reportPrivateUsage]
         model.prepare_messages([ModelRequest(parts=[UserPromptPart('Hi!'), page])])
 
 
@@ -172,7 +175,7 @@ def test_text_below_operator_stays_out_of_system_messages(profile: ModelProfile)
     prepared = FunctionModel(_respond, profile=profile).prepare_messages(history)
     sent = ' '.join(_texts(prepared))
     # Not vacuous: the lowered text still reaches the model, just not as a system message.
-    assert all(text in sent for text in (USER, TOOL, PAGE, NUDGE_USER, NUDGE_TOOL, LOOKALIKE, RETRY, SUMMARY))
+    assert all(text in sent for text in LOWERED)
 
 
 def test_the_applications_own_words_may_quote_anything() -> None:
@@ -205,12 +208,14 @@ LOW = 'Text that a user or a tool wrote, long enough to be looked for.'
         UserPromptPart(LOW),
         UserPromptPart([TextContent(LOW), ImageUrl('https://example.com/chart.png')]),
         ToolReturnPart('fetch', LOW, tool_call_id='c1'),
+        ToolReturnPart('fetch', [LOW, ImageUrl('https://example.com/chart.png')], tool_call_id='c1'),
         RetryFeedbackPart(content=LOW, retry=RetryInfo(cause='model_retry')),
         CompactionPart(content=LOW),
         InstructionDeltaPart(id=NOTES_ID, content=LOW, authority='none'),
         SpeechPart(speaker='user', transcript=LOW),
         FetchedPagePart(content=LOW, source=ToolResultSource(tool_name='fetch')),
         FetchedPagePart(content=[TextContent(LOW)], source=ToolResultSource(tool_name='fetch')),
+        FetchedPagePart(content=StructuredContent(LOW, format=str), source=ToolResultSource(tool_name='fetch')),
     ],
     ids=lambda part: type(part).__name__,
 )
