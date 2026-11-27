@@ -56,7 +56,7 @@ from pydantic_ai_harness.file_system import (
     FileWrittenEvent,
 )
 from pydantic_ai_harness.shell import CommandFinishedEvent, CommandOutputEvent, CommandStartedEvent
-from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import ConversationSummary, SqliteSessionStore
 from pydantic_ai_pax.builtin_plugins.web import (
     WebPlugin,
     channel as channel_module,
@@ -615,7 +615,7 @@ async def test_run_web_serves_until_cancelled(resume: bool, tmp_path: Path, monk
     saved = None
     if resume:
         store.save_plugin(PluginSettings(id='web', factory='pydantic_ai_pax.builtin_plugins.web', enabled=True))
-        sessions = SqliteConversationStore(database=store.path.with_name('sessions.db'))
+        sessions = SqliteSessionStore(database=store.path.with_name('sessions.db'))
         saved = await sessions.save(
             summary=ConversationSummary(workspace=str(Path.cwd().resolve()), title='Saved'), messages=[]
         )
@@ -655,7 +655,7 @@ async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypa
     other.mkdir()
     monkeypatch.chdir(launch)
     store = SettingsStore(tmp_path / 'config.db')
-    saved = await SqliteConversationStore(database=store.path.with_name('sessions.db')).save(
+    saved = await SqliteSessionStore(database=store.path.with_name('sessions.db')).save(
         summary=ConversationSummary(workspace=str(other.resolve()), title='Elsewhere'), messages=[]
     )
     output = _Output()
@@ -687,7 +687,7 @@ async def test_run_web_works_in_each_sessions_directory(tmp_path: Path, monkeypa
 
 async def test_run_web_refuses_a_session_whose_directory_is_gone(tmp_path: Path) -> None:
     store = SettingsStore(tmp_path / 'config.db')
-    saved = await SqliteConversationStore(database=store.path.with_name('sessions.db')).save(
+    saved = await SqliteSessionStore(database=store.path.with_name('sessions.db')).save(
         summary=ConversationSummary(workspace=str(tmp_path / 'gone'), title='Gone'), messages=[]
     )
     with pytest.raises(ValueError, match=re.escape(f'does not exist. Session {saved.id} was saved there;')):
@@ -977,7 +977,7 @@ async def test_run_web_serves_an_agent_of_your_own(tmp_path: Path, monkeypatch: 
     assert offered == [['shout']] * 4
     # Nor the guidance that tells the model to call it.
     assert not any('ask_user_question' in text for text in instructions)
-    assert len(await SqliteConversationStore(database=store.path.with_name('sessions.db')).listing(limit=10)) == 2
+    assert len(await SqliteSessionStore(database=store.path.with_name('sessions.db')).listing(limit=10)) == 2
 
 
 async def test_run_web_asks_in_the_browser_about_your_own_agents_approvals(
