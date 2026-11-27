@@ -1,4 +1,4 @@
-"""`pydantic_ai.telemetry`: spans that follow the right run's tracer and content policy.
+"""`open_span`, `record_decision` and `tool_call_span`: spans that follow the right run's tracer and content policy.
 
 These are unit tests, not VCR tests: what they check is span attributes and the `INVALID_SPAN` and
 `NoOpTracer` branches, which no provider response can show, so the runs use `TestModel` or no model.
@@ -16,28 +16,24 @@ from opentelemetry.trace import INVALID_SPAN, NoOpTracer, Tracer
 from opentelemetry.util.types import AttributeValue
 
 from pydantic_ai import Agent, AgentRunResult, RunContext
-from pydantic_ai._telemetry import run_telemetry_scope
+from pydantic_ai._telemetry import open_ambient_span, run_telemetry_scope
 from pydantic_ai.capabilities import (
     AbstractCapability,
     CapabilityOrdering,
     Instrumentation,
     ValidatedToolArgs,
     WrapRunHandler,
+    open_span,
+    record_decision,
+    tool_call_span,
 )
 from pydantic_ai.durable_exec import DurableRunContext
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.realtime.codec import ResponseDone
-from pydantic_ai.telemetry import (
-    current_run_telemetry,
-    current_span,
-    open_span,
-    record_decision,
-    records_content,
-    set_content_attribute,
-)
+from pydantic_ai.realtime.codec import ResponseDone, ToolCall
 from pydantic_ai.tools import ToolDefinition
+from pydantic_ai.toolsets import FunctionToolset, ToolsetTool, WrapperToolset
 from pydantic_ai.usage import RunUsage
 
 from .conftest import Instrumented, try_import
@@ -59,7 +55,8 @@ class TraceWhenPrepared(AbstractCapability[object]):
         with open_span(
             ctx, 'example prepare', attributes={'example.kind': 'setup'}, content={'example.input': 'a'}
         ) as span:
-            set_content_attribute(ctx, span, 'example.output', 'b')
+            if ctx.trace_include_content:
+                span.set_attribute('example.output', 'b')
         record_decision(ctx, 'example decided', attributes={'example.kind': 'setup'}, content={'example.detail': 'c'})
         return self
 
@@ -148,30 +145,67 @@ class MarkToolCall(AbstractCapability[object]):
     async def before_tool_execute(
         self, ctx: RunContext[object], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs
     ) -> ValidatedToolArgs:
-        current_span(ctx).set_attribute('example.marked', True)
+        tool_call_span(ctx).set_attribute('example.marked', True)
         return args
+
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[object],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: Any,
+    ) -> Any:
+        tool_call_span(ctx).set_attribute('example.marked_after', True)
+        return result
 
 
 def agent_with_tool(*capabilities: AbstractCapability[object]) -> Agent[None, str]:
     agent = Agent(TestModel(call_tools=['noop']), capabilities=[MarkToolCall(), *capabilities])
 
-    @agent.tool_plain
-    def noop() -> str:
+    @agent.tool
+    def noop(ctx: RunContext[object]) -> str:
+        tool_call_span(ctx).set_attribute('example.marked_in_body', True)
         return 'ok'
 
     return agent
 
 
-async def test_current_span_in_a_tool_hook_is_the_calls_execute_tool_span(instrumented: Instrumented):
+def spans_with(exporter: InMemorySpanExporter, attribute: str) -> list[str]:
+    return [span.name for span in exporter.get_finished_spans() if (span.attributes or {}).get(attribute)]
+
+
+async def test_tool_call_span_in_a_tool_hook_and_body_is_the_calls_execute_tool_span(instrumented: Instrumented):
     instrumentation, exporter = instrumented(False)
     await agent_with_tool(instrumentation).run('go')
 
-    assert [span.name for span in exporter.get_finished_spans() if (span.attributes or {}).get('example.marked')] == [
-        'execute_tool noop'
-    ]
+    assert spans_with(exporter, 'example.marked') == ['execute_tool noop']
+    assert spans_with(exporter, 'example.marked_after') == ['execute_tool noop']
+    assert spans_with(exporter, 'example.marked_in_body') == ['execute_tool noop']
 
 
-async def test_current_span_leaves_the_applications_span_alone_in_an_uninstrumented_run():
+class MarkingToolset(WrapperToolset[object]):
+    async def call_tool(
+        self, name: str, tool_args: dict[str, Any], ctx: RunContext[object], tool: ToolsetTool[object]
+    ) -> Any:
+        tool_call_span(ctx).set_attribute('example.marked_in_call_tool', True)
+        return await super().call_tool(name, tool_args, ctx, tool)
+
+
+async def test_tool_call_span_in_a_toolsets_call_tool_is_the_calls_execute_tool_span(instrumented: Instrumented):
+    instrumentation, exporter = instrumented(False)
+
+    def noop() -> str:
+        return 'ok'
+
+    toolset = MarkingToolset(FunctionToolset([noop]))
+    await Agent(TestModel(call_tools=['noop']), toolsets=[toolset], capabilities=[instrumentation]).run('go')
+
+    assert spans_with(exporter, 'example.marked_in_call_tool') == ['execute_tool noop']
+
+
+async def test_tool_call_span_leaves_the_applications_span_alone_in_an_uninstrumented_run():
     exporter = InMemorySpanExporter()
     provider = TracerProvider()
     provider.add_span_processor(SimpleSpanProcessor(exporter))
@@ -189,7 +223,7 @@ async def test_an_uninstrumented_sub_agent_does_not_trace_onto_its_parent(instru
 
     @child.tool_plain
     def helper() -> str:
-        with open_span(current_run_telemetry(), 'example helper'):
+        with open_ambient_span('example helper'):
             return 'ok'
 
     @parent.tool_plain
@@ -206,15 +240,15 @@ async def test_an_uninstrumented_sub_agent_does_not_trace_onto_its_parent(instru
 @dataclass
 class MarkWhenPrepared(AbstractCapability[object]):
     async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
-        set_content_attribute(ctx, current_span(ctx), 'example.prompt', 'secret')
+        tool_call_span(ctx).set_attribute('example.prompt', 'secret')
         return self
 
 
 @dataclass
 class HelperWhenPrepared(AbstractCapability[object]):
     async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
-        # Code without a `ctx`, such as a workspace operation in setup, reads the published telemetry.
-        with open_span(current_run_telemetry(), 'example helper'):
+        # Core code without a `ctx`, such as a workspace operation in setup, reads the published telemetry.
+        with open_ambient_span('example helper'):
             return self
 
 
@@ -257,7 +291,7 @@ class MarkAroundTheRun(AbstractCapability[object]):
         return CapabilityOrdering(position='outermost')
 
     async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
-        set_content_attribute(ctx, current_span(ctx), 'example.prompt', 'secret')
+        tool_call_span(ctx).set_attribute('example.prompt', 'secret')
         return await handler()
 
 
@@ -277,7 +311,7 @@ async def test_a_wrap_run_outside_instrumentation_does_not_write_to_the_span_aro
 
 
 async def run_marking_sub_agent(parent: AbstractCapability[object], child: AbstractCapability[object]) -> None:
-    """Run a parent whose tool runs a sub-agent that writes a content attribute to `current_span` in `for_run`."""
+    """Run a parent whose tool runs a sub-agent that writes an attribute to `tool_call_span` in `for_run`."""
     sub_agent = Agent(TestModel(), capabilities=[MarkWhenPrepared(), child])
     agent = Agent(TestModel(call_tools=['delegate']), capabilities=[parent])
 
@@ -321,29 +355,30 @@ def test_a_durable_unit_that_did_not_carry_the_tracer_is_untraced():
     ctx = DurableRunContext[None](deps=None)
 
     with open_span(ctx, 'example work') as span:
-        set_content_attribute(ctx, span, 'example.detail', 'a')
+        pass
     record_decision(ctx, 'example decided')
 
     assert span is INVALID_SPAN
-    assert current_span(ctx) is INVALID_SPAN
-    assert records_content(ctx) is False
+    assert tool_call_span(ctx) is INVALID_SPAN
+    # Defaulted rather than guarded, so a capability that reads it records no content instead of raising.
+    assert ctx.trace_include_content is False
 
 
 async def test_code_without_a_ctx_traces_to_the_calling_run(instrumented: Instrumented):
-    """A tool's helper with no `RunContext` reads the run's telemetry; outside a run there is none."""
+    """Core code with no `RunContext` reads the run's published telemetry; outside a run there is none."""
     instrumentation, exporter = instrumented(False)
     agent = Agent(TestModel(call_tools=['noop']), capabilities=[instrumentation])
 
     @agent.tool_plain
     def noop() -> str:
-        with open_span(current_run_telemetry(), 'example helper', content={'example.input': 'a'}):
+        with open_ambient_span('example helper', content={'example.input': 'a'}):
             pass
         return 'ok'
 
     await agent.run('go')
 
     assert example_spans(exporter) == [{'name': 'example helper'}]
-    with open_span(current_run_telemetry(), 'example outside a run') as span:
+    with open_ambient_span('example outside a run') as span:
         assert span is INVALID_SPAN
 
 
@@ -366,6 +401,7 @@ def test_an_escaping_exception_is_recorded_by_its_type(include_content: bool):
 
     [span] = exporter.get_finished_spans()
     assert span.status.status_code.name == 'ERROR'
+    assert (span.attributes or {})['error.type'] == 'ValueError'
     [event] = span.events
     assert (event.attributes or {})['exception.type'] == 'ValueError'
     recorded = f'{span.status.description} {event.attributes}'
@@ -386,11 +422,84 @@ def test_a_cancellation_is_not_an_error():
     assert (span.status.status_code.name, span.events) == ('UNSET', ())
 
 
+class ExampleError(Exception):
+    pass
+
+
+def test_an_errored_span_sets_error_type_without_content():
+    """`error.type` is the exception's fully-qualified type, set even when the run doesn't capture content."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    with pytest.raises(ExampleError):
+        with open_span(traced_context(provider.get_tracer('test'), False), 'example work'):
+            raise ExampleError('private')
+
+    [span] = exporter.get_finished_spans()
+    assert dict(span.attributes or {}) == {'error.type': 'tests.test_run_telemetry.ExampleError'}
+
+
 def test_a_telemetry_scope_publishes_for_its_block_only():
-    with run_telemetry_scope(traced_context(TracerProvider().get_tracer('test'), False)):
-        outer = current_run_telemetry()
-        assert outer is not None
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+
+    with run_telemetry_scope(traced_context(provider.get_tracer('test'), False)):
         with run_telemetry_scope(traced_context(NoOpTracer(), True)):
-            assert current_run_telemetry() is None
-        assert current_run_telemetry() is outer
-    assert current_run_telemetry() is None
+            with open_ambient_span('example inner') as span:
+                assert span is INVALID_SPAN
+        with open_ambient_span('example outer'):
+            pass
+    with open_ambient_span('example after') as span:
+        assert span is INVALID_SPAN
+
+    assert [span.name for span in exporter.get_finished_spans()] == ['example outer']
+
+
+@dataclass
+class RecordToolCallSpanOutsideToolCalls(AbstractCapability[object]):
+    """Records what `tool_call_span` returns in hooks that run outside any tool call."""
+
+    seen: dict[str, object]
+
+    async def for_run(self, ctx: RunContext[object]) -> AbstractCapability[object]:
+        self.seen['for_run'] = tool_call_span(ctx)
+        return self
+
+    async def before_run(self, ctx: RunContext[object]) -> None:
+        self.seen['before_run'] = tool_call_span(ctx)
+
+    async def wrap_run(self, ctx: RunContext[object], *, handler: WrapRunHandler) -> AgentRunResult[Any]:
+        self.seen['wrap_run'] = tool_call_span(ctx)
+        return await handler()
+
+
+async def test_tool_call_span_is_invalid_outside_a_tool_call(instrumented: Instrumented):
+    """`for_run`, `before_run` and `wrap_run` run outside any tool call: no span, not the run's or the application's."""
+    instrumentation, _ = instrumented(True)
+    seen: dict[str, object] = {}
+    with TracerProvider().get_tracer('app').start_as_current_span('app request'):
+        await Agent(TestModel(), capabilities=[RecordToolCallSpanOutsideToolCalls(seen), instrumentation]).run('go')
+
+    assert seen == {'for_run': INVALID_SPAN, 'before_run': INVALID_SPAN, 'wrap_run': INVALID_SPAN}
+
+
+async def test_tool_call_span_is_invalid_in_a_realtime_sessions_before_run(instrumented: Instrumented):
+    """A realtime session's `before_run` runs outside any tool call; a tool call in the session still gets its span."""
+    instrumentation, exporter = instrumented(False)
+    seen: dict[str, object] = {}
+
+    def noop() -> str:
+        return 'ok'
+
+    connection = FakeRealtimeConnection([ToolCall(tool_call_id='call-1', tool_name='noop', args='{}'), ResponseDone()])
+    realtime = Agent(capabilities=[RecordToolCallSpanOutsideToolCalls(seen), MarkToolCall(), instrumentation]).realtime(
+        FakeRealtimeModel(connection), toolsets=[FunctionToolset([noop])]
+    )
+    with TracerProvider().get_tracer('app').start_as_current_span('app request'):
+        async with realtime.session() as session:
+            _ = [event async for event in session]
+
+    assert seen['before_run'] is INVALID_SPAN
+    assert spans_with(exporter, 'example.marked') == ['execute_tool noop']

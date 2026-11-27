@@ -92,10 +92,13 @@ _GUARDED_FIELDS = frozenset(RunContext.__dataclass_fields__) - {'deps', *_NONE_U
 # just doesn't inherit one, rather than the tool failing on the read.
 # `_tool_name_path` is serialized only when a name-changing wrapper set it, and empty is what a
 # listing outside one carries: a payload without it lists like a run without wrappers did.
+# `trace_include_content` is defaulted to `False` so a payload without it records no content and a
+# capability that reads it doesn't raise.
 _DEFAULTED_UNLESS_CARRIED: tuple[tuple[str, Any], ...] = (
     ('_anchored_evidence', AnchoredEvidence()),
     ('deadline', None),
     ('_tool_name_path', ()),
+    ('trace_include_content', False),
 )
 
 # Payloads written by a worker running an older version, or by a custom `serialize_run_context` that

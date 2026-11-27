@@ -62,7 +62,16 @@ from pydantic_ai._instrumentation import (
     serialize_any,
     span_include_content,
 )
-from pydantic_ai.capabilities import AbstractCapability, Capability, Hooks, LocalWorkspace
+from pydantic_ai._telemetry import open_ambient_span
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    Capability,
+    Hooks,
+    LocalWorkspace,
+    open_span,
+    record_decision,
+    tool_call_span,
+)
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.capabilities.mcp import MCP
 from pydantic_ai.direct import model_request
@@ -86,7 +95,6 @@ from pydantic_ai.native_tools import AbstractNativeTool, CodeExecutionTool, File
 from pydantic_ai.output import PromptedOutput
 from pydantic_ai.realtime import RealtimeModelSettings
 from pydantic_ai.realtime.codec import InputTranscript, OutputTranscript, ResponseDone, ToolCall
-from pydantic_ai.telemetry import current_run_telemetry, open_span, record_decision, set_content_attribute
 from pydantic_ai.tools import Tool, ToolDefinition
 
 from .conftest import try_import
@@ -1377,12 +1385,19 @@ async def test_no_content_reaches_telemetry_from_a_lowered_capabilitys_instructi
     assert ('capability:sentinel_lowered_block' in exported) is include_content
 
 
-def _record_without_a_context() -> str:
-    """What code with no `RunContext`, such as a workspace, records through the run's published telemetry."""
-    telemetry = current_run_telemetry()
-    with open_span(telemetry, 'example helper', content={'example.first': SECRETS['helper_content']}) as span:
-        set_content_attribute(telemetry, span, 'example.later', SECRETS['helper_content'])
-    record_decision(telemetry, 'example decision', content={'example.reason': SECRETS['decision_content']})
+def _record_without_a_context() -> None:
+    """What core code with no `RunContext`, such as a workspace, records through the run's published telemetry."""
+    with open_ambient_span('example helper', content={'example.first': SECRETS['helper_content']}):
+        pass
+
+
+def _record_with_a_context(ctx: RunContext[None]) -> str:
+    """What a tool records with the `ctx` helpers, including on its tool call's span."""
+    with open_span(ctx, 'example span', content={'example.first': SECRETS['helper_content']}):
+        pass
+    if ctx.trace_include_content:
+        tool_call_span(ctx).set_attribute('example.later', SECRETS['helper_content'])
+    record_decision(ctx, 'example decision', content={'example.reason': SECRETS['decision_content']})
     return 'done'
 
 
@@ -1391,11 +1406,12 @@ def _record_without_a_context() -> str:
 async def test_no_content_reaches_telemetry_from_a_helper_without_a_context(
     include_content: bool, mode: Literal['run', 'realtime']
 ) -> None:
-    """`current_run_telemetry()` carries the run's content setting to code that has no `RunContext`."""
+    """The run's content setting reaches the `ctx` helpers and core code that has no `RunContext`."""
     settings, exporter = redacted_setup(include_content)
 
-    def lookup() -> str:
-        return _record_without_a_context()
+    def lookup(ctx: RunContext[None]) -> str:
+        _record_without_a_context()
+        return _record_with_a_context(ctx)
 
     if mode == 'run':
         agent = Agent(
@@ -1412,7 +1428,8 @@ async def test_no_content_reaches_telemetry_from_a_helper_without_a_context(
         async with realtime.session() as session:
             _ = [event async for event in session]
 
-    assert {'example helper', 'example decision'} <= {span.name for span in exporter.get_finished_spans()}
+    names = {span.name for span in exporter.get_finished_spans()}
+    assert {'example helper', 'example span', 'example decision'} <= names
     check(exporter, include_content, {'helper_content', 'decision_content'})
 
 
