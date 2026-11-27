@@ -367,8 +367,8 @@ and the status row prefixes a known cost with `>=`.
 
 When the conversation nears the model's context limit, Pax summarises older messages
 for you. Run `/compact` to do it now, and add a note to say what the summary must keep,
-such as `/compact keep the API decisions`. To choose when it happens, give `/auto-compact`
-a token count or a share of the window: `/auto-compact 150k` or `/auto-compact 70%`.
+such as `/compact keep the API decisions`. To choose when it happens, run `/auto-compact`
+and pick a level from the list, or type it: `/auto-compact 70%` or `/auto-compact 150k`.
 
 ![/usage table, /cost line, and /compact reporting the tokens it saved](https://raw.githubusercontent.com/pydantic/pydantic-ai/main/src/pydantic_ai_pax/docs/images/usage.png)
 

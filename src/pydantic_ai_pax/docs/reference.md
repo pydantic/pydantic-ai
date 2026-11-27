@@ -42,7 +42,7 @@ everything it does, in detail. For an overview with screenshots, start with the
 | `/plugins [...]` | Manage plugins; no arguments opens the menu |
 | `/mcp [...]` | Manage MCP servers (from the built-in `mcp` plugin) |
 | `/compact [FOCUS]` | Summarise older messages now (from the built-in `compaction` plugin) |
-| `/auto-compact [TOKENS\|PERCENT\|reset]` | Show or set when compaction runs automatically, such as `150k` or `70%` (from the built-in `compaction` plugin) |
+| `/auto-compact [TOKENS\|PERCENT\|reset]` | Choose when compaction runs automatically from a list, or set it directly, such as `70%` or `150k` (from the built-in `compaction` plugin) |
 | `/refine [FOCUS]` | Have the model review and revise its last answer (from the built-in `refinement` plugin) |
 | `/usage` | Tokens and cost per turn |
 | `/cost` | The retained history's total cost and tokens |
@@ -2320,13 +2320,34 @@ back to truncation; other exceptions propagate. The summary request is billed
 to the current model unless `summarization_model` selects another.
 
 The chain runs automatically before requests above `threshold` (85% of the context
-window by default). `/auto-compact` shows when it runs and changes it for the next turn:
+window by default). To change when, run `/auto-compact` and pick from the list with the arrow keys
+and Enter:
+
+```text
+When should Pax compact automatically?
+  50% - about 100k tokens
+  60% - about 120k tokens
+  70% - about 140k tokens
+  80% - about 160k tokens
+> 85% - about 170k tokens - default (current)
+  90% - about 180k tokens
+  Fixed token count...
+  Reset to default
+```
+
+Each share shows what it means in tokens on the model you are using, once its window is known.
+A share follows you when you switch models; **Fixed token count...** asks for a number of tokens
+instead, such as `150k`, whatever the window. Esc leaves it as it was. The change applies from the
+next turn. You can also type the value and skip the list:
 
 ```text
 /auto-compact 150k     # once a request passes 150,000 tokens (also 150000, 150,000, 1.5m)
 /auto-compact 70%      # once a request passes 70% of the window
 /auto-compact reset    # back to 85% of the window
 ```
+
+In the web UI the list opens as a dialog. Where there is nowhere to show it, such as output redirected
+to a file, `/auto-compact` alone says when compaction runs.
 
 A token count saves `threshold_tokens` and a share saves `threshold`, the same settings as the
 **Threshold tokens** and **Threshold** rows of `/plugins configure compaction`. With

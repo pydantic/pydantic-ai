@@ -11,6 +11,7 @@ import re
 from collections.abc import Sequence
 from dataclasses import dataclass
 from decimal import Decimal
+from functools import partial
 from typing import Literal, Self
 
 from pydantic import (
@@ -37,9 +38,11 @@ from pydantic_ai_harness.compaction import (
 )
 from pydantic_ai_pax.commands import Command
 from pydantic_ai_pax.plugins import ConversationChanged, Plugin, PluginHost, SessionEnd, TurnEnd
-from pydantic_ai_pax.plugins.menus import FieldRow, SettingsMenu
+from pydantic_ai_pax.plugins.menus import Dialogs, FieldRow, Option, SettingsMenu
 from pydantic_ai_pax.runtime import agent_instrumentation
+from pydantic_ai_pax.ui.menus import dialogs
 from pydantic_ai_pax.ui.menus.field_menu import first_error, shown
+from pydantic_ai_pax.ui.menus.menu_worker import remote_dialogs, require_terminal
 from pydantic_ai_pax.ui.rendering.status import Status
 
 
@@ -196,6 +199,87 @@ def _token_count(text: str) -> int:
     return int(count)
 
 
+def _with_trigger(settings: CompactionSettings, value: str) -> CompactionSettings:
+    """`settings` with the trigger `/auto-compact VALUE` sets; `ValueError` saying why `value` is not one."""
+    data: dict[str, JsonValue] = settings.model_dump(mode='json')
+    data.pop('threshold_tokens', None)
+    if value.lower() == 'reset':
+        data.pop('threshold', None)
+    elif value.endswith('%'):
+        data['threshold'] = _percent(value)
+    else:
+        data['threshold_tokens'] = _token_count(value)
+    try:
+        return CompactionSettings.model_validate(data)
+    except ValueError as exc:
+        raise ValueError(f'/auto-compact {value}: {first_error(exc)}') from None
+
+
+def _trigger_problem(settings: CompactionSettings, value: str) -> str | None:
+    """Why `value` typed as a token count is not one, for the custom row's input."""
+    if value.endswith('%') or value.lower() == 'reset':
+        return 'Type a token count, such as 150k; pick a share of the window from the list.'
+    try:
+        _with_trigger(settings, value)
+    except ValueError as exc:
+        return str(exc)
+    return None
+
+
+_PRESETS = (0.5, 0.6, 0.7, 0.8, 0.85, 0.9)
+"""The shares of the window the `/auto-compact` list offers."""
+
+_CUSTOM = 'custom'
+"""The list row that asks for a token count, an `Option.value` `/auto-compact` never takes typed."""
+
+
+def _share(fraction: float) -> str:
+    return f'{fraction * 100:g}%'
+
+
+def _thousands(tokens: int) -> str:
+    return f'{round(tokens / 1000):,}k'
+
+
+def _trigger_options(settings: CompactionSettings, window: int | None) -> tuple[list[Option], str]:
+    """The `/auto-compact` list, each value what `/auto-compact` takes typed, and the current row's value."""
+    default = CompactionSettings.model_fields['threshold'].default
+    shares = sorted({*_PRESETS, settings.threshold})
+    options = [
+        Option(
+            value=_share(fraction),
+            label=' - '.join(
+                (
+                    _share(fraction),
+                    *((f'about {_thousands(round(window * fraction))} tokens',) if window else ()),
+                    *(('default',) if fraction == default else ()),
+                )
+            ),
+            description=(
+                f'Compacts at about {_thousands(round(window * fraction))} tokens of the {_thousands(window)} window.'
+                if window
+                else "Compacts at this share of the model's context window, whichever model you use."
+            ),
+        )
+        for fraction in shares
+    ]
+    current = _share(settings.threshold)
+    if (tokens := settings.threshold_tokens) is not None:
+        current = str(tokens)
+        options.append(
+            Option(
+                value=current,
+                label=f'{tokens:,} tokens',
+                description='Compacts at this many tokens, whatever the window.',
+            )
+        )
+    options += [
+        Option(value=_CUSTOM, label='Fixed token count...', description='Type a count, such as 150k.'),
+        Option(value='reset', label='Reset to default', description=f'Compacts at {_share(default)} of the window.'),
+    ]
+    return options, current
+
+
 def _trigger(settings: CompactionSettings) -> str:
     if (tokens := settings.threshold_tokens) is not None:
         return f'above {tokens:,} tokens'
@@ -303,34 +387,65 @@ class CompactionPlugin(Plugin[CompactionSettings]):
             ),
             Command(
                 name='auto-compact',
-                description='Show or set when compaction runs: a token count (150k) or a share of the window (70%)',
+                description='Choose when compaction runs, or set it directly: a share of the window (70%) or tokens (150k)',
                 handler=self._auto_compact,
                 complete=lambda args: ('150k', '70%', 'reset') if len(args) <= 1 else (),
             ),
         )
 
     async def _auto_compact(self, args: list[str]) -> str:
-        if not args:
-            return f'Auto-compaction runs {_trigger(self.settings)}. Set it with /auto-compact 150k, 70%, or reset.'
         if len(args) > 1:
             raise ValueError('Give one value: /auto-compact 150k, /auto-compact 70%, or /auto-compact reset.')
-        data: dict[str, JsonValue] = self.settings.model_dump(mode='json')
-        data.pop('threshold_tokens', None)
-        if args[0].lower() == 'reset':
-            data.pop('threshold', None)
-        elif args[0].endswith('%'):
-            data['threshold'] = _percent(args[0])
+        asking = self._dialogs()
+        if args:
+            value = args[0]
+        elif asking is None:
+            return f'Auto-compaction runs {_trigger(self.settings)}. Set it with /auto-compact 150k, 70%, or reset.'
+        elif not (picked := await self._pick_trigger(asking)):
+            return f'Auto-compaction unchanged: it runs {_trigger(self.settings)}.'
         else:
-            data['threshold_tokens'] = _token_count(args[0])
-        try:
-            settings = CompactionSettings.model_validate(data)
-        except ValueError as exc:
-            raise ValueError(f'/auto-compact {args[0]}: {first_error(exc)}') from None
+            value = picked
+        settings = _with_trigger(self.settings, value)
         if (plugins := self.host.plugins) is None:
             raise ValueError('/auto-compact needs a Pax session; use /plugins configure compaction.')
         # Loads the plugin again, so the next turn runs the new chain; this instance is unloaded.
         await plugins.save_settings(self.host.name, settings)
         return f'Auto-compaction now runs {_trigger(settings)}.'
+
+    def _dialogs(self) -> Dialogs | None:
+        """Where to show the trigger list: the web UI's dialogs, the terminal, or `None` with neither, as in `-p`."""
+        if (remote := remote_dialogs()) is not None:
+            return remote
+        if not self.host.console.is_terminal:
+            return None
+        try:
+            require_terminal()
+        except ValueError:
+            return None
+        # The module's `RUNNERS` is read here, not imported, so tests can script the terminal.
+        return dialogs.TerminalDialogs(dialogs.RUNNERS)
+
+    async def _pick_trigger(self, asking: Dialogs) -> str | None:
+        """What the user picked in the trigger list, as `/auto-compact` takes it typed; `None` or empty to keep it."""
+        window = self.host.status.window
+        options, current = _trigger_options(self.settings, window)
+        picked = await asking.choose(
+            title='When should Pax compact automatically?',
+            options=options,
+            current=current,
+            description=f'This model has a {_thousands(window)} window.' if window else '',
+        )
+        if picked != _CUSTOM:
+            return picked
+        tokens = self.settings.threshold_tokens
+        return await asking.text(
+            title='Compact above how many tokens?',
+            label='Tokens',
+            placeholder='150k',
+            initial='' if tokens is None else str(tokens),
+            check=partial(_trigger_problem, self.settings),
+            description="Such as 150000, 150k or 1.5m. Keep it below the model's window.",
+        )
 
     def settings_menu(self) -> SettingsMenu:
         return SettingsMenu(source=CompactionSource(self.host))

@@ -45,6 +45,7 @@ from pydantic_ai_pax.builtin_plugins.compaction import (
     CompactionPlugin,
     CompactionSettings,
     CompactionSource,
+    _trigger_problem,  # pyright: ignore[reportPrivateUsage]
     build_chain,
 )
 from pydantic_ai_pax.commands import Command, Commands
@@ -65,7 +66,9 @@ from pydantic_ai_pax.plugins import (
 from pydantic_ai_pax.plugins.loader import PluginLoader
 from pydantic_ai_pax.runtime.session_runtime import create_shell
 from pydantic_ai_pax.ui.menus import dialogs
+from pydantic_ai_pax.ui.menus.menu_worker import without_terminal
 from tests._timeouts import READINESS_WAIT_TIMEOUT
+from tests.pax.dialog_script import Answer, Asked, Back, Pick, ScriptedDialogs, Type
 from tests.pax.menu_script import Script, pick, typed
 from tests.pax.test_app_edges import inputs
 
@@ -710,6 +713,118 @@ def test_auto_compact_completes_its_forms() -> None:
     assert command is not None
     assert list(command.complete([''])) == ['150k', '70%', 'reset']
     assert list(command.complete(['150k', ''])) == []
+
+
+async def test_auto_compact_alone_offers_a_list_of_triggers(tmp_path: Path) -> None:
+    """Bare `/auto-compact` lists shares of the window, each with its tokens on this model, and a token count row."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    compaction = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'compaction')
+    commands = Commands()
+    plugins = PluginLoader[None](
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=commands,
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        builtin=(compaction,),
+    )
+
+    def chain() -> FallbackCompaction[None]:
+        loaded = plugins.entries()[0].loaded
+        assert loaded is not None and isinstance(loaded.plugin, CompactionPlugin)
+        return loaded.plugin.chain
+
+    async def answered(*answers: Answer) -> tuple[str, list[Asked]]:
+        asking = ScriptedDialogs(answers)
+        with without_terminal('/auto-compact', dialogs=asking):
+            reply = await commands.execute_async('/auto-compact')
+        assert not asking.unused
+        return reply, asking.asked
+
+    try:
+        await plugins.load_all()
+        loaded = plugins.entries()[0].loaded
+        assert loaded is not None
+        loaded.host.status.context_window = 200_000
+
+        reply, [asked] = await answered(Pick(value='70%'))
+        assert reply == 'Auto-compaction now runs above 70% of the context window.'
+        assert (asked.title, asked.current, asked.description) == (
+            'When should Pax compact automatically?',
+            '85%',
+            'This model has a 200k window.',
+        )
+        assert [(option.label, option.description) for option in asked.options] == [
+            ('50% - about 100k tokens', 'Compacts at about 100k tokens of the 200k window.'),
+            ('60% - about 120k tokens', 'Compacts at about 120k tokens of the 200k window.'),
+            ('70% - about 140k tokens', 'Compacts at about 140k tokens of the 200k window.'),
+            ('80% - about 160k tokens', 'Compacts at about 160k tokens of the 200k window.'),
+            ('85% - about 170k tokens - default', 'Compacts at about 170k tokens of the 200k window.'),
+            ('90% - about 180k tokens', 'Compacts at about 180k tokens of the 200k window.'),
+            ('Fixed token count...', 'Type a count, such as 150k.'),
+            ('Reset to default', 'Compacts at 85% of the window.'),
+        ]
+        assert chain().max_fraction == 0.7
+
+        reply, [_, typing] = await answered(Pick(value='custom'), Type(text='150k'))
+        assert reply == 'Auto-compaction now runs above 150,000 tokens.'
+        assert (typing.title, typing.placeholder, typing.initial) == ('Compact above how many tokens?', '150k', '')
+        assert (chain().max_tokens, chain().max_fraction) == (150_000, None)
+
+        reply, [asked, typing] = await answered(Pick(value='custom'), Type(text=''))
+        assert reply == 'Auto-compaction unchanged: it runs above 150,000 tokens.'
+        assert asked.current == '150000' and asked.options[-3].label == '150,000 tokens'
+        assert typing.initial == '150000'
+
+        reply, _ = await answered(Back())
+        assert reply == 'Auto-compaction unchanged: it runs above 150,000 tokens.'
+
+        reply, _ = await answered(Pick(value='reset'))
+        assert reply == 'Auto-compaction now runs above 85% of the context window.'
+        assert store.plugins()[0].settings == {}
+    finally:
+        await plugins.close('exit')
+
+
+async def test_auto_compact_list_without_a_known_window_keeps_an_unlisted_share() -> None:
+    asking = ScriptedDialogs([Back()])
+    with without_terminal('/auto-compact', dialogs=asking):
+        reply = await make_plugin(threshold=0.75).commands.execute_async('/auto-compact')
+    assert reply == 'Auto-compaction unchanged: it runs above 75% of the context window.'
+    [asked] = asking.asked
+    assert asked.description == '' and asked.current == '75%'
+    assert [option.label for option in asked.options][:6] == ['50%', '60%', '70%', '75%', '80%', '85% - default']
+    assert (
+        asked.options[0].description == "Compacts at this share of the model's context window, whichever model you use."
+    )
+
+
+async def test_auto_compact_opens_its_list_in_the_terminal(monkeypatch: pytest.MonkeyPatch) -> None:
+    script = Script([], [MenuResult(cancelled=True)], [])
+    monkeypatch.setattr(dialogs, 'RUNNERS', script.runners)
+    host = PluginHost[None](name='compaction', console=Console(file=io.StringIO(), force_terminal=True), settings={})
+    plugin = load_plugin(CompactionPlugin, host)
+    assert await plugin.commands.execute_async('/auto-compact') == (
+        'Auto-compaction unchanged: it runs above 85% of the context window.'
+    )
+    assert script.opened == ['choice']
+    with without_terminal('/auto-compact'):
+        assert await plugin.commands.execute_async('/auto-compact') == (
+            'Auto-compaction runs above 85% of the context window. Set it with /auto-compact 150k, 70%, or reset.'
+        )
+
+
+@pytest.mark.parametrize(
+    ('typed_text', 'problem'),
+    [
+        ('150k', None),
+        ('70%', 'Type a token count, such as 150k; pick a share of the window from the list.'),
+        ('reset', 'Type a token count, such as 150k; pick a share of the window from the list.'),
+        ('lots', "'lots' is not a token count such as 150k, a share such as 70%, or reset."),
+        ('0', '/auto-compact 0: Input should be greater than 0'),
+    ],
+)
+def test_auto_compact_token_count_input_says_what_is_wrong(typed_text: str, problem: str | None) -> None:
+    assert _trigger_problem(CompactionSettings(), typed_text) == problem
 
 
 @pytest.mark.parametrize(

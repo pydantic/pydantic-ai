@@ -1428,7 +1428,8 @@ propagate. With the experimental `background_compaction` on, the chain also gets
 `background_start`: it writes the summary in the background ahead of the threshold and swaps it in
 when compaction is due; `/compact` without a focus uses a held summary, with a focus drops it, and
 unloading the plugin cancels one still running. `/plugins disable compaction` turns automatic compaction,
-`/compact`, and its context warning off. `/auto-compact 150k` saves `threshold_tokens` and
+`/compact`, and its context warning off. Bare `/auto-compact` asks through the web UI's `Dialogs`
+(`remote_dialogs()`) or the terminal's, offering shares of the window and a token count; `/auto-compact 150k` saves `threshold_tokens` and
 `/auto-compact 70%` saves `threshold` and clears `threshold_tokens`, through `host.plugins.save_settings`, so the
 plugin reloads for the next turn. `/plugins configure compaction` edits its
 settings (`strategy`, `threshold`, `threshold_tokens`, `protected_tokens`, `context_window`,
