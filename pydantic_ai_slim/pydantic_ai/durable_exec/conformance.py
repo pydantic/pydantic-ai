@@ -437,7 +437,7 @@ class DurableEngineSuite:
             breaks.append(f'recovering the refused run returned {_describe(recovered.output)}, not the refusal')
         if self.recovery.mode == 'replay' and after != before:
             breaks.append(f'recovering the refused run made a request again: {dict(before)} became {dict(after)}')
-        return breaks
+        return breaks + _observed_breaks('recovering the refused run', run, recovered)
 
     def _assert_cell(self, name: str, engine: DurableEngine, run: EngineRun, breaks: list[str]) -> None:
         cell = self.support.get(name)
@@ -509,8 +509,11 @@ def _differences(label: str, run: EngineRun, recovered: EngineRun, *, kept: int 
         breaks.append(f'{label} returned {_describe(recovered.output)}, not {run.output!r}')
     if recovered.units[:kept] != run.units[:kept]:
         breaks.append(f'{label} recorded {recovered.units}, not {run.units}')
+    return breaks + _observed_breaks(label, run, recovered)
+
+
+def _observed_breaks(label: str, run: EngineRun, recovered: EngineRun) -> list[str]:
+    """What `recovered` observed that `run` didn't, or the other way around: each event and message must be kept once."""
     lost = sorted((Counter(run.observed) - Counter(recovered.observed)).elements())
     added = sorted((Counter(recovered.observed) - Counter(run.observed)).elements())
-    breaks += [f'{label} lost {lost}'] if lost else []
-    breaks += [f'{label} added {added}'] if added else []
-    return breaks
+    return ([f'{label} lost {lost}'] if lost else []) + ([f'{label} added {added}'] if added else [])
