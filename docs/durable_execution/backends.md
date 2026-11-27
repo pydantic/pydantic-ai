@@ -447,9 +447,12 @@ class TestMyEngine(DurableEngineSuite):
   than replaying its record.
 - Return `False` from the `can_fork_mid_run` fixture if your engine can't recover a run from part of its record,
   and document that limit for your users.
-- Override `count_requests` to count the requests your own stand-ins make, so the suite checks a recovery repeats
-  none of them. Override `expected_units` and `model_request_unit` to pin the names your engine records, which a run
-  recorded by an earlier release recovers by.
+- The suite counts the requests a recovery must not make again: a capability's own model requests, and, under
+  `HarnessDurableEngineSuite`, the writes and reads of the stores the Harness cases use. They're counted in the test's
+  process. A case you add whose stand-ins make requests of their own overrides `count_requests` to count them too,
+  which keeps the suite's own counts.
+- Override `expected_units` and `model_request_unit` to pin the names your engine records, which a run recorded by
+  an earlier release recovers by.
 
 [`HarnessDurableEngineSuite`](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/conformance.py),
 from `pydantic_ai_harness.conformance`, is the same suite with the [Pydantic AI Harness](../harness/index.md)

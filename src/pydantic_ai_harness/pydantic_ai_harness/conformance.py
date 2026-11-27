@@ -13,7 +13,9 @@ from __future__ import annotations
 
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import ClassVar
+from typing import ClassVar, ParamSpec, TypeVar
+
+import pytest
 
 from pydantic_ai.capabilities import AbstractCapability, LocalWorkspace, Toolset
 from pydantic_ai.capabilities.conformance import (
@@ -24,12 +26,15 @@ from pydantic_ai.capabilities.conformance import (
     _echo_toolset,  # pyright: ignore[reportPrivateUsage]
     _with_echo,  # pyright: ignore[reportPrivateUsage]
 )
-from pydantic_ai.durable_exec.conformance import DurableEngineSuite
+from pydantic_ai.durable_exec.conformance import (
+    _NESTED as _SUITE_COUNTS,  # pyright: ignore[reportPrivateUsage]
+    DurableEngineSuite,
+)
 from pydantic_ai.messages import ToolCallPart
 from pydantic_ai.tools import ToolSelector
 
 from .background_tools import BackgroundTools
-from .capability_creation import CapabilityCreation
+from .capability_creation import CapabilityCreation, CapabilityStore
 from .code_mode import CodeMode
 from .coder import Coder
 from .compaction import CompactOnRequest, DeduplicateFileReads, PruneToolResults, SlidingWindowCompaction
@@ -51,6 +56,9 @@ from .tool_bridge import ToolBridge
 from .tool_budgets import ToolBudgets
 
 __all__ = ('CALLS', 'HarnessDurableEngineSuite')
+
+P = ParamSpec('P')
+T = TypeVar('T')
 
 
 def _workspace(build: Callable[[], AbstractCapability[None]]) -> CapabilityBuilder:
@@ -269,6 +277,31 @@ CALLS: Mapping[str, Calls] = {
 """The calls that run each Pydantic AI Harness capability's tools offline, keyed by capability class name."""
 
 
+_COUNTED_METHODS: tuple[tuple[str, type, str], ...] = (
+    ('store.write', CapabilityStore, 'write'),
+    ('store.list_all', CapabilityStore, 'list_all'),
+    ('store.disable', CapabilityStore, 'disable'),
+    # A memory write first looks up its idempotency key; the write is what recovery must not repeat.
+    ('memory.write', InMemoryMemoryStore, 'write'),
+    # The plan tools read the store many times; a write is what recovery must not repeat.
+    ('plan.set_items', SqlitePlanStore, 'set_items'),
+    ('plan.add_item', SqlitePlanStore, 'add_item'),
+    ('history.list_runs', SnapshotHistorySource, 'list_runs'),
+)
+"""The store methods `HarnessDurableEngineSuite` counts, each under its key: the requests a recovered run must not
+make again."""
+
+
+def _counting(key: str, method: Callable[P, T]) -> Callable[P, T]:
+    """`method`, counting each call in the suite's own counts under `key`, when its request starts."""
+
+    def counting(*args: P.args, **kwargs: P.kwargs) -> T:
+        _SUITE_COUNTS[key] += 1
+        return method(*args, **kwargs)
+
+    return counting
+
+
 class HarnessDurableEngineSuite(DurableEngineSuite):
     """`DurableEngineSuite` with the Pydantic AI Harness cases added to the core ones.
 
@@ -278,3 +311,13 @@ class HarnessDurableEngineSuite(DurableEngineSuite):
 
     cases: ClassVar[Mapping[str, Calls]] = {**_CORE_CALLS, **CALLS}
     """The core and Harness cases, by capability class name."""
+
+    @pytest.fixture(autouse=True)
+    def _count_stores(self, monkeypatch: pytest.MonkeyPatch) -> None:
+        """Count the writes and reads of the stores the Harness cases' stand-ins use, beside the suite's own counts.
+
+        They're counted in this process, whatever `count_requests` returns, so an override that counts stand-ins of
+        its own keeps them.
+        """
+        for key, owner, method in _COUNTED_METHODS:
+            monkeypatch.setattr(owner, method, _counting(key, getattr(owner, method)))

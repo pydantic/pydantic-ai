@@ -12,26 +12,19 @@ from collections import Counter
 from collections.abc import Callable, Collection, Mapping, Sequence
 from functools import partial
 from pathlib import Path
-from typing import ClassVar, Literal, ParamSpec, TypeVar
+from typing import ClassVar, Literal
 from unittest.mock import patch
 
 import pytest
 
 from pydantic_ai.capabilities import AbstractCapability
 from pydantic_ai.capabilities.conformance import Calls
-from pydantic_ai_harness.capability_creation import CapabilityStore
 from pydantic_ai_harness.conformance import HarnessDurableEngineSuite
-from pydantic_ai_harness.conversation_search import SnapshotHistorySource
-from pydantic_ai_harness.memory import InMemoryMemoryStore
-from pydantic_ai_harness.planning import SqlitePlanStore
 
 from ..append_only import skip_unless_installed
 from ..capability_cases import Contract
 from ._contracts import CASES, PUBLIC
 from ._counting_clients import AWS_CLI_COUNT_VARIABLE, REQUESTS
-
-P = ParamSpec('P')
-T = TypeVar('T')
 
 
 def build_case(name: str, directory: Path) -> list[AbstractCapability[None]]:
@@ -63,36 +56,15 @@ def suite_cases(contract: Contract) -> dict[str, Calls]:
     }
 
 
-def _counted(key: str, method: Callable[P, T]) -> Callable[P, T]:
-    """`method`, counting each call in `REQUESTS` under `key`: an async method's call, when its request starts."""
-
-    def counted(*args: P.args, **kwargs: P.kwargs) -> T:
-        REQUESTS[key] += 1
-        return method(*args, **kwargs)
-
-    return counted
-
-
 def counting_requests(monkeypatch: pytest.MonkeyPatch, directory: Path) -> Callable[[], Counter[str]]:
-    """Count every request the cases' stand-ins, the `aws` stand-in, and the stores make, from now on.
+    """Count every request the test-only cases' stand-ins and the `aws` stand-in make, from now on.
 
-    Both built-in suites count with it, so a request means the same thing in each. `directory` holds the `aws` count.
+    `HarnessDurableEngineSuite` counts the public cases' stores itself; both built-in suites add these, so a request
+    means the same thing in each. `directory` holds the `aws` count.
     """
     REQUESTS.clear()
     aws_count = directory / 'aws_cli_count'
     monkeypatch.setenv(AWS_CLI_COUNT_VARIABLE, str(aws_count))
-
-    monkeypatch.setattr(CapabilityStore, 'write', _counted('store.write', CapabilityStore.write))
-    monkeypatch.setattr(CapabilityStore, 'list_all', _counted('store.list_all', CapabilityStore.list_all))
-    monkeypatch.setattr(CapabilityStore, 'disable', _counted('store.disable', CapabilityStore.disable))
-    # A memory write first looks up its idempotency key; the write is what recovery must not repeat.
-    monkeypatch.setattr(InMemoryMemoryStore, 'write', _counted('memory.write', InMemoryMemoryStore.write))
-    # The plan tools read the store many times; a write is what recovery must not repeat.
-    monkeypatch.setattr(SqlitePlanStore, 'set_items', _counted('plan.set_items', SqlitePlanStore.set_items))
-    monkeypatch.setattr(SqlitePlanStore, 'add_item', _counted('plan.add_item', SqlitePlanStore.add_item))
-    monkeypatch.setattr(
-        SnapshotHistorySource, 'list_runs', _counted('history.list_runs', SnapshotHistorySource.list_runs)
-    )
 
     def snapshot() -> Counter[str]:
         counts = Counter(REQUESTS)

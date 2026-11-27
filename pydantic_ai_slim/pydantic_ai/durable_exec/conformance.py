@@ -69,7 +69,8 @@ _UNPROMPTED_REQUEST = 'model.unprompted_request'
 """What the suite counts a model request without `PROMPT` under: a capability's own run on the run's model."""
 
 _NESTED: Counter[str] = Counter()
-"""The model requests the suite's model counted itself, since the current cell started."""
+"""The requests the suite counted itself since the current cell started: its model's, and those of the stand-ins
+`pydantic_ai_harness.conformance` counts."""
 
 _OBSERVED: dict[str, list[str]] = {}
 """What each scenario agent's recorder saw in its latest run, by agent name: an engine may run a copy of it."""
@@ -228,9 +229,11 @@ class DurableEngineSuite:
 
     @pytest.fixture
     def count_requests(self) -> Callable[[], Mapping[str, int]]:
-        """Count the requests the cases' stand-ins make from now on, by kind: override it when they count any.
+        """Count the requests the cases' stand-ins make from now on, by kind.
 
-        The suite counts the model requests of a capability's own runs itself.
+        The suite counts the model requests of a capability's own runs itself, and `HarnessDurableEngineSuite` the
+        stores its cases use; the core cases' stand-ins make no other request. Override it to count the stand-ins
+        of a case of your own.
         """
         return dict
 

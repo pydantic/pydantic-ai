@@ -125,7 +125,8 @@ keep only the cells that aren't `supported`, and regenerate the docs table with
 `ENGINE_SUPPORT_MODULES` (`tests/capability_cases.py`) and `TABLES` in that script. A built-in
 engine's subclass extends `BuiltInEngineSuite` (`tests/harness/_durable_cases.py`), a
 `HarnessDurableEngineSuite` that also runs the cases whose stand-ins are test-only and pins the case
-units to each `CapabilityCase.durable_steps`. `TestDBOS` and `TestTemporal` are the examples, and
+units to each `CapabilityCase.durable_steps`. Its `count_requests` counts the test-only stand-ins;
+`HarnessDurableEngineSuite` counts the public cases' stores itself. `TestDBOS` and `TestTemporal` are the examples, and
 `agent_docs/capability-conformance.md` ("Durable execution") says what each level checks.
 
 ## Core changes that engines depend on
