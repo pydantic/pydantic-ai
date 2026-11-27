@@ -57,6 +57,7 @@ from .abstract import (
 if TYPE_CHECKING:
     from pydantic_ai.models import ModelRequestContext
     from pydantic_ai.output import OutputContext
+    from pydantic_ai.realtime import RealtimeConnectContext
     from pydantic_ai.run import AgentRunResult
 
 _FuncT = TypeVar('_FuncT', bound=Callable[..., Any])
@@ -159,6 +160,10 @@ class OnEventHookFunc(Protocol, Generic[EventT]):
     def __call__(
         self, ctx: RunContext[Any], event: EventT, /
     ) -> None | AgentStreamEvent | Awaitable[None | AgentStreamEvent]: ...
+
+class BeforeRealtimeConnectHookFunc(Protocol):
+    """Protocol for [`before_realtime_connect`][pydantic_ai.capabilities.AbstractCapability.before_realtime_connect] hook functions."""
+    def __call__(self, ctx: RunContext[Any], connect_context: RealtimeConnectContext, /) -> RealtimeConnectContext | Awaitable[RealtimeConnectContext]: ...
 
 class BeforeModelRequestHookFunc(Protocol):
     """Protocol for [`before_model_request`][pydantic_ai.capabilities.AbstractCapability.before_model_request] hook functions."""
@@ -462,6 +467,19 @@ class _HookRegistration(Generic[AgentDepsT]):
             return func
 
         return decorator
+
+    # --- Realtime session ---
+
+    @overload
+    def before_realtime_connect(self, func: BeforeRealtimeConnectHookFunc, /) -> BeforeRealtimeConnectHookFunc: ...
+    @overload
+    def before_realtime_connect(
+        self, *, timeout: float | None = None
+    ) -> Callable[[BeforeRealtimeConnectHookFunc], BeforeRealtimeConnectHookFunc]: ...
+    def before_realtime_connect(
+        self, func: BeforeRealtimeConnectHookFunc | None = None, *, timeout: float | None = None
+    ) -> Any:
+        return _bare_or_parameterized(self._r, 'before_realtime_connect', func, timeout=timeout)
 
     # --- Model request ---
 
@@ -823,6 +841,8 @@ class Hooks(AbstractCapability[AgentDepsT]):
         # Event stream
         run_event_stream: WrapRunEventStreamHookFunc | None = None,
         event: OnEventHookFunc[AgentStreamEvent] | None = None,
+        # Realtime session
+        before_realtime_connect: BeforeRealtimeConnectHookFunc | None = None,
         # Model request
         before_model_request: BeforeModelRequestHookFunc | None = None,
         prepare_model_request: PrepareModelRequestHookFunc | None = None,
@@ -877,6 +897,7 @@ class Hooks(AbstractCapability[AgentDepsT]):
             'on_node_run_error': node_run_error,
             'wrap_run_event_stream': run_event_stream,
             'on_event': event,
+            'before_realtime_connect': before_realtime_connect,
             'before_model_request': before_model_request,
             'prepare_model_request': prepare_model_request,
             'after_model_request': after_model_request,
@@ -1096,6 +1117,13 @@ class Hooks(AbstractCapability[AgentDepsT]):
                 ctx._event_stream_replacements[id(original_event)] = replacement  # pyright: ignore[reportPrivateUsage]
         # A `Hooks` subclass can carry marked listeners of its own; the base dispatches them.
         await super().on_event(ctx, event=event)
+
+    async def before_realtime_connect(
+        self, ctx: RunContext[AgentDepsT], connect_context: RealtimeConnectContext
+    ) -> RealtimeConnectContext:
+        for entry in self._get('before_realtime_connect'):
+            connect_context = await _call_entry(entry, 'before_realtime_connect', ctx, connect_context)
+        return connect_context
 
     async def before_model_request(
         self, ctx: RunContext[AgentDepsT], request_context: ModelRequestContext

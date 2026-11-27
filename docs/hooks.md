@@ -189,6 +189,14 @@ To skip the model call entirely, raise [`SkipModelRequest(response)`][pydantic_a
 !!! note "Context variables in streamed model requests"
     In [`run_stream()`][pydantic_ai.agent.AbstractAgent.run_stream], context-variable values set by an async `before_model_request` hook are available to later tool, output, and run hooks, as in a non-streamed run. Values set later in that model request (for example, after a wrapper's handler returns) may not be. Use mutable [dependencies](dependencies.md) for state that must be shared throughout the run.
 
+### Realtime session hooks
+
+| `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
+|---|---|---|
+| `before_realtime_connect` | `before_realtime_connect=` | `before_realtime_connect` |
+
+A [realtime session](realtime/capabilities.md) has no model requests, so model request hooks don't fire in one. `before_realtime_connect` fires once instead, before the session connects, with a [`RealtimeConnectContext`][pydantic_ai.realtime.RealtimeConnectContext] that bundles `model`, `messages`, `model_settings`, and `model_request_parameters`. It can change `messages`, the history the session is seeded with, which is then what the session records and what a reconnect replays; the other fields are read-only. It never fires in a standard run. See [Processing seeded history](realtime/capabilities.md#processing-seeded-history).
+
 ### Tool validation hooks
 
 | `hooks.on.` | Constructor kwarg | `AbstractCapability` method |
