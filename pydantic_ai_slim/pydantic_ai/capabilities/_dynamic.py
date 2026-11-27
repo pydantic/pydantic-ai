@@ -15,7 +15,7 @@ from .abstract import (
     CapabilityOrdering,
     _LoweredInstructionSource,  # pyright: ignore[reportPrivateUsage]
 )
-from .wrapper import WrapperCapability, _registers_children  # pyright: ignore[reportPrivateUsage]
+from .wrapper import WrapperCapability
 
 CapabilityFunc: TypeAlias = Callable[
     [RunContext[AgentDepsT]],
@@ -130,12 +130,15 @@ class ResolvedDynamicCapability(WrapperCapability[AgentDepsT]):
         return self.dynamic_toolset
 
     def _lowered_instruction_sources(self) -> list[_LoweredInstructionSource[AgentDepsT]]:
-        # A wrapper over a leaf stands in for it. When the factory returns a container, keep the resolved
-        # tree's lowered blocks and ids instead of grouping them under this wrapper.
-        wrapped_capabilities: list[AbstractCapability[AgentDepsT]] = []
-        self.wrapped.apply(wrapped_capabilities.append)
-        if _registers_children(self.wrapped, wrapped_capabilities):
-            return self.wrapped._lowered_instruction_sources()
+        # A deferred group's members state their instructions only after the group is loaded.
+        if self.defer_loading is True:
+            return super()._lowered_instruction_sources()
+        from .combined import CombinedCapability
+
+        # A direct container keeps its members' block ids. For a wrapper around one, this dynamic wrapper must remain
+        # the source: it owns the outer toolset that gathers the nested toolsets' instructions.
+        if isinstance(self.wrapped, CombinedCapability):
+            return self.wrapped._lowered_instruction_sources()  # pyright: ignore[reportPrivateUsage]
         return super()._lowered_instruction_sources()
 
     def get_ordering(self) -> CapabilityOrdering | None:

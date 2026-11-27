@@ -25,6 +25,7 @@ from pydantic_ai.capabilities import (
     Hooks,
     ModelFallback,
     PrefixTools,
+    Toolset,
 )
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import (
@@ -48,6 +49,7 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.toolsets import FunctionToolset
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
@@ -544,6 +546,50 @@ async def test_a_dynamic_capabilitys_ceiling_lowers_the_instructions_it_returns(
     assert received.instructions == ['Be brief.']
     assert statements(result.all_messages()) == [
         InstructionDeltaPart(id=NOTES_ID, content='Static note.\n\nThe count is 1.', authority='none')
+    ]
+
+
+async def test_a_deferred_dynamic_groups_instructions_are_not_stated_before_it_loads():
+    """A dynamic deferred group keeps its member instructions hidden until the group is loaded."""
+    received = Received()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.messages.append(messages)
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    group = CombinedCapability[Notes](
+        [notes_capability()], id='notes_group', description='Notes tools.', defer_loading=True
+    )
+    agent = Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=Notes,
+        capabilities=[DynamicCapability(lambda ctx: group).with_authority('none')],
+    )
+    result = await agent.run('Hi', deps=Notes())
+
+    assert statements(result.all_messages()) == []
+    assert all('Static note.' not in str(message) for message in received.messages)
+
+
+async def test_a_dynamic_wrapper_keeps_its_nested_toolsets_instructions():
+    """Keeping the dynamic wrapper as the source preserves the owner of a nested toolset's instructions."""
+    received = Received()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.messages.append(messages)
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    docs = Toolset(FunctionToolset(instructions='Always search the docs first.'), id='docs')
+    wrapped = PrefixTools(wrapped=CombinedCapability([docs]), prefix='n')
+    agent = Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=type(None),
+        capabilities=[DynamicCapability(lambda ctx: wrapped).with_authority('none')],
+    )
+    result = await agent.run('Hi')
+
+    assert [(delta.content, delta.authority) for delta in statements(result.all_messages())] == [
+        ('Always search the docs first.', 'none')
     ]
 
 
