@@ -216,9 +216,9 @@ def test_required_check_after_first_hundred_contexts_is_seen(tmp_path: Path):
     ('event', 'base', 'required', 'reason'),
     [
         ('pull_request', 'main', True, None),
-        ('pull_request', 'release', True, 'PR #123 is based on release, not main'),
+        ('pull_request', 'release', False, 'PR #123 is based on release, not main'),
         ('pull_request_review', 'main', True, None),
-        ('pull_request_review', 'release', True, 'PR #123 is based on release, not main'),
+        ('pull_request_review', 'release', False, 'PR #123 is based on release, not main'),
         ('workflow_run', 'release', False, f'required check has not passed on {HEAD}'),
         ('workflow_dispatch', 'main', True, None),
         ('workflow_dispatch', 'release', True, None),

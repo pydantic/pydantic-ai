@@ -434,6 +434,13 @@ jobs:
           # on a fork PR skips as silently as the `workflow_run` path does.
           [ -n "$MARKER_SHA" ] || MARKER_SHA="$HEAD_SHA"
 
+          # --- Default-branch base ---------------------------------------------
+          # An approval or label requests a review only on a PR into the default branch.
+          if [ "$EVENT_NAME" = 'pull_request_review' ] || [ "$EVENT_NAME" = 'pull_request' ]; then
+            [ -n "$EVENT_BASE_REF" ] && [ "$EVENT_BASE_REF" = "$DEFAULT_BRANCH" ] \
+              || skip "PR #${PR_NUMBER} is based on ${EVENT_BASE_REF}, not ${DEFAULT_BRANCH}"
+          fi
+
           # --- Current-head authority ----------------------------------------
           # The PR moved on while CI was running: reviewing the CI run's head would
           # comment on code that is no longer there. The CI run for the new head
@@ -483,13 +490,6 @@ jobs:
               | select((.conclusion // .state) as $c | $c != "SUCCESS" and $c != "SKIPPED" and $c != "NEUTRAL")
               | (.name // .context) ] | join(", ")')
           [ -z "$FAILING" ] || skip "required checks not passing: ${FAILING}"
-
-          # --- Default-branch base ---------------------------------------------
-          # An approval or label requests a review only on a PR into the default branch.
-          if [ "$EVENT_NAME" = 'pull_request_review' ] || [ "$EVENT_NAME" = 'pull_request' ]; then
-            [ -n "$EVENT_BASE_REF" ] && [ "$EVENT_BASE_REF" = "$DEFAULT_BRANCH" ] \
-              || skip "PR #${PR_NUMBER} is based on ${EVENT_BASE_REF}, not ${DEFAULT_BRANCH}"
-          fi
 
           # --- A maintainer already asked for changes --------------------------
           # Piling an AI verdict on top of a human REQUEST_CHANGES adds noise to a
