@@ -4,8 +4,9 @@ from __future__ import annotations
 
 import re
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from unittest.mock import MagicMock
 
 import pytest
 
@@ -42,6 +43,10 @@ from pydantic_ai_harness.permissions import (
 )
 from pydantic_ai_harness.shell import Shell
 from pydantic_ai_harness.sub_agents import SubAgents
+from tests.conftest import try_import
+
+with try_import() as prefect_installed:
+    from pydantic_ai.durable_exec.prefect._cache_policies import PrefectAgentInputs
 
 
 def _calls(*calls: tuple[str, Mapping[str, object]]) -> FunctionModel:
@@ -1063,6 +1068,32 @@ class _KeepingResults(AbstractCapability[None]):
         return result
 
 
+async def _reviewer_approved_call(*capabilities: AbstractCapability[None]) -> RunContext[None]:
+    """Run an unprotected call a reviewer approves, and return the context its tool ran with."""
+    seen: list[RunContext[None]] = []
+
+    def run_command(ctx: RunContext[None], command: str) -> str:
+        seen.append(ctx)
+        return 'ran'
+
+    agent = Agent[None, str](
+        _calls(('run_command', {'command': 'echo x > notes.md'})),
+        deps_type=type(None),
+        tools=[Tool(run_command, requires_approval=True)],
+        capabilities=[*capabilities, ApprovalReviewer[None](_safe_reviewer(), question='Could this call do harm?')],
+    )
+    await agent.run('go')
+    [ctx] = seen
+    return ctx
+
+
+def _prefect_key(ctx: RunContext[None]) -> str | None:
+    """The key Prefect caches a tool call under, from its `RunContext` and arguments."""
+    return PrefectAgentInputs().compute_key(
+        task_ctx=MagicMock(), inputs={'ctx': ctx, 'args': {'command': 'echo x > notes.md'}}, flow_parameters={}
+    )
+
+
 class _DefersFirst(AbstractCapability[None]):
     """Defers every call from `after_tool_validate`, before `Permissions` sees it, without saying it is protected."""
 
@@ -1137,14 +1168,14 @@ class TestProtectedCallsDeferredBeforePermissions:
         assert ran == ['echo x > notes.md']
 
     async def test_a_reviewer_approval_on_resume_still_asks_a_person(self, tmp_path: Path) -> None:
-        """Results a reviewer gave for the call where nothing marked it protected, such as before the path was."""
+        """Results a reviewer gave for the call where nothing marked it protected, such as before `.pax` was."""
         command = 'echo x > .pax/settings.json'
         reviewer = _KeepingResults(ApprovalReviewer[None](_safe_reviewer(), question='Could this call do harm?'))
         unprotected = Agent[None, str](
             _calls(('run_command', {'command': command})),
             deps_type=type(None),
             tools=[_approval_required_shell([])],
-            capabilities=[reviewer],
+            capabilities=[Permissions('auto', protected_paths=['.git/hooks/*']), reviewer],
         )
         await unprotected.run('go')
         [approvals] = reviewer.results
@@ -1164,6 +1195,34 @@ class TestProtectedCallsDeferredBeforePermissions:
         assert isinstance(resumed.output, DeferredToolRequests)
         assert [(r.subject, r.person_only) for r in permission_requests(resumed.output)] == [(command, True)]
         assert ran == []
+
+    @pytest.mark.parametrize(
+        'permissions',
+        [
+            pytest.param([], id='no-permissions'),
+            pytest.param([Permissions[None]('auto')], id='nothing-protected'),
+        ],
+    )
+    async def test_without_protection_a_reviewer_approval_leaves_the_call_as_it_was(
+        self, permissions: list[AbstractCapability[None]]
+    ) -> None:
+        """No marker in its `tool_call_metadata`, so neither the tool nor a durable cache key sees a change."""
+        seen = await _reviewer_approved_call(*permissions)
+        assert seen.tool_call_approved and seen.tool_call_metadata is None
+        if prefect_installed():  # pragma: no branch
+            assert _prefect_key(seen) == _prefect_key(replace(seen, tool_call_metadata=None))
+
+    @pytest.mark.parametrize(
+        'permissions',
+        [
+            pytest.param(Permissions[None]('auto', protected_paths=['.git/hooks/*']), id='protected-paths'),
+            pytest.param(Permissions[None]('auto', protected_commands=['pax config']), id='protected-commands'),
+            pytest.param(Permissions[None]('auto', protected_paths=['.git/hooks/*']).prefix_tools('p'), id='wrapped'),
+        ],
+    )
+    async def test_with_protection_a_reviewer_approval_is_marked(self, permissions: AbstractCapability[None]) -> None:
+        seen = await _reviewer_approved_call(permissions)
+        assert seen.tool_call_metadata == {'approval_reviewer': {'approved': True}}
 
     async def test_a_person_approval_on_resume_runs_it(self, tmp_path: Path) -> None:
         ran: list[str] = []
