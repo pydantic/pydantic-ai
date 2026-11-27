@@ -459,8 +459,9 @@ between tool calls.
   events) and an event's text (`browser.event.message`) are recorded only when the
   run includes content in traces. The spans go to the run's own tracer, so an agent
   instrumented for [Logfire](https://pydantic.dev/docs/ai/integrations/logfire/)
-  reports them with everything else. A session used outside an agent run reports
-  to `PlaywrightBrowserSession.tracer` and records everything.
+  reports them with everything else. A
+  browser tool called outside an agent run's tool call, such as on a session driven
+  directly, reports to `PlaywrightBrowserSession.tracer` and records everything.
 - The agent can read the same log through `console_messages` and
   `network_requests`, which is often how it recovers from a page that renders
   from an API rather than from HTML. Only what identifies a request is recorded,

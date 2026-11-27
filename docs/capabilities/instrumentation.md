@@ -21,6 +21,6 @@ agent = Agent('{{ openai:medium }}', capabilities=[Instrumentation()])
 
 Pass [`InstrumentationSettings`][pydantic_ai.models.instrumented.InstrumentationSettings] via `Instrumentation(settings=...)` to customize providers, content capture, and the conventions version. To instrument every agent in your application instead of attaching the capability per agent, use [`Agent.instrument_all()`][pydantic_ai.agent.Agent.instrument_all].
 
-Other capabilities can attach attributes to the created spans with [`current_span`][pydantic_ai.telemetry.current_span], which returns a span only inside the run's own trace. See [Tracing what your capability does](custom.md#tracing) for the other helpers.
+Other capabilities can add attributes to a tool call's span with [`tool_call_span`][pydantic_ai.capabilities.tool_call_span]. See [Tracing what your capability does](custom.md#tracing) for the other helpers.
 
 See [Debugging and Monitoring](../logfire.md#using-logfire) for the full guide: setup, what gets captured, semantic-conventions versions, and excluding sensitive or binary content.

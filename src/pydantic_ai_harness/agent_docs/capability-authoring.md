@@ -347,23 +347,20 @@ adds no spans because core's `Instrumentation` already covers the run, and
 would grow the trace without recording a decision. Write the reason down. An
 undocumented silence is indistinguishable from an oversight.
 
-The house pattern uses four functions from the public `pydantic_ai.telemetry` module, the same ones a
-user writing their own capability uses, plus `records_content` for content that costs something to
-build. `RunTelemetry` and `current_run_telemetry` are how code without a `ctx` reaches the run's
-telemetry. Each function takes the run first, as its `ctx` or, where there is none,
-`current_run_telemetry()`, and does nothing when that run isn't traced, so an uninstrumented run
-pays nothing:
+The house pattern uses three functions from `pydantic_ai.capabilities`, the same ones a user writing
+their own capability uses. Each takes the run's `ctx` and does nothing when the run isn't traced, so
+an uninstrumented run pays nothing:
 
 ```python
-from pydantic_ai.telemetry import current_span, open_span, record_decision, set_content_attribute
+from pydantic_ai.capabilities import open_span, record_decision, tool_call_span
 
 # Work that takes time and can fail (a hypothetical `notes` capability).
 with open_span(ctx, 'notes search', attributes={'notes.backend': backend}, content={'notes.query': query}) as span:
     match = await store.search(query)
     span.set_attribute('notes.matched', match is not None)
-    if match is not None:
+    if match is not None and ctx.trace_include_content:
         # Content found partway through the span.
-        set_content_attribute(ctx, span, 'notes.match_path', match.path)
+        span.set_attribute('notes.match_path', match.path)
 
 # A decision that changed the run's course (from `Guardrails`).
 record_decision(
@@ -373,44 +370,40 @@ record_decision(
     content={'guardrail.message': message},
 )
 
-# An attribute on the span already open around a tool hook (`execute_tool`).
-current_span(ctx).set_attribute('notes.truncated', True)
+# An attribute on the tool call's `execute_tool` span, from a tool hook or a tool body.
+tool_call_span(ctx).set_attribute('notes.truncated', True)
 ```
 
 Where the tracer comes from:
 
 - Pass the `ctx` of the hook or tool the code runs in.
-- Code that runs during a run but has no `RunContext`, such as a backend, store or session that runs
-  can share, passes `current_run_telemetry()`: the calling run's tracer and content policy, read at
-  call time. Never store a tracer on such an object: a run sharing it would trace to another run's
-  tracer. Inside a hook, pass `ctx` instead: the value is only published once `wrap_run` starts.
+- Never store a tracer on a backend, store or session that runs can share: a run sharing it would
+  trace to another run's tracer. Pass the calling `ctx` into the operation instead. Core code with no
+  `ctx`, such as a workspace, uses a private helper that reads the run's tracer at call time.
 - A standalone helper that users call outside any run takes `tracer: Tracer | None = None` and falls
   back to `NoOpTracer()`, so it emits the same span shape as the in-run path (`compaction`'s
   `compact_messages`).
-- A span opened in `for_run` goes to the right tracer, but it isn't a child of the run's `invoke_agent`
-  span, which opens after `for_run` returns. Record from a hook inside the run instead, such as
-  `before_run`. `Skills` still records its scan from `for_run`; moving it is a follow-up.
+- Record from `before_run` or the tool and model request hooks. `for_run` runs before the run's tracing
+  settings are final and before its `invoke_agent` span opens, so it can use a tracer or content setting
+  the run then drops. In a realtime session, `before_run` also runs before the session span opens.
+  `Skills` still records its scan from `for_run`; moving it is a follow-up.
+- Replayed work is not exported twice only on Temporal, and only from `wrap_run` on. DBOS and Prefect
+  don't report replay to these helpers.
 
 What to record, and where:
 
-- Prefer an attribute on a span that is already open, through `current_span(ctx)`. In a tool hook
-  (`before_tool_execute`, `after_tool_execute`, `wrap_tool_execute`) that is the call's `execute_tool`
-  span; in `before_model_request` it is the request's `chat` span. The helpers work only inside the
-  run's `agent run` span: in `for_run`, and in a `wrap_run` of a capability that is also outermost and
-  listed before an explicit `Instrumentation`, they do nothing. Don't call `opentelemetry.trace.get_current_span()` directly: in an
-  uninstrumented run it returns whatever span the application has open, such as its request span.
-- `current_span(ctx)` in a tool's own body, including a toolset's `call_tool`, is also that call's
-  `execute_tool` span, not only the span seen by tool hooks, except in a durable unit that runs out of
-  process, such as a Temporal activity, where it is `INVALID_SPAN`.
-- Take `current_span(ctx)` before or after nested work, never while a child span may be current in
-  another task.
+- Prefer an attribute on the tool call's span, through `tool_call_span(ctx)`. It is the call's
+  `execute_tool` span while `Instrumentation` has it open for that call: in `before_tool_execute`,
+  `after_tool_execute`, a `wrap_tool_execute` inside `Instrumentation`, a tool's body and a toolset's
+  `call_tool`. Everywhere else, such as `for_run`, `before_run`, `wrap_run`, `before_tool_validate`, or
+  a task that outlives the call, it is `INVALID_SPAN`. Don't call
+  `opentelemetry.trace.get_current_span()` directly: in an uninstrumented run it returns whatever span
+  the application has open, such as its request span.
 - A durable-unit context that did not carry the tracer makes every telemetry helper a no-op: the unit
   is untraced.
-- Holding a `RunTelemetry` for one operation and clearing it in `finally` is not storing a tracer.
 - Give a decision its own `record_decision` when there's no span to put it on, when one span can see
   several decisions (guards in a chain), or when operators should find it by name across capabilities
-  (`guardrail blocked input`, `spend budget exhausted`). It is a span that ends at once today; its public
-  docstring says a later release may record it as a span event (#11562) under the same name and attributes.
+  (`guardrail blocked input`, `spend budget exhausted`). It is a span that ends at once.
 - Open a span for work with its own duration, and give slow setup, such as starting a sandbox or a
   browser, its own child span, so it isn't mistaken for the work that triggered it.
 - Record what was acted on and what happened (ids, counts, sizes, outcomes) as plain attributes, so
@@ -419,19 +412,18 @@ What to record, and where:
 Content:
 
 - Content is anything that could quote user content, a prompt, tool arguments, a path, or a tenant or
-  user id. It goes only through `content=` or `set_content_attribute`, which record it only when the
-  run captures content. A trace has a wider audience than the application that produced it.
+  user id. It goes only through `content=`, which records it only when the run captures content, or
+  onto a span only `if ctx.trace_include_content`. A trace has a wider audience than the application that produced it.
 - Never put content in a span's name or in `logfire.msg`. Logfire does not scrub `logfire.msg`.
-- `open_span` records an uncaught error by its type only, unless the run captures content, because an
-  exception message can quote content. A cancellation is not an error and leaves the status unset. For
+- `open_span` sets `error.type` on an uncaught error. It records the error's message only when the
+  run captures content, because an exception message can quote content. A cancellation is not an error and leaves the status unset. For
   an exception that is an expected answer, such as a `FileNotFoundError` from an existence check, catch
   it inside the span and record the outcome as an attribute.
 - `content=` and `attributes=` are built even when nothing is recorded, so pass plain values. When
   building a content value costs something or can raise, such as `str()` of an object a guard returned
-  or a serialized message, build it only `if records_content(ctx)` and pass `None` otherwise:
-  `content={'guardrail.replacement': str(replacement)} if records_content(ctx) else None`. Don't read
-  `ctx.trace_include_content` for this: it raises in a durable unit that didn't carry it. Don't test
-  `span.is_recording()` either: `record_decision` gives you no span, and a span records when the run
+  or a serialized message, build it only `if ctx.trace_include_content` and pass `None` otherwise:
+  `content={'guardrail.replacement': str(replacement)} if ctx.trace_include_content else None`. Don't
+  test `span.is_recording()` for this: `record_decision` gives you no span, and a span records when the run
   is traced without content too.
 
 Names:
@@ -453,11 +445,9 @@ what happened uses the words the capability's API already uses for it, such as t
 `GuardrailResult` actions (`block`, `replace`, `approve`) or `SubAgents`' `DelegationOutcome`, so an
 operator reading a trace and a developer reading the code name the same outcome the same way.
 
-Code that still calls `ctx.tracer.start_span` or `start_as_current_span`, or checks
-`ctx.trace_include_content` to gate recording content itself, predates these functions and moves onto
-them in follow-ups; don't copy it. To skip building costly content, use `records_content(ctx)`, as above.
-Smart search (`smart_search/_toolset.py`) keeps its own span on purpose: the span records no failure
-and leaves it to the enclosing tool span, which redacts it by `include_content`.
+Code that still calls `ctx.tracer.start_span` or `start_as_current_span` predates these functions and moves onto
+them in follow-ups; don't copy it. Smart search (`smart_search/_toolset.py`) keeps its own span on purpose:
+the span records no failure and leaves it to the enclosing tool span, which redacts it by `include_content`.
 
 Document the spans and their attributes in both the capability README and the docs page, and cover
 them in tests like any other public behavior.

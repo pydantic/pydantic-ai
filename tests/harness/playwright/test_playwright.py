@@ -4044,14 +4044,12 @@ class TestBrowserEvents:
         session.page = _BusyPage()
 
         tracing, exporter = instrumented(include_content)
-        agent = Agent(TestModel(call_tools=['drive']), capabilities=[tracing])
+        # Called by the run, so the operation follows that run's tracer and content setting.
+        agent = Agent(
+            TestModel(call_tools=['get_text']), deps_type=type(None), toolsets=[toolset], capabilities=[tracing]
+        )
 
-        @agent.tool_plain
-        async def drive() -> str:
-            await toolset.get_text()
-            return ''
-
-        await agent.run('drive')
+        await agent.run('read the page')
         (span,) = [span for span in exporter.get_finished_spans() if span.name.startswith('browser ')]
         # Everything exported is pinned, so a content-bearing attribute added later fails here.
         exported = (dict(span.attributes or {}), [dict(event.attributes or {}) for event in span.events])

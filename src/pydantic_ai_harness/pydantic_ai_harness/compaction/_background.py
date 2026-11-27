@@ -8,9 +8,9 @@ from collections.abc import Sequence
 from dataclasses import dataclass
 
 from pydantic_ai._utils import cancel_and_drain
+from pydantic_ai.capabilities import open_span
 from pydantic_ai.messages import ModelMessage
 from pydantic_ai.models import AbstractModel
-from pydantic_ai.telemetry import open_span
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._shared import CompactionStrategy
 
