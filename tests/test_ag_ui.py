@@ -12602,7 +12602,7 @@ async def test_run_id_defaults_to_run_input_run_id():
 
 
 async def test_resent_run_id_falls_back_to_a_run_id_of_the_agents_own():
-    """A `runId` the stored history already has would fail the run, so the agent picks its own `run_id` and the adapter warns."""
+    """A `runId` the stored history already has would fail the run, so the agent picks its own `run_id`."""
     agent = Agent(model=FunctionModel(stream_function=simple_stream))
     store = InMemoryConversationStore()
     first = create_input(UserMessage(id='u1', content='Hi'), thread_id='thread').model_copy(update={'run_id': 'run-1'})
@@ -12611,8 +12611,7 @@ async def test_resent_run_id_falls_back_to_a_run_id_of_the_agents_own():
         UserMessage(id='u1', content='Hi'), UserMessage(id='u2', content='Again'), thread_id='thread'
     ).model_copy(update={'run_id': 'run-1'})
 
-    with pytest.warns(UserWarning, match="The request's run ID 'run-1' already appears in the message history"):
-        events = await _stored_turn(agent, store, resent)
+    events = await _stored_turn(agent, store, resent)
 
     assert not [event for event in events if isinstance(event, RunErrorEvent)]
     [started] = [event for event in events if isinstance(event, RunStartedEvent)]
@@ -12640,7 +12639,7 @@ async def test_run_id_argument_wins_over_run_input_run_id():
 
 
 async def test_empty_run_input_run_id_leaves_the_run_id_to_the_agent():
-    """An empty `runId` is no ID to correlate by, so the agent mints its own `run_id` without a warning."""
+    """An empty `runId` is no ID to correlate by, so the agent mints its own `run_id`."""
     agent = Agent(model=FunctionModel(stream_function=simple_stream))
     run_input = create_input(UserMessage(id='u1', content='Hi')).model_copy(update={'run_id': ''})
     adapter = AGUIAdapter(agent, run_input)

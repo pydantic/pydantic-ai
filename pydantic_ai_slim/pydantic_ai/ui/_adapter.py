@@ -1237,7 +1237,8 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """The `run_id` to run the agent with: the one passed, else the request's own, else `None` to leave it to the agent.
 
         The client mints the request's ID, so one it resends would fail the run with the `UserError` a
-        `run_id` already on the history raises; the agent picks its own instead, with a warning.
+        `run_id` already on the history raises; the agent picks its own instead. That's silent: the client, not
+        the caller, supplied the ID, so there's nothing for the caller to change.
         """
         if run_id is not None:
             return run_id
@@ -1246,12 +1247,6 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             return None
         history = conversation.messages if conversation is not None else message_history or ()
         if any(message.run_id == request_run_id for message in history):
-            warnings.warn(
-                f"The request's run ID {request_run_id!r} already appears in the message history, so the agent run "
-                'gets a `run_id` of its own instead. Pass `run_id` to choose it yourself.',
-                UserWarning,
-                stacklevel=2,
-            )
             return None
         return request_run_id
 
