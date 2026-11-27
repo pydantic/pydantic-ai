@@ -11,6 +11,7 @@ import sys
 from collections.abc import AsyncIterator, Callable
 from dataclasses import replace
 from pathlib import Path
+from typing import ParamSpec
 
 import anyio
 import httpx
@@ -99,7 +100,7 @@ from pydantic_ai_pax.builtin_plugins.web.protocol import (
 )
 from pydantic_ai_pax.builtin_plugins.web.server import WebServer
 from pydantic_ai_pax.builtin_plugins.web.service import Observer
-from pydantic_ai_pax.cli import cli
+from pydantic_ai_pax.cli import cli, web as web_module
 from pydantic_ai_pax.cli.web import run_web
 from pydantic_ai_pax.config import PluginSettings, Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
@@ -108,6 +109,7 @@ from pydantic_ai_pax.plugins import CommandEnd, ForkEnd, ForkInfo, PluginHost, T
 from pydantic_ai_pax.plugins.menus import Option
 from pydantic_ai_pax.runtime.monty_cells import MontyCell
 from pydantic_ai_pax.runtime.sandbox_calls import SandboxCallFinishedEvent, SandboxCallStartedEvent
+from pydantic_ai_pax.runtime.session_runtime import SessionRuntime
 from pydantic_ai_pax.runtime.worktrees import Worktree
 from pydantic_ai_pax.ui.rendering.status import Status
 from pydantic_ai_pax.ui.rendering.usage_report import session_usage
@@ -849,6 +851,8 @@ async def test_run_web_on_a_launchers_port_and_token(
         assert token not in output.getvalue()
 
 
+_P = ParamSpec('_P')
+
 CLI_AGENT = Agent(TestModel())
 """What `pax --web --agent tests.pax.test_web_parts:CLI_AGENT` imports."""
 
@@ -876,21 +880,25 @@ def test_web_flag_serves_an_agent_of_your_own(tmp_path: Path, monkeypatch: pytes
 
 
 async def test_run_web_serves_an_agent_of_your_own(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    """`pax --web --agent` runs that agent, with its tools and model, in the session Pax starts with, loading no plugin but `web`.
+    """`pax --web --agent` runs that agent, with its tools and model, loading no plugin but `web`: in the session Pax
+    starts with, and in a session opened from the browser.
 
-    Its conversation is saved, so the sidebar can resume it, as for the stock agent.
+    Their conversations are saved, so the sidebar can resume them, as for the stock agent.
     """
     opened: list[str] = []
     monkeypatch.setattr('pydantic_ai_pax.builtin_plugins.web.open_browser', opened.append)
     offered: list[list[str]] = []
     instructions: list[str] = []
+    answered = anyio.Event()
 
     async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
         offered.append(sorted(tool.name for tool in info.function_tools))
         instructions.append(info.instructions or '')
-        if len(offered) == 1:
+        if not any(isinstance(part, ToolReturnPart) for part in messages[-1].parts):
             yield {0: DeltaToolCall(name='shout', json_args='{"text": "hello"}')}
         else:
+            if len(offered) == 4:
+                answered.set()
             yield 'Shouted.'
 
     agent = Agent(FunctionModel(stream_function=respond, model_name='custom'))
@@ -902,6 +910,16 @@ async def test_run_web_serves_an_agent_of_your_own(tmp_path: Path, monkeypatch: 
 
     store = SettingsStore(tmp_path / 'config.db')
     store.set('model', 'openai:gpt-5')
+    shells: list[SessionRuntime[None, object]] = []
+
+    def recording(build: Callable[_P, SessionRuntime[None, object]]) -> Callable[_P, SessionRuntime[None, object]]:
+        def web_session(*args: _P.args, **kwargs: _P.kwargs) -> SessionRuntime[None, object]:
+            shells.append(build(*args, **kwargs))
+            return shells[-1]
+
+        return web_session
+
+    monkeypatch.setattr(web_module, '_web_session', recording(web_module._web_session))  # pyright: ignore[reportPrivateUsage]
     output = _Output()
     with anyio.fail_after(READINESS_WAIT_TIMEOUT):
         async with anyio.create_task_group() as group:
@@ -939,12 +957,18 @@ async def test_run_web_serves_an_agent_of_your_own(tmp_path: Path, monkeypatch: 
                 await client.post('/api/model', json={'name': 'test'})
                 await output.logged('Saved model. Applied.').wait()
                 assert (await snapshot()).status.model == 'test'
+            # A session opened from the browser is built by `live.build`, here driven in-process.
+            [main] = shells
+            opened_session = await main.process.live.new(workspace=tmp_path)
+            assert len(shells) == 2 and shells[1].agent is agent
+            opened_session.send_input('Shout hello')
+            await answered.wait()
             group.cancel_scope.cancel()
     # Only its own tool: the web UI adds no question tool to an agent of your own, nor any stock plugin's tools.
-    assert offered == [['shout']] * 2
+    assert offered == [['shout']] * 4
     # Nor the guidance that tells the model to call it.
     assert not any('ask_user_question' in text for text in instructions)
-    assert len(await SqliteConversationStore(database=store.path.with_name('sessions.db')).listing(limit=10)) == 1
+    assert len(await SqliteConversationStore(database=store.path.with_name('sessions.db')).listing(limit=10)) == 2
 
 
 def test_web_flag_returns_after_the_web_ui(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
