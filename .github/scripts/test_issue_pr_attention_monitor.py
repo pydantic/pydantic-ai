@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import datetime as dt
+import email.message
 import io
 import json
 import re
@@ -3315,6 +3316,77 @@ def test_priority_sla_records_a_failed_issue_and_keeps_going(monkeypatch: pytest
 
     assert due == [1]
     assert len(failures) == 1 and failures[0].startswith('#2 priority SLA: HTTPError')
+
+
+def http_error(code: int, **headers: str) -> urllib.error.HTTPError:
+    message = email.message.Message()
+    for name, value in headers.items():
+        message[name.replace('_', '-')] = value
+    return urllib.error.HTTPError('u', code, 'refused', message, None)
+
+
+@pytest.mark.parametrize(
+    ('error', 'stops'),
+    [
+        pytest.param(http_error(429), True, id='too-many-requests'),
+        pytest.param(http_error(403, x_ratelimit_remaining='0'), True, id='primary-limit'),
+        pytest.param(http_error(403, retry_after='60'), True, id='secondary-limit'),
+        pytest.param(http_error(403, x_ratelimit_remaining='12'), False, id='forbidden'),
+    ],
+)
+def test_priority_sla_stops_its_sweep_at_a_rate_limit(
+    error: urllib.error.HTTPError, stops: bool, monkeypatch: pytest.MonkeyPatch
+):
+    stale = [label_event('p:2-high', created_at=days_ago(8))]
+    client = sla_client(
+        {1: list(stale), 2: list(stale), 3: list(stale)},
+        labels={1: ['p:1-highest'], 2: ['p:1-highest']},
+        assignees={1: ['DouweM'], 3: ['DouweM']},
+    )
+    client.timelines[1] = [label_event('p:1-highest', created_at=days_ago(4))]
+    real = client.first_pages
+    read: list[str] = []
+
+    def first_pages(path: str, *, count: int) -> tuple[list[dict[str, Any]], bool]:
+        read.append(path)
+        if '/issues/2/' in path:
+            raise error
+        return real(path, count=count)
+
+    monkeypatch.setattr(client, 'first_pages', first_pages)
+
+    due, lines, failures = monitor.priority_sla(client, 'r', now=SLA_NOW, post=False)
+
+    assert failures[0].startswith('#2 priority SLA: HTTPError')
+    if stops:
+        assert due == [1]
+        assert failures[1:] == ['priority SLA: rate limited, stopped before the remaining issues']
+        assert not any('labels=p%3A2-high' in path or '/issues/3/' in path for path in read)
+    else:
+        assert due == [1, 3]
+        assert failures[1:] == []
+    assert lines[-1].startswith('due: ')
+
+
+def test_priority_sla_post_stops_at_a_rate_limit(monkeypatch: pytest.MonkeyPatch):
+    stale = [label_event('p:2-high', created_at=days_ago(8))]
+    client = sla_client({1: list(stale), 2: list(stale)}, assignees={1: ['DouweM'], 2: ['DouweM']})
+    real = client.post
+
+    def post(path: str, payload: object) -> Any:
+        if path == '/repos/r/issues/1/comments':
+            raise http_error(403, x_ratelimit_remaining='0')
+        return real(path, payload)
+
+    monkeypatch.setattr(client, 'post', post)
+    monkeypatch.setenv('PRIORITY_SLA_ITEMS', '[1, 2]')
+
+    lines, failures = monitor._run_priority_sla(client, 'r', 'priority-sla-post', now=SLA_NOW)
+
+    assert lines == []
+    assert posted(client) == []
+    assert failures[0].startswith('#1 priority SLA comment: HTTPError')
+    assert failures[1:] == ['priority SLA: rate limited, stopped before the remaining comments']
 
 
 @pytest.mark.parametrize('value', ['', '[true]', '[0]', '["1"]', '{"items": [1]}'])

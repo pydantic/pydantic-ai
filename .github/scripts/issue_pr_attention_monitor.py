@@ -2156,15 +2156,42 @@ def finalize_notices(client: GitHubClient, repo: str, notices: Sequence[NoticeRe
     return lines
 
 
-def _priority_sla_since(
-    client: GitHubClient, repo: str, label: str, timeline: Sequence[dict[str, Any]], *, now: dt.datetime
-) -> dt.datetime | None:
-    """When the issue last moved: its priority label, a maintainer's action, or a fresh open linked PR.
+def _rate_limited(exc: Exception) -> bool:
+    """Whether GitHub refused a request for the token's primary or secondary rate limit.
 
-    Title edits, bots and the passive `mentioned`/`subscribed` events never count; an assignment
-    counts as the assignee's, as in `_owner_quiet_since`. None means the timeline holds no such
-    moment, or the maintainer lookups ran out before ruling an actor out.
+    GitHub answers every further request the same until the limit resets, and warns that
+    requests sent meanwhile can get the integration banned, so a sweep stops at the first one.
     """
+    return isinstance(exc, urllib.error.HTTPError) and (
+        exc.code == 429
+        or (exc.code == 403 and (exc.headers.get('x-ratelimit-remaining') == '0' or 'retry-after' in exc.headers))
+    )
+
+
+def _priority_sla_decision(
+    client: GitHubClient, repo: str, issue: Mapping[str, Any], label: str, *, now: dt.datetime
+) -> tuple[_PrioritySlaOutcome, str]:
+    """Decide one open priority issue, with the comment to post when it is due one.
+
+    The issue last moved when its priority label was applied, a maintainer acted, or an open
+    linked pull request was updated. Title edits, bots and the passive `mentioned`/`subscribed`
+    events never count; an assignment counts as the assignee's, as in `_owner_quiet_since`.
+
+    The whole timeline is read, oldest first: on a longer one the newest marker or linked pull
+    request could lie past the pages fetched, so the issue is left `unknown` rather than pinged.
+    It is also `unknown` when the timeline holds no such moment, or the maintainer lookups ran
+    out before ruling an actor out.
+    """
+    marker = '<!-- pydantic-ai-priority-sla:v1 '
+    # Only this author's markers count, so pasting the marker cannot suppress a comment.
+    author = 'github-actions[bot]'
+    # Never mentioned: an issue only they own is counted and skipped, because a comment
+    # without a mention still notifies every assignee. Casefolded.
+    silent_owners = frozenset({'dsfaccini'})
+    number = int(issue['number'])
+    timeline, whole = client.first_pages(f'/repos/{repo}/issues/{number}/timeline', count=_EVENT_PAGE_LIMIT)
+    if not whole:
+        return 'unknown', ''
     # An open pull request linked to the issue counts as movement only while it is this fresh.
     pull_freshness = dt.timedelta(days=7)
     probe = _MaintainerProbe(client, repo)
@@ -2191,29 +2218,9 @@ def _priority_sla_since(
             and probe.login(_actor(value))
         ):
             moments.append(when)
-    return None if probe.exhausted else max(moments, default=None)
-
-
-def _priority_sla_decision(
-    client: GitHubClient, repo: str, issue: Mapping[str, Any], label: str, *, now: dt.datetime
-) -> tuple[_PrioritySlaOutcome, str]:
-    """Decide one open priority issue, with the comment to post when it is due one.
-
-    The whole timeline is read, oldest first: on a longer one the newest marker or linked pull
-    request could lie past the pages fetched, so the issue is left `unknown` rather than pinged.
-    """
-    marker = '<!-- pydantic-ai-priority-sla:v1 '
-    # Only this author's markers count, so pasting the marker cannot suppress a comment.
-    author = 'github-actions[bot]'
-    # Never mentioned: an issue only they own is counted and skipped, because a comment
-    # without a mention still notifies every assignee. Casefolded.
-    silent_owners = frozenset({'dsfaccini'})
-    number = int(issue['number'])
-    timeline, whole = client.first_pages(f'/repos/{repo}/issues/{number}/timeline', count=_EVENT_PAGE_LIMIT)
-    window = _PRIORITY_SLA_WINDOWS[label]
-    since = _priority_sla_since(client, repo, label, timeline, now=now) if whole else None
-    if since is None:
+    if probe.exhausted or (since := max(moments, default=None)) is None:
         return 'unknown', ''
+    window = _PRIORITY_SLA_WINDOWS[label]
     if now - since <= window:
         return 'active', ''
     # A comment newer than `since` already covers this window, even when `since` has since
@@ -2250,9 +2257,11 @@ def priority_sla(
     lines: list[str] = []
     failures: list[str] = []
     seen: set[int] = set()
-    truncated = False
+    truncated = limited = False
     # Tightest window first, so an issue carrying both labels is judged once, by P1.
     for label in sorted(_PRIORITY_SLA_WINDOWS, key=_PRIORITY_SLA_WINDOWS.__getitem__):
+        if limited:
+            break
         path = f'/repos/{repo}/issues?state=open&labels={urllib.parse.quote(label)}'
         issues, whole = client.first_pages(path, count=page_limit)
         truncated = truncated or not whole
@@ -2266,6 +2275,9 @@ def priority_sla(
                 if isinstance(exc, urllib.error.HTTPError):
                     exc.close()
                 failures.append(f'#{number} priority SLA: {type(exc).__name__}: {exc}')
+                if limited := _rate_limited(exc):
+                    failures.append('priority SLA: rate limited, stopped before the remaining issues')
+                    break
                 continue
             counts[outcome] += 1
             if outcome == 'due':
@@ -2304,6 +2316,9 @@ def post_priority_sla(
             if isinstance(exc, urllib.error.HTTPError):
                 exc.close()
             failures.append(f'#{number} priority SLA comment: {type(exc).__name__}: {exc}')
+            if _rate_limited(exc):
+                failures.append('priority SLA: rate limited, stopped before the remaining comments')
+                break
     return lines, failures
 
 
