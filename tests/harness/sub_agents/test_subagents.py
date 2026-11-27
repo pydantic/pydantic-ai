@@ -85,7 +85,7 @@ async def test_workspace_free_temporal_delegate() -> None:
         models={'test': ModelOption(TestModel(custom_output_text='worker'))},
     )
     result = await toolset.delegate_task(
-        TemporalRunContext[object](deps=None, tool_name='delegate_task', agent=Agent(TestModel())),
+        TemporalRunContext[object](deps=None, tool_name='delegate_task'),
         'worker',
         'hello',
         model='test',
@@ -110,7 +110,7 @@ async def test_temporal_delegate_with_its_own_model_does_not_read_the_parent_mod
         call_counts={},
     )
     result = await toolset.delegate_task(
-        TemporalRunContext[object](deps=None, tool_name='delegate_task', agent=Agent(TestModel())), 'worker', 'hello'
+        TemporalRunContext[object](deps=None, tool_name='delegate_task'), 'worker', 'hello'
     )
     assert result == 'worker'
 

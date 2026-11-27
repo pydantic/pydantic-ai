@@ -642,8 +642,7 @@ def inherited_managed_permissions(ctx: RunContext[AgentDepsT]) -> list[Permissio
     delegate's run context.
 
     Inside a durable unit, whose context carries the agent but not the run's capabilities, the agent's own
-    capabilities are read: a durable engine refuses a `Permissions` added per run. Without either, it raises
-    `UserError` rather than let a delegate run without limits it can't see.
+    capabilities are read: a durable engine refuses a `Permissions` added per run.
     """
     inherited: list[Permissions[AgentDepsT]] = []
     for capability in _run_capabilities(ctx):
@@ -660,13 +659,9 @@ def _run_capabilities(ctx: RunContext[AgentDepsT]) -> Iterable[AbstractCapabilit
     try:
         return ctx.capabilities.values()
     except UserError:
-        if ctx.agent is None:
-            raise UserError(
-                "A `SubAgents` delegation ran in a context that carries neither the run's capabilities nor its "
-                'agent, so it cannot tell whether a `Permissions` with `max_mode` or `managed_rules` must hold the '
-                'delegate.'
-            ) from None
-        return leaf_capabilities(ctx.agent.root_capability)
+        # Every durable engine's unit carries the live context or one rebuilt with its agent, except the deprecated
+        # `TemporalAgent` with a custom six-argument `temporalize_toolset_func`: there, nothing can be carried.
+        return () if ctx.agent is None else leaf_capabilities(ctx.agent.root_capability)
 
 
 def _managed_layer(

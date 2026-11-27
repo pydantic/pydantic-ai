@@ -545,15 +545,38 @@ class TestInheritedInDurableUnits:
         assert result == 'done'
         assert ran == []
 
-    async def test_without_capabilities_or_an_agent_it_refuses(self) -> None:
+    async def test_without_capabilities_or_an_agent_nothing_is_carried(self) -> None:
+        """As in a deprecated `TemporalAgent` with a custom six-argument `temporalize_toolset_func`."""
         pytest.importorskip('temporalio')
         from pydantic_ai.durable_exec.temporal import TemporalRunContext
 
         worker = Agent[object, str](TestModel(custom_output_text='worker'), name='worker')
-        with pytest.raises(UserError, match='carries neither the run'):
-            await self._toolset(worker).delegate_task(
-                TemporalRunContext[object](deps=None, tool_name='delegate_task'), 'worker', 'hello'
-            )
+        result = await self._toolset(worker).delegate_task(
+            TemporalRunContext[object](deps=None, tool_name='delegate_task'), 'worker', 'hello'
+        )
+        assert result == 'worker'
+
+    async def test_a_reviewers_approval_of_a_delegates_own_hold_does_not_answer_the_ceiling(
+        self, tmp_path: Path
+    ) -> None:
+        """The delegate's own `'read-only'` holds the call and the reviewer approves it; the inherited ceiling holds it
+        again. The run's handlers have answered this round, so the delegate ends with the call held and the run fails
+        instead of running it; one approval decision point in core (#14593) would let a person be asked instead."""
+        agent = Agent[None, str](
+            _delegating('touch made'),
+            deps_type=type(None),
+            capabilities=[
+                LocalWorkspace(tmp_path),
+                Shell(denied_commands=[]),
+                Permissions[None]('read-only'),
+                _safe_reviewer(),
+                SubAgents(include_self=True, max_depth=2, agent_folders=None),
+                DenyUnanswered[None](),
+            ],
+        )
+        with pytest.raises(UserError, match='`DeferredToolRequests` is not among output types'):
+            await agent.run('go', capabilities=[Permissions[None]('full', max_mode='read-only')])
+        assert not (tmp_path / 'made').exists()
 
 
 class TestReviewerApprovals:
