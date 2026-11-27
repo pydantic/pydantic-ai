@@ -71,6 +71,7 @@ Plugins add their own commands, such as `/notion login` or `/google_workspace`. 
 | `-m`, `--model MODEL` | Use this model for this run, without saving it |
 | `-p`, `--prompt TEXT` | Run one prompt without interaction and print only the answer; see [Headless mode](#headless-mode) |
 | `-a`, `--agent MODULE:ATTR` | Chat with your own Pydantic AI agent; see [Your own agent](#your-own-agent) |
+| `-x`, `--plugin NAME` | Load this plugin for this launch only, even if disabled, without saving it; repeatable; see [Plugins for one launch](#plugins-for-one-launch) |
 | `--resume [SESSION-ID]` | Restore a saved session; no ID opens the browser |
 | `-c`, `--continue` | Restore the most recent saved session in this directory; see [Saved sessions](#saved-sessions-and-resume) |
 | `--resume-claude [SESSION-ID]`, `--resume-codex [SESSION-ID]` | Import and restore a Claude Code or Codex session |
@@ -98,7 +99,7 @@ Change these with `/set KEY VALUE`, or open `/set` to browse them. See
 | `display.task_models` | `true` | Name the model each subagent runs on in its start row, which waits for the child to report it. Off, the row prints at once without it. |
 | `display.theme` | `default` | Keep Pax colours, readable on light and dark terminals, or select a bundled Termflow palette with /theme. |
 | `display.spinner` | `working` | Working animation; /spinner previews the choices. An unknown name shows working. |
-| `display.footer_fields` | `["model", "workspace", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]` | Visible main-footer fields in display order, as a JSON list. An empty list hides the footer figures. Use /set to configure the layout or reset it. assistant_age is off by default. |
+| `display.footer_fields` | `["model", "workspace", "permissions", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]` | Visible main-footer fields in display order, as a JSON list. An empty list hides the footer figures. Use /set to configure the layout or reset it. assistant_age is off by default. |
 | `display.splash` | `true` | Animate the startup splash. Takes effect next start. |
 | `display.full_screen` | `false` | Take the whole terminal height from the start, instead of starting compact below the shell and growing as the session needs room. Takes effect next start. |
 | `display.tool_calls` | `detailed` | How tool calls print: detailed gives each call its own line with arguments; grouped counts consecutive calls by tool on one live line. Grouped ignores display.tool_output and display.tool_arg_chars; file diffs still print. |
@@ -992,7 +993,7 @@ completes the login.
 Tokens are encrypted into `0600` files in `$XDG_CONFIG_HOME/pydantic-ai-pax/`
 (`credentials-ACCOUNT.enc`), not stored in SQLite or `~/.codex/auth.json`. The key
 that decrypts them is the only entry Pax keeps in the configured Python `keyring`
-backend (service `pydantic-clai2`, account `encryption-key`). Pax reads that entry
+backend (service `pydantic-ai-pax`, account `encryption-key`). Pax reads that entry
 at most once per session, so macOS asks for keychain access at most once, instead of
 once per saved credential. Logins that older versions saved as keyring entries are
 moved into encrypted files the first time they are read. Choose an OS-backed credential store: Pax
@@ -1872,7 +1873,7 @@ fields are hidden; `[]` hides the footer figures, not the prompt or task panel.
 The default order is:
 
 ```json
-["model", "workspace", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]
+["model", "workspace", "permissions", "context", "output", "cost", "activity", "plugins", "updates", "live", "queued"]
 ```
 
 Every field is independently selectable and reorderable:
@@ -1881,6 +1882,7 @@ Every field is independently selectable and reorderable:
 |---|---|
 | `model` | Selected model, including the focused subagent's name and short task ID when its figures are shown |
 | `workspace` | Working directory, abbreviated to its tail, with its `trusted` / `untrusted` state when folder trust applies; hidden when empty |
+| `permissions` | The `/permissions` mode: `full access` (in the warning colour), `auto mode`, or `read-only` |
 | `context` | Used and maximum context tokens, with `?` for unknown figures |
 | `output` | Streamed output estimate, then reported output tokens |
 | `cost` | Retained-history cost; hidden until priced usage exists |
@@ -1897,7 +1899,7 @@ fragments move and hide together through `plugins`, not as individual fields.
 When the row is wider than the terminal, `workspace` shortens to its last folder
 (`…/jsonrc`), then fields are hidden, least important first, until it fits:
 `assistant_age`, `output`, `cost`, `queued`, `updates`, `live`, `workspace`,
-`plugins`, the `context` labels, then `model`. `activity` and the context figure
+`plugins`, `permissions`, the `context` labels, then `model`. `activity` and the context figure
 always stay. The row is cut at the edge rather than wrapped if it still does not fit.
 
 To set the list directly, keep the JSON in one quoted argument:
@@ -2610,11 +2612,14 @@ The `coder` plugin loads [Agent Skills](https://agentskills.io/specification)
 1. `.agents/skills` and `.claude/skills` in the project
 2. `~/.agents/skills` and `~/.claude/skills` in your home directory
 
-A project folder is looked for in the directory you launch Pax in, then in
-each directory above it up to the root of its git repository, nearest first.
-Launched in `repo/src`, Pax reads `repo/src/.agents/skills`, then
-`repo/.agents/skills`, then the same for `.claude/skills`. Outside a git
-repository, only the launch directory is searched.
+Project folders are looked for in the directory you launch Pax in, then in
+each directory above it up to the root of its git repository, nearest directory
+first, the way nearer instruction files take precedence. Launched in `repo/src`,
+Pax reads `repo/src/.agents/skills` and `repo/src/.claude/skills`, then
+`repo/.agents/skills` and `repo/.claude/skills`, so a skill in
+`repo/src/.claude/skills` wins over one with the same name in
+`repo/.agents/skills`. Outside a git repository, only the launch directory is
+searched.
 
 Folders that do not exist are skipped. Skills need a local workspace, so they
 are off on Windows. The model sees each skill's name and
@@ -2641,12 +2646,14 @@ Pax quietly ignores the other behavioral fields some clients support, such as
 `allowed-tools` or `model`, so skills shared with those clients load as they are.
 
 When two folders have a skill with the same name, the earlier folder wins:
-project skills over personal ones, `.agents` over `.claude`. A skill reached
+project skills over personal ones, nearer directories over further ones, and
+`.agents` over `.claude` in the same directory. A skill reached
 twice, such as through a symlinked `.agents/skills`, or a byte-identical copy,
 counts once. Pax prints one line for each skipped skill when it starts: a
 malformed `SKILL.md`, or a name another skill already has. It also prints a line
-for a skill folder it skips because it is a file, or holds a `SKILL.md` itself
-(one skill rather than a folder of them); your other folders still load.
+for a skill folder it skips because it is a file, holds a `SKILL.md` itself
+(one skill rather than a folder of them), or can't be read, such as one without
+read permission; your other folders still load.
 
 The model's catalog is read at the start of every turn, so it lists a skill you
 add mid-session. Its `/command` arrives after `/reload` or
@@ -2655,10 +2662,11 @@ under **Skill folders**, as a JSON list of paths; `~/` means your home directory
 and `[]` turns skills off. To turn off single skills, choose **Skills** there:
 each pick turns a skill on or off. A skill that is off is hidden from the model
 and has no `/command`, in every project; skills you add later start on. A
-folder Pax cannot read when it starts, such as one without read permission,
-turns skills off, with a notice, until the next
-`/reload`; the coding tools still load. A folder that becomes a file or a single
-skill mid-session is left out of the next turn's catalog.
+skill folder that becomes a file, a single skill, or unreadable mid-session is
+left out of the next turn's catalog. A single skill's directory or `SKILL.md`
+that Pax cannot read is skipped with a notice, and the other skills still load.
+Any other error reading the folders when Pax starts turns skills off, with a
+notice, until the next `/reload`; the coding tools still load.
 
 Skill commands are read on this machine. With a plugin that runs the agent in a
 sandbox, the model's catalog is read from the sandbox's workspace instead, so the
@@ -3488,6 +3496,28 @@ default, and opens its settings menu (`/plugins configure linear` reopens it). T
 key is picked from `/keys` by name (a new one is saved there as `LINEAR_API_KEY`),
 or choose browser sign-in. See [PLUGINS.md](../PLUGINS.md#linear-issues-and-projects).
 
+### Plugins for one launch
+
+```sh
+pax -x web -x workspaces
+pax -x github -p "Summarize my open pull requests"
+```
+
+`-x NAME` (long form `--plugin NAME`, repeatable) loads a plugin for this launch
+only, even when it is disabled. It works in the terminal, with `-p`, and with
+`--web`, where every session the browser opens loads it too. `NAME` is a plugin
+`/plugins` lists as built in, added, or a drop-in file; an unknown one fails
+before the first prompt, listing the ones there are. A plugin the project's
+`.clai/settings.json` declares isn't loaded this way: approve it with
+`/plugins enable NAME`, as usual.
+
+Nothing saved changes: `/plugins list` shows a disabled plugin as `disabled,
+loaded for this launch`, and the next `pax` without `-x` leaves it off, even if
+the plugin saved its settings meanwhile. `/plugins disable NAME` or
+`/plugins remove NAME` turns it off for the rest of the launch, also through
+`/reload` and `/update`, and is saved as usual. `-x` can't be combined with
+`--agent`, which loads no plugins.
+
 ### Built-in plugins at a glance
 
 The coding tools,
@@ -3707,7 +3737,7 @@ which are saved as plaintext.
 its settings menu. Each option below is a row there; each edit saves at once and
 applies from the next run. The last command replaces the built-in configuration
 instead. Its options are
-`service_name` (default `pydantic-clai2`), `include_content` (default `false`),
+`service_name` (default `pydantic-ai-pax`), `include_content` (default `false`),
 `include_binary_content` (default `false`), `httpx` (default `false`), and `send_to_logfire` (either
 `"if-token-present"` or `false`). The plugin explicitly sets the latter, rather
 than taking `LOGFIRE_SEND_TO_LOGFIRE` from the environment. Traces carry Pax's

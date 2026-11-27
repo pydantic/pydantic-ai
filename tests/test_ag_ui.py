@@ -171,6 +171,7 @@ with try_import() as imports_successful:
     from pydantic_ai.ui import (
         DEFAULT_ALLOWED_CONTENT_TYPES,
         SSE_CONTENT_TYPE,
+        NativeEvent,
         OnCompleteFunc,
         StateDeps,
         ag_ui as ag_ui_package,
@@ -826,6 +827,136 @@ async def test_run_stream_error_closes_open_tool_call() -> None:
             'RUN_ERROR',
         ]
     )
+
+
+async def _encode_restarted_part(events: AsyncIterator[NativeEvent]) -> list[dict[str, Any]]:
+    """AG-UI events for a republished part, without timestamps.
+
+    Pinned to the declared floor, so the thinking envelope is the same on every installed SDK.
+    """
+    event_stream = AGUIEventStream[None, str](thread_id='thread_1', run_id='run_1', ag_ui_version='0.1.10')
+    return [
+        {k: v for k, v in json.loads(event.removeprefix('data: ')).items() if k != 'timestamp'}
+        async for event in event_stream.encode_stream(event_stream.transform_stream(events))
+    ]
+
+
+async def test_restarted_part_ends_open_text() -> None:
+    """A republished `PartStartEvent` ends the open text message before the new one starts. #11734
+
+    A retried durable activity republishes the model events it already published, so the client sees the first
+    attempt's partial message as its own, ended message, followed by the retry's full message.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo'))
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo, world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello, world'))
+
+    events = await _encode_restarted_part(event_generator())
+
+    assert events == snapshot(
+        [
+            {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1'},
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (first_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': first_id, 'delta': 'Hel'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': first_id, 'delta': 'lo'},
+            {'type': 'TEXT_MESSAGE_END', 'messageId': first_id},
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (second_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': second_id, 'delta': 'Hel'},
+            {'type': 'TEXT_MESSAGE_CONTENT', 'messageId': second_id, 'delta': 'lo, world'},
+            {'type': 'TEXT_MESSAGE_END', 'messageId': second_id},
+            {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1'},
+        ]
+    )
+    assert len({e['messageId'] for e in events if 'messageId' in e}) == 2
+
+
+async def test_restarted_part_ends_open_thinking() -> None:
+    """A republished `PartStartEvent` ends the open thinking message before the new one starts. #11734"""
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo'))
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo, world'))
+        yield PartEndEvent(index=0, part=ThinkingPart(content='Hello, world'))
+
+    events = await _encode_restarted_part(event_generator())
+
+    assert events == snapshot(
+        [
+            {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1'},
+            {'type': 'THINKING_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Hel'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'lo'},
+            {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_END'},
+            {'type': 'THINKING_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_START'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'Hel'},
+            {'type': 'THINKING_TEXT_MESSAGE_CONTENT', 'delta': 'lo, world'},
+            {'type': 'THINKING_TEXT_MESSAGE_END'},
+            {'type': 'THINKING_END'},
+            {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1'},
+        ]
+    )
+
+
+async def test_restarted_part_ends_open_tool_call() -> None:
+    """A republished `PartStartEvent` ends the open tool call before the new one starts. #11734"""
+
+    def call_part(args: str) -> ToolCallPart:
+        return ToolCallPart(tool_name='get_time', args=args, tool_call_id='call_0')
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=call_part('{"tz": '))
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"U'))
+        yield PartStartEvent(index=0, part=call_part('{"tz": '))
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}'))
+        yield PartEndEvent(index=0, part=call_part('{"tz": "UTC"}'))
+        yield FunctionToolCallEvent(part=call_part('{"tz": "UTC"}'), args_valid=True)
+        yield FunctionToolResultEvent(part=ToolReturnPart(tool_name='get_time', tool_call_id='call_0', content='12:00'))
+
+    events = await _encode_restarted_part(event_generator())
+
+    assert events == snapshot(
+        [
+            {'type': 'RUN_STARTED', 'threadId': 'thread_1', 'runId': 'run_1'},
+            {'type': 'TEXT_MESSAGE_START', 'messageId': (parent_id := IsSameStr()), 'role': 'assistant'},
+            {'type': 'TEXT_MESSAGE_END', 'messageId': parent_id},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'call_0',
+                'toolCallName': 'get_time',
+                'parentMessageId': parent_id,
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"tz": '},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '"U'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+            {
+                'type': 'TOOL_CALL_START',
+                'toolCallId': 'call_0',
+                'toolCallName': 'get_time',
+                'parentMessageId': parent_id,
+            },
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '{"tz": '},
+            {'type': 'TOOL_CALL_ARGS', 'toolCallId': 'call_0', 'delta': '"UTC"}'},
+            {'type': 'TOOL_CALL_END', 'toolCallId': 'call_0'},
+            {
+                'type': 'TOOL_CALL_RESULT',
+                'messageId': IsSameStr(),
+                'toolCallId': 'call_0',
+                'content': '12:00',
+                'role': 'tool',
+            },
+            {'type': 'RUN_FINISHED', 'threadId': 'thread_1', 'runId': 'run_1'},
+        ]
+    )
+    assert len({e['messageId'] for e in events if 'messageId' in e}) == 2
 
 
 async def test_ag_ui_id_only_tool_call_delta_emits_no_args_fragment() -> None:

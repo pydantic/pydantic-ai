@@ -123,6 +123,17 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_toolset.py::<module>"
       ]
+    },
+    "compaction_only_run": {
+      "engines": [
+        "dbos"
+      ],
+      "kinds": [
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>"
+      ]
     }
   },
   "pydantic_ai_slim/pydantic_ai/_deferred.py": {
@@ -338,10 +349,12 @@
         "annotation_only"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_compact_history_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_sync_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent._open_realtime_session",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent._resolve_realtime_session",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.override",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run",
@@ -350,6 +363,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run_sync",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent._open_realtime_session",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent._resolve_realtime_session",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.override",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.run",
@@ -358,6 +372,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.run_sync",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._open_realtime_session",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._resolve_realtime_session",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.override",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run",
@@ -1951,6 +1966,21 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._resolve_realtime_session"
       ]
     },
+    "AbstractAgent.compact_history": {
+      "engines": [
+        "dbos",
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.compact_history",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.compact_history",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.compact_history"
+      ]
+    },
     "AbstractAgent.deps_type": {
       "engines": [
         "azure_durable_task",
@@ -2112,6 +2142,7 @@
         "override"
       ],
       "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_compact_history_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::DBOSDurability._bind_to_agent.legacy_run_workflow",
@@ -2433,6 +2464,22 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent._resolve_realtime_session",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent._resolve_realtime_session",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._resolve_realtime_session"
+      ]
+    },
+    "WrapperAgent.compact_history": {
+      "engines": [
+        "dbos",
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "attribute_read",
+        "override"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.compact_history",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.compact_history",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.compact_history"
       ]
     },
     "WrapperAgent.deps_type": {
@@ -4423,6 +4470,22 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._call_event_stream_handler_activity"
       ]
     },
+    "CompactionReason": {
+      "engines": [
+        "dbos",
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "annotation_only"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_compact_history_workflow",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.compact_history",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.compact_history",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.compact_history"
+      ]
+    },
     "CompactionStartEvent.event_kind": {
       "engines": [
         "temporal"
@@ -4593,10 +4656,12 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_operation.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_compact_history_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_sync_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent._open_realtime_session",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent._resolve_realtime_session",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run_stream",
@@ -4606,6 +4671,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_operation_backend.py::DBOSOperationBackend._bind_model_or_event.model_step",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent._open_realtime_session",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent._resolve_realtime_session",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.run_stream",
@@ -4615,6 +4681,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._open_realtime_session",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._resolve_realtime_session",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run_stream",
@@ -5233,8 +5300,10 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_utils.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_compact_history_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_sync_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_workflow",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.override",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run",
@@ -5244,6 +5313,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_durability.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_model.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.override",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.run",
@@ -5254,6 +5324,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_model.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._temporal_overrides",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.override",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run",
@@ -6090,14 +6161,17 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_base.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_compact_history_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_sync_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_workflow",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.override",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run_stream",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run_stream_events",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run_sync",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.override",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.run",
@@ -6105,6 +6179,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.run_stream_events",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.run_sync",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._temporal_overrides",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.override",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run",
@@ -6890,6 +6965,33 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_event_stream.py::DurableAgentRunEvents.__anext__"
+      ]
+    },
+    "CompactionRunResult": {
+      "engines": [
+        "dbos",
+        "prefect",
+        "temporal"
+      ],
+      "kinds": [
+        "annotation_only",
+        "import"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::<module>"
+      ]
+    },
+    "CompactionRunResult._of": {
+      "engines": [
+        "dbos"
+      ],
+      "kinds": [
+        "attribute_read"
+      ],
+      "sites": [
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.compact_history"
       ]
     }
   },
@@ -8049,10 +8151,12 @@
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_capability_operation.py::<module>",
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_compact_history_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_sync_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent._open_realtime_session",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent._resolve_realtime_session",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run_stream",
@@ -8060,6 +8164,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run_sync",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent._open_realtime_session",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent._resolve_realtime_session",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.run_stream",
@@ -8067,6 +8172,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.run_sync",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._open_realtime_session",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._resolve_realtime_session",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run_stream",
@@ -8100,10 +8206,12 @@
       ],
       "sites": [
         "pydantic_ai_slim/pydantic_ai/durable_exec/_run_context.py::<module>",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_compact_history_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_sync_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.__init__.wrapped_run_workflow",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent._open_realtime_session",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent._resolve_realtime_session",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run_stream",
@@ -8111,6 +8219,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/dbos/_agent.py::DBOSAgent.run_sync",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent._open_realtime_session",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent._resolve_realtime_session",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.run_stream",
@@ -8118,6 +8227,7 @@
         "pydantic_ai_slim/pydantic_ai/durable_exec/prefect/_agent.py::PrefectAgent.run_sync",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._open_realtime_session",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent._resolve_realtime_session",
+        "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.compact_history",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.iter",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run",
         "pydantic_ai_slim/pydantic_ai/durable_exec/temporal/_agent.py::TemporalAgent.run_stream",

@@ -232,6 +232,9 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     ('AbstractAgent', 'run_stream_events'): frozenset({'infer_name'}),
     ('AbstractAgent', 'run_stream_sync'): frozenset({'infer_name'}),
     ('AbstractAgent', 'run_sync'): frozenset({'infer_name'}),
+    # Same for `infer_name`. `focus` and `reason` are folded into the `compact=` options the run is
+    # given, which is how a run receives them.
+    ('AbstractAgent', 'compact_history'): frozenset({'infer_name', 'focus', 'reason'}),
     # Stored rather than delegated: `realtime()` builds an `AgentRealtime` that holds the whole
     # configuration until `session()` opens the connection, so every keyword lands on a private
     # dataclass field (`_deps=deps`) rather than on a same-named parameter. The rename is what the
@@ -275,6 +278,8 @@ _UNFORWARDED_BY_DESIGN: dict[tuple[str, str], frozenset[str] | None] = {
     ('DBOSAgent', 'run'): frozenset({'cancellation_token', 'timeout'}),
     ('DBOSAgent', 'run_sync'): frozenset({'cancellation_token', 'timeout'}),
     ('DBOSAgent', 'run_stream'): frozenset({'cancellation_token', 'timeout'}),
+    # Also `infer_name`: the wrapper's name is fixed when it's built, so there's nothing to infer.
+    ('DBOSAgent', 'compact_history'): frozenset({'cancellation_token', 'timeout', 'infer_name'}),
     ('PrefectAgent', 'run'): frozenset({'cancellation_token', 'timeout'}),
     ('PrefectAgent', 'run_sync'): frozenset({'cancellation_token', 'timeout'}),
     ('PrefectAgent', 'run_stream'): frozenset({'cancellation_token', 'timeout'}),

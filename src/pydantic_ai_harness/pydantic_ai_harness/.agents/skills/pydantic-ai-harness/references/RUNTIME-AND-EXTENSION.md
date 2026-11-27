@@ -14,7 +14,7 @@ Agentic Workflow.
 | Let another model choose the main agent's model from a named menu | `ModelRouter` |
 | Resume, continue, or fork a run from saved history; audit tool side effects after a crash | `StepPersistence` |
 | Store a whole `Conversation` between runs, each message once, in SQLite, Postgres, or MongoDB | `pydantic_ai_harness.conversation_store`: `SqliteConversationStore`, `PostgresConversationStore`, `MongoConversationStore` (see [Conversation stores](#conversation-stores)) |
-| Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | core durability capability; most harness capabilities work inside it |
+| Survive worker crashes with automatic replay (Temporal, DBOS, Prefect) | `TemporalDurability`, `DBOSDurability`, `PrefectDurability`; most harness capabilities work inside them |
 | Checkpoint every model/tool step on AWS Lambda durable functions | `AWSLambdaDurability` |
 | Checkpoint every model/tool step in Postgres with Absurd | `AbsurdDurability` |
 | Checkpoint every model/tool step in Postgres with pgtask | `PGTaskDurability` |
@@ -240,10 +240,21 @@ store takes the same connection arguments as the matching step store and can sha
 - The browser-oriented store Pax uses is `step_persistence.conversations.SqliteSessionStore`, formerly
   `SqliteConversationStore` there.
 
+## TemporalDurability, DBOSDurability and PrefectDurability
+
+Import them from `pydantic_ai_harness.temporal`, `pydantic_ai_harness.dbos` and `pydantic_ai_harness.prefect`
+(extras `[temporal]`, `[dbos]` and `[prefect]`). These modules re-export `pydantic_ai.durable_exec.<engine>`,
+where the code lives until Pydantic AI v3. Both paths give the same objects and the same recorded workflow,
+activity, step and task names, so existing `pydantic_ai.durable_exec.*` imports keep working until v3. The
+deprecated `TemporalAgent`, `DBOSAgent`, `PrefectAgent`, `PrefectFunctionToolset` and `PrefectMCPToolset` are
+only on the core path. See the [Temporal](https://pydantic.dev/docs/ai/capabilities/durable_execution/temporal/),
+[DBOS](https://pydantic.dev/docs/ai/capabilities/durable_execution/dbos/) and
+[Prefect](https://pydantic.dev/docs/ai/capabilities/durable_execution/prefect/) docs.
+
 ## Harness capabilities under core durable execution
 
-Most harness capabilities run under core `TemporalDurability`, `DBOSDurability`, and
-`PrefectDurability` (`pydantic_ai.durable_exec.*`), but support is per capability:
+Most harness capabilities run under `TemporalDurability`, `DBOSDurability`, and `PrefectDurability`,
+whose code is in core until v3, but support is per capability:
 
 - `Agent(...)` with `TemporalDurability` raises `UserError` ("Toolsets that are 'leaves' ... need to
   have a unique id") for `AskUser`, `ExaSearch`, `ExaAgent`, `YouSearch`,
@@ -263,9 +274,9 @@ give the agent a `name`:
 ```python {test="skip"}
 from pydantic_ai import Agent
 from pydantic_ai.capabilities import LocalWorkspace
-from pydantic_ai.durable_exec.temporal import TemporalDurability
 
 from pydantic_ai_harness.coder import Coder
+from pydantic_ai_harness.temporal import TemporalDurability
 
 agent = Agent(
     'anthropic:claude-opus-5-5',

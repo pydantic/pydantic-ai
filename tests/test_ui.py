@@ -417,6 +417,42 @@ async def test_event_stream_error_closes_open_text():
     )
 
 
+async def test_event_stream_restarted_part_ends_open_text():
+    """A republished `PartStartEvent` ends the still-open part before the new start is emitted. #11734
+
+    A retried durable activity republishes the model events it already published, so the retry's
+    `PartStartEvent` arrives with no `PartEndEvent` for the first attempt's part before it.
+    """
+
+    async def event_generator() -> AsyncIterator[NativeEvent]:
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo'))
+        # The retry republishes its part start without a `PartEndEvent` first.
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo, world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello, world'))
+
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    event_stream = DummyUIEventStream(run_input=request)
+    events = [event async for event in event_stream.transform_stream(event_generator())]
+
+    assert events == snapshot(
+        [
+            '<stream>',
+            '<response>',
+            '<text follows_text=False>Hel',
+            'lo',
+            # the first attempt's part, closed with its recorded deltas applied
+            '</text followed_by_text=False>',
+            '<text follows_text=False>Hel',
+            'lo, world',
+            '</text followed_by_text=False>',
+            '</response>',
+            '</stream>',
+        ]
+    )
+
+
 async def test_event_stream_error_closes_open_thinking():
     """A mid-stream error while a thinking part is open emits `thinking-end` before the error."""
 

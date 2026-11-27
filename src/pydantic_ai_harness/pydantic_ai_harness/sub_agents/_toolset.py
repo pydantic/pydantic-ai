@@ -749,6 +749,33 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
             f'choose the next action; do not delegate to {agent_name!r} again.',
         )
 
+    def _admit_controlled(
+        self,
+        ctx: RunContext[AgentDepsT],
+        owner: DelegationTasks,
+        agent_name: str,
+        sub_agent: SubAgent[AgentDepsT] | None,
+        conversation_id: str,
+    ) -> str | None:
+        """Refuse a task over `max_running_tasks`, then charge a local delegate's `max_calls`.
+
+        The running limit is checked first, so a refused task costs nothing. Returns the budget-exhausted
+        steering message, or `None` to go ahead.
+        """
+        self._check_running_limit(ctx, owner, agent_name, conversation_id)
+        if sub_agent is None:
+            return None
+        return self._call_budget_message(ctx, agent_name, sub_agent)
+
+    def _refund_call(
+        self, ctx: RunContext[AgentDepsT], agent_name: str, sub_agent: SubAgent[AgentDepsT] | None
+    ) -> None:
+        """Give back the `max_calls` slot `_call_budget_message` charged for a delegation that never started."""
+        if sub_agent is None or sub_agent.max_calls is None:
+            return
+        counts = self._call_counts[ctx.run_id or '']
+        counts[agent_name] -= 1
+
     def _resolve_model_key(self, agent_name: str, sub_agent: SubAgent[AgentDepsT], key: str | None) -> str | None:
         """The menu key one delegation runs on, or `None` to leave the model as it was.
 
@@ -1044,10 +1071,9 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
         else:
             sub_agent = self._resolve_agent(ctx, agent_name)
             key = self._resolve_model_key(agent_name, sub_agent, model)
-            if (exhausted := self._call_budget_message(ctx, agent_name, sub_agent)) is not None:
-                return exhausted
             resumable, can_ask = _local_abilities(ctx, sub_agent)
-        self._check_running_limit(ctx, owner, agent_name, conversation_id)
+        if (exhausted := self._admit_controlled(ctx, owner, agent_name, sub_agent, conversation_id)) is not None:
+            return exhausted
         task_id = resume or _new_task_id(ctx, owner)
         start_type = TaskAssignedEvent if previous is None else TaskResumedEvent
         # The task counts as running while listeners see it, so concurrent delegations can't overrun the limit.
@@ -1070,6 +1096,8 @@ class SubAgentToolset(FunctionToolset[AgentDepsT]):
                 ),
             )
         if start.vetoed:
+            # The task never started, so it doesn't count against `max_calls`.
+            self._refund_call(ctx, agent_name, sub_agent)
             return _vetoed_reply('The task was not sent', start)
         run = partial(
             self._run_announced,

@@ -16,7 +16,7 @@ from .._json_schema import JsonSchema
 from ..capabilities import AgentCapability
 from ..conversation import Conversation
 from ..output import OutputDataT, OutputSpec
-from ..run import AgentRun
+from ..run import AgentRun, CompactionRunResult
 from ..settings import ModelSettings
 from ..template import TemplateStr
 from ..tools import (
@@ -357,6 +357,56 @@ class WrapperAgent(AbstractAgent[AgentDepsT, OutputDataT]):
             spec=spec,
         ) as run:
             yield run
+
+    async def compact_history(
+        self,
+        message_history: Sequence[_messages.ModelMessage],
+        *,
+        focus: str | None = None,
+        reason: _messages.CompactionReason = 'manual',
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
+        usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
+    ) -> CompactionRunResult:
+        """Compact a message history with the wrapped agent's [`compact_history`][pydantic_ai.agent.AbstractAgent.compact_history].
+
+        Forwarded rather than run through this agent's `run()`, so a wrapped agent that runs it its own way, like
+        `DBOSAgent` in a workflow of its own, still does.
+        """
+        return await self.wrapped.compact_history(
+            message_history,
+            focus=focus,
+            reason=reason,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            model=model,
+            instructions=instructions,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            cancellation_token=cancellation_token,
+            timeout=timeout,
+            usage=usage,
+            metadata=metadata,
+            infer_name=infer_name,
+            toolsets=toolsets,
+            event_stream_handler=event_stream_handler,
+            capabilities=capabilities,
+            spec=spec,
+        )
 
     def _check_realtime_signaling(self) -> None:
         self.wrapped._check_realtime_signaling()

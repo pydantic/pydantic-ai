@@ -375,8 +375,9 @@ async def test_app_data_with_process_tool_call(hooked_weather: MCPToolset[Any], 
 
 
 @pytest.mark.skipif(not logfire_imports_successful(), reason='logfire not installed')
-async def test_tool_span_omits_app_binary_without_binary_content(capfire: CaptureLogfire):
-    """`include_binary_content=False` also drops the base64 data the app record keeps in wire form."""
+@pytest.mark.parametrize('include_binary_content', [False, True])
+async def test_tool_span_omits_app_binary_without_binary_content(include_binary_content: bool, capfire: CaptureLogfire):
+    """`include_binary_content=False` also drops the base64 data the app record keeps in wire form, and only then."""
     server: FastMCP[None] = FastMCP('charts')
 
     @server.tool(meta={'ui': {'resourceUri': 'ui://charts/view'}})
@@ -397,7 +398,7 @@ async def test_tool_span_omits_app_binary_without_binary_content(capfire: Captur
     agent = Agent(
         TestModel(call_tools=['chart']),
         toolsets=[MCPToolset(server, id='charts')],
-        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=False))],
+        capabilities=[Instrumentation(settings=InstrumentationSettings(include_binary_content=include_binary_content))],
     )
     await agent.run('Chart?')
 
@@ -405,12 +406,22 @@ async def test_tool_span_omits_app_binary_without_binary_content(capfire: Captur
     tool_result = next(span for span in spans if span['name'] == 'execute_tool chart')['attributes'][
         'gen_ai.tool.call.result'
     ]
-    assert tool_result['metadata']['mcp_app']['result']['content'] == snapshot(
-        [
-            {'type': 'text', 'text': 'A chart'},
-            {'type': 'image', 'mimeType': 'image/png'},
-            {'type': 'resource', 'resource': {'uri': 'file:///chart.csv', 'mimeType': 'text/csv'}},
-        ]
+    assert tool_result['metadata']['mcp_app']['result']['content'] == (
+        snapshot(
+            [
+                {'type': 'text', 'text': 'A chart'},
+                {'type': 'image', 'data': 'aGk=', 'mimeType': 'image/png'},
+                {'type': 'resource', 'resource': {'uri': 'file:///chart.csv', 'mimeType': 'text/csv', 'blob': 'aGk='}},
+            ]
+        )
+        if include_binary_content
+        else snapshot(
+            [
+                {'type': 'text', 'text': 'A chart'},
+                {'type': 'image', 'mimeType': 'image/png'},
+                {'type': 'resource', 'resource': {'uri': 'file:///chart.csv', 'mimeType': 'text/csv'}},
+            ]
+        )
     )
 
 

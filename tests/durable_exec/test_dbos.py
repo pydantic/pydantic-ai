@@ -62,6 +62,7 @@ from pydantic_ai import (
 from pydantic_ai._cancel import inherited_run_deadline
 from pydantic_ai._run_context import get_current_run_context
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
+from pydantic_ai.agent import WrapperAgent
 from pydantic_ai.capabilities import (
     MCP,
     BatchModelRequests,
@@ -8016,6 +8017,155 @@ async def test_dbos_run_compact_runs_the_compaction_as_a_step(dbos: DBOS) -> Non
     assert [step['function_name'] for step in steps] == snapshot(
         ['durability_run_compact__model.compact_messages', 'durability_run_compact__model.request']
     )
+
+
+async def test_dbos_compact_history_runs_the_compaction_as_a_step(dbos: DBOS) -> None:
+    """`compact_history()` in a workflow is a run like any other: its compaction is a DBOS step, and nothing else is."""
+
+    class CompactingModel(FunctionModel):
+        async def compact_messages(
+            self, request_context: ModelRequestContext, *, instructions: str | None = None
+        ) -> ModelResponse:
+            return ModelResponse(
+                parts=[CompactionPart(content=f'a summary of {len(request_context.messages)}, about {instructions}')]
+            )
+
+    def not_sent(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        raise AssertionError('`compact_history` sends no model request')  # pragma: no cover
+
+    after_run: list[object] = []
+
+    async def record_after_run(ctx: RunContext[None], *, result: AgentRunResult[Any]) -> AgentRunResult[Any]:
+        after_run.append(result.output)
+        return result
+
+    model = CompactingModel(
+        not_sent, profile=ModelProfile(supports_compaction_on_demand=True, compaction_instructions='replaces_prompt')
+    )
+    agent = Agent(
+        model,
+        name='durability_compact_history',
+        capabilities=[Hooks(after_run=record_after_run), NativeCompaction(), DBOSDurability()],
+    )
+
+    @DBOS.workflow()
+    async def compact_durably() -> tuple[list[str | None], list[str]]:
+        result = await agent.compact_history(
+            [ModelRequest(parts=[UserPromptPart('Hello DBOS')]), ModelResponse(parts=[TextPart('Hello!')])],
+            focus='the greeting',
+        )
+        summaries = [
+            part.content
+            for message in result.all_messages()
+            for part in message.parts
+            if isinstance(part, CompactionPart)
+        ]
+        return summaries, [record.handler for record in result.compactions]
+
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid):
+        summaries, handlers = await compact_durably()
+    assert summaries == ['a summary of 2, about the greeting']
+    assert handlers == ['native']
+    assert after_run == [None]
+    steps = await dbos.list_workflow_steps_async(wfid)
+    assert [step['function_name'] for step in steps] == snapshot(['durability_compact_history__model.compact_messages'])
+
+
+compact_history_recovery_calls: list[str] = []
+
+
+class _RecoveryCompactingModel(FunctionModel):
+    async def compact_messages(
+        self, request_context: ModelRequestContext, *, instructions: str | None = None
+    ) -> ModelResponse:
+        compact_history_recovery_calls.append('compact_messages')
+        return ModelResponse(parts=[CompactionPart(content='a summary')])
+
+
+def _answer_after_recovery(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # Reached only if a recovered run took itself for a regular one and continued the conversation.
+    compact_history_recovery_calls.append('model request')  # pragma: no cover
+    return ModelResponse(parts=[TextPart('answered')])  # pragma: no cover
+
+
+async def _crash_after_the_first_compaction(
+    ctx: RunContext[None], *, result: AgentRunResult[Any]
+) -> AgentRunResult[Any]:
+    if compact_history_recovery_calls.count('after_run') == 0:
+        compact_history_recovery_calls.append('after_run')
+        raise _ProcessCrash
+    compact_history_recovery_calls.append('after_run')
+    return result
+
+
+def _compact_history_recovery_agent(name: str, *capabilities: AbstractCapability[None]) -> Agent[None, str]:
+    model = _RecoveryCompactingModel(
+        _answer_after_recovery,
+        profile=ModelProfile(supports_compaction_on_demand=True, compaction_instructions='replaces_prompt'),
+    )
+    # Instructions give a run continuing the history something to send, which a regular run then would.
+    return Agent(
+        model,
+        name=name,
+        instructions='Be brief.',
+        deps_type=type(None),
+        capabilities=[Hooks[None](after_run=_crash_after_the_first_compaction), NativeCompaction(), *capabilities],
+    )
+
+
+compact_history_dbos_agent = DBOSAgent(_compact_history_recovery_agent('legacy_compact_history_recovery'))  # pyright: ignore[reportDeprecated]
+compact_history_durability_agent = _compact_history_recovery_agent('compact_history_recovery', DBOSDurability())
+COMPACT_HISTORY_RECOVERY_HISTORY: list[ModelMessage] = [
+    ModelRequest(parts=[UserPromptPart('Hello DBOS')]),
+    ModelResponse(parts=[TextPart('Hello!')]),
+]
+
+
+@DBOS.workflow()
+async def compact_history_recovery_workflow() -> list[str]:
+    result = await compact_history_durability_agent.compact_history(COMPACT_HISTORY_RECOVERY_HISTORY)
+    return [record.handler for record in result.compactions]
+
+
+@pytest.mark.parametrize('wrapper', ['DBOSAgent', 'WrapperAgent(DBOSAgent)', 'DBOSDurability'])
+async def test_dbos_compact_history_recovers_as_a_compaction(dbos: DBOS, wrapper: str) -> None:
+    """A recovered `compact_history()` workflow compacts again, replaying the step, and never continues the conversation.
+
+    `DBOSAgent` runs it in a `.compact_history` workflow of its own, whose body makes the run compaction-only: the
+    `.run` workflow's recorded arguments don't say it was, so recovering that one would continue the conversation.
+    A `WrapperAgent` around it forwards `compact_history()` to it, so it gets the same workflow. Under
+    `DBOSDurability`, recovery re-executes the caller's workflow, which calls `compact_history()` again.
+    """
+    compact_history_recovery_calls.clear()
+    wfid = str(uuid.uuid4())
+    with SetWorkflowID(wfid), pytest.raises(_ProcessCrash):
+        if wrapper == 'DBOSAgent':
+            await compact_history_dbos_agent.compact_history(COMPACT_HISTORY_RECOVERY_HISTORY)
+        elif wrapper == 'WrapperAgent(DBOSAgent)':
+            await WrapperAgent(compact_history_dbos_agent).compact_history(COMPACT_HISTORY_RECOVERY_HISTORY)
+        else:
+            await compact_history_recovery_workflow()
+    assert compact_history_recovery_calls == ['compact_messages', 'after_run']
+
+    # Resuming the pending workflow re-executes it under the same ID, the way recovery does.
+    result = await (await DBOS.resume_workflow_async(wfid)).get_result()
+    steps = [step['function_name'] for step in await dbos.list_workflow_steps_async(wfid)]
+    # No model request is sent in either case: the recovered run is still a compaction.
+    if wrapper != 'DBOSDurability':
+        status = await DBOS.get_workflow_status_async(wfid)
+        assert status is not None and status.name == 'legacy_compact_history_recovery.compact_history'
+        assert result.output is None
+        assert [record.handler for record in result.compactions] == ['native']
+        # `DBOSAgent`'s model makes its requests DBOS steps, but not `compact_messages`, under `run(compact=)` too, so
+        # the recovered workflow compacts again rather than replaying it.
+        assert compact_history_recovery_calls == ['compact_messages', 'after_run', 'compact_messages', 'after_run']
+        assert steps == []
+    else:
+        assert result == ['native']
+        # The compaction replays from its step.
+        assert compact_history_recovery_calls == ['compact_messages', 'after_run', 'after_run']
+        assert steps == ['compact_history_recovery__model.compact_messages']
 
 
 class _Survey(BaseModel):
