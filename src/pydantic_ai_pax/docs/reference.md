@@ -1393,7 +1393,7 @@ room for the editor. The original message text is unchanged. The footer also sho
 the number waiting when the `queued` footer field is visible, excluding the entry held for editing. Press F4 for visible
 **Edit**, **Remove**, **Steer**, and **Delivery** controls.
 Up/Down chooses an entry; `e` edits, `d` removes, `s` steers, and Esc closes without
-interrupting. Edit shows **Editing - won't send while you edit it**.
+interrupting. Any other key closes the panel and acts as it would without it, so typing keeps its letters. Edit shows **Editing - won't send while you edit it**.
 The held entry cannot run and keeps its reserved ordering slot. The send key
 **Save/requeue** returns it to that slot in after-turn mode. In next-checkpoint
 mode, the send key opens **Choose delivery**, described below. Esc, **Stop editing**,

@@ -548,6 +548,20 @@ async def test_visible_queue_edit_keeps_id_order_and_entire_earlier_draft() -> N
         assert live.buffer.text == ''
 
 
+async def test_a_key_the_queue_panel_does_not_handle_closes_it_and_reaches_the_draft() -> None:
+    """Typing after F4 keeps every letter, as it does without the panel."""
+    async with editor() as (live, _, _):
+        live.submit('first')
+        (first,) = live.queued_prompts()
+        live.feed('f4')
+        await anyio.lowlevel.checkpoint()
+        assert 'e Edit - d Remove - s Steer' in '\n'.join(live.frame())
+        live.feed('x')
+        assert live.buffer.text == 'x'
+        assert 'e Edit' not in '\n'.join(live.frame())
+        assert [entry.id for entry in live.queued_prompts()] == [first.id]
+
+
 async def test_visible_queue_remove_and_steer_cannot_execute_a_finished_entry() -> None:
     async with editor() as (live, _, _):
         live.steer = steered = Steered()
@@ -772,8 +786,10 @@ async def test_delivery_mode_is_persistent_and_reachable_without_queued_messages
         await anyio.lowlevel.checkpoint()
         frame = '\n'.join(live.frame())
         assert 'New busy: after turn - m change - Esc close' in frame and 'e Edit' not in frame
-        live.feed('e')  # Nothing is queued, so nothing was ever queued to edit.
-        assert live.notice == '' and 'm change' in '\n'.join(live.frame())
+        live.feed('e')  # Nothing is queued to edit, so the key closes the panel and types into the draft.
+        assert live.buffer.text == 'e' and 'm change' not in '\n'.join(live.frame())
+        live.feed('f4')
+        await anyio.lowlevel.checkpoint()
         live.feed('m')
         assert context.settings.busy_delivery == 'next-checkpoint'
         assert SettingsStore(store.path).load().busy_delivery == 'next-checkpoint'

@@ -490,12 +490,16 @@ class LivePrompt:
         asyncio.get_running_loop().call_soon(self.arm_queue)
 
     def queue_entry_key(self, key: str) -> bool:
-        """Apply an explicit action only while the selected entry is still runnable."""
+        """Apply an explicit action only while the selected entry is still runnable; other keys close the panel.
+
+        A key the panel does not handle falls through to the editor, so typing after F4 keeps its letters.
+        """
         entries = self.runnable_prompts()
         entry = self._queue_selected
         if entry is None:
             # The panel opened on an empty queue, so it offers only the delivery mode.
-            return True
+            self._queue_open = False
+            return False
         if entry not in entries:
             self._queue_open = False
             self.notice = 'That message is no longer queued.'
@@ -516,7 +520,8 @@ class LivePrompt:
                     self.notice = 'Cannot steer this input now. Commands and shell lines never steer.'
                 self._queue_open = False
             case _:
-                pass
+                self._queue_open = False
+                return False
         return True
 
     def arm_queue(self) -> None:
