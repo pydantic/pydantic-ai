@@ -2872,7 +2872,8 @@ async def test_falls_back_on_an_empty_error_response_by_default(parts: list[Mode
 async def test_a_chain_of_empty_error_responses_raises_instead_of_the_retry_prompt():
     """When every model returns an empty error response, the run raises, where without the fallback it re-prompts.
 
-    `RetryOnModelErrors` retries each model before falling back, so with it the retry recovers again.
+    `RetryOnModelErrors` resends the request to each model before falling back, so with it the resent request recovers.
+    Leaving `ModelEmptyResponseError` out of `fallback_on` keeps the retry prompt itself.
     """
     calls: list[str] = []
     agent = Agent(_ends_with_error('primary', calls), capabilities=[ModelFallback(_ends_with_error('backup', calls))])
@@ -2897,6 +2898,18 @@ async def test_a_chain_of_empty_error_responses_raises_instead_of_the_retry_prom
         result = await agent.run('x')
     assert result.output == 'primary answered'
     assert calls == ['primary', 'primary']
+
+    calls.clear()
+    agent = Agent(
+        _ends_with_error('primary', calls),
+        capabilities=[ModelFallback(_ends_with_error('backup', calls), fallback_on=(ModelAPIError,))],
+    )
+    result = await agent.run('x')
+    assert result.output == 'primary answered'
+    assert calls == ['primary', 'primary']
+    retry_request = result.all_messages()[2]
+    assert isinstance(retry_request, ModelRequest)
+    assert [type(part) for part in retry_request.parts] == [_messages.RetryPromptPart]
 
 
 async def test_an_error_response_with_text_is_the_output():
