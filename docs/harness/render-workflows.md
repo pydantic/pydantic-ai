@@ -407,7 +407,7 @@ return `False` or the toolset's options.
 Function tool arguments cross into the chained task run as JSON, and the task run validates them again with the
 tool's schema. That JSON doesn't always validate back to the values the run validated: a `TypedDict` or
 standard-library dataclass field crosses by Python name while the schema reads its alias, a field crosses under a
-serialization alias it isn't validated by, a `SecretStr` crosses masked, and a `Json` value or a computed field
+serialization alias it isn't validated by, a `SecretStr` crosses masked, and a computed field
 crosses in its serialized form. For such a call, the task input also carries the arguments the model sent, and the
 task run validates those, as the run did, so the tool gets the values it would get outside Render. Those arguments
 count toward the task size limit below.

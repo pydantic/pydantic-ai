@@ -175,10 +175,9 @@ Inside activities, live run fields such as `ctx.messages` and `ctx.prompt` are u
 Function tool arguments cross into the activity as JSON, and the activity validates them again with the tool's
 schema. That JSON doesn't always validate back to the values the orchestrator validated: a `TypedDict` or
 standard-library dataclass field crosses by Python name while the schema reads its alias, a field crosses under a
-serialization alias it isn't validated by, a `SecretStr` crosses masked, and a `Json` value outside a model crosses
-as its parsed value. For such a call, the activity input also carries the arguments the model sent, and the
-activity validates those, as the orchestrator did, so the tool gets the values it would get outside Azure Durable
-Task.
+serialization alias it isn't validated by, and a `SecretStr` crosses masked. For such a call, the activity input also
+carries the arguments the model sent, and the activity validates those, as the orchestrator did, so the tool gets the
+values it would get outside Azure Durable Task.
 
 A call crosses as its JSON alone when validating the tool's arguments can run your own code, such as a
 validator function, a `default_factory` other than a builtin type, or a `model_post_init`, or when a hook or
