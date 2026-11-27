@@ -19,7 +19,7 @@ import json
 import tempfile
 import uuid
 from collections import Counter
-from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator, Sequence
+from collections.abc import AsyncIterable, AsyncIterator, Awaitable, Callable, Generator
 from pathlib import Path
 from typing import Any
 
@@ -44,6 +44,7 @@ from pydantic_ai_harness.planning import (
 from pydantic_ai_harness.shell import Shell
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
+from ..append_only import as_capabilities
 from ._counting_clients import AWS_CLI_COUNT_VARIABLE, REQUESTS
 from .capability_cases import CASES
 
@@ -87,12 +88,6 @@ def _call_tools(*calls: tuple[str, dict[str, Any]]) -> FunctionModel:
     return FunctionModel(respond)
 
 
-def _capabilities(
-    built: AbstractCapability[None] | Sequence[AbstractCapability[None]],
-) -> list[AbstractCapability[None]]:
-    return [built] if isinstance(built, AbstractCapability) else list(built)
-
-
 _DURABLE = {name: case.calls for name, case in CASES.items() if case.calls is not None and case.calls.durable_steps}
 """The cases whose tools make requests a recovered run must not repeat."""
 
@@ -102,7 +97,7 @@ _AGENTS: dict[str, Agent[None, str]] = {
         name=f'{name}_agent',
         deps_type=type(None),
         capabilities=[
-            *_capabilities(calls.build(Path(tempfile.mkdtemp(prefix=f'harness_durable_tool_io_{name}_')))),
+            *as_capabilities(calls.build(Path(tempfile.mkdtemp(prefix=f'harness_durable_tool_io_{name}_')))),
             DBOSDurability[None](),
         ],
     )
@@ -398,5 +393,5 @@ def test_toolset_can_be_wrapped_by_engines_that_wrap_function_tools(
         _call_tools(),
         name=f'wrapped_{uuid.uuid4().hex}',
         deps_type=type(None),
-        capabilities=[*_capabilities(_DURABLE[scenario].build(tmp_path)), durability()],
+        capabilities=[*as_capabilities(_DURABLE[scenario].build(tmp_path)), durability()],
     )

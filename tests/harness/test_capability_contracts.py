@@ -8,7 +8,6 @@ suite until the exemption is removed.
 from __future__ import annotations
 
 import inspect
-import json
 import re
 from collections.abc import AsyncIterator, Callable, Sequence
 from contextlib import suppress
@@ -25,13 +24,20 @@ from pydantic_ai.capabilities import AbstractCapability, AgentCapability, LocalW
 from pydantic_ai.capabilities.abstract import leaf_capabilities
 from pydantic_ai.exceptions import UsageLimitExceeded, UserError
 from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart
-from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset
 from pydantic_ai.usage import UsageLimits
 
 from .. import capability_cases as core
-from ..append_only import ToolCall, build_capabilities, discover_capabilities, drain_events, skip_unless_installed
+from ..append_only import (
+    OneCallPerResponse,
+    build_calls,
+    build_capabilities,
+    discover_capabilities,
+    drain_events,
+    skip_unless_installed,
+)
 from ..capability_cases import (
     COMBINE_FIXED_POINT,
     CONTRACTS as CORE_CONTRACTS,
@@ -102,25 +108,6 @@ def _assert_holds(contract: Contract, name: str, breaks: Sequence[str]) -> None:
         assert not breaks, '; '.join(breaks)
 
 
-def _one_call_per_response(made: tuple[ToolCall, ...], prefix: str) -> FunctionModel:
-    """A model that streams the calls in order, one per response, then answers; call `i` gets the ID `call_{i}`.
-
-    The run streams its requests, so a request that isn't streamed is a capability's own run on the run's model, such
-    as `BrowserUse`'s browser agent, and gets the answer.
-    """
-
-    async def respond(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
-        del info
-        step = sum(isinstance(message, ModelResponse) for message in messages)
-        if step == len(made):
-            yield 'done'
-            return
-        name, args = made[step]
-        yield {0: DeltaToolCall(name=f'{prefix}{name}', json_args=json.dumps(args), tool_call_id=f'call_{step}')}
-
-    return FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('done')]), stream_function=respond)
-
-
 _GENERATED_ID = re.compile(r'\b[0-9a-f]{8}\b')
 """An ID a tool generates at random, such as a `Planning` step's, which no two runs share."""
 
@@ -132,12 +119,6 @@ def _comparable(content: object, directory: Path) -> object:
     return _GENERATED_ID.sub('<id>', content.replace(str(directory), '<dir>'))
 
 
-def _capabilities(
-    built: AbstractCapability[DepsT] | Sequence[AbstractCapability[DepsT]],
-) -> list[AbstractCapability[DepsT]]:
-    return [built] if isinstance(built, AbstractCapability) else list(built)
-
-
 async def _run_calls(
     case: CapabilityCase, directory: Path, *, prefixed: bool = False, usage_limits: UsageLimits | None = None
 ) -> AgentRunResult[str]:
@@ -145,12 +126,10 @@ async def _run_calls(
     if case.requires is not None:
         pytest.importorskip(case.requires)
     assert case.calls is not None
-    directory.mkdir()
-    # Built off the event loop, as an app builds its agent: building can import a client library.
-    capabilities = _capabilities(await anyio.to_thread.run_sync(case.calls.build, directory))
+    capabilities = await build_calls(case.calls.build, directory)
     if prefixed:
         capabilities = [capability.prefix_tools('p') for capability in capabilities]
-    model = _one_call_per_response(case.calls.made, 'p_' if prefixed else '')
+    model = OneCallPerResponse(case.calls.made, prefix='p_' if prefixed else '').model
     # Streamed, so a tool that emits a capability event has a handler to deliver it to.
     return await Agent(model, capabilities=capabilities).run(
         'go', event_stream_handler=drain_events, usage_limits=usage_limits
@@ -460,6 +439,11 @@ def test_a_capability_that_runs_with_tools_declares_calls(
 
 
 def test_pending_calls_backfill() -> None:
-    """The cases whose `calls` are still to be written: a PR that writes one lowers the count, and none raises it."""
+    """The cases whose `calls` are still to be written.
+
+    The count is pinned, so it moves only on purpose: a PR that writes a case's `calls`, or gives a case a reasoned
+    exemption of its own (such as a route other tools run through, which C1 covers), lowers it in the same change, and
+    no PR raises it.
+    """
     pending = sorted(name for name, exempt in DECLARES_CALLS.exempt.items() if exempt.reason.startswith(PENDING_CALLS))
-    assert len(pending) == 15, pending
+    assert len(pending) == 11, pending

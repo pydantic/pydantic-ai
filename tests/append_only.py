@@ -28,7 +28,16 @@ import importlib.util
 import inspect
 import json
 import sys
-from collections.abc import AsyncGenerator, AsyncIterable, Awaitable, Callable, Iterator, Mapping, Sequence
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Iterator,
+    Mapping,
+    Sequence,
+)
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, nullcontext
 from dataclasses import dataclass, field
 from datetime import UTC, datetime, timedelta
@@ -36,6 +45,7 @@ from functools import cache
 from pathlib import Path
 from typing import Any, Literal, TypeGuard
 
+import anyio
 import httpx2
 import pytest
 from pydantic_core import to_json
@@ -52,8 +62,11 @@ from pydantic_ai.messages import (
     ModelRequestPart,
     ModelResponse,
     SystemPromptPart,
+    TextPart,
+    ToolCallPart,
 )
 from pydantic_ai.models import Model, ModelRequestParameters, StreamedResponse
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.settings import ModelSettings
 from pydantic_ai.tools import RunContext
@@ -65,7 +78,10 @@ from .conftest import try_import
 Provider = Literal['anthropic', 'openai-responses', 'openai-chat']
 PROVIDERS: tuple[Provider, ...] = ('anthropic', 'openai-responses', 'openai-chat')
 
-ToolCall = tuple[str, dict[str, Any]]
+ToolArgs = dict[str, Any]
+"""A tool call's arguments, as a test passes them."""
+
+ToolCall = tuple[str, ToolArgs]
 
 START = datetime(2026, 10, 16, 9, 58, tzinfo=UTC)
 """Just before the hour, so the first clock step crosses it."""
@@ -605,7 +621,7 @@ def _client_messages(protocol: Literal['vercel', 'agui'], history: list[ModelMes
     )
 
 
-async def _run_through_ui(
+async def run_through_ui(
     protocol: Literal['vercel', 'agui'],
     agent: Agent[Any, Any],
     prompt: str,
@@ -662,7 +678,7 @@ async def run_conversation(
     async def run(prompt: str, **kwargs: Any) -> AgentRunResult[Any]:
         if scenario.ui_adapter is None:
             return await agent.run(prompt, **kwargs)
-        return await _run_through_ui(scenario.ui_adapter, agent, prompt, **kwargs)
+        return await run_through_ui(scenario.ui_adapter, agent, prompt, **kwargs)
 
     async with scenario.around() if scenario.around is not None else nullcontext():
         first = await run('What is the weather and the news?', **scenario.run_kwargs)
@@ -1087,6 +1103,65 @@ def skip_unless_installed(name: str, module: str | None) -> None:
 
 Fixture = Callable[[Path], 'AbstractCapability[Any] | Sequence[AbstractCapability[Any]]']
 """Builds a configured capability, plus any it depends on (a workspace, say), in the test's `tmp_path`."""
+
+
+def as_capabilities(
+    built: AbstractCapability[Any] | Sequence[AbstractCapability[Any]],
+) -> list[AbstractCapability[Any]]:
+    """What a `Fixture` built, as a list."""
+    return [built] if isinstance(built, AbstractCapability) else list(built)
+
+
+async def build_calls(build: Fixture, directory: Path) -> list[AbstractCapability[Any]]:
+    """What a case's `calls` run against, built in a new `directory`.
+
+    Built off the event loop, as an app builds its agent: building can import a client library.
+    """
+    directory.mkdir()
+    return as_capabilities(await anyio.to_thread.run_sync(build, directory))
+
+
+@dataclass
+class OneCallPerResponse:
+    """A model that makes `made` in order, one call per response, then answers; call `i` gets the ID `call_{i}`.
+
+    `prefix` goes before each tool name, as `prefix_tools()` renames them. With `wrap`, a call to a tool the model
+    isn't offered goes through what `wrap` returns, such as a route's dispatcher, and `wrapped` counts those. A run
+    that streams its requests makes the calls from those, so by default a request that isn't streamed is a
+    capability's own run on the run's model, such as `BrowserUse`'s browser agent, and gets the answer: `unstreamed`
+    makes the calls from those too, for an agent whose runs don't stream, such as a sub-agent.
+    """
+
+    made: Sequence[ToolCall]
+    prefix: str = ''
+    wrap: Callable[[str, ToolArgs, AgentInfo], ToolCall] | None = None
+    unstreamed: bool = False
+    wrapped: int = 0
+
+    def _next(self, messages: list[ModelMessage], info: AgentInfo) -> ToolCallPart | None:
+        step = sum(isinstance(message, ModelResponse) for message in messages)
+        if step >= len(self.made):
+            return None
+        name, args = self.made[step]
+        name = f'{self.prefix}{name}'
+        if self.wrap is not None and name not in {tool.name for tool in info.function_tools}:
+            self.wrapped += 1
+            name, args = self.wrap(name, args, info)
+        return ToolCallPart(name, args, tool_call_id=f'call_{step}')
+
+    def _respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        call = self._next(messages, info) if self.unstreamed else None
+        return ModelResponse(parts=[TextPart('done') if call is None else call])
+
+    async def _stream(self, messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        if (call := self._next(messages, info)) is None:
+            yield 'done'
+        else:
+            yield {0: DeltaToolCall(call.tool_name, call.args_as_json_str(), tool_call_id=call.tool_call_id)}
+
+    @property
+    def model(self) -> FunctionModel:
+        return FunctionModel(self._respond, stream_function=self._stream)
 
 
 def build_capabilities(

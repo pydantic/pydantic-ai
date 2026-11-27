@@ -8,7 +8,7 @@ A capability is conformant when its entry in `CASES` (`tests/capability_cases.py
 
 Each area says what it requires and how the suite checks it. Contracts are `Contract(applies, exempt)` entries in `CONTRACTS`, run by `tests/harness/test_capability_contracts.py`; an exempt case must still break its contract, so fixing the capability fails the suite until the exemption is removed. Link an exemption that records a bug to the issue that tracks it.
 
-The contracts are numbered C0, C1, … as this checklist assigns them, not in the order they land. C1–C5 are planned and work toward [#13118](https://github.com/pydantic/pydantic-ai/issues/13118): no capability content below `'operator'` reaches the model in system voice.
+The contracts are numbered C0, C1, … as this checklist assigns them, not in the order they land. C1–C5 work toward [#13118](https://github.com/pydantic/pydantic-ai/issues/13118): no capability content below `'operator'` reaches the model in system voice.
 
 ## Coverage
 
@@ -20,7 +20,7 @@ The contracts are numbered C0, C1, … as this checklist assigns them, not in th
 **How it's tested**
 
 - `DECLARES_CALLS` (C0) builds every buildable public case and checks it: `test_a_capability_that_runs_with_tools_declares_calls`. A capability made of others is checked through its parts.
-- `test_pending_calls_backfill` pins how many cases are still pending. A PR that writes a case's `calls` removes its exemption and lowers the count; a new capability doesn't add a pending one.
+- `test_pending_calls_backfill` pins how many cases are still pending. A PR that writes a case's `calls`, or gives a case a reasoned exemption of its own (such as a route other tools run through, which C1 covers), removes its pending exemption and lowers the count; no PR raises it, so a new capability doesn't add a pending one.
 - For a capability whose hooks run around other tools' calls, `with_echo` builds it beside an `echo` tool, and `ECHO` calls it.
 
 ## Prompt cache
@@ -50,7 +50,7 @@ The rules behind these are in [Message History & Prompt Caching](message-history
 **How it's tested**
 
 - C0 (above) makes these contracts reach every capability that runs tools.
-- C1, route matrix (planned): each case's `calls` run at `with_authority('none')` through every route, and the typed history must match the native route's source, authority and frame.
+- C1, route matrix: `test_calls_reach_the_model_the_same_on_every_route` in `tests/harness/test_capability_routes.py` (with its IPython twin) runs each case's `calls` at `with_authority('none')` natively and through Code Mode, IPython Code Mode, `ToolBridge`, `BackgroundTools`, a sub-agent, a prepare hook that rebuilds each tool definition, a `ModelMessagesTypeAdapter` round trip, and a Vercel AI and an AG-UI run that keep the history on the server. The same tools must run, and every part the calls add besides each call's own result must match the native route's type, source, capability id, authority, frame and scope, and for the probes its content too. `PROBES` there add calls that return `ToolReturn.content`, call `ctx.enqueue`, and enqueue a request-scoped instruction, so every route has a part to compare, and a route that turns a request-scoped part into a lasting one fails. A route that breaks this for a case is in `KNOWN`, a strict `xfail` linked to its fix; one that doesn't apply is skipped with its reason. The durable routes (Temporal, DBOS) are D1's. To add a route, add it to `Route` and give `_through` the way to run calls on it.
 - C2, sink check (planned): `Model.prepare_messages` asserts no part below `'operator'` renders as system or developer, and no capability below `'operator'` authors a `ModelResponse`.
 - C3, role-site guard (planned): every site that builds a system or developer part is in an allowlist with its reason.
 - C4, transformation registry (planned): every function that returns `list[ModelMessage]` is registered, and sources survive each one.
