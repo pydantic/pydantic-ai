@@ -566,8 +566,8 @@ async def test_messages_added_to_a_loaded_conversation_are_saved_with_the_parts_
     assert record is not None and record.branches == []
 
 
-async def test_unsaved_messages_the_run_merges_are_saved_after_the_stored_ones() -> None:
-    """Unsaved requests the run merges into one to send it are still found after the stored messages, so the save appends."""
+async def test_unsaved_messages_the_run_merges_fall_back_to_comparing_with_the_stored_history() -> None:
+    """Without knowing which stored messages the changed unsaved ones follow, the save compares the whole history."""
     store = InMemoryConversationStore()
     stored = await _stored_conversation(store, turns=2)
     loaded = await store.load(stored.conversation_id)
@@ -577,7 +577,7 @@ async def test_unsaved_messages_the_run_merges_are_saved_after_the_stored_ones()
 
     result = await Agent(TestModel()).run(conversation=loaded)
     conversation = result.conversation
-    assert conversation.new_message_index == len(stored.messages)
+    assert conversation.new_message_index is None
     await store.save(conversation)
 
     reloaded = await store.load(stored.conversation_id)
@@ -2934,52 +2934,6 @@ async def test_capture_run_conversation_keeps_the_first_run_and_leaves_an_inner_
 class _FailsBeforeTheRun(AbstractCapability[None]):
     async def before_run(self, ctx: RunContext[None]) -> None:
         raise RuntimeError('the hook failed')
-
-
-@dataclasses.dataclass
-class _ChangesTheHistoryBeforeTheRun(AbstractCapability[None]):
-    how: str
-
-    async def before_run(self, ctx: RunContext[None]) -> None:
-        note = ModelRequest(parts=[UserPromptPart('note')])
-        if self.how == 'insert':
-            ctx.messages.insert(0, note)
-        else:
-            if self.how == 'trim_then_append':
-                del ctx.messages[:2]
-            ctx.messages.append(note)
-
-
-@pytest.mark.parametrize(
-    'how,prompts',
-    [
-        ('append', ['First', 'Second', 'note', 'Third']),
-        ('trim_then_append', ['First', 'Second', 'note', 'Third']),
-        # A message put before stored ones can't be appended to them, so it isn't saved.
-        ('insert', ['First', 'Second', 'Third']),
-    ],
-)
-async def test_messages_a_before_run_hook_puts_in_a_loaded_conversation_are_saved_once(
-    how: str, prompts: list[str]
-) -> None:
-    store = InMemoryConversationStore()
-    agent = Agent(TestModel(), deps_type=type(None))
-    await store.save(await agent.run('First', conversation_id='c'))
-    await store.save(await agent.run('Second', conversation=await store.load('c')))
-
-    result = await agent.run(
-        'Third', conversation=await store.load('c'), capabilities=[_ChangesTheHistoryBeforeTheRun(how)]
-    )
-    await store.save(result)
-
-    loaded = await store.load('c')
-    record = await store.read_record('c')
-    assert loaded is not None and record is not None
-    assert [
-        part.content for message in loaded.messages for part in message.parts if isinstance(part, UserPromptPart)
-    ] == prompts
-    assert len(loaded.messages) == len(prompts) + 3
-    assert record.branches == []
 
 
 async def test_a_resumed_run_that_fails_before_adding_a_message_leaves_the_calls_waiting() -> None:
