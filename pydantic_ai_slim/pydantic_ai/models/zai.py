@@ -5,11 +5,11 @@ from __future__ import annotations as _annotations
 from collections.abc import Mapping
 from dataclasses import dataclass
 from types import MappingProxyType
-from typing import Any, Literal, cast
+from typing import Any, Literal, cast, overload
 
 from typing_extensions import override
 
-from ..messages import FinishReason
+from ..messages import FinishReason, ModelMessage, ModelResponse
 from ..profiles import ModelProfileSpec
 from ..profiles.zai import ZaiModelProfile
 from ..providers import Provider
@@ -17,7 +17,7 @@ from ..settings import ModelSettings
 from . import ModelRequestParameters
 
 try:
-    from openai import AsyncOpenAI, Omit, omit
+    from openai import AsyncOpenAI, AsyncStream, Omit, omit
     from openai.types import chat
     from openai.types.chat import chat_completion
 
@@ -159,6 +159,45 @@ class ZaiModel(OpenAIChatModel):
             reasoning_effort_mapping=profile.get('zai_reasoning_effort_mapping', {}),
         )
         return new_settings, customized_parameters
+
+    @overload
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[True],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> AsyncStream[chat.ChatCompletionChunk] | ModelResponse: ...
+
+    @overload
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: Literal[False],
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> chat.ChatCompletion | ModelResponse: ...
+
+    @override
+    async def _completions_create(
+        self,
+        messages: list[ModelMessage],
+        stream: bool,
+        model_settings: OpenAIChatModelSettings,
+        model_request_parameters: ModelRequestParameters,
+    ) -> chat.ChatCompletion | AsyncStream[chat.ChatCompletionChunk] | ModelResponse:
+        if (
+            stream
+            and model_request_parameters.declared_tool_defs
+            and self.profile.get('zai_supports_tool_stream', False)
+        ):
+            # Flagged GLM models stream tool call arguments, output tools' included, only when the request sets `tool_stream`.
+            # A `tool_stream` the user passed via `extra_body` wins.
+            extra_body = dict(cast(dict[str, object], model_settings.get('extra_body', {})))
+            if 'tool_stream' not in extra_body:
+                extra_body['tool_stream'] = True
+            model_settings = {**model_settings, 'extra_body': extra_body}
+        return await super()._completions_create(messages, stream, model_settings, model_request_parameters)
 
     @override
     def _translate_thinking(

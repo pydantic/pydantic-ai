@@ -1,9 +1,13 @@
 from __future__ import annotations as _annotations
 
+import json
 import re
+from collections.abc import Callable
 
+import httpx2
 import pytest
 from dirty_equals import IsOneOf
+from pydantic import BaseModel, JsonValue
 
 from pydantic_ai import (
     Agent,
@@ -11,8 +15,10 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     ModelSettingsDeltaPart,
+    PartDeltaEvent,
     TextPart,
     ThinkingPart,
+    ToolCallPartDelta,
     UserPromptPart,
 )
 from pydantic_ai.exceptions import ContentFilterError
@@ -27,13 +33,18 @@ from ..conftest import IsDatetime, IsDecimal, IsStr, RequestCapture, try_import
 with try_import() as imports_successful:
     from openai.types import chat
     from openai.types.chat.chat_completion import Choice
-    from openai.types.chat.chat_completion_chunk import Choice as ChunkChoice, ChoiceDelta
+    from openai.types.chat.chat_completion_chunk import (
+        Choice as ChunkChoice,
+        ChoiceDelta,
+        ChoiceDeltaToolCall,
+        ChoiceDeltaToolCallFunction,
+    )
     from openai.types.chat.chat_completion_message import ChatCompletionMessage
 
     from pydantic_ai.models.zai import ZaiModel, ZaiModelSettings
     from pydantic_ai.providers.zai import ZaiProvider
 
-    from .mock_openai import MockOpenAI
+    from .mock_openai import MockOpenAI, get_mock_chat_completion_kwargs
 
 
 pytestmark = [
@@ -52,7 +63,7 @@ def zai_request_fields(capture: RequestCapture) -> list[dict[str, object]]:
     since drifted still replays green against its recording.
     """
     return [
-        {key: body[key] for key in ('thinking', 'reasoning_effort', 'user_id') if key in body}
+        {key: body[key] for key in ('thinking', 'reasoning_effort', 'tool_stream', 'user_id') if key in body}
         for body in capture.bodies('/chat/completions')
     ]
 
@@ -561,6 +572,18 @@ async def test_zai_non_standard_finish_reason(
     assert (result.response.provider_details or {})['finish_reason'] == raw_finish_reason
 
 
+def zai_chunk(
+    delta: ChoiceDelta, finish_reason: str | None = None, *, model: str = 'glm-5.2'
+) -> chat.ChatCompletionChunk:
+    return chat.ChatCompletionChunk.model_construct(
+        id='123',
+        choices=[ChunkChoice.model_construct(index=0, delta=delta, finish_reason=finish_reason)],
+        created=1704067200,  # 2024-01-01
+        model=model,
+        object='chat.completion.chunk',
+    )
+
+
 @pytest.mark.parametrize(
     'raw_finish_reason,expected_finish_reason',
     [
@@ -579,20 +602,10 @@ async def test_zai_non_standard_finish_reason_stream(
     same reason as `test_zai_non_standard_finish_reason`.
     """
 
-    def chunk(content: str, finish_reason: str | None = None) -> chat.ChatCompletionChunk:
-        return chat.ChatCompletionChunk.model_construct(
-            id='123',
-            choices=[
-                ChunkChoice.model_construct(
-                    index=0, delta=ChoiceDelta(content=content, role='assistant'), finish_reason=finish_reason
-                )
-            ],
-            created=1704067200,  # 2024-01-01
-            model='glm-5.1',
-            object='chat.completion.chunk',
-        )
-
-    stream = [chunk('Partial '), chunk('answer.', finish_reason=raw_finish_reason)]
+    stream = [
+        zai_chunk(ChoiceDelta(content='Partial ', role='assistant'), model='glm-5.1'),
+        zai_chunk(ChoiceDelta(content='answer.', role='assistant'), finish_reason=raw_finish_reason, model='glm-5.1'),
+    ]
     model = ZaiModel('glm-5.1', provider=ZaiProvider(openai_client=MockOpenAI.create_mock_stream(stream)))
 
     async with Agent(model).run_stream('Tell me something.') as result:
@@ -624,3 +637,209 @@ async def test_zai_sensitive_without_content_raises_content_filter_error(allow_m
 
     with pytest.raises(ContentFilterError, match=re.escape("Content filter triggered. Finish reason: 'sensitive'")):
         await Agent(model).run('Tell me something.')
+
+
+def weather(city: str) -> str:
+    return 'sunny'
+
+
+class Forecast(BaseModel):
+    weather: str
+
+
+@pytest.mark.parametrize(
+    'model_name,stream,tools,output,settings,expected_extra_body',
+    [
+        pytest.param(
+            'glm-5.2',
+            True,
+            [weather],
+            'Paris is sunny.',
+            None,
+            snapshot({'thinking': {'clear_thinking': False}, 'tool_stream': True}),
+            id='streamed-with-function-tools',
+        ),
+        pytest.param(
+            'glm-5.2',
+            True,
+            [],
+            Forecast(weather='sunny'),
+            None,
+            snapshot({'thinking': {'clear_thinking': False}, 'tool_stream': True}),
+            id='streamed-with-output-tool',
+        ),
+        pytest.param(
+            'glm-5.2',
+            True,
+            [weather],
+            'Paris is sunny.',
+            ModelSettings(extra_body={'tool_stream': False}),
+            snapshot({'tool_stream': False, 'thinking': {'clear_thinking': False}}),
+            id='explicit-tool-stream-kept',
+        ),
+        pytest.param(
+            'glm-5.2',
+            True,
+            [],
+            'Paris is sunny.',
+            None,
+            snapshot({'thinking': {'clear_thinking': False}}),
+            id='streamed-without-tools',
+        ),
+        pytest.param(
+            'glm-5.2',
+            False,
+            [weather],
+            'Paris is sunny.',
+            None,
+            snapshot({'thinking': {'clear_thinking': False}}),
+            id='non-streamed',
+        ),
+        pytest.param(
+            'glm-4.5',
+            True,
+            [weather],
+            'Paris is sunny.',
+            None,
+            snapshot({'thinking': {'clear_thinking': False}}),
+            id='unflagged-model',
+        ),
+    ],
+)
+async def test_zai_tool_stream_extra_body(
+    allow_model_requests: None,
+    model_name: str,
+    stream: bool,
+    tools: list[Callable[[str], str]],
+    output: str | Forecast,
+    settings: ModelSettings | None,
+    expected_extra_body: dict[str, object],
+):
+    """`tool_stream` goes only on streamed requests with tools for a flagged model, and an explicit value wins.
+
+    Function tools and output tools both count. Each case pins the whole `extra_body` handed to the SDK, so it
+    also shows `tool_stream` sitting next to the `thinking` payload rather than replacing it. Unit test because
+    the default cassette matchers ignore the request body, so a recording could not catch a drifted `extra_body`.
+    """
+    if isinstance(output, Forecast):
+        tool_call = ChoiceDeltaToolCallFunction(name='final_result', arguments=output.model_dump_json())
+        delta = ChoiceDelta(
+            role='assistant',
+            tool_calls=[ChoiceDeltaToolCall(index=0, id='call_1', type='function', function=tool_call)],
+        )
+    else:
+        delta = ChoiceDelta(role='assistant', content=output)
+    if stream:
+        client = MockOpenAI.create_mock_stream([zai_chunk(delta, finish_reason='stop', model=model_name)])
+    else:
+        client = MockOpenAI.create_mock(
+            chat.ChatCompletion.model_construct(
+                id='123',
+                choices=[
+                    Choice.model_construct(
+                        finish_reason='stop',
+                        index=0,
+                        message=ChatCompletionMessage(role='assistant', content=delta.content),
+                    )
+                ],
+                created=1704067200,  # 2024-01-01
+                model=model_name,
+                object='chat.completion',
+            )
+        )
+    model = ZaiModel(model_name, provider=ZaiProvider(openai_client=client))
+    agent = Agent(model, output_type=type(output), tools=tools)
+
+    if stream:
+        async with agent.run_stream('What is the weather in Paris?', model_settings=settings) as result:
+            assert await result.get_output() == output
+    else:
+        assert (await agent.run('What is the weather in Paris?', model_settings=settings)).output == output
+
+    assert get_mock_chat_completion_kwargs(client)[-1].get('extra_body') == expected_extra_body
+
+
+@pytest.mark.parametrize(
+    'tools,output_type,tool_name,arguments,expected_output',
+    [
+        pytest.param([weather], str, 'weather', ['{"city": ', '"Paris"}'], 'It is sunny in Paris.', id='function-tool'),
+        pytest.param(
+            [], Forecast, 'final_result', ['{"weather": ', '"sunny"}'], Forecast(weather='sunny'), id='output-tool'
+        ),
+    ],
+)
+async def test_zai_tool_stream_streams_tool_call_arguments(
+    allow_model_requests: None,
+    request_capture: RequestCapture,
+    tools: list[Callable[[str], str]],
+    output_type: type[str] | type[Forecast],
+    tool_name: str,
+    arguments: list[str],
+    expected_output: str | Forecast,
+):
+    """A streamed GLM-5.2 tool call's arguments reach the run as separate deltas, for function and output tools.
+
+    The fake endpoint answers the way Z.AI documents `tool_stream`: it splits the arguments across chunks only
+    when the request sets `tool_stream`, and sends them whole otherwise, so this fails if `ZaiModel` stops sending
+    it. Unit test until a live `glm-5.2` recording exists, which needs a standard Z.AI key.
+    """
+
+    def handler(request: httpx2.Request) -> httpx2.Response:
+        if len(request_capture.paths) == 1:
+            parts = arguments if request_capture.body('/chat/completions').get('tool_stream') else [''.join(arguments)]
+            deltas: list[dict[str, JsonValue]] = [
+                {
+                    'tool_calls': [
+                        {
+                            'index': 0,
+                            'id': 'call_1',
+                            'type': 'function',
+                            'function': {'name': tool_name, 'arguments': parts[0]},
+                        }
+                    ]
+                },
+                *({'tool_calls': [{'index': 0, 'function': {'arguments': part}}]} for part in parts[1:]),
+            ]
+            finish_reason = 'tool_calls'
+        else:
+            deltas = [{'content': 'It is sunny in Paris.'}]
+            finish_reason = 'stop'
+        chunks = [{'delta': delta, 'finish_reason': None} for delta in deltas] + [
+            {'delta': {}, 'finish_reason': finish_reason}
+        ]
+        content = ''.join(
+            'data: '
+            + json.dumps(
+                {
+                    'id': '123',
+                    'object': 'chat.completion.chunk',
+                    'created': 1704067200,  # 2024-01-01
+                    'model': 'glm-5.2',
+                    'choices': [{'index': 0, **chunk}],
+                }
+            )
+            + '\n\n'
+            for chunk in chunks
+        )
+        return httpx2.Response(
+            200, content=f'{content}data: [DONE]\n\n'.encode(), headers={'content-type': 'text/event-stream'}
+        )
+
+    async with httpx2.AsyncClient(
+        transport=httpx2.MockTransport(handler),
+        event_hooks={'request': list(request_capture.client.event_hooks['request'])},
+    ) as http_client:
+        # The cassette layer ignores localhost, so the request reaches `handler`.
+        provider = ZaiProvider(api_key='test', base_url='http://localhost/api/paas/v4', http_client=http_client)
+        agent = Agent(ZaiModel('glm-5.2', provider=provider), output_type=output_type, tools=tools)
+        async with agent.run_stream_events('Weather in Paris?') as stream:
+            events = [event async for event in stream]
+
+    assert [
+        event.delta.args_delta
+        for event in events
+        if isinstance(event, PartDeltaEvent) and isinstance(event.delta, ToolCallPartDelta)
+    ] == arguments[1:]
+    assert {fields.get('tool_stream') for fields in zai_request_fields(request_capture)} == {True}
+    assert isinstance(events[-1], AgentRunResultEvent)
+    assert events[-1].result.output == expected_output
