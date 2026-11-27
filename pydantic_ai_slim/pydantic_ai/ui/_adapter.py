@@ -1222,6 +1222,39 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
         """
         return None
 
+    @property
+    def _request_run_id(self) -> str | None:
+        """The agent `run_id` the protocol's run input names, used when the run methods get no `run_id`.
+
+        Not a public property, since not every UI protocol has a run ID: AG-UI's `RunAgentInput.runId`
+        does, Vercel AI has no counterpart.
+        """
+        return None
+
+    def _agent_run_id(
+        self, run_id: str | None, conversation: Conversation | None, message_history: Sequence[ModelMessage] | None
+    ) -> str | None:
+        """The `run_id` to run the agent with: the one passed, else the request's own, else `None` to leave it to the agent.
+
+        The client mints the request's ID, so one it resends would fail the run with the `UserError` a
+        `run_id` already on the history raises; the agent picks its own instead, with a warning.
+        """
+        if run_id is not None:
+            return run_id
+        request_run_id = self._request_run_id
+        if not request_run_id:
+            return None
+        history = conversation.messages if conversation is not None else message_history or ()
+        if any(message.run_id == request_run_id for message in history):
+            warnings.warn(
+                f"The request's run ID {request_run_id!r} already appears in the message history, so the agent run "
+                'gets a `run_id` of its own instead. Pass `run_id` to choose it yourself.',
+                UserWarning,
+                stacklevel=2,
+            )
+            return None
+        return request_run_id
+
     def sanitize_messages(
         self,
         messages: Sequence[ModelMessage],
@@ -1599,7 +1632,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history] is `'server'`.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the workflow or flow run so it stays the same when the engine re-executes the run.
+            run_id: Optional ID for this agent run. If omitted, the run input's own run ID (AG-UI's `runId`) is used unless it's empty or already appears on the run's history. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. Otherwise, a fresh UUID7 is generated, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the workflow or flow run so it stays the same when the engine re-executes the run.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1681,7 +1714,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 message_history=message_history,
                 deferred_tool_results=deferred_tool_results,
                 conversation_id=None if conversation is not None else conversation_id,
-                run_id=run_id,
+                run_id=self._agent_run_id(run_id, conversation, message_history),
                 cancellation_token=cancellation_token,
                 timeout=timeout,
                 model=model,
@@ -1745,7 +1778,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history] is `'server'`.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the workflow or flow run so it stays the same when the engine re-executes the run.
+            run_id: Optional ID for this agent run. If omitted, the run input's own run ID (AG-UI's `runId`) is used unless it's empty or already appears on the run's history. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. Otherwise, a fresh UUID7 is generated, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the workflow or flow run so it stays the same when the engine re-executes the run.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.
@@ -1845,7 +1878,7 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 [`manage_message_history`][pydantic_ai.ui.UIAdapter.manage_message_history] is `'server'`.
             deferred_tool_results: Optional results for deferred tool calls in the message history.
             conversation_id: ID of the conversation this run belongs to. Pass `'new'` to start a fresh conversation, ignoring any `conversation_id` already on `message_history`. If omitted, falls back to the most recent `conversation_id` on `message_history` or a freshly generated UUID7, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the `run_id` so it stays the same when the engine re-executes the run.
-            run_id: Optional ID for this agent run. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. If omitted, a fresh UUID7 is generated, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the workflow or flow run so it stays the same when the engine re-executes the run.
+            run_id: Optional ID for this agent run. If omitted, the run input's own run ID (AG-UI's `runId`) is used unless it's empty or already appears on the run's history. Unlike `conversation_id`, never inherited from `message_history`. Passing an empty string, or a value that already appears on `message_history`, raises `UserError` because both break `new_messages()`; use `conversation_id` to correlate across turns or deferred-tool resume. Otherwise, a fresh UUID7 is generated, except that an agent with a `TemporalDurability`, `DBOSDurability` or `PrefectDurability` capability, run inside a workflow or flow, gets one derived from the workflow or flow run so it stays the same when the engine re-executes the run.
             model: Optional model to use for this run, required if `model` was not set when creating the agent.
             instructions: Optional additional instructions to use for this run.
             deps: Optional dependencies to use for this run.

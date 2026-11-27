@@ -149,6 +149,7 @@ with try_import() as imports_successful:
         Message,
         RunAgentInput,
         RunErrorEvent,
+        RunStartedEvent,
         StateSnapshotEvent,
         SystemMessage,
         TextInputContent,
@@ -12577,3 +12578,74 @@ def test_dump_messages_keeps_the_reserved_namespace_of_tool_return_text_server_s
     assert 'tag' in dumped
     # The caller's own objects are not mutated.
     assert marked.metadata == reserved
+
+
+def _stored_run_ids(conversation: Conversation | None) -> list[str | None]:
+    assert conversation is not None
+    return [message.run_id for message in conversation.messages]
+
+
+async def test_run_id_defaults_to_run_input_run_id():
+    """The agent run takes the request's `runId`, so the stored messages carry the run ID the client saw on `RUN_STARTED`."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    store = InMemoryConversationStore()
+    first = create_input(UserMessage(id='u1', content='Hi'), thread_id='thread').model_copy(update={'run_id': 'run-1'})
+    events = await _stored_turn(agent, store, first)
+    second = create_input(
+        UserMessage(id='u1', content='Hi'), UserMessage(id='u2', content='Again'), thread_id='thread'
+    ).model_copy(update={'run_id': 'run-2'})
+    await _stored_turn(agent, store, second)
+
+    [started] = [event for event in events if isinstance(event, RunStartedEvent)]
+    assert started.run_id == 'run-1'
+    assert _stored_run_ids(await store.load('thread')) == ['run-1', 'run-1', 'run-2', 'run-2']
+
+
+async def test_resent_run_id_falls_back_to_a_run_id_of_the_agents_own():
+    """A `runId` the stored history already has would fail the run, so the agent picks its own `run_id` and the adapter warns."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    store = InMemoryConversationStore()
+    first = create_input(UserMessage(id='u1', content='Hi'), thread_id='thread').model_copy(update={'run_id': 'run-1'})
+    await _stored_turn(agent, store, first)
+    resent = create_input(
+        UserMessage(id='u1', content='Hi'), UserMessage(id='u2', content='Again'), thread_id='thread'
+    ).model_copy(update={'run_id': 'run-1'})
+
+    with pytest.warns(UserWarning, match="The request's run ID 'run-1' already appears in the message history"):
+        events = await _stored_turn(agent, store, resent)
+
+    assert not [event for event in events if isinstance(event, RunErrorEvent)]
+    [started] = [event for event in events if isinstance(event, RunStartedEvent)]
+    assert started.run_id == 'run-1'
+    run_ids = _stored_run_ids(await store.load('thread'))
+    assert run_ids[:2] == ['run-1', 'run-1']
+    assert run_ids[2] == run_ids[3] == IsStr() and run_ids[2] != 'run-1'
+
+
+async def test_run_id_argument_wins_over_run_input_run_id():
+    """An explicit `run_id` is used as is, and still raises when the history already has it."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(UserMessage(id='u1', content='Hi')).model_copy(update={'run_id': 'run-1'})
+    adapter = AGUIAdapter(agent, run_input)
+    results: list[AgentRunResult[Any]] = []
+    async for _ in adapter.run_stream(run_id='explicit', on_complete=results.append):
+        pass
+    [result] = results
+    assert result.run_id == 'explicit'
+
+    adapter = AGUIAdapter(agent, create_input(UserMessage(id='u2', content='Again')))
+    events = [event async for event in adapter.run_stream(run_id='explicit', message_history=result.all_messages())]
+    errors = [event.message for event in events if isinstance(event, RunErrorEvent)]
+    assert errors == [IsStr(regex=r"^`run_id='explicit'` already appears in `message_history`\..*")]
+
+
+async def test_empty_run_input_run_id_leaves_the_run_id_to_the_agent():
+    """An empty `runId` is no ID to correlate by, so the agent mints its own `run_id` without a warning."""
+    agent = Agent(model=FunctionModel(stream_function=simple_stream))
+    run_input = create_input(UserMessage(id='u1', content='Hi')).model_copy(update={'run_id': ''})
+    adapter = AGUIAdapter(agent, run_input)
+    results: list[AgentRunResult[Any]] = []
+    async for _ in adapter.run_stream(on_complete=results.append):
+        pass
+    [result] = results
+    assert result.run_id == IsStr(min_length=1)

@@ -563,6 +563,11 @@ class AGUIAdapter(UIAdapter[RunAgentInput, Message, BaseEvent, AgentDepsT, Outpu
         """Conversation ID from the AG-UI `RunAgentInput.threadId`."""
         return self.run_input.thread_id
 
+    @property
+    def _request_run_id(self) -> str | None:
+        """Agent run ID from the AG-UI `RunAgentInput.runId`, so the stored messages carry the run ID the client saw on `RUN_STARTED`."""
+        return self.run_input.run_id
+
     @cached_property
     def deferred_tool_results(self) -> DeferredToolResults | None:
         """Translate AG-UI `RunAgentInput.resume[]` into Pydantic AI `DeferredToolResults`.

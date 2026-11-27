@@ -159,9 +159,9 @@ class AGUIEventStream(UIEventStream[RunAgentInput, BaseEvent, AgentDepsT, Output
     run ID replaces whatever was passed here, with a `UserWarning`. Without a run input, set it to
     the ID the run already has in your own transport, or leave it to default to a new UUID.
 
-    This is the protocol's run ID, not the agent run ID that
-    [`UIAdapter.run_stream()`][pydantic_ai.ui.UIAdapter.run_stream] takes as `run_id`; the two are
-    never wired together.
+    This is the protocol's run ID. [`AGUIAdapter`][pydantic_ai.ui.ag_ui.AGUIAdapter] also uses the run
+    input's run ID as the agent's `run_id`, unless [`run_stream()`][pydantic_ai.ui.UIAdapter.run_stream]
+    gets a `run_id` or the history already has that ID; a stream built without the adapter wires nothing.
     """
 
     manage_system_prompt: Literal['server', 'client'] = 'server'
