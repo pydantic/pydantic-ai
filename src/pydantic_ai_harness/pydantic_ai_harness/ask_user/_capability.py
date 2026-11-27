@@ -23,7 +23,7 @@ from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai_harness._callable import takes_context
 from pydantic_ai_harness._combine import one_per_id
 from pydantic_ai_harness._from_spec import use_default_from_spec
-from pydantic_ai_harness._typeguards import is_tool_return
+from pydantic_ai_harness._tool_return_guard import is_tool_return
 from pydantic_ai_harness.ask_user._events import AskUserAnsweredEvent
 from pydantic_ai_harness.ask_user._toolset import (
     OWNER_METADATA_KEY,

@@ -27,7 +27,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolSelector, matches_tool
 from pydantic_ai.toolsets import WrapperToolset
 from pydantic_ai.toolsets.abstract import SchemaValidatorProt, ToolsetTool
 from pydantic_ai_harness._code_tools import is_code_execution_tool, reserve_nested_call
-from pydantic_ai_harness._typeguards import is_tool_return
+from pydantic_ai_harness._tool_return_guard import is_tool_return
 
 SEARCH_TOOL_NAME = 'tool_search'
 DESCRIBE_TOOL_NAME = 'tool_describe'
