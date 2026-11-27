@@ -1129,16 +1129,14 @@ class TestSubAgentsTaskControl:
                 if event.prompt == 'Forbidden.':
                     event.veto('not allowed')
 
+        capabilities: list[AbstractCapability[None]] = [controlled(researcher(child('done'), max_calls=1)), Policy()]
         parent = Agent(
             scripted(
                 call('delegate_task', agent_name='researcher', task='Forbidden.'),
                 call('delegate_task', agent_name='researcher', task='Allowed.'),
                 echo_last_return,
             ),
-            capabilities=[
-                controlled(researcher(child('done'), max_calls=1)),
-                Policy(),
-            ],
+            capabilities=capabilities,
         )
         result = await parent.run('Go.')
         vetoed, allowed = tool_returns(result.all_messages())
