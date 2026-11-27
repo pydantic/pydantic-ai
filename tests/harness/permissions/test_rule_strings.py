@@ -1,4 +1,7 @@
-"""Tests for `parse_permission_rule` and `parse_permission_rules`."""
+"""Tests for `parse_permission_rule` and `parse_permission_rules`.
+
+Parsing makes no provider request, and the agent runs use `FunctionModel`, so there is nothing to record.
+"""
 
 from __future__ import annotations
 
@@ -127,6 +130,32 @@ class TestParsePermissionRule:
             'deny', tools=['write_file'], args={'path': '9=x'}
         )
 
+    @pytest.mark.parametrize('verdict', ['allow', 'deny'])
+    def test_a_trailing_space_star_is_the_same_as_colon_star(self, verdict: PermissionVerdict) -> None:
+        assert parse_permission_rule('Bash(git push *)', verdict) == parse_permission_rule('Bash(git push:*)', verdict)
+        assert parse_permission_rule('Bash(*)', verdict) == parse_permission_rule('Bash', verdict)
+
+    def test_a_star_inside_a_command_raises(self) -> None:
+        with pytest.raises(UserError, match='has a `\\*` that is not at its end'):
+            parse_permission_rule('Bash(git * main)', 'deny')
+
+    @pytest.mark.parametrize('rule', ['read_file(./.env)', 'read_file(././.env)', 'read_file(path=./.env)'])
+    def test_a_leading_dot_slash_is_dropped(self, rule: str) -> None:
+        assert parse_permission_rule(rule, 'deny') == PermissionRule('deny', tools=['read_file'], args={'path': '.env'})
+
+    def test_other_arguments_keep_their_glob_as_written(self) -> None:
+        assert parse_permission_rule('web_fetch(url=./x)', 'deny').args == {'url': './x'}
+
+    @pytest.mark.parametrize('rule', ['read_file(/secrets/**)', 'read_file(~/.ssh/*)', 'read_file(path=/etc/*)'])
+    def test_an_absolute_or_home_path_raises(self, rule: str) -> None:
+        with pytest.raises(UserError, match='starts its path with'):
+            parse_permission_rule(rule, 'deny')
+
+    @pytest.mark.parametrize('rule', ['mcp__github__*', 'mcp__github__create_?', 'tool[s]', 'mcp__*(x)'])
+    def test_a_wildcard_in_a_tool_name_raises(self, rule: str) -> None:
+        with pytest.raises(UserError, match='has a wildcard in its tool name'):
+            parse_permission_rule(rule, 'deny')
+
     def test_an_empty_command_raises(self) -> None:
         with pytest.raises(UserError, match='must be a shell command'):
             parse_permission_rule('Bash(:*)', 'allow')
@@ -135,10 +164,15 @@ class TestParsePermissionRule:
 class TestParsePermissionRules:
     def test_parses_each_verdict(self) -> None:
         assert parse_permission_rules(
-            {'allow': ['Bash(git status:*)', 'write_file(docs/**)'], 'deny': ['Bash(rm -rf)']}
+            {
+                'allow': ['Bash(git status:*)', 'write_file(docs/**)'],
+                'ask': ['Bash(git push)'],
+                'deny': ['Bash(rm -rf)'],
+            }
         ) == [
             PermissionRule('allow', command='git status'),
             PermissionRule('allow', tools=['write_file'], args={'path': 'docs/**'}),
+            PermissionRule('ask', command='git push'),
             PermissionRule('deny', command='rm -rf'),
         ]
 

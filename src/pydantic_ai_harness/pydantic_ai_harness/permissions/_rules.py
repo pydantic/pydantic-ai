@@ -421,14 +421,19 @@ def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str 
     - `'Bash(git push:*)'` or `'Shell(git push:*)'`: shell commands that start with `git push`, as a
       `PermissionRule.command`, on any tool that declares a shell command argument. `'Bash'` alone matches every
       shell command.
+    - `'Bash(git push *)'`: the same as `'Bash(git push:*)'`, and `'Bash(*)'` the same as `'Bash'`. A `*` anywhere
+      else in a command raises `UserError`: a command rule matches words, not wildcards.
     - `'Bash(git push)'`, without `:*`: the same rule for `'ask'` and `'deny'`. For `'allow'` it raises
       `UserError`, since Claude Code reads it as one exact command and a command rule's allow matches every
       command that starts with its words.
     - `'write_file'`: every call to the tool of that name.
-    - `'write_file(docs/**)'`: calls whose `path` argument matches the glob.
+    - `'write_file(docs/**)'`: calls whose `path` argument matches the glob. A leading `./` is dropped, and a
+      path starting with `/` or `~` raises `UserError`: Claude Code reads those against the project or home
+      folder, while a glob here is matched as written, and a relative one also against the end of a longer path.
     - `'web_fetch(url=https://example.com/*)'`: calls whose `url` argument matches the glob.
 
-    A pattern ending in `:*` on any other name, such as a lowercase `'shell(rm -rf:*)'`, raises `UserError`.
+    A pattern ending in `:*` on any other name, such as a lowercase `'shell(rm -rf:*)'`, raises `UserError`, and so
+    does a wildcard in a tool name, such as `'mcp__github__*'`: a rule names tools exactly.
 
     The text between the first `(` and the last `)` is the pattern, so a command may hold parentheses. Claude Code's
     own tool names, such as `Read` or `Edit`, raise `UserError` naming the tool to use: no tool here has them, so
@@ -437,25 +442,52 @@ def parse_permission_rule(rule: str, verdict: PermissionVerdict, *, reason: str 
     name, inner = _split_rule(rule)
     if (instead := _CLAUDE_CODE_TOOLS.get(name)) is not None:
         raise UserError(f'Permission rule {rule!r} uses the Claude Code tool name {name!r}: name {instead} instead.')
+    if any(char in name for char in '*?['):
+        raise UserError(f'Permission rule {rule!r} has a wildcard in its tool name: name each tool in full.')
     inner = None if inner is None else inner.strip()
     if name in _SHELL_NAMES:
-        if inner is None:
-            return PermissionRule(verdict, tools={'code_arg_language': 'shell'}, reason=reason)
-        command = inner.removesuffix(':*').rstrip()
-        if verdict == 'allow' and command == inner:
-            raise UserError(
-                f'Permission rule {rule!r} would allow every command starting with {inner!r}, not just that one: '
-                f'write `{name}({inner}:*)` to allow them.'
-            )
-        return PermissionRule(verdict, command=command, reason=reason)
+        return _shell_rule(rule, name, inner, verdict, reason=reason)
     if inner is None:
         return PermissionRule(verdict, tools=[name], reason=reason)
     if inner.endswith(':*'):
         # Otherwise it would be a `path` glob that a shell tool's call never matches, so a deny would refuse nothing.
         raise UserError(f'Permission rule {rule!r} uses `:*`, which only `Bash(...)` and `Shell(...)` take.')
     arg, equals, glob = inner.partition('=')
-    args = {arg: glob.strip()} if equals and arg.isidentifier() and glob else {'path': inner}
-    return PermissionRule(verdict, tools=[name], args=args, reason=reason)
+    arg, glob = (arg, glob.strip()) if equals and arg.isidentifier() and glob else ('path', inner)
+    return PermissionRule(
+        verdict, tools=[name], args={arg: _path_glob(rule, glob) if arg == 'path' else glob}, reason=reason
+    )
+
+
+def _shell_rule(
+    rule: str, name: str, inner: str | None, verdict: PermissionVerdict, *, reason: str | None
+) -> PermissionRule[Any]:
+    """The rule for a `Bash(...)` or `Shell(...)` string, whose pattern is `inner`."""
+    if inner is None or inner == '*':
+        return PermissionRule(verdict, tools={'code_arg_language': 'shell'}, reason=reason)
+    prefix = inner.endswith((':*', ' *'))
+    command = inner[:-2].rstrip() if prefix else inner
+    if '*' in command:
+        # A command rule matches words in order, so the wildcard would be a literal word and the rule match nothing.
+        raise UserError(f'Permission rule {rule!r} has a `*` that is not at its end: a command rule matches words.')
+    if verdict == 'allow' and not prefix:
+        raise UserError(
+            f'Permission rule {rule!r} would allow every command starting with {inner!r}, not just that one: '
+            f'write `{name}({inner}:*)` to allow them.'
+        )
+    return PermissionRule(verdict, command=command, reason=reason)
+
+
+def _path_glob(rule: str, glob: str) -> str:
+    """A rule string's `path` glob as a `PermissionRule` matches it: without a leading `./`."""
+    if glob.startswith(('/', '~')):
+        raise UserError(
+            f'Permission rule {rule!r} starts its path with {glob[0]!r}: write it relative, such as `secrets/**`, '
+            'which also matches the end of a longer path.'
+        )
+    while glob.startswith('./'):
+        glob = glob[2:]
+    return glob
 
 
 def parse_permission_rules(rules: Mapping[PermissionVerdict, Sequence[str]]) -> list[PermissionRule[Any]]:
