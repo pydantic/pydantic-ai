@@ -1436,6 +1436,8 @@ async def test_resume_browser_marks_a_copy_whose_original_moved_on(
     def check(browser: SessionBrowser) -> str:
         [entry] = [entry for entry in browser.entries if entry.id == copy]
         changed.append(browser.changed_since_import(entry))
+        # A copy saved before `created_at` existed never shows as changed.
+        assert not browser.changed_since_import(replace(entry, created_at=None))
         # Pax's own sessions and ones not imported yet have no import to compare with.
         assert len(browser.entries) == 3 and not any(
             browser.changed_since_import(other) for other in browser.entries if other.id != copy
@@ -1525,15 +1527,17 @@ def test_browser_marks_sessions_to_import() -> None:
     changed[0] = True
     frame = '\n'.join(browser.frame(width=140, height=20))
     assert frame.count('Claude Code · imported, changed since · 123 msgs / 1,234,567 tok') == 1
-    changed[0] = False
     # A narrower pane drops the tokens, then that it was imported, then the source, before they squeeze out the title.
-    for width, counts in (
-        (100, 'Claude Code · imported · 123 msgs'),
-        (40, 'Claude Code · 123 msgs'),
-        (22, '123 msgs'),
-        (22, 'to import'),
+    for width, counts, moved_on in (
+        (100, 'Claude Code · imported · 123 msgs', False),
+        (40, 'Claude Code · 123 msgs', False),
+        # That the original changed goes with the import marker, before the source label.
+        (40, 'Claude Code · 123 msgs', True),
+        (22, '123 msgs', False),
+        (22, 'to import', False),
     ):
         importing[0] = counts == 'to import'
+        changed[0] = moved_on
         frame = ANSI_ESCAPE_RE.sub('', '\n'.join(browser.frame(width=width, height=20)))
         card = next((line for line in frame.splitlines() if '> ' in line and ' Fr' in line), frame)
         assert card.endswith(f' {counts}') and card.count('·') == counts.count('·'), frame
