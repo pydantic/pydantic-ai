@@ -31,6 +31,7 @@ DOCS = Path(__file__).parent.parent / 'docs'
 EXEMPT_PAGES = {
     'changelog.md': 'release notes name the models of their time',
     'migration.md': 'migration notes name the models of their version',
+    'capabilities/model-instructions.md': 'matches model names, so its patterns and examples name specific models',
     'capabilities/thinking.md': 'thinking support and settings differ per model',
     'evals/evaluators/built-in.md': "documents the judge's default model",
     'harness/cdp-browser.md': 'reports a benchmark run of the models it measured',

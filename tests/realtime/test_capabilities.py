@@ -29,6 +29,7 @@ from pydantic_ai.capabilities import (
     CombinedCapability,
     Hooks,
     Instrumentation,
+    ModelInstructions,
     NativeTool,
     PrefixTools,
     ProcessEventStream,
@@ -1965,3 +1966,13 @@ async def test_capability_with_only_session_hooks_does_not_warn(capabilities: li
     `before_model_request`; `filterwarnings = error` turns any warning into a failure here.
     """
     await _drain(Agent[None, str](capabilities=capabilities, deps_type=type(None)), _RecordingModel())
+
+
+async def test_model_instructions_match_a_realtime_model() -> None:
+    """A realtime model has no `Model.profile`, but its name is matched like any other model's."""
+    agent = Agent(instructions='Be helpful.')
+    model = _RecordingModel()
+    await _drain(agent, model, capabilities=[ModelInstructions({'claude-*': 'Claude.', 'gpt-realtime*': 'Realtime.'})])
+    assert model.instructions is not None
+    assert 'Realtime.' in model.instructions
+    assert 'Claude.' not in model.instructions

@@ -40,6 +40,7 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     LocalWorkspace,
     ModelFallback,
+    ModelInstructions,
     NativeTool,
     PrefixTools,
     PrepareOutputTools,
@@ -524,6 +525,13 @@ CASES: dict[str, CapabilityCase] = {
             _check_thread_executor,
         ),
         build=lambda _: UseThreadExecutor(ThreadPoolExecutor(max_workers=1)),
+    ),
+    'ModelInstructions': CapabilityCase(
+        Narrows(
+            'one block per id; merging two mappings would let one shadow the other, so two that differ need their own ids',
+            lambda cls: (cls({'*': 'One.'}), cls({'*': 'Two.'})),
+        ),
+        build=lambda _: ModelInstructions({'*': 'Instructions for every model.'}),
     ),
     # -- Several of these is the normal case, so they stay anonymous. --
     'Capability': CapabilityCase(Anonymous('a generic bundle; several per agent is the usual shape')),

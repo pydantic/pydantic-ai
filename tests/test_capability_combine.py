@@ -60,7 +60,7 @@ from pydantic_ai.toolsets import AbstractToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 from pydantic_ai.toolsets.prepared import PreparedToolset
 
-from .capability_cases import CASES, CORE_CAPABILITY_PACKAGES, Anonymous, Combines, shipped_capability_types
+from .capability_cases import CASES, CORE_CAPABILITY_PACKAGES, Anonymous, Combines, Narrows, shipped_capability_types
 
 
 @pytest.mark.parametrize('name', sorted(CASES))
@@ -81,10 +81,17 @@ def test_capability_combine_policy_holds(name: str) -> None:
         )
         return
 
-    assert isinstance(policy, Combines), f'{name}: a core capability is `Anonymous` or `Combines`'
+    assert isinstance(policy, Combines | Narrows), f'{name}: a core capability is `Anonymous`, `Combines` or `Narrows`'
     assert _declares_default_id(capability_type), (
-        f'{name} is declared `Combines` but declares no default id, so two never meet'
+        f'{name} is declared `{type(policy).__name__}` but declares no default id, so two never meet'
     )
+    if isinstance(policy, Narrows):
+        first, second = policy.make(capability_type)
+        assert first.id is not None and first.id == second.id
+        assert capability_type.combine([first, first]) is first
+        with pytest.raises(UserError, match='disagree on'):
+            capability_type.combine([first, second])
+        return
 
     first, second = policy.make()
     assert first.id is not None and first.id == second.id, (

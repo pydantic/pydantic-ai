@@ -185,7 +185,10 @@ async def resolve_capability_block_instructions(
     """
     # Without `own`, an overriding wrapper or container replaced the capability's own instructions: only its toolsets'.
     sourced = capability._collect_instructions() if own else []  # pyright: ignore[reportPrivateUsage]
-    parts = await resolve_sourced_instructions(sourced, ctx)
+    # The block is the capability's joined text, so an empty part that removes a block of its own has nothing to do.
+    parts = [
+        part for part in await resolve_sourced_instructions(sourced, ctx) if part.content or part.on_change == 'append'
+    ]
 
     owned: list[CapabilityOwnedToolset[AgentDepsT]] = []
 
