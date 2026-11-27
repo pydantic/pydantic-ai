@@ -49,7 +49,7 @@ from pydantic_ai_pax.builtin_plugins.compaction import (
     build_chain,
 )
 from pydantic_ai_pax.commands import Command, Commands
-from pydantic_ai_pax.config import PluginSettings, Settings
+from pydantic_ai_pax.config import PluginSettings, Settings, features
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
 from pydantic_ai_pax.plugins import (
@@ -65,6 +65,7 @@ from pydantic_ai_pax.plugins import (
 )
 from pydantic_ai_pax.plugins.loader import PluginLoader
 from pydantic_ai_pax.runtime.session_runtime import create_shell
+from pydantic_ai_pax.runtime.sessions import PersistencePlugin
 from pydantic_ai_pax.ui.menus import dialogs
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.pax.menu_script import Script, pick, typed
@@ -515,7 +516,7 @@ def test_settings_source_shows_validates_saves_and_resets() -> None:
         save_settings=saved.append,
     )
     source = CompactionSource(host)
-    strategy, threshold, protected, window, summarizer, background, start = source.rows()
+    strategy, threshold, protected, window, summarizer, background, start, search = source.rows()
     assert [source.current(row) for row in source.rows()] == [
         'summarization',
         '0.85',
@@ -524,6 +525,7 @@ def test_settings_source_shows_validates_saves_and_resets() -> None:
         '(not set)',
         'false',
         '0.85',
+        'false',
     ]
     assert [row.default for row in source.rows()] == [
         'summarization',
@@ -533,8 +535,10 @@ def test_settings_source_shows_validates_saves_and_resets() -> None:
         '(not set)',
         'false',
         '0.85',
+        'false',
     ]
     assert background.choices == ('true', 'false') and not background.allow_custom
+    assert search.choices == ('true', 'false') and not search.allow_custom
     assert source.problem(start, '1') == 'Input should be less than 1'
     assert strategy.choices == ('summarization', 'truncation') and not strategy.allow_custom
     assert threshold.allow_custom and not threshold.choices
@@ -548,6 +552,7 @@ def test_settings_source_shows_validates_saves_and_resets() -> None:
     assert source.apply(strategy, 'truncation') == 'Saved Strategy.'
     assert source.apply(background, 'true') == 'Saved Background compaction.'
     assert source.apply(start, '0.9') == 'Saved Background start.'
+    assert source.apply(search, 'true') == 'Saved Search history.'
     assert saved[-1] == {
         'protected_tokens': 0,
         'threshold': 0.7,
@@ -556,6 +561,7 @@ def test_settings_source_shows_validates_saves_and_resets() -> None:
         'strategy': 'truncation',
         'background_compaction': True,
         'background_start': 0.9,
+        'search_history': True,
     }, 'only chosen settings are saved, so later default changes still apply'
     assert source.current(window) == '200000'
     assert source.reset(threshold) == 'Reset Threshold.'
@@ -856,3 +862,169 @@ async def test_background_settings_are_tagged_for_older_builds(tmp_path: Path) -
         }
     finally:
         await plugins.close('exit')
+
+
+QUESTION = 'what was the codeword?'
+
+
+def searches_on_question(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    """Calls the search tool when asked `QUESTION`, answers with what it returned, and says `ok` otherwise.
+
+    The summariser gets `ok` too, as its summary.
+    """
+    last = messages[-1]
+    assert isinstance(last, ModelRequest)
+    if returned := [part for part in last.parts if isinstance(part, ToolReturnPart)]:
+        return ModelResponse(parts=[TextPart(returned[0].model_response_str())])
+    if any(isinstance(part, UserPromptPart) and part.content == QUESTION for part in last.parts):
+        return ModelResponse(parts=[ToolCallPart('search_conversation_history', {'query': 'codeword'})])
+    return ModelResponse(parts=[TextPart('ok')])
+
+
+async def streams_on_question(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+    """`searches_on_question`, streamed, as Pax's turns are."""
+    [part] = searches_on_question(messages, info).parts
+    if isinstance(part, ToolCallPart):
+        yield {0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str())}
+    else:
+        assert isinstance(part, TextPart)
+        yield part.content
+
+
+def searching_session(store: SqliteSessionStore, tmp_path: Path, **settings: JsonValue) -> Session[None, str]:
+    """A saved session whose turns persist their steps and compact before every request, keeping the newest message.
+
+    `FunctionModel` reports 50 input tokens per streamed request, above the 51-token threshold once a prompt follows.
+    """
+    session = Session(
+        Agent(FunctionModel(searches_on_question, stream_function=streams_on_question)),
+        deps=None,
+        conversations=store,
+        workspace=tmp_path,
+    )
+    persistence = load_plugin(
+        PersistencePlugin,
+        PluginHost[None](name='persistence', console=Console(file=io.StringIO()), settings={}, conversation=session),
+    )
+    compaction = make_plugin(session, context_window=60, protected_tokens=0, **settings)
+    session.plugins = [*persistence.capabilities, *compaction.capabilities]
+    return session
+
+
+async def said_then_compacted(session: Session[None, str], codeword: str) -> None:
+    """Say `codeword` in the second turn, then have the next turn's compaction drop it; the first prompt is kept."""
+    await session.prompt('start')
+    await session.prompt(f'The codeword is {codeword}.')
+    await session.prompt('next')
+    said = [part for message in session.messages for part in message.parts if isinstance(part, UserPromptPart)]
+    assert all(codeword not in str(part.content) for part in said), 'compaction dropped the first turn'
+
+
+@pytest.mark.moves_cache_prefix(reason='compaction rewrites the history before every request')
+@pytest.mark.parametrize('strategy', ['summarization', 'truncation'])
+async def test_search_history_finds_what_compaction_dropped(tmp_path: Path, strategy: str) -> None:
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
+    other = searching_session(store, tmp_path, strategy=strategy, search_history=True)
+    await other.prompt('The codeword is OSPREY.')
+    session = searching_session(store, tmp_path, strategy=strategy, search_history=True)
+    await said_then_compacted(session, 'PELICAN')
+
+    result = await session.prompt(QUESTION)
+
+    assert 'PELICAN' in result.output
+    assert 'OSPREY' not in result.output, "another session's text never reaches this conversation"
+
+
+@pytest.mark.moves_cache_prefix(reason='compaction rewrites the history before every request')
+async def test_search_history_survives_resume_and_stays_out_of_forks(tmp_path: Path) -> None:
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
+    session = searching_session(store, tmp_path, search_history=True)
+    await said_then_compacted(session, 'PELICAN')
+
+    forked = searching_session(store, tmp_path, search_history=True)
+    await forked.resume(session.summary.id)
+    await forked._fork()  # pyright: ignore[reportPrivateUsage]
+    answer = (await forked.prompt(QUESTION)).output
+    assert 'PELICAN' not in answer, 'a fork is a conversation of its own, so what its parent compacted stays unsearched'
+
+    restored = searching_session(store, tmp_path, search_history=True)
+    await restored.resume(session.summary.id)
+    assert 'PELICAN' in (await restored.prompt(QUESTION)).output
+
+
+def tools_and_instructions(requests: list[tuple[list[str], str | None]]) -> FunctionModel:
+    """A model recording each request's tool names and instructions."""
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        requests.append(([tool.name for tool in info.function_tools], info.instructions))
+        return ModelResponse(parts=[TextPart('ok')])
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        requests.append(([tool.name for tool in info.function_tools], info.instructions))
+        yield 'ok'
+
+    return FunctionModel(respond, stream_function=stream)
+
+
+@pytest.mark.moves_cache_prefix(reason='turning `search_history` on between turns adds its tool')
+@pytest.mark.parametrize('saved', [True, False])
+async def test_search_history_is_off_unless_chosen_and_needs_saved_sessions(tmp_path: Path, saved: bool) -> None:
+    """Off by default, so requests carry no search tool or instructions; without saved sessions nothing is searchable."""
+    conversations = SqliteSessionStore(database=tmp_path / 'sessions.db') if saved else None
+    requests: list[tuple[list[str], str | None]] = []
+    session = Session(Agent(tools_and_instructions(requests)), deps=None, conversations=conversations)
+    for settings in ({}, {'search_history': True}):
+        plugin = make_plugin(session, **settings)
+        session.plugins = plugin.capabilities
+        await session.prompt('hi')
+    [(default_tools, default_instructions), (chosen_tools, chosen_instructions)] = requests
+    assert 'search_conversation_history' not in default_tools
+    assert 'search_conversation_history' in chosen_tools if saved else chosen_tools == default_tools
+    assert chosen_instructions != default_instructions if saved else chosen_instructions == default_instructions
+
+
+def test_search_history_needs_a_store_it_can_read_snapshots_from() -> None:
+    class StepsOnly:
+        """A step store without `list_snapshots`, which harness search cannot read."""
+
+    transcript = Transcript()
+    transcript.step_store = StepsOnly()  # pyright: ignore[reportAttributeAccessIssue]
+    assert len(make_plugin(transcript, search_history=True).capabilities) == 3
+
+
+def compaction_loader(store: SettingsStore) -> PluginLoader[None]:
+    compaction = next(plugin for plugin in DEFAULT_PLUGINS if plugin.id == 'compaction')
+    return PluginLoader[None](
+        store=store,
+        console=Console(file=io.StringIO()),
+        commands=Commands(),
+        session_start=lambda: SessionStart(agent=Agent(TestModel()), settings=store.load()),
+        builtin=(compaction,),
+    )
+
+
+@pytest.mark.parametrize('supported', [True, False], ids=['this-build', 'build-without-search-history'])
+async def test_search_history_is_tagged_for_older_builds(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, supported: bool
+) -> None:
+    """A saved `search_history` is tagged, so a build without the feature loads `compaction` with it off."""
+    store = SettingsStore(tmp_path / 'settings.db')
+    plugins = compaction_loader(store)
+    try:
+        await plugins.load_all()
+        loaded = plugins.entries()[0].loaded
+        assert loaded is not None
+        loaded.host.save_settings(CompactionSettings(search_history=True))
+        assert store.plugin_requirements('compaction') == {'search_history': ['compaction-search-history']}
+    finally:
+        await plugins.close('exit')
+    if not supported:
+        monkeypatch.setattr(features, 'SUPPORTED_FEATURES', features.SUPPORTED_FEATURES - {'compaction-search-history'})
+    reloaded = compaction_loader(store)
+    try:
+        await reloaded.load_all()
+        [entry] = reloaded.entries()
+        assert entry.loaded is not None and isinstance(entry.loaded.plugin, CompactionPlugin)
+        assert entry.loaded.plugin.settings.search_history == supported
+    finally:
+        await reloaded.close('exit')

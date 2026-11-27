@@ -1426,10 +1426,13 @@ the summariser's prompt. Only `ModelAPIError`, `FallbackExceptionGroup`, and
 propagate. With the experimental `background_compaction` on, the chain also gets harness's
 `background_start`: it writes the summary in the background ahead of the threshold and swaps it in
 when compaction is due; `/compact` without a focus uses a held summary, with a focus drops it, and
-unloading the plugin cancels one still running. `/plugins disable compaction` turns automatic compaction,
+unloading the plugin cancels one still running. With `search_history` on and saved sessions, it also binds
+harness `ConversationSearch(SnapshotHistorySource(<session step store>), scope='conversation')`, so the model
+can search what compaction dropped from the current conversation, and never another session's.
+`/plugins disable compaction` turns automatic compaction,
 `/compact`, and its context warning off. `/plugins configure compaction` edits its
 settings (`strategy`, `threshold`, `protected_tokens`, `context_window`,
-`summarization_model`, and the experimental `background_compaction` and `background_start`; see the
+`summarization_model`, `search_history`, and the experimental `background_compaction` and `background_start`; see the
 [reference](docs/reference.md#compacting-the-conversation)) and reloads it for the next turn. A
 declaration under the same name changes them too:
 

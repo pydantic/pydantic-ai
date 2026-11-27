@@ -2352,6 +2352,7 @@ You can also redeclare the plugin with your own settings;
 | `summarization_model` | unset | a cheaper model to write the summary; unset uses the one in use |
 | `background_compaction` | `false` | experimental: write the summary in the background before it is due ([below](#background-compaction-experimental)) |
 | `background_start` | `0.85` | experimental: with `background_compaction`, the fraction of `threshold` at which the background summary starts |
+| `search_history` | `false` | give the model a tool that searches what compaction dropped from this conversation ([below](#searching-what-compaction-dropped)) |
 
 The status row shows compact used/max context tokens, such as `128k/1m`.
 The maximum comes from the request's model or the `context_window` override.
@@ -2369,6 +2370,30 @@ than 50,000 tokens, redeclare the plugin with a smaller `protected_tokens` value
 `/compact` does not override that protection. Run `/compact` to retry the chain,
 or `/new` to clear the history. The figure and colour
 refresh with the next request; `/compact` alone does not change them.
+
+#### Searching what compaction dropped
+
+Compaction replaces older messages with a summary, or drops them, so an exact detail such as a file
+path, a value, or a decision can leave the conversation. Saved sessions still hold the originals:
+each turn's steps are recorded before the next compaction. With `search_history` set to `true` (in
+`/plugins configure compaction`), the model gets harness
+[`ConversationSearch`](../../../docs/harness/conversation-search.md)'s `search_conversation_history`
+tool over those records, and a line in its instructions saying the tool exists, so it can look up
+what the summary left out.
+
+The search covers the current conversation only: turns saved under its session ID, including ones
+from before a `/resume` and ones a `/rewind` undid. It never reaches another session, so no other
+conversation's text is sent to the model. A fork is a session of its own, so it searches what it
+inherited and what it adds, not what its parent compacted before the fork. Without saved sessions
+there is nothing to search, and the tool is not added. The records come from the built-in
+[`persistence`](#storage-and-recovery-limits) plugin, so with it disabled the search finds only turns recorded
+before.
+
+The tool and its instruction line are part of every request while the setting is on, whether or not
+the conversation has compacted yet, so turning it on or off changes the requests that follow. It is
+off by default, which leaves requests as they were. A turn that runs more than eight steps keeps only
+its latest eight checkpoints, so what that turn said in earlier steps and then compacted within the
+same turn may not be found.
 
 #### Background compaction (experimental)
 
