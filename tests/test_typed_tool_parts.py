@@ -27,6 +27,7 @@ from pydantic_ai.capabilities import (
     Capability,
     HandleDeferredToolCalls,
     ValidatedToolArgs,
+    WrapModelRequestHandler,
     WrapToolExecuteHandler,
 )
 from pydantic_ai.exceptions import ToolFailed, UserError
@@ -1339,9 +1340,9 @@ async def test_output_tool_call_from_a_capability_supplied_response_is_marked():
     """An output call in a response a `wrap_model_request` capability returns instead of the model's is marked too."""
 
     @dataclass
-    class AnswerItself(AbstractCapability[Any]):
+    class AnswerItself(AbstractCapability[object]):
         async def wrap_model_request(
-            self, ctx: RunContext[Any], *, request_context: ModelRequestContext, handler: Any
+            self, ctx: RunContext[object], *, request_context: ModelRequestContext, handler: WrapModelRequestHandler
         ) -> ModelResponse:
             return ModelResponse(parts=[ToolCallPart('submit_report', {'title': 'done'}, 'call_1')])
 
