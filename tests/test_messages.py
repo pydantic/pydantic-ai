@@ -1,9 +1,11 @@
 import gc
+import inspect
 import json
 import os
 import re
 import subprocess
 import sys
+import textwrap
 import warnings
 from collections.abc import Callable, Sequence
 from dataclasses import fields, replace
@@ -3300,42 +3302,26 @@ def test_args_as_dict_raise_if_invalid_non_dict_json():
         part.args_as_dict(raise_if_invalid=True)
 
 
-@pytest.mark.subprocess(reason='`-O` strips `assert` statements only when it starts the interpreter')
 def test_args_as_dict_rejects_non_dict_json_under_optimization():
-    """Non-object JSON stays invalid when `python -O` strips `assert` statements."""
-    # Uses no `assert`, which `-O` strips from this script too.
-    script = """
-import json
-import sys
+    """Non-object JSON stays invalid when `python -O` strips `assert` statements.
 
-from pydantic_ai.messages import ToolCallPart
+    `compile(..., optimize=1)` strips `assert` statements as `-O` does, so the method is compiled that way in process.
+    An `-O` interpreter would find no `-O` bytecode cached and compile everything it imports from source.
+    """
+    # The premise: this raises if `optimize=1` ever stops stripping `assert` statements.
+    exec(compile('assert False', '<assert probe compiled with optimize=1>', 'exec', optimize=1))
 
-results = {}
-for raw in ['[1, 2, 3]', '"text"', '1', 'null']:
-    part = ToolCallPart(tool_name='test_tool', args=raw)
-    try:
-        part.args_as_dict(raise_if_invalid=True)
-        raised = None
-    except Exception as e:
-        raised = type(e).__name__
-    results[raw] = {'args_as_dict': part.args_as_dict(), 'raise_if_invalid': raised}
-print(json.dumps({'optimize': sys.flags.optimize, 'results': results}))
-"""
-    result = subprocess.run(
-        [sys.executable, '-O', '-c', script],
-        capture_output=True,
-        text=True,
-        env={key: value for key, value in os.environ.items() if not key.startswith('COVERAGE_')},
-    )
+    source = textwrap.dedent(inspect.getsource(ToolCallPart.args_as_dict))
+    code = compile(source, '<args_as_dict compiled with optimize=1>', 'exec', optimize=1)
+    namespace: dict[str, Callable[..., object]] = {}
+    exec(code, ToolCallPart.args_as_dict.__globals__, namespace)
+    args_as_dict = namespace['args_as_dict']
 
-    assert result.returncode == 0, result.stderr
-    assert json.loads(result.stdout) == {
-        'optimize': 1,
-        'results': {
-            raw: {'args_as_dict': {INVALID_JSON_KEY: raw}, 'raise_if_invalid': 'AssertionError'}
-            for raw in ['[1, 2, 3]', '"text"', '1', 'null']
-        },
-    }
+    for raw in ['[1, 2, 3]', '"text"', '1', 'null']:
+        part = ToolCallPart(tool_name='test_tool', args=raw)
+        with pytest.raises(AssertionError):
+            args_as_dict(part, raise_if_invalid=True)
+        assert args_as_dict(part) == {INVALID_JSON_KEY: raw}
 
 
 def test_args_as_json_str_valid_json_canonical():

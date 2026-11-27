@@ -236,7 +236,7 @@ agent = Agent(
 
 Key parameters: `source` (required; a `HistorySource`), `scope` (`'conversation'` or `'all'`),
 `max_matches=10`, `context_lines=5`, `bm25_k1=1.5`, `bm25_b=0.75`, `add_instructions=True`,
-`tool_id='conversation-search'`.
+`tool_id='conversation-search'`, `max_scanned_messages=2000` (keyword-only).
 
 Gotchas:
 - Always set `scope` explicitly. Unset resolves to `'conversation'` and emits a
@@ -255,6 +255,9 @@ Gotchas:
 - Recovery of compaction-dropped messages depends on pre-compaction snapshots still being
   retained (`max_snapshots_per_run` can prune them). The corpus is rebuilt on every call, so cost
   grows with in-scope history.
+- One search scores only the newest `max_scanned_messages` in-scope messages and says so in its
+  result when it skipped older ones; a `run_id` search reaches an older run. Queries over 1,000
+  characters or 32 unique terms raise `ModelRetry`.
 - History a run inherits through `message_history` is indexed under the run that first
   persisted it; a request a later run adds an instruction change to is indexed again with that
   change, so its other parts can match twice. Excerpts are clipped to 500 characters; when the matched term lies past the cutoff,

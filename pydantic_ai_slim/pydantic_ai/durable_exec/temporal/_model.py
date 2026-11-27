@@ -582,7 +582,7 @@ class TemporalModel(WrapperModel):
         `prepare_messages` decides from `self.profile`, and a registered model is the same instance on
         both sides of the boundary, so its workflow-side pass already saw the right profile. A runtime
         model *string* isn't: the workflow infers it without constructing a provider, and a client can
-        narrow the inferred profile — `AsyncAnthropicFoundry` turns off `supports_inline_system_prompts`,
+        narrow the inferred profile — `AsyncAnthropicFoundry` turns off `supports_mid_conversation_effort`,
         which the string-inferred profile advertises. Whatever the workflow prepared was decided against
         a profile the request is not being sent under.
 

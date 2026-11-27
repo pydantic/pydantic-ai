@@ -389,8 +389,10 @@ capability to see post-compaction usage, before it to see what triggered compact
   Provider-native compaction still unloads them.
 - The same strategies keep tool search discoveries (a `search_tools` exchange, a native search result or a
   `ToolReturn.tools` reveal) by recording them again after the summary as a `ToolAvailabilityDeltaPart`.
-- `receipts=True` on `SlidingWindowCompaction` / `SummarizingCompaction` appends a note saying
-  history was compacted; with `StepPersistence` attached it includes the run handle.
+- `receipts=True` on `SlidingWindowCompaction` / `SummarizingCompaction` / `RelevanceCompaction` appends
+  a note saying history was compacted; with `StepPersistence` attached it includes the run handle. It's a
+  `CompactionReceiptPart` in the application's voice, not a user prompt, so it never starts a user turn;
+  find receipts by that type.
 - `await compact_now(strategy, history, model=..., focus=..., conversation_id=...)` (plus `deps=` for typed deps) runs a
   strategy between runs (for a `/compact` command). It applies no trigger of its own.
 

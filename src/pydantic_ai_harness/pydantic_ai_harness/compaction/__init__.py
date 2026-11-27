@@ -18,7 +18,7 @@ from pydantic_ai_harness.compaction._fallback_compaction import FallbackCompacti
 from pydantic_ai_harness.compaction._manual import compact_now
 from pydantic_ai_harness.compaction._pinning import PinSource, is_pinned, pin, reinject_pinned
 from pydantic_ai_harness.compaction._prune_tool_results import PruneToolResults
-from pydantic_ai_harness.compaction._receipts import TranscriptHandleProvider
+from pydantic_ai_harness.compaction._receipts import CompactionReceiptPart, TranscriptHandleProvider
 from pydantic_ai_harness.compaction._relevance_compaction import RelevanceCompaction
 from pydantic_ai_harness.compaction._report_context_usage import ContextUsage, ReportContextUsage
 from pydantic_ai_harness.compaction._reset_compaction import (
@@ -45,6 +45,7 @@ __all__ = [
     'ClampOversizedMessages',
     'ClearToolResults',
     'CompactOnRequest',
+    'CompactionReceiptPart',
     'CompactionStrategy',
     'ContextUsage',
     'ContextUsageMeasuredEvent',

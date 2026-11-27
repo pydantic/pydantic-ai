@@ -7040,7 +7040,7 @@ async def test_google_failed_tool_return_keeps_files_out_of_error_payload(google
 
 
 async def test_google_prepends_empty_user_turn_when_first_content_is_model(google_provider: GoogleProvider):
-    """Test that an empty user turn is prepended when contents start with a model response.
+    """Test that an empty user turn is prepended when contents start with a model function call.
 
     This happens when there's a conversation history with a model response (containing tool calls)
     followed by tool results, but no initial user prompt. The Gemini API requires that function
@@ -7089,6 +7089,72 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
                     },
                 ],
             },
+        ]
+    )
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_google_leading_text_model_turn_sent_as_is(
+    allow_model_requests: None, google_provider: GoogleProvider, vcr: Cassette
+):
+    """Gemini accepts contents that start with a text model turn, so no empty user turn is prepended."""
+    agent = Agent(GoogleModel('gemini-3.8-flash', provider=google_provider))
+
+    result = await agent.run(
+        'What is its population? Answer in one sentence.',
+        message_history=[ModelResponse(parts=[TextPart(content='Hi! I can tell you about Paris.')])],
+    )
+
+    assert single_request_body(vcr)['contents'] == snapshot(
+        [
+            {'parts': [{'text': 'Hi! I can tell you about Paris.'}], 'role': 'model'},
+            {'parts': [{'text': 'What is its population? Answer in one sentence.'}], 'role': 'user'},
+        ]
+    )
+    assert result.output == snapshot(
+        'The city of Paris has a population of approximately 2.1 million residents, expanding to over 12 million in its greater metropolitan area.'
+    )
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_google_cloud_leading_text_model_turn_sent_as_is(
+    allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette
+):
+    """Google Cloud also accepts contents that start with a text model turn, so no empty user turn is prepended."""
+    agent = Agent(GoogleModel('gemini-3.8-flash', provider=vertex_provider))
+
+    result = await agent.run(
+        'What is its population? Answer in one sentence.',
+        message_history=[ModelResponse(parts=[TextPart(content='Hi! I can tell you about Paris.')])],
+    )
+
+    assert single_request_body(vcr)['contents'] == snapshot(
+        [
+            {'parts': [{'text': 'Hi! I can tell you about Paris.'}], 'role': 'model'},
+            {'parts': [{'text': 'What is its population? Answer in one sentence.'}], 'role': 'user'},
+        ]
+    )
+    assert result.output == snapshot(
+        'As of recent estimates, the city proper of Paris has a population of approximately 2.1 million people, with over 12 million living in its greater metropolitan area.'
+    )
+
+
+async def test_google_prepends_empty_user_turn_when_only_content_is_model(google_provider: GoogleProvider):
+    """A model turn with nothing after it still gets an empty user turn first.
+
+    Only a text model turn followed by more turns was verified to be accepted without it, and some models reject a
+    request whose only turn is a model turn, so the empty user turn stays for this case.
+    Unit test (not VCR): an agent run never sends a request that ends with a model turn.
+    """
+    m = GoogleModel('gemini-3.8-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='Hi! I can tell you about Paris.')])]
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {'role': 'user', 'parts': [{'text': ''}]},
+            {'role': 'model', 'parts': [{'text': 'Hi! I can tell you about Paris.'}]},
         ]
     )
 

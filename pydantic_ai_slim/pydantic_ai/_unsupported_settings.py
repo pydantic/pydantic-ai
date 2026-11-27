@@ -39,8 +39,8 @@ SUPPRESSED_WARNINGS: ContextVar[frozenset[ModelSettingName]] = ContextVar(
 )
 """The settings `Model.prepare_request` doesn't warn about, set by `suppress_warnings`.
 
-For `thinking`, the suppressed warning is that a provider-specific setting from the model's `settings` takes precedence
-over it; for the others, that the model ignores them.
+For `thinking` and `thinking_summary`, the suppressed warning is that a provider-specific setting from the model's
+`settings` takes precedence over them; for the others, that the model ignores them.
 """
 
 
@@ -81,15 +81,15 @@ def suppress_warnings(settings: Iterable[ModelSettingName] | None = None) -> Gen
     """Don't warn about `settings` in `Model.prepare_request` calls inside this block.
 
     Without `settings`, don't emit any warning `prepare_request` emits: about each of the `GUARANTEE_SETTINGS` a model
-    may ignore, about `thinking`, which a provider-specific setting from the model's `settings` may take precedence over,
-    and about a model its provider deprecated.
+    may ignore, about `thinking` and `thinking_summary`, which a provider-specific setting from the model's `settings`
+    may take precedence over, and about a model its provider deprecated.
 
     For framework code that prepares a request without sending it (to resolve the output mode, count its tokens, or
     describe it on a span, possibly in a Temporal workflow), so a request warns once, when the model that sends it
     prepares it; and, with `settings`, for settings the user didn't choose, like the `stop_sequences` an MCP server's
     sampling request sends.
     """
-    names = (*GUARANTEE_SETTINGS, 'thinking') if settings is None else settings
+    names = (*GUARANTEE_SETTINGS, 'thinking', 'thinking_summary') if settings is None else settings
     token = SUPPRESSED_WARNINGS.set(SUPPRESSED_WARNINGS.get() | frozenset(names))
     deprecation_token = DEPRECATED_MODEL_WARNING_SUPPRESSED.set(
         settings is None or DEPRECATED_MODEL_WARNING_SUPPRESSED.get()

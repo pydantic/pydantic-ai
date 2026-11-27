@@ -87,7 +87,7 @@ from .capability_models import (
     noop_greet as _noop_greet,
     registered_capability_context as _registered_capability_context,
 )
-from .conftest import IsStr, iter_message_parts, remove_schema_descriptions, try_import
+from .conftest import iter_message_parts, remove_schema_descriptions, try_import
 
 _SEARCH_TOOLS_NAME = ToolSearch.function_tool_name
 
@@ -162,7 +162,7 @@ async def test_instrumentation_removes_binary_content_from_nested_lists(
     spans = capfire.exporter.exported_spans_as_dict(parse_json_attributes=True)
     tool_span = next(span for span in spans if span['name'] == 'execute_tool image_list')
     assert tool_span['attributes']['gen_ai.tool.call.result'] == snapshot(
-        [{'media_type': 'image/png', 'vendor_metadata': None, 'kind': 'binary', 'identifier': IsStr()}]
+        [{'type': 'blob', 'mime_type': 'image/png', 'modality': 'image'}]
     )
 
 
@@ -1413,6 +1413,7 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Thinking',
                         },
+                        'thinking_summary': {'title': 'Thinking Summary', 'type': 'boolean'},
                         'citations': {'title': 'Citations', 'type': 'boolean'},
                         'cache': {
                             'anyOf': [
@@ -2218,6 +2219,7 @@ def test_model_json_schema_with_capabilities():
                             ],
                             'title': 'Effort',
                         },
+                        'summary': {'anyOf': [{'type': 'boolean'}, {'type': 'null'}], 'title': 'Summary'},
                     },
                     'title': 'spec_params_Thinking',
                     'type': 'object',

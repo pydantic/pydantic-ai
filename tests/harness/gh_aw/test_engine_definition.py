@@ -53,9 +53,9 @@ if shutil.which('node') is None:  # pragma: no cover
     pytest.skip('the gh-aw harness script is JavaScript and needs node', allow_module_level=True)
 
 DEFINITION = Path(__file__).parents[3] / 'src' / 'pydantic_ai_harness' / 'gh-aw' / 'pydantic.md'
-CLAI2_SOURCE = Path(__file__).parents[3] / 'src' / 'pydantic_ai_pax'
+PAX_SOURCE = Path(__file__).parents[3] / 'src' / 'pydantic_ai_pax'
 
-requires_clai2 = pytest.mark.skipif(
+requires_pax = pytest.mark.skipif(
     importlib.util.find_spec('pydantic_ai_pax') is None,
     reason='running the launcher requires pydantic-ai-pax',
 )
@@ -155,6 +155,7 @@ class _Execution(BaseModel):
     model_config = ConfigDict(extra='ignore')
 
     protected_session_capture: bool = Field(alias='protected-session-capture')
+    command_name: str = Field(alias='command-name')
 
 
 class _Behaviors(BaseModel):
@@ -284,7 +285,7 @@ def behaviors() -> _Behaviors:
     return definition().engine.behaviors
 
 
-def test_install_pins_clai2_and_installs_spec_extra_for_yaml_agents() -> None:
+def test_install_pins_pax_and_installs_spec_extra_for_yaml_agents() -> None:
     requirements = [
         argument
         for step in definition().pre_agent_steps
@@ -302,11 +303,11 @@ def test_install_pins_clai2_and_installs_spec_extra_for_yaml_agents() -> None:
         for line in step.run.splitlines()
         if line.strip().startswith('python3 -P -m pip install ')
         for argument in shlex.split(line)
-        if argument.startswith(('pydantic-ai-harness[coder]==', 'pydantic-clai2=='))
+        if argument.startswith(('pydantic-ai-harness[coder]==', 'pydantic-ai-pax==', 'pydantic-clai2=='))
     ]
     assert harness_requirements == [
         'pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}',
-        'pydantic-clai2==${GH_AW_ENGINE_VERSION}',
+        'pydantic-ai-pax==${GH_AW_ENGINE_VERSION}',
     ]
     assert requirement == 'pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0'
 
@@ -324,7 +325,7 @@ def test_host_installer_adds_logfire_only_for_an_otlp_endpoint(tmp_path: Path, e
     python.write_text('#!/bin/sh\nprintf \'%s\\n\' "$*" >> "$INSTALL_LOG"\n')
     python.chmod(0o755)
     home = tmp_path / 'home'
-    cli = home / '.local/bin/clai2'
+    cli = home / '.local/bin/pax'
     cli.parent.mkdir(parents=True)
     cli.write_text('#!/bin/sh\nexit 0\n')
     cli.chmod(0o755)
@@ -359,6 +360,11 @@ def test_threat_detection_runs_on_a_built_in_engine() -> None:
 
 def test_engine_requires_protected_session_capture() -> None:
     assert behaviors().execution.protected_session_capture is True
+
+
+def test_engine_invokes_pax() -> None:
+    # The launcher tests pass their own command name, so only this pins the one compiled workflows run.
+    assert behaviors().execution.command_name == 'pax'
 
 
 def test_harness_rejects_a_runtime_without_protected_capture(tmp_path: Path) -> None:
@@ -889,7 +895,7 @@ def test_result_metadata_is_signed_into_the_terminal_record_only_when_valid(
     invocation = launch(
         tmp_path,
         {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'workflow_fixture:agent', 'PAI_RESULT_METADATA': target},
-        extra_python_path=CLAI2_SOURCE,
+        extra_python_path=PAX_SOURCE,
     )
     (Path(invocation.cwd) / 'workflow_fixture.py').write_text(
         'from pydantic_ai import Agent\nagent = Agent()\n' + fixture, encoding='utf-8'
@@ -915,12 +921,12 @@ def test_result_metadata_is_signed_into_the_terminal_record_only_when_valid(
 
 
 @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
-@requires_clai2
+@requires_pax
 def test_an_imported_agent_does_not_pass_the_capture_to_its_children(tmp_path: Path) -> None:
     invocation = launch(
         tmp_path,
         {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'custom_agent:agent'},
-        extra_python_path=CLAI2_SOURCE,
+        extra_python_path=PAX_SOURCE,
     )
     child_env_path = Path(invocation.cwd) / 'child-environment.json'
     custom_agent = Path(invocation.cwd) / 'custom_agent.py'
@@ -1815,18 +1821,18 @@ def code_mode_off_args(tmp_path: Path) -> tuple[str, str]:
     """
     from pydantic_ai_pax.config.settings_store import SettingsStore
 
-    database = tmp_path / 'clai2.db'
+    database = tmp_path / 'pax.db'
     SettingsStore(database).set('run.code_mode', False)
     return '--database', str(database)
 
 
 @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
-@requires_clai2
+@requires_pax
 def test_the_generated_recorder_uses_the_dedicated_capture_descriptor(tmp_path: Path) -> None:
     invocation = launch(
         tmp_path,
         {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'capture_test_agent:agent'},
-        extra_python_path=CLAI2_SOURCE,
+        extra_python_path=PAX_SOURCE,
     )
     (Path(invocation.cwd) / 'capture_test_agent.py').write_text(
         "from pydantic_ai import Agent\nagent = Agent(name='simple', instructions='Answer briefly.')\n",
@@ -1852,12 +1858,12 @@ def test_the_generated_recorder_uses_the_dedicated_capture_descriptor(tmp_path: 
 
 
 @pytest.mark.subprocess(reason='verifies SIGTERM handling in the generated launcher process')
-@requires_clai2
+@requires_pax
 def test_sigterm_keeps_an_unterminated_recording_diagnostic(tmp_path: Path) -> None:
     invocation = launch(
         tmp_path,
         {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'interrupted_agent:agent'},
-        extra_python_path=CLAI2_SOURCE,
+        extra_python_path=PAX_SOURCE,
     )
     (Path(invocation.cwd) / 'interrupted_agent.py').write_text(
         """import asyncio
@@ -1917,14 +1923,14 @@ agent = Agent(FunctionModel(stream_function=stream))
     ids=['successful-cli', 'argument-error'],
 )
 @pytest.mark.parametrize('fail_every_terminal', [False, True], ids=['status-only-recovery', 'capture-write-failure'])
-@requires_clai2
+@requires_pax
 def test_a_recorder_finish_write_failure_preserves_the_cli_result(
     tmp_path: Path, cli_fails: bool, expected_exit_code: int, expected_status: str, fail_every_terminal: bool
 ) -> None:
     invocation = launch(
         tmp_path,
         {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'finish_test_agent:agent'},
-        extra_python_path=CLAI2_SOURCE,
+        extra_python_path=PAX_SOURCE,
     )
     (Path(invocation.cwd) / 'finish_test_agent.py').write_text(
         "from pydantic_ai import Agent\nagent = Agent(name='simple', instructions='Answer briefly.')\n",
@@ -2059,7 +2065,7 @@ class TestLauncherProgram:
             env={
                 'PATH': os.environ['PATH'],
                 'HOME': str(tmp_path / 'home'),
-                'PYTHONPATH': f'{module_dir}:{CLAI2_SOURCE}',
+                'PYTHONPATH': f'{module_dir}:{PAX_SOURCE}',
                 'GH_AW_TEST_IMPORTS': str(imports),
                 'PYTHONIOENCODING': 'utf-8',
             },
@@ -2070,7 +2076,7 @@ class TestLauncherProgram:
         )
 
     @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
-    @requires_clai2
+    @requires_pax
     def test_the_agent_module_is_imported_once_and_not_from_the_checkout(self, tmp_path: Path) -> None:
         completed = self.run(
             tmp_path,
@@ -2101,13 +2107,13 @@ class TestLauncherProgram:
             pytest.param('checkout_agent:agent', id='checkout-hosted-target'),
         ],
     )
-    @requires_clai2
+    @requires_pax
     def test_checkout_modules_do_not_shadow_installed_ones(self, tmp_path: Path, pai_agent: str | None) -> None:
         """The checkout reaches `sys.path` only for a target that lives there, and then after installed packages."""
         env = proxy_env('openai', 'openai/gpt-5')
         if pai_agent is not None:
             env['PAI_AGENT'] = pai_agent
-        invocation = launch(tmp_path, env, extra_python_path=CLAI2_SOURCE)
+        invocation = launch(tmp_path, env, extra_python_path=PAX_SOURCE)
         workspace = Path(invocation.cwd)
         for name in ('tabnanny', 'gh_aw_test_optional_dependency'):
             (workspace / f'{name}.py').write_text(CHECKOUT_MODULE, encoding='utf-8')
@@ -2182,9 +2188,9 @@ class TestLauncherProgram:
         assert 'Could not load agent' not in completed.stderr + completed.stdout
 
     @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
-    @requires_clai2
+    @requires_pax
     def test_cli_argument_error_finishes_the_generated_recorder_without_run_events(self, tmp_path: Path) -> None:
-        invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'), extra_python_path=CLAI2_SOURCE)
+        invocation = launch(tmp_path, proxy_env('openai', 'openai/gpt-5'), extra_python_path=PAX_SOURCE)
         invalid_argument = '--gh-aw-invalid'
         completed = subprocess.run(
             [
@@ -2224,7 +2230,7 @@ class TestLauncherProgram:
         invocation = launch(
             tmp_path,
             {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'broken_agent:agent'},
-            extra_python_path=CLAI2_SOURCE,
+            extra_python_path=PAX_SOURCE,
         )
 
         completed = subprocess.run(

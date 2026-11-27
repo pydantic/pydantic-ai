@@ -25,6 +25,8 @@ from inline_snapshot import snapshot
 
 from pydantic_ai import Agent, CostCalculationFailedWarning
 from pydantic_ai._genai_prices import best_effort_price, lookup_context_window
+from pydantic_ai.embeddings import EmbeddingResult
+from pydantic_ai.images import ImageGenerationResult
 from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
@@ -373,14 +375,27 @@ def test_run_usage_subtraction_keeps_every_counter():
     assert before.details == {}
 
 
-def test_model_response_cost_requires_model_name():
-    """`ModelResponse.cost()` is the public entry point, so it owns the "can this be priced at all?" guard.
+@pytest.mark.parametrize(
+    'result',
+    [
+        pytest.param(ModelResponse(parts=[]), id='model-response'),
+        pytest.param(
+            EmbeddingResult([[0.1]], inputs=['x'], input_type='query', model_name='', provider_name='openai'),
+            id='embedding',
+        ),
+        pytest.param(ImageGenerationResult(images=[], prompt='p', model_name='', provider_name='openai'), id='image'),
+    ],
+)
+def test_cost_requires_model_name(result: ModelResponse | EmbeddingResult | ImageGenerationResult):
+    """`cost()` is the public entry point, so it owns the "can this be priced at all?" guard.
 
     `calculate_price_for_usage` takes a non-optional `model_name`, so the check can't live there; a response
-    without one (e.g. synthetic, from a capability) has nothing to look up.
+    without one (e.g. synthetic, from a capability) has nothing to look up. It's a `ValueError`, like omitted usage,
+    so callers that fall back to their own pricing catch only `ValueError` and `LookupError`; an `assert` would
+    vanish under `python -O`: https://github.com/pydantic/pydantic-ai/issues/14698
     """
-    with pytest.raises(AssertionError, match='Model name is required to calculate price'):
-        ModelResponse(parts=[]).cost()
+    with pytest.raises(ValueError, match='Model name is required to calculate price'):
+        result.cost()
 
 
 def test_lookup_context_window_by_url_or_provider_name():
