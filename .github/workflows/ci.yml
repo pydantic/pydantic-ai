@@ -485,15 +485,14 @@ jobs:
           # per core swaps. A runner has the memory, and this step is the longest in the job, so
           # CI opts back in. Each worker is its own Node process holding most of the project's
           # types, and empties its whole type cache whenever its heap passes 90% of Node's limit,
-          # then re-evaluates everything it still needs. A 6 GB heap kept three workers from
-          # emptying it on 2026-10-28 and fit the runner's 16 GB (#8182). By 2026-11-27 three such
-          # workers held 14.5 GB, leaving about 100 MB free with all 3 GB of swap in use, which
-          # matches the runners merge groups lost mid-pyright. Two workers with the same heap
-          # peaked at 11.9 GB with 3 GB free and no swap, and took 231 to 374 s. That is past the
-          # pull request budget below, and a pull request rarely gets here, so it keeps three.
-          # A 4 GB heap also fit three workers, but they emptied the cache about 30 times a run,
-          # and one of five such runs reported an `Unnecessary "# pyright: ignore"` error that
-          # the others did not.
+          # then re-evaluates everything it still needs, which a 6 GB heap makes rarer. Three
+          # workers with it no longer fit the runner's 16 GB: on 2026-11-27 they filled its memory
+          # and swap, which matches the runners merge groups lost mid-pyright. Two fit with 3 GB to
+          # spare. They take up to about 370 s, the pull request budget below, so a pull request,
+          # which gets here only when pyright-rs did not pass, keeps three and the risk of running
+          # out of memory. A 4 GB heap also fits three workers, but they empty the cache about 30
+          # times a run, and one `--verbose` run then reported an `Unnecessary "# pyright: ignore"`
+          # error that other runs did not. Whether two workers ever do that is not measured.
           PYRIGHT_THREADS: ${{ github.event_name == 'pull_request' && '3' || '2' }}
           NODE_OPTIONS: --max-old-space-size=6144
           # Fail a passing pyright run that outlasts this many seconds, so a change that makes
