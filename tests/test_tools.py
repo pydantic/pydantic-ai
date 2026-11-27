@@ -1,7 +1,9 @@
+import importlib
 import inspect
 import json
 import linecache
 import logging
+import py_compile
 import re
 import sys
 import threading
@@ -11,6 +13,7 @@ import warnings
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
 from enum import Enum
+from pathlib import Path
 from typing import Annotated, Any, Literal, cast
 
 import pydantic_core
@@ -6175,6 +6178,36 @@ def test_an_opted_in_enum_whose_source_cannot_be_read_warns_once(monkeypatch: py
     with warnings.catch_warnings():
         warnings.simplefilter('error')
         TypeAdapter(Urgency).json_schema(schema_generator=GenerateToolJsonSchema)
+
+
+def test_an_opted_in_enum_from_a_bytecode_only_module_warns_to_install_its_source(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+):
+    """A module installed as `.pyc` alone already defines the enum with a `class`; the remedy is its `.py` source."""
+    source = tmp_path / 'bytecode_only_urgency.py'
+    source.write_text(
+        'from enum import Enum\n'
+        'from pydantic_ai import UseEnumMemberDocstrings\n'
+        'class Urgency(UseEnumMemberDocstrings, str, Enum):\n'
+        "    low = 'low'\n"
+        '    """Can wait."""\n'
+    )
+    installed = tmp_path / 'installed'
+    installed.mkdir()
+    py_compile.compile(str(source), cfile=str(installed / 'bytecode_only_urgency.pyc'), doraise=True)
+    monkeypatch.setattr(sys, 'path', [str(installed), *sys.path])
+    monkeypatch.delitem(sys.modules, 'bytecode_only_urgency', raising=False)
+    Urgency = importlib.import_module('bytecode_only_urgency').Urgency
+    monkeypatch.delitem(sys.modules, 'bytecode_only_urgency')
+
+    with pytest.warns(EnumDocstringsUnavailableWarning) as warned:
+        schema = TypeAdapter(Urgency).json_schema(schema_generator=GenerateToolJsonSchema)
+    assert schema == snapshot({'enum': ['low'], 'title': 'Urgency', 'type': 'string'})
+    assert str(warned[0].message) == snapshot(
+        '`Urgency` mixes in `UseEnumMemberDocstrings`, but its source could not be read, so its members are '
+        'described to the model by their values alone. Define it with a `class` statement in a notebook cell or in '
+        'a module whose `.py` source is installed (not only its bytecode), or describe the options with `Choices`.'
+    )
 
 
 def test_registered_text_that_does_not_parse_or_a_module_that_is_not_running_keeps_no_source(
