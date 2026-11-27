@@ -1568,6 +1568,10 @@ class GraphAgentDeps(Generic[DepsT, OutputDataT]):
     compaction_only: bool = dataclasses.field(default=False, repr=False)
     """Whether the run is one of [`compact_history`][pydantic_ai.agent.AbstractAgent.compact_history]'s, which ends
     after its first request step's compaction instead of sending that request."""
+    added_compaction_request: _messages.ModelRequest | None = dataclasses.field(default=None, repr=False)
+    """The request a `compact_history` run added after the history's last response to compact it with, which the run
+    removes when it ends, with whatever it holds, like the statement of an appending dynamic system prompt that
+    changed: the next run on the history states it again."""
     prepared_output_tool_defs: list[ToolDefinition] | None = dataclasses.field(default=None, repr=False)
     """The output tools as this step's `prepare_output_tools` hooks left them, recorded once they're prepared.
 
@@ -1780,7 +1784,7 @@ class UserPromptNode(AgentNode[DepsT, NodeRunEndT]):
             if self.user_prompt is not None:
                 parts.append(_messages.UserPromptPart(self.user_prompt))
 
-            next_message = _messages.ModelRequest(parts=parts)
+            next_message = _added_request(ctx, parts)
 
         return ModelRequestNode[DepsT, NodeRunEndT](
             request=next_message, is_resuming_without_prompt=is_resuming_without_prompt
@@ -1934,6 +1938,16 @@ async def _continues_with_a_request(
     It does when there are instructions to send, and in a `compact_history` run, to compact the history with.
     """
     return ctx.deps.compaction_only or bool(await _get_instructions(ctx, run_context))
+
+
+def _added_request(
+    ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[Any, Any]], parts: list[_messages.ModelRequestPart]
+) -> _messages.ModelRequest:
+    """The request a run adds after the history it was given, recorded when the run is a `compact_history` one's."""
+    request = _messages.ModelRequest(parts=parts)
+    if ctx.deps.compaction_only:
+        ctx.deps.added_compaction_request = request
+    return request
 
 
 def _check_compactable(
@@ -5286,22 +5300,20 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
     ) -> SetFinalResult[DepsT, NodeRunEndT]:
         """End a `compact_history` run after its compaction step, without an output.
 
-        The run's history is the compacted one, or the one it was given when nothing compacted it: the empty request
-        the run added to compact it with is removed, as no response will answer it.
+        The run's history is the compacted one, or the one it was given when nothing compacted it: the request the run
+        added to compact it with is removed, as no response will answer it.
         """
-        _drop_unanswered_request_scoped_prompts(ctx.state)
         history = ctx.state.message_history
-        if (
-            not self.is_resuming_without_prompt
-            and isinstance(added := history[-1], _messages.ModelRequest)
-            and not added.parts
-        ):
-            del history[-1]
+        if (added := ctx.deps.added_compaction_request) is not None:
+            # By identity, from the end: a compaction keeps the request being answered as it was, and a hook can have
+            # appended a message after it.
+            del history[next(index for index in reversed(range(len(history))) if history[index] is added)]
             ctx.state.appended_messages.replace(added, None)
             ctx.deps.new_message_index = min(ctx.deps.new_message_index, len(history))
             # The run ends right after its compaction step, so there's at most the one compaction it kept.
             for record in ctx.state.compactions:
                 _drop_added_request(record)
+        _drop_unanswered_request_scoped_prompts(ctx.state)
         self._result = SetFinalResult(result.FinalResult(cast(NodeRunEndT, None)))
         return self._result
 

@@ -23,6 +23,7 @@ from pydantic_ai import (
     ModelRequest,
     ModelResponse,
     RunContext,
+    SystemPromptPart,
     TextPart,
     ToolCallPart,
     UserPromptPart,
@@ -374,3 +375,62 @@ async def test_a_later_run_is_not_compaction_only():
     compacted = await agent.compact_history(history())
     result = await agent.run('Which database?', message_history=compacted.all_messages())
     assert result.output == 'answered'
+
+
+@pytest.mark.parametrize('compacts', [True, False], ids=['compacted', 'nothing-compacted'])
+async def test_a_changed_appending_system_prompt_isnt_added_to_the_history(compacts: bool):
+    """The request the run adds to compact with is dropped even when it holds a changed system prompt's statement.
+
+    An `on_change='append'` dynamic system prompt that changed since the history's last request is stated again in
+    that request. The next run on the returned history re-evaluates the prompt against it, so it still appends the
+    statement, and the record counts only the messages the caller passed.
+    """
+    seen: list[list[ModelMessage]] = []
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return ModelResponse(parts=[TextPart('answered')])
+
+    calls: list[CompactionRequest] = []
+
+    class SummarizeAfterThePrompt(AbstractCapability[Any]):
+        async def compact_history(self, ctx: RunContext[Any], request: CompactionRequest) -> CompactionResult | None:
+            calls.append(request)
+            first = request.messages[0]
+            standing = [part for part in first.parts if isinstance(part, SystemPromptPart)]
+            part = CompactionPart(content='summary')
+            return CompactionResult(
+                messages=[ModelRequest(parts=[*standing, part]), *request.messages[-2:]], part=part, handler='summarize'
+            )
+
+    agent = Agent(FunctionModel(answer), capabilities=[SummarizeAfterThePrompt()] if compacts else [])
+    state = {'plan': 'one'}
+
+    @agent.system_prompt(dynamic=True, on_change='append')
+    def plan() -> str:
+        return f'The plan is {state["plan"]}.'
+
+    given = (await agent.run('Hello')).all_messages()
+    state['plan'] = 'two'
+    result = await agent.compact_history(given)
+
+    if compacts:
+        assert shapes(result.all_messages()) == snapshot(
+            ['ModelRequest: SystemPromptPart, CompactionPart', 'ModelResponse: TextPart']
+        )
+        assert result.all_messages()[1] is given[-1]
+        [record] = result.compactions
+        assert (record.messages_before, record.messages_after, record.kept_from) == (len(given), 2, 1)
+        assert (record.part_message_index, record.part_index) == (0, 1)
+        assert record.replaced == given
+        # What the handler was given still ends with the request the run compacted with, which states the change.
+        [request] = calls
+        assert shapes(request.messages)[-1] == 'ModelRequest: SystemPromptPart'
+    else:
+        assert result.all_messages() == given
+        assert result.compactions == []
+
+    await agent.run('And now?', message_history=result.all_messages())
+    # The model is sent the appended statement, framed, at the start of the new request.
+    sent = [str(part.content) for part in seen[-1][-1].parts if isinstance(part, UserPromptPart)]
+    assert ['The plan is two.' in text for text in sent] == [True, False]
