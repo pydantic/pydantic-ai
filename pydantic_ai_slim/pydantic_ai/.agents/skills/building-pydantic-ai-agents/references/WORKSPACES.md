@@ -66,8 +66,8 @@ taken from the extension as in `BinaryContent.from_path` (`application/octet-str
 file with no size limit; check `stat(path).size` first to refuse large ones. To get a file the agent made out after the
 run, call it on `result.workspace`. With only a stored ref, for example in a download endpoint, wrap `backend(ref)` of the
 capability that created the sandbox (`DockerContainer`, `E2BSandbox` and the other harness sandboxes that create their
-own environment; wrappers such as `BubblewrappedWorkspace` have none) in `Workspace(...)`: the backend attaches on first
-use, without starting a run. Serve only paths the app chose: `read_file` doesn't confine a path to the working
+own environment; wrappers such as `BubblewrappedWorkspace` have none), configured the same way (its `working_dir` and
+`env` carry over), in `Workspace(...)`: the backend attaches on first use, without starting a run. Serve only paths the app chose: `read_file` doesn't confine a path to the working
 directory (absolute paths and `..` reach any file the environment can read), so check a path from the client or the
 model with `realpath` against `working_dir()` first.
 

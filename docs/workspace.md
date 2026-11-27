@@ -295,7 +295,9 @@ async def download(ref: WorkspaceRef, path: str) -> BinaryContent:
   [`BinaryImage`][pydantic_ai.messages.BinaryImage].
 - The whole file is read into memory, whatever its size. To refuse large files, check
   [`stat`][pydantic_ai.workspaces.Workspace.stat]`(path).size` first.
-- Use the capability that created the sandbox. If the sandbox is gone, reading raises
+- Use the capability that created the sandbox, or one configured the same way: `backend(ref)` takes its
+  settings, such as `working_dir` and `env`, from that instance, and relative paths resolve against its
+  `working_dir`. If the sandbox is gone, reading raises
   [`WorkspaceUnavailableError`][pydantic_ai.workspaces.WorkspaceUnavailableError].
 - Serve only paths your app chose, such as the file name you asked the agent to write. `read_file` doesn't
   keep a path inside the working directory: an absolute path or `..` can name any file the environment can
