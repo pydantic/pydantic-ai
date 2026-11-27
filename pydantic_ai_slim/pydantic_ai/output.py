@@ -527,7 +527,11 @@ def _json_schema_validator(json_schema: JsonSchemaValue) -> Callable[[dict[str, 
         if not problems:
             problems = _schema_problems(validator, value, Unresolvable)
         if problems:
-            raise _schema_mismatch(problems)
+            raise PydanticCustomError(
+                'json_schema_mismatch',
+                'Output does not match the JSON schema: {problems}',
+                {'problems': '; '.join(problems)},
+            )
         return value
 
     return validate
@@ -551,18 +555,20 @@ def _error_path(error: Any) -> list[str]:
 
 
 def _error_message(error: Any) -> str:
-    """A `jsonschema` validation error as one line, prefixed with where it is unless it's at the top level."""
+    """A `jsonschema` validation error as one line, prefixed with where it is unless it's at the top level.
+
+    For `anyOf`/`oneOf`, it adds the closest branch's error, so the model has something concrete to fix.
+    """
     path = '.'.join(_error_path(error))
-    return f'at `{path}`: {error.message}' if path else error.message
+    message = f'at `{path}`: {error.message}' if path else error.message
+    if error.context:
+        from jsonschema.exceptions import best_match
+
+        message += f' (closest: {_error_message(best_match(error.context))})'
+    return message
 
 
-def _schema_mismatch(problems: list[str]) -> PydanticCustomError:
-    return PydanticCustomError(
-        'json_schema_mismatch', 'Output does not match the JSON schema: {problems}', {'problems': '; '.join(problems)}
-    )
-
-
-_DATA_KEYWORDS = frozenset({'enum', 'const', 'default', 'examples'})
+_DATA_KEYWORDS = frozenset({'enum', 'const', 'default', 'examples', 'dependentRequired'})
 """Keywords whose values are data rather than subschemas, so a `pattern` key inside them isn't a pattern."""
 
 _SCHEMA_MAP_KEYWORDS = frozenset(

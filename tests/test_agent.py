@@ -7,6 +7,7 @@ from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callab
 from contextlib import asynccontextmanager, nullcontext
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Annotated, Any, Generic, Literal, Self, TypeVar, Union
 
 import anyio
@@ -3123,13 +3124,20 @@ def test_output_type_structured_dict_refuses_non_finite_numbers():
     )
 
 
-def test_structured_dict_validate_checks_patterns_in_linear_time():
-    """Patterns that backtrack exponentially in Python's `re` refuse crafted output instead of stalling the run.
+def test_structured_dict_validate_checks_patterns_in_linear_time(monkeypatch: pytest.MonkeyPatch):
+    """Pattern keywords never reach Python's backtracking `re`, so crafted output can't stall the run.
 
-    With Python's `re`, these 30-character inputs would take far longer than the test's timeout, so a regression hangs
-    the test rather than flaking. It feeds deliberately crafted output, which no provider sends on demand, so this is a
-    unit test.
+    `jsonschema` calls `re.search` for `pattern`, `patternProperties` and `additionalProperties`; with that replaced by
+    a function that fails the test, the output is still checked, and refused. It feeds deliberately crafted output,
+    which no provider sends on demand, so this is a unit test.
     """
+
+    def backtracking_search(pattern: str, string: str) -> None:  # pragma: no cover
+        raise AssertionError(f'`jsonschema` matched {pattern!r} with Python `re`')
+
+    for module in ('jsonschema._keywords', 'jsonschema._utils'):
+        monkeypatch.setattr(f'{module}.re', SimpleNamespace(search=backtracking_search))
+
     Code = StructuredDict(
         {
             'type': 'object',
@@ -3139,94 +3147,48 @@ def test_structured_dict_validate_checks_patterns_in_linear_time():
         },
         validate=True,
     )
-    agent = Agent(
-        TestModel(custom_output_args={'code': 'a' * 30 + '!', 'default': 'b' * 30 + '!', 'x' * 30 + '!': 1}),
-        output_type=Code,
-        retries=0,
-    )
+    retry_messages: list[str] = []
 
-    with pytest.raises(UnexpectedModelBehavior, match='Exceeded maximum output retries'):
-        agent.run_sync('Code')
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            args = {'code': 'aaa!', 'default': 'bbb!', 'xxx!': 1}
+        else:
+            retry = messages[-1].parts[-1]
+            assert isinstance(retry, ToolReturnPart)
+            retry_messages.append(retry.model_response_str())
+            args = {'code': 'aaa', 'default': 'bbb', 'xxx': 1}
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
 
+    result = Agent(FunctionModel(call_tool), output_type=Code).run_sync('Code')
 
-def test_output_type_structured_dict_accepts_output_matching_patterns():
-    """Pattern keywords pass values they don't apply to, and descend into the subschemas of matching keys.
-
-    It feeds output shaped to reach each keyword's branches, which no provider sends on demand, so this is a unit test.
-    """
-    Record = StructuredDict(
-        {
-            'type': 'object',
-            'properties': {
-                'count': {'pattern': '^a'},
-                'labels': {
-                    'patternProperties': {'^a': {'type': 'integer'}},
-                    'additionalProperties': {'type': 'string'},
-                },
-                'items': {'patternProperties': {'^a': True}, 'additionalProperties': False},
-            },
-        },
-        validate=True,
-    )
-    output = {'count': 5, 'labels': {'ab': 1, 'z': 'ok'}, 'items': [1]}
-    agent = Agent(TestModel(custom_output_args=output), output_type=Record)
-
-    assert agent.run_sync('Record').output == output
-
-
-def test_structured_dict_validate_refuses_lookaround_patterns():
-    """A pattern the linear-time engine can't compile is refused when the `StructuredDict` is created.
-
-    It checks a configuration error raised before any request, so this is a unit test.
-    """
-    with pytest.raises(UserError, match=r"does not support the pattern '\(\?=a\)a'"):
-        StructuredDict(
-            {'type': 'object', 'properties': {'code': {'type': 'string', 'pattern': '(?=a)a'}}}, validate=True
-        )
-
-
-def test_structured_dict_validate_refuses_unevaluated_properties_with_patterns():
-    """`jsonschema` matches `patternProperties` with Python's `re` for `unevaluatedProperties`, so the pair is refused.
-
-    It checks a configuration error raised before any request, so this is a unit test.
-    """
-    with pytest.raises(UserError, match='does not support `unevaluatedProperties` together with `pattern`'):
-        StructuredDict(
-            {'type': 'object', 'patternProperties': {'^x+$': True}, 'unevaluatedProperties': False}, validate=True
-        )
-
-
-def test_structured_dict_validate_refuses_invalid_schemas():
-    """A schema that isn't valid for its dialect is refused when the `StructuredDict` is created.
-
-    It checks a configuration error raised before any request, so this is a unit test.
-    """
-    with pytest.raises(UserError, match='got an invalid JSON schema'):
-        StructuredDict({'type': 'object', 'properties': {'a': {'type': 'strng'}}}, validate=True)
-
-
-def test_structured_dict_validate_allows_property_dependencies_named_like_keywords():
-    """A Draft 7 `dependencies` entry for a property named `$schema` is a property name, not a nested dialect.
-
-    It checks a configuration that must not raise, before any request, so this is a unit test.
-    """
-    StructuredDict(
-        {
-            '$schema': 'http://json-schema.org/draft-07/schema#',
-            'type': 'object',
-            'dependencies': {'$schema': {'required': ['version']}},
-        },
-        validate=True,
+    assert result.output == snapshot({'code': 'aaa', 'default': 'bbb', 'xxx': 1})
+    assert retry_messages == snapshot(
+        [
+            '{"error":[{"type":"json_schema_mismatch","loc":[],"msg":"Output does not match the JSON schema: Additional properties are not allowed (\'xxx!\' was unexpected); at `code`: \'aaa!\' does not match \'^(a+)+$\'; at `default`: \'bbb!\' does not match \'^(b+)+$\'","input":{"code":"aaa!","default":"bbb!","xxx!":1}}]}'
+        ]
     )
 
 
-def test_structured_dict_validate_refuses_nested_dialects():
-    """A nested `$schema` would switch `jsonschema` back to Python's `re` for its patterns, so it's refused.
-
-    It checks a configuration error raised before any request, so this is a unit test.
-    """
-    with pytest.raises(UserError, match='supports `\\$schema` only at the top level'):
-        StructuredDict(
+@pytest.mark.parametrize(
+    ('schema', 'match'),
+    [
+        pytest.param(
+            {'type': 'object', 'properties': {'code': {'type': 'string', 'pattern': '(?=a)a'}}},
+            r"does not support the pattern '\(\?=a\)a'",
+            id='lookaround',
+        ),
+        pytest.param(
+            {'type': 'object', 'patternProperties': {'^x+$': True}, 'unevaluatedProperties': False},
+            'does not support `unevaluatedProperties` together with `pattern`',
+            id='unevaluated-properties-with-patterns',
+        ),
+        pytest.param(
+            {'type': 'object', 'properties': {'a': {'type': 'strng'}}},
+            'got an invalid JSON schema',
+            id='invalid-schema',
+        ),
+        pytest.param(
             {
                 'type': 'object',
                 'properties': {
@@ -3236,8 +3198,80 @@ def test_structured_dict_validate_refuses_nested_dialects():
                     }
                 },
             },
-            validate=True,
-        )
+            'supports `\\$schema` only at the top level',
+            id='nested-dialect',
+        ),
+    ],
+)
+def test_structured_dict_validate_refuses_schemas_it_cannot_check_safely(schema: dict[str, Any], match: str):
+    """Schemas that `validate=True` can't check correctly, or in linear time, are refused when it's created.
+
+    A lookaround can't be compiled by the linear-time engine; `jsonschema` matches `patternProperties` with Python's
+    `re` for `unevaluatedProperties`, and switches to its stock validator for a nested `$schema`. Each is a
+    configuration error raised before any request, so this is a unit test.
+    """
+    with pytest.raises(UserError, match=match):
+        StructuredDict(schema, validate=True)
+
+
+@pytest.mark.parametrize(
+    'schema',
+    [
+        pytest.param(
+            {
+                '$schema': 'http://json-schema.org/draft-07/schema#',
+                'type': 'object',
+                'dependencies': {'$schema': {'required': ['version']}},
+            },
+            id='draft-7-dependencies',
+        ),
+        pytest.param({'type': 'object', 'dependentRequired': {'$schema': ['other']}}, id='dependent-required'),
+    ],
+)
+def test_structured_dict_validate_allows_property_names_that_look_like_keywords(schema: dict[str, Any]):
+    """Property-name maps like `dependencies` and `dependentRequired` aren't mistaken for nested dialects.
+
+    It checks configurations that must not raise, before any request, so this is a unit test.
+    """
+    StructuredDict(schema, validate=True)
+
+
+def test_output_type_structured_dict_explains_any_of_mismatches():
+    """For an `anyOf` mismatch, the retry message names the closest branch's error, so the model can fix it.
+
+    It feeds deliberately invalid output, which no provider sends on demand, so this is a unit test.
+    """
+    Contact = StructuredDict(
+        {
+            'type': 'object',
+            'properties': {
+                'contact': {
+                    'anyOf': [
+                        {'type': 'object', 'properties': {'email': {'type': 'string'}}, 'required': ['email']},
+                        {'type': 'string', 'pattern': '^[0-9]+$'},
+                    ]
+                }
+            },
+        },
+        validate=True,
+    )
+    retry_messages: list[str] = []
+
+    def call_tool(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        assert info.output_tools is not None
+        if len(messages) == 1:
+            args: dict[str, Any] = {'contact': {'mail': 'a@b.c'}}
+        else:
+            retry = messages[-1].parts[-1]
+            assert isinstance(retry, ToolReturnPart)
+            retry_messages.append(retry.model_response_str())
+            args = {'contact': {'email': 'a@b.c'}}
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, args)])
+
+    Agent(FunctionModel(call_tool), output_type=Contact).run_sync('Contact')
+
+    assert len(retry_messages) == 1
+    assert 'is not valid under any of the given schemas (closest: at `contact`:' in retry_messages[0]
 
 
 def test_output_type_structured_dict_refuses_nan_under_multiple_of():
