@@ -19,6 +19,8 @@ import pytest
 from markdownify import MarkdownConverter, markdownify
 
 from pydantic_ai._utils import run_in_executor, using_thread_executor
+from pydantic_ai.agent import Agent
+from pydantic_ai.capabilities import WebFetch
 from pydantic_ai.common_tools.web_fetch import (
     _HTML_CONVERSION_LIMITER,  # pyright: ignore[reportPrivateUsage]
     _MAX_HTML_CONVERSION_COST,  # pyright: ignore[reportPrivateUsage]
@@ -28,6 +30,8 @@ from pydantic_ai.common_tools.web_fetch import (
     web_fetch_tool,
 )
 from pydantic_ai.exceptions import ModelRetry
+from pydantic_ai.messages import ModelMessage, ModelResponse, TextPart, ToolCallPart, ToolReturnPart
+from pydantic_ai.models.function import AgentInfo, FunctionModel
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 _CPU_SECONDS_BUDGET = 60
@@ -1922,3 +1926,59 @@ class TestWebFetchToolFactory:
             max_content_length=10_000, timeout=60, allow_local_urls=True, max_download_bytes=1_000_000
         )
         assert tool.name == 'web_fetch'
+
+
+async def test_meta_charset_is_honored_when_content_type_has_no_charset():
+    response = httpx2.Response(
+        200,
+        headers={'content-type': 'text/html'},
+        content=b'<html><head><meta charset="latin-1"></head><body><p>caf\xe9</p></body></html>',
+        request=httpx2.Request('GET', 'https://example.com'),
+    )
+    with patch('pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = response
+        result = await web_fetch_tool().function(url='https://example.com')
+
+    assert result['content'] == 'café'
+
+
+async def test_web_fetch_capability_local_callable_honors_meta_charset():
+    response = httpx2.Response(
+        200,
+        headers={'content-type': 'text/html'},
+        content=b'<html><head><meta charset="latin-1"></head><body><p>caf\xe9</p></body></html>',
+        request=httpx2.Request('GET', 'https://example.com'),
+    )
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            assert [tool.name for tool in info.function_tools] == ['web_fetch']
+            return ModelResponse([ToolCallPart('web_fetch', {'url': 'https://example.com'})])
+        return ModelResponse([TextPart('done')])
+
+    agent = Agent(FunctionModel(model_fn), capabilities=[WebFetch(native=False, local=True)])
+    with patch('pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = response
+        result = await agent.run('Fetch the page')
+
+    tool_returns = [
+        part.content for message in result.all_messages() for part in message.parts if isinstance(part, ToolReturnPart)
+    ]
+    assert tool_returns == [{'url': 'https://example.com', 'title': '', 'content': 'café'}]
+
+
+async def test_meta_charset_http_equiv_variant_is_honored():
+    response = httpx2.Response(
+        200,
+        headers={'content-type': 'text/html'},
+        content=(
+            b'<html><head><meta http-equiv="Content-Type" '
+            b'content="text/html; charset=latin-1"></head><body><p>caf\xe9</p></body></html>'
+        ),
+        request=httpx2.Request('GET', 'https://example.com'),
+    )
+    with patch('pydantic_ai.common_tools.web_fetch.safe_download', new_callable=AsyncMock) as mock_download:
+        mock_download.return_value = response
+        result = await web_fetch_tool().function(url='https://example.com')
+
+    assert result['content'] == 'café'

@@ -28,6 +28,7 @@ from pydantic_ai.tools import Tool
 
 try:
     from bs4 import BeautifulSoup, Tag
+    from bs4.dammit import EncodingDetector
     from bs4.element import Comment, Doctype, NavigableString, PageElement
     from markdownify import MarkdownConverter
 except ImportError as _import_error:
@@ -225,13 +226,16 @@ class WebFetchLocalTool:
 
 
 def _decode_text(response: httpx2.Response) -> str:
-    """Decode the body with the charset the server declared, or UTF-8 if it declared none.
+    """Decode with the HTTP charset, then the HTML-declared charset, or UTF-8.
 
     This goes through `bytes.decode` rather than `response.text` so that a label naming a
     registered codec that isn't a text encoding (`rot_13`, `base64_codec`) raises `LookupError`
     instead of failing inside the codec with whatever it happens to raise.
     """
-    return response.content.decode(response.encoding or 'utf-8', errors='replace')
+    charset = response.charset_encoding
+    if charset is None:
+        charset = EncodingDetector.find_declared_encoding(response.content, is_html=True) or 'utf-8'
+    return response.content.decode(charset, errors='replace')
 
 
 def _format_json(text: str, max_length: int | None) -> str:
