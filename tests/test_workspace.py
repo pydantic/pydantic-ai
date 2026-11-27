@@ -262,16 +262,17 @@ async def test_read_file_reads_a_cited_file_only_inside_the_working_dir(tmp_path
     workspace = Workspace(LocalWorkspaceBackend(project))
     root = await workspace.working_dir()
 
-    [out, escape, link] = [
+    [out, escape, link, drive] = [
         citation.sources[0]
         for citation in file_links(
-            f'[out](sandbox:{root}/out.csv) [x](sandbox:{root}/../secret.txt) [y](sandbox:{root}/link.csv)'
+            f'[out](sandbox:{root}/out.csv) [x](sandbox:{root}/../secret.txt) [y](sandbox:{root}/link.csv) '
+            '[win](sandbox:C:/out.csv)'
         )
     ]
     assert isinstance(out, FileCitationSource)
     file = await workspace.read_file(out)
     assert (file.data, file.media_type) == (b'a,b\n', 'text/csv')
-    for source in (escape, link):
+    for source in (escape, link, drive):  # a drive path is not absolute on POSIX
         assert isinstance(source, FileCitationSource)
         with pytest.raises(PermissionError, match='is not inside the working directory'):
             await workspace.read_file(source)

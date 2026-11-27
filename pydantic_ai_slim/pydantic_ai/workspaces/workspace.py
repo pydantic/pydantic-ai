@@ -750,14 +750,14 @@ class Workspace(WorkspaceBackend):
         A path is read as given. A [`FileCitationSource`][pydantic_ai.messages.FileCitationSource], such as one
         from [`file_links`][pydantic_ai.workspaces.file_links], names a path the model chose, so it is read only
         inside the working directory, as [`in_working_dir`][pydantic_ai.workspaces.Workspace.in_working_dir]
-        checks: a path outside raises `PermissionError`.
+        checks: a path outside, or one that isn't absolute on this workspace's platform, raises `PermissionError`.
 
         The whole file is read into memory, with no size limit: check
         [`stat`][pydantic_ai.workspaces.Workspace.stat]`(path).size` first to refuse large files.
         """
         if isinstance(path, FileCitationSource):
             name = path.location.path
-            if (target := await self._real_path_in_working_dir(name)) is None:
+            if not self._is_absolute(name) or (target := await self._real_path_in_working_dir(name)) is None:
                 raise PermissionError(
                     f'{name!r} is not inside the working directory, or the backend cannot resolve symlinks to check'
                 )
