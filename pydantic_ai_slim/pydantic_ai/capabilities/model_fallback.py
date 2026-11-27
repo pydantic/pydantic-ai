@@ -306,6 +306,9 @@ class ModelFallback(AbstractCapability[AgentDepsT]):
             self._pass_chain = []
             self._pass_errors = 0
             self._pass_wait = None
+        # Read by a `RetryOnModelErrors`' `prepare_model_request`, which runs after this one, so the first attempt of a
+        # new pass gets a fresh budget even at the model the last pass ended on.
+        request_context._new_fallback_pass = self._pass_wait is not None  # pyright: ignore[reportPrivateUsage]
         if self._pass_wait is not None:
             # Waited here rather than in the hook that started the pass, so the agent has already recorded the last
             # attempt of the pass before as ending when its model failed. The next attempt is timed from after this

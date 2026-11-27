@@ -964,6 +964,9 @@ def test_model_request_context_projection_is_exhaustive() -> None:
         # The request's messages as the hooks left them, set caller-side after every hook has run, for readers of
         # the request (such as `TrajectoryJudge`) in `after_model_request`; a durable hook never sees it.
         '_hooked_messages',
+        # Set by `ModelFallback.prepare_model_request` for the first attempt of a new pass and read by
+        # `RetryOnModelErrors.prepare_model_request` right after it, both caller-side; a durable hook never sees it.
+        '_new_fallback_pass',
     }
     projected = {field.name for field in fields(ModelRequestContextProjection)}
     context_fields = {field.name for field in fields(ModelRequestContext)}

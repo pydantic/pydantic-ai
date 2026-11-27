@@ -734,6 +734,29 @@ async def test_a_hook_retrying_the_same_model_records_a_retry():
     assert _kinds(result.response.failed_attempts) == snapshot([('primary', 'retry', 'ModelAPIError', None)])
 
 
+async def test_a_hook_moving_to_the_same_model_shares_the_budget():
+    """Only a new `ModelFallback` pass starts a fresh budget at the same model, not any hook that names it."""
+    answered: list[str] = []
+    moved: list[int] = []
+
+    async def move_once(
+        ctx: RunContext[Any], *, request_context: ModelRequestContext, error: Exception
+    ) -> ModelResponse:
+        if moved:
+            raise error
+        moved.append(request_context.attempt)
+        raise RetryModelRequest(request_context.model)
+
+    hooks = Hooks()
+    hooks.on.model_request_error(move_once)
+    model = _flaky('primary', [_http_error(ModelUnavailableError, 'primary')] * 10, answered)
+    agent = Agent(model, capabilities=[hooks, RetryOnModelErrors(max_attempts=3, initial_delay=0)])
+    with _recorded_sleeps(), pytest.raises(ModelUnavailableError):
+        await agent.run('x')
+    # Three attempts, then the hook's one more, which has no attempts left to retry it.
+    assert (answered, moved) == (['primary'] * 4, [3])
+
+
 # --- Response handlers ---
 
 

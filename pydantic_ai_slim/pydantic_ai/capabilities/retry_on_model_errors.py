@@ -187,18 +187,16 @@ class RetryOnModelErrors(AbstractCapability[AgentDepsT]):
 
         An attempt is one more at the same model, or the first at another one, whichever capability asked for it, so
         a `ModelFallback` moving on to its next model starts a fresh budget, and two of these capabilities share one
-        per model. A `ModelFallback` moving the request to a model also starts a fresh budget when it's the same
-        model, as when a new pass starts over on the model the last pass ended on. A retry gets what's left of the
-        first attempt's `request_timeout` rather than a fresh one, so the deadline covers the retries and the waits
-        between them.
+        per model. A new `ModelFallback` pass also starts a fresh budget when it starts over on the model the last
+        pass ended on. A retry gets what's left of the first attempt's `request_timeout` rather than a fresh one, so
+        the deadline covers the retries and the waits between them.
         """
         # The model may be wrapped by now, e.g. by a durable-execution capability, and wasn't on the previous attempt.
         model = _unwrap_model(request_context.model)
         settings: ModelSettings = merge_model_settings(model.settings, request_context.model_settings) or {}
         updates: ModelSettings = {}
-        # Moved by another capability, a `ModelFallback` pass may start over on the model the last pass ended on.
-        moved = request_context._moved  # pyright: ignore[reportPrivateUsage]
-        if self._step == ctx.run_step and model is self._model and not moved:
+        new_pass = request_context._new_fallback_pass  # pyright: ignore[reportPrivateUsage]
+        if self._step == ctx.run_step and model is self._model and not new_pass:
             self._attempt += 1
             if self._deadline is not None:
                 updates['request_timeout'] = max(self._deadline - _now(), 0.0)
