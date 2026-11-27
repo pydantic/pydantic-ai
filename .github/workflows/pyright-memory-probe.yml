@@ -1,0 +1,90 @@
+# TEMPORARY measurement workflow for the merge-queue Pyright runner losses; removed before review.
+name: Pyright memory probe
+
+on:
+  push:
+    branches:
+      - ci-merge-group-pyright-memory
+
+permissions:
+  contents: read
+
+env:
+  UV_PYTHON: 3.12
+  UV_FROZEN: "1"
+  UV_PYTHON_PREFERENCE: only-managed
+
+jobs:
+  probe:
+    name: probe ${{ matrix.config }} run ${{ matrix.run }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 40
+    strategy:
+      fail-fast: false
+      matrix:
+        config: [t3-h6144, t2-h6144, t3-h4096, t2-h4096, pyright-rs]
+        run: [1, 2]
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.13"
+          enable-cache: true
+          cache-suffix: lint
+
+      - name: Install dependencies
+        run: uv sync --all-extras --all-packages --group lint
+
+      - name: Install pyright-rs
+        if: matrix.config == 'pyright-rs'
+        env:
+          PYRIGHT_RS_RELEASE: v1.1.414-1
+          PYRIGHT_RS_SHA256: 8eacc246abfabff2bfc1d2735b756050047471b1468cb29a7ddcf42c56ae3cdc
+        run: |
+          name="pyright-rs-$PYRIGHT_RS_RELEASE-x86_64-unknown-linux-gnu"
+          curl --fail --silent --show-error --location --retry 3 --retry-all-errors \
+            --output "$RUNNER_TEMP/$name.tar.gz" \
+            "https://github.com/dsfaccini/pyright-rs/releases/download/$PYRIGHT_RS_RELEASE/$name.tar.gz"
+          echo "$PYRIGHT_RS_SHA256  $RUNNER_TEMP/$name.tar.gz" | sha256sum --check --strict
+          tar -xzf "$RUNNER_TEMP/$name.tar.gz" -C "$RUNNER_TEMP"
+          echo "PYRIGHT=$RUNNER_TEMP/$name/pyright-rs" >> "$GITHUB_ENV"
+
+      - name: Type-check under a memory sampler
+        env:
+          CONFIG: ${{ matrix.config }}
+          UV_NO_SYNC: "1"
+        run: |
+          case "$CONFIG" in
+            t*-h*) export PYRIGHT_THREADS="${CONFIG#t}"; PYRIGHT_THREADS="${PYRIGHT_THREADS%%-*}"
+                   export NODE_OPTIONS="--max-old-space-size=${CONFIG##*-h}" ;;
+          esac
+          nproc; free -m; swapon --show || true
+          log="$RUNNER_TEMP/mem.tsv"
+          (
+            while true; do
+              avail=$(awk '/^MemAvailable:/ {print int($2/1024)}' /proc/meminfo)
+              swap=$(awk '/^SwapTotal:/ {t=$2} /^SwapFree:/ {f=$2} END {print int((t-f)/1024)}' /proc/meminfo)
+              rss=$(ps -eo rss=,comm= | awk '$2 ~ /^(node|pyright-rs|MainThread)$/ {s+=$1; if ($1>m) m=$1; n++} END {printf "%d\t%d\t%d", s/1024, m/1024, n}')
+              printf '%s\t%s\t%s\t%s\n' "$(date +%s)" "$avail" "$swap" "$rss" >> "$log"
+              sleep 2
+            done
+          ) &
+          sampler=$!
+          start=$(date +%s)
+          set +e
+          make typecheck-pyright > "$RUNNER_TEMP/pyright.out" 2>&1
+          status=$?
+          set -e
+          end=$(date +%s)
+          kill "$sampler"
+          tail -n 30 "$RUNNER_TEMP/pyright.out"
+          echo "config=$CONFIG status=$status seconds=$((end - start))"
+          echo "unused-import findings: $(grep -c reportUnusedImport "$RUNNER_TEMP/pyright.out")"
+          grep reportUnusedImport "$RUNNER_TEMP/pyright.out" || true
+          awk -F'\t' 'NR==1 {minavail=$2} {if ($2<minavail) minavail=$2; if ($4>maxsum) maxsum=$4; if ($5>maxone) maxone=$5; if ($3>maxswap) maxswap=$3; if ($6>maxn) maxn=$6}
+            END {printf "PEAK config=%s min_MemAvailable_MB=%d max_swap_used_MB=%d max_total_checker_RSS_MB=%d max_single_RSS_MB=%d max_procs=%d\n", ENVIRON["CONFIG"], minavail, maxswap, maxsum, maxone, maxn}' "$log" | tee -a "$GITHUB_STEP_SUMMARY"
+          echo "seconds=$((end - start)) status=$status" >> "$GITHUB_STEP_SUMMARY"
+          ps -eo rss=,comm= | sort -rn | head -5
