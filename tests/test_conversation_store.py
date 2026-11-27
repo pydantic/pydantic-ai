@@ -1754,6 +1754,10 @@ async def test_dropping_the_last_of_two_identical_turns_is_saved() -> None:
     reloaded = await store.load('c')
     assert reloaded is not None
     assert reloaded.messages == turn
+    # The dropped turn stays stored, on a branch, as for any other cut.
+    record = await store.read_record('c')
+    assert record is not None
+    assert len(record.branches) == 1
 
 
 @dataclasses.dataclass
