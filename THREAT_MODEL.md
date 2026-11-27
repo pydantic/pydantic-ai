@@ -175,11 +175,13 @@ CLAI 2's background session naming is also on by default. A naming request carri
 
 A setting that suppresses one content field does not establish that the same content is absent from every event, exception, or integration. Integrations that call their own models or telemetry services are additional export channels. Local conversation, credential, and tool-output spill stores also need their documented access protections.
 
+The version check is the one request Pydantic AI makes to Pydantic by default. It runs only where the first-run or `clai` banner is displayed and sends no content: its `User-Agent` names the installed Pydantic AI, Pydantic AI Harness and `genai-prices` versions, the Python version, OS and architecture, and a coding agent only by a name from the library's own table, never the free text of `AI_AGENT`. The first banner announces it without sending it. Versions in the response are printed to the terminal only if they are plain dotted numbers. `PYDANTIC_AI_NO_VERSION_CHECK` or `DO_NOT_TRACK` turns it off.
+
 Span attributes, both conversation IDs included, label telemetry; they don't prove who owns a conversation. Logfire copies the baggage of an incoming request onto each span by default. Pydantic AI removes only `pydantic_ai.root_conversation_id` from it, and only for the spans of an agent run, so an application that adds up cost or bills by span attributes for clients it doesn't trust should set `logfire.configure(distributed_tracing=False)` or drop the `baggage` header at its edge.
 
 Configuration also carries secrets. Request settings such as extra headers and bodies, native-tool credentials, and identifiers derived from a URL can hold credentials, because a URL can carry one in its user info, path or query. Keep them out of traces, frontend events, and durable activity names. A credential must reach only the service it was issued for. A provider's `base_url` is part of that service: the provider sends its credentials there, OAuth subscription tokens included, and the Codex and ChatGPT providers inject theirs only over HTTPS and only to the `base_url` origin (host and port).
 
-Canonical guidance: [Logfire](docs/logfire.md), [instrumentation](docs/capabilities/instrumentation.md), [Pax telemetry](src/pydantic_ai_pax/docs/reference.md#telemetry-and-references), [Pax storage and authentication](src/pydantic_ai_pax/README.md), and [tool output limits](docs/harness/tool-output-limits.md).
+Canonical guidance: [Logfire](docs/logfire.md), [instrumentation](docs/capabilities/instrumentation.md), [network requests](docs/network-requests.md), [Pax telemetry](src/pydantic_ai_pax/docs/reference.md#telemetry-and-references), [Pax storage and authentication](src/pydantic_ai_pax/README.md), and [tool output limits](docs/harness/tool-output-limits.md).
 
 ### Availability and resource lifetime
 
