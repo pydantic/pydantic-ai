@@ -523,6 +523,41 @@ class TestFileStepStore:
         assert counts == [0, 1, 1, 1, 1]
         assert await store.list_events(run_id='r1') == events
 
+    async def test_keyed_snapshot_save_rereads_a_snapshot_file_replaced_under_the_same_name(
+        self, tmp_path: Path
+    ) -> None:
+        # Another writer replaces `0.json` with a snapshot whose key-log line it never wrote.
+        store = FileStepStore(tmp_path / 'store')
+        await store.save_snapshot(ContinuableSnapshot(run_id='r1', step_index=0, messages=[], idempotency_key='0:0'))
+        replacement = ContinuableSnapshot(run_id='r1', step_index=1, messages=[], idempotency_key='1:1')
+        await FileStepStore(tmp_path / 'other').save_snapshot(replacement)
+        (tmp_path / 'other' / 'r1' / 'snapshots' / '0.json').replace(tmp_path / 'store' / 'r1' / 'snapshots' / '0.json')
+
+        await store.save_snapshot(replacement)
+
+        assert await store.list_snapshots(run_id='r1') == [replacement]
+
+    async def test_keyed_event_append_parses_a_line_without_its_newline_on_every_call(self, tmp_path: Path) -> None:
+        first = StepEvent(run_id='r1', kind='run_started', step_index=0, idempotency_key='event:0')
+        second = StepEvent(run_id='r1', kind='run_started', step_index=1, idempotency_key='event:1')
+        await FileStepStore(tmp_path / 'other').append_event(second)
+        second_line = (tmp_path / 'other' / 'r1' / 'events.jsonl').read_text(encoding='utf-8').rstrip('\n')
+        store = FileStepStore(tmp_path / 'store')
+        await store.append_event(first)
+        log = tmp_path / 'store' / 'r1' / 'events.jsonl'
+        complete = log.read_text(encoding='utf-8')
+
+        # A corrupt line a crash cut short raises on every keyed append, as a full read does.
+        log.write_text(complete + '{', encoding='utf-8')
+        for _ in range(2):
+            with pytest.raises(ValueError):
+                await store.append_event(second)
+        # A line a writer is still appending already counts.
+        log.write_text(complete + second_line, encoding='utf-8')
+        await store.append_event(second)
+
+        assert await store.list_events(run_id='r1') == [first, second]
+
     async def test_keyed_event_append_rereads_a_log_rewritten_since_the_last_one(self, tmp_path: Path) -> None:
         store = FileStepStore(tmp_path)
         first = StepEvent(run_id='r1', kind='run_started', step_index=0, idempotency_key='event:0')
