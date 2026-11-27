@@ -152,3 +152,7 @@ Pass `client` when you need control of the connection itself: your own FastMCP c
 A `client` is one connection shared by every run; see [Per-user credentials](#per-user-credentials) to connect each user separately. To use two connections, give each a distinct `id` and `tool_prefix`.
 
 [Source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/logfire_mcp/)
+
+## API reference
+
+::: pydantic_ai_harness.logfire_mcp.LogfireMCP
