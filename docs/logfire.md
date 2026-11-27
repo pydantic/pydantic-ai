@@ -556,7 +556,7 @@ The run's own instrumentation decides what is traced and whether content is reco
 | `file.path` | On file operations, only with `include_content=True` |
 | `file.size` | On `read_bytes` and `write_bytes` |
 
-An exception records an error status, except a missing file on `stat`, `read_bytes`, `list_dir`, `remove` or `realpath`, which is often an expected answer. Under [durable execution](durable_execution/overview.md), calls that run inside a Temporal activity or a Render task are not traced yet.
+An exception records an error status, except a missing file on `stat`, `read_bytes`, `list_dir`, `remove` or `realpath`, which is often an expected answer. Under [durable execution](durable_execution/overview.md), a workspace call that an engine runs in its own worker, such as a Temporal activity, a Render task or an Azure Durable Task activity, is not traced yet.
 
 ### Adding Custom Metadata
 

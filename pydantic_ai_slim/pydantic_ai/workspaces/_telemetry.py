@@ -17,7 +17,7 @@ from opentelemetry.trace import INVALID_SPAN, Span
 from opentelemetry.util.types import AttributeValue
 
 from .._instrumentation import record_exception
-from .._telemetry import ambient_traced_run, open_ambient_span
+from .._telemetry import _TracedRun, ambient_traced_run, open_ambient_span  # pyright: ignore[reportPrivateUsage]
 from ..messages import WorkspaceRef
 from .protocol import WorkspaceBackend, WorkspaceCommand
 
@@ -25,10 +25,10 @@ __all__ = (
     'Operation',
     'Step',
     'acquire_span',
+    'captures_content',
     'command_span',
     'destroy_span',
     'operation_span',
-    'captures_content',
     'set_command',
 )
 
@@ -65,7 +65,7 @@ _LOOKUPS: frozenset[Operation] = frozenset({'stat', 'read_bytes', 'list_dir', 'r
 Every other span, such as `workspace run` with a missing `cwd`, records it as an error."""
 _SpanName: TypeAlias = Operation | Literal['create', 'attach', 'destroy']
 
-_opened_by: ContextVar[object | None] = ContextVar('pydantic_ai.workspace_span_opened_by', default=None)
+_opened_by: ContextVar[_TracedRun | None] = ContextVar('pydantic_ai.workspace_span_opened_by', default=None)
 """The run whose workspace span is open, so that run's nested `Workspace` calls (such as `Workspace(self)`
 in a backend) add none, while a run started inside it, which publishes its own value, traces its own."""
 
