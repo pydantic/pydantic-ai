@@ -23,7 +23,17 @@ from pydantic_ai.messages import (
     ToolResultSource,
     ToolReturnPart,
 )
-from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolDenied, ToolSelector, matches_tool_selector
+from pydantic_ai.tools import (
+    AgentDepsT,
+    DeferredToolApprovalResult,
+    DeferredToolRequests,
+    DeferredToolResults,
+    RunContext,
+    ToolDefinition,
+    ToolDenied,
+    ToolSelector,
+    matches_tool_selector,
+)
 from pydantic_ai_harness._judge import SerializableToolSelector
 from pydantic_ai_harness._mcp import is_read_only
 
@@ -144,6 +154,25 @@ class UntrustedContentGate(AbstractCapability[AgentDepsT]):
                         '`gated_tools`.'
                     )
         return tool_defs
+
+    async def handle_deferred_tool_calls(
+        self, ctx: RunContext[AgentDepsT], *, requests: DeferredToolRequests
+    ) -> DeferredToolResults | None:
+        """In `'block'` mode, deny a gated call in a tainted run that asked for approval before an execute hook ran.
+
+        A `requires_approval=True` tool, or one whose `args_validator` asks, defers during validation, where a
+        hook can't deny the call. Answering the request here means no one is asked about a call the gate would
+        deny whatever they answered.
+        """
+        if self.on_tainted != 'block' or ctx.tool_manager is None:
+            return None
+        denials: dict[str, DeferredToolApprovalResult | bool] = {}
+        for call in requests.approvals:
+            tool_def = ctx.tool_manager.get_tool_def(call.tool_name)
+            if tool_def is not None and (asked := await self._decide(ctx, call=call, tool_def=tool_def)) is not None:
+                self._trace(ctx, call, asked)
+                denials[call.tool_call_id] = ToolDenied(_block_message(call.tool_name))
+        return DeferredToolResults(approvals=denials) if denials else None
 
     def get_ordering(self) -> CapabilityOrdering:
         """Run last among `before_tool_execute` hooks, so other capabilities' approval requests come first."""

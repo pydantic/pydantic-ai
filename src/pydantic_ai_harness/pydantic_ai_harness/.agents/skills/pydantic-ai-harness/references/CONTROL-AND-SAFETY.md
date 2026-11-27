@@ -461,6 +461,9 @@ Gotchas:
   UIs that show only their own capability's metadata do not show it; `Permissions`' approver gets it
   at the end of `PermissionRequest.reason`. Exception: for a tool with an `args_validator` the gate asks
   during validation, so that request also covers a later `Permissions` ask, whose reason is not shown.
+- `'block'` with a `requires_approval=True` or `args_validator` tool: the gate denies the request itself
+  (`handle_deferred_tool_calls`), so no one is asked; a `HandleDeferredToolCalls` handler still sees
+  it first, and the call is denied whatever it answers.
 - `trusted_tools` trusts everything a tool returns, including text it relays (an editable wiki, a
   fetched page). List only tools whose results come from the person or the application.
 - `CodeMode`'s `run_code` is not gated unless `gated_tools` selects it; each nested call is, judged on

