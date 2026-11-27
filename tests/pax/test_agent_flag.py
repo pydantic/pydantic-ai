@@ -32,6 +32,7 @@ def fixture_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
     """An importable module in the launch directory, removed from `sys.modules` afterwards."""
     (tmp_path / f'{_MODULE}.py').write_text(
         'from dataclasses import dataclass\n'
+        'from typing import Any\n'
         'from pydantic import BaseModel\n'
         'from pydantic_ai import Agent, RunContext\n'
         'from pydantic_ai.models.test import TestModel\n'
@@ -49,6 +50,8 @@ def fixture_module(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> Path:
         'def with_deps():\n'
         "    return deps_agent, Deps(api_key='secret')\n"
         'optional_deps_agent = Agent(TestModel(), deps_type=Deps | None)\n'
+        'object_deps_agent = Agent(TestModel(), deps_type=object)\n'
+        'any_deps_agent = Agent(TestModel(), deps_type=Any)\n'
         'listed_deps_agent = Agent(TestModel(), deps_type=list[Deps])\n'
         'def deps_agent_alone():\n'
         '    return deps_agent\n'
@@ -204,9 +207,10 @@ def test_import_agent_closes_an_async_factory_coroutine() -> None:
     assert [str(warning.message) for warning in caught] == []
 
 
+@pytest.mark.parametrize('attr', ['optional_deps_agent', 'object_deps_agent', 'any_deps_agent'])
 @pytest.mark.usefixtures('fixture_module')
-def test_import_agent_accepts_an_agent_whose_deps_may_be_none_without_deps() -> None:
-    imported = import_agent(f'{_MODULE}:optional_deps_agent')
+def test_import_agent_accepts_an_agent_whose_deps_may_be_none_without_deps(attr: str) -> None:
+    imported = import_agent(f'{_MODULE}:{attr}')
     assert imported.deps is None
 
 
