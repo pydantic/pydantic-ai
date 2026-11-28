@@ -1295,8 +1295,6 @@ class GoogleModel(Model[Client]):
         model_request_parameters: ModelRequestParameters,
     ) -> tuple[list[ContentUnionDict], GenerateContentConfigDict]:
         tools, tool_config, image_config = self._get_tool_config(model_request_parameters, model_settings)
-        if model_request_parameters.function_tools and not self.profile.get('supports_tools', True):
-            raise UserError('Tools are not supported by this model.')
 
         # `google_cached_content` will strip `tools` (and `tool_config` / `system_instruction`)
         # below — resolve it up front so `prompted` output-mode sees the post-strip tool set
