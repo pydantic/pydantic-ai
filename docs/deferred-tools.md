@@ -123,6 +123,9 @@ When the approved call resumes, the model's arguments are validated again, hooks
 
 Once you've gathered the user's approvals or denials, you can build a [`DeferredToolResults`][pydantic_ai.tools.DeferredToolResults] object with an `approvals` dictionary that maps each tool call ID to a boolean, a [`ToolApproved`][pydantic_ai.tools.ToolApproved] object (with optional `override_args`), or a [`ToolDenied`][pydantic_ai.tools.ToolDenied] object (with an optional custom `message` to provide to the model). You can also provide a `metadata` dictionary on `DeferredToolResults` that maps each tool call ID to a dictionary of metadata that will be available in the tool's [`RunContext.tool_call_metadata`][pydantic_ai.tools.RunContext.tool_call_metadata] attribute. This `DeferredToolResults` object can then be provided to one of the agent run methods as `deferred_tool_results`, alongside the original run's [message history](message-history.md) or its [conversation](#pausing-a-conversation), which also keeps the requests for when the answers come later.
 
+!!! warning "Approved calls are at-least-once on the manual resume path"
+    Pydantic AI only knows an approved tool ran once you store the new messages from the resumed run. If the process stops after the tool executed but before those messages are stored, resuming with the same message history and approval replays the call, so the tool can run more than once. Make tools with side effects idempotent: key them on a stable application operation ID, created and stored before the first attempt and supplied unchanged on resume, together with [`RunContext.tool_call_id`][pydantic_ai.tools.RunContext.tool_call_id], or have the tool check the outside system for the effect before acting.
+
 Here's an example that shows how to require approval for all file deletions, and for updates of specific protected files:
 
 ```python {title="tool_requires_approval.py"}
