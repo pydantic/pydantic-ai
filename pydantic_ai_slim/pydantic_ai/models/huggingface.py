@@ -10,6 +10,7 @@ from typing import Any, Literal, assert_never, cast, overload
 from typing_extensions import TypedDict
 
 from .. import ModelAPIError, _model_errors, _utils, usage
+from .._output import DEFAULT_OUTPUT_TOOL_NAME
 from .._run_context import RunContext
 from .._thinking_part import split_content_into_text_and_thinking
 from .._utils import guard_tool_call_id as _guard_tool_call_id
@@ -69,6 +70,7 @@ try:
         ChatCompletionInputFunctionName,
         ChatCompletionInputMessage,
         ChatCompletionInputMessageChunk,
+        ChatCompletionInputResponseFormatJSONSchema,
         ChatCompletionInputTool,
         ChatCompletionInputToolChoiceClass,
         ChatCompletionInputURL,
@@ -331,6 +333,7 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                 messages=hf_messages,  # pyright: ignore[reportArgumentType]
                 tools=tools,
                 tool_choice=tool_choice or None,
+                response_format=self._map_response_format(model_request_parameters),
                 stream=stream,
                 max_tokens=model_settings.get('max_tokens', None),
                 stop=model_settings.get('stop_sequences', None),
@@ -525,6 +528,27 @@ class HuggingFaceModel(Model[AsyncInferenceClient]):
                     'arguments': t.args_as_json_str(),
                 },
             }
+        )
+
+    @staticmethod
+    def _map_response_format(
+        model_request_parameters: ModelRequestParameters,
+    ) -> ChatCompletionInputResponseFormatJSONSchema | None:
+        """The `response_format` for native output, which `prepare_request` allows only where the profile does."""
+        if model_request_parameters.output_mode != 'native':
+            return None
+        output_object = model_request_parameters.output_object
+        assert output_object is not None
+        json_schema: dict[str, Any] = {
+            'name': output_object.name or DEFAULT_OUTPUT_TOOL_NAME,
+            'schema': output_object.json_schema,
+        }
+        if output_object.description:
+            json_schema['description'] = output_object.description
+        if output_object.strict is not None:
+            json_schema['strict'] = output_object.strict
+        return ChatCompletionInputResponseFormatJSONSchema.parse_obj_as_instance(  # pyright: ignore[reportUnknownMemberType]
+            {'type': 'json_schema', 'json_schema': json_schema}
         )
 
     @staticmethod
