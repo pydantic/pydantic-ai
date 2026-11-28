@@ -662,7 +662,17 @@ class TestResetCompaction:
             ]
             sizes.append(len(await compact_now(reset, history, model=Script().model())))
 
+        received: list[ResetNotice] = []
+
+        def notice(facts: ResetNotice) -> str:
+            received.append(facts)
+            return 'Cleared.'
+
+        await compact_now(ResetCompaction(reset.work_log, notice=notice), history, model=Script().model())
+
         assert sizes == [5, 5, 5]
+        # Rome and Oslo arrive merged in one request, and are still counted as two prompts.
+        assert [facts.kept_user_turns for facts in received] == [3]
         assert _shape(await compact_now(reset, history, model=Script().model())) == snapshot(
             [
                 "request: user 'Plan the trip.'",

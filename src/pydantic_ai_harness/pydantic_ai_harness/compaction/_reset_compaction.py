@@ -108,7 +108,9 @@ class ResetNotice:
     """Whether the conversation's first user request is still in it."""
 
     kept_user_turns: int
-    """User turns after the first request still in the conversation, besides one in the kept messages."""
+    """User prompts after the first request still in the conversation, besides one in the kept messages.
+
+    Counted by prompt, since a reset keeps the user's later turns in one request."""
 
     kept_messages: int
     """Messages kept after the notice, at the end of the conversation."""
@@ -301,11 +303,8 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
         ]
         # One request for every kept turn, so a message-count trigger can't be crossed by the turns alone. The
         # user's parts only: tool results merged into a turn's request would have lost their calls.
-        turns: list[ModelMessage] = (
-            [replace(kept_turns[-1], parts=[part for turn in kept_turns for part in turn.parts if is_user_part(part)])]
-            if kept_turns
-            else []
-        )
+        kept_prompts = [part for turn in kept_turns for part in turn.parts if is_user_part(part)]
+        turns: list[ModelMessage] = [replace(kept_turns[-1], parts=kept_prompts)] if kept_turns else []
         tail = without_reset_parts(messages[cutoff:])
         log_id = ctx.conversation_id or next(
             (message.conversation_id for message in reversed(messages) if message.conversation_id), None
@@ -318,7 +317,7 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
             replies_logged=self.work_log.record_text,
             cleared_messages=cutoff - len(head) - len(kept_turns),
             kept_first_request=first is not None,
-            kept_user_turns=len(kept_turns),
+            kept_user_turns=len(kept_prompts),
             kept_messages=len(tail),
             kept_tool_calls=len(iter_tool_pairs(tail)),
         )

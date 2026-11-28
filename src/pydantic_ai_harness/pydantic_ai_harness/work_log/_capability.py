@@ -8,6 +8,7 @@ from dataclasses import KW_ONLY, dataclass
 from datetime import UTC, datetime
 from typing import Any
 
+import anyio.to_thread
 from pydantic_core import PydanticSerializationError
 
 from pydantic_ai.capabilities import (
@@ -106,9 +107,9 @@ class WorkLog(AbstractCapability[AgentDepsT]):
     max_scanned_entries: int = DEFAULT_MAX_SCANNED_ENTRIES
     """How many of the newest matching entries one search with a `query` scores. Must be positive.
 
-    Ranking runs on the event loop, so this bounds how long one search can hold it. When more
-    entries match the filters, older ones are not searched and the result's `unsearched_entries`
-    says how many. Raise it to search further back at the cost of slower searches.
+    This bounds how long one search takes. When more entries match the filters, older ones are not
+    searched and the result's `unsearched_entries` says how many. Raise it to search further back at
+    the cost of slower searches.
     """
 
     id: str | None = 'work_log'
@@ -250,8 +251,9 @@ class WorkLog(AbstractCapability[AgentDepsT]):
         ]
         # Listing the newest entries ranks nothing, so only a search with a query is cut to the newest.
         unsearched = max(0, len(candidates) - self.max_scanned_entries) if query and query.strip() else 0
-        ranked = _ranked(candidates[unsearched:], query)
-        matches, capped = _matches(ranked[:limit], frozenset(tokenize(query or '')))
+        # Entries hold full results, which can run to megabytes, so ranking and excerpting run in a worker thread.
+        ranked = await anyio.to_thread.run_sync(_ranked, candidates[unsearched:], query)
+        matches, capped = await anyio.to_thread.run_sync(_matches, ranked[:limit], frozenset(tokenize(query or '')))
         return WorkLogSearchResult(
             total_entries=len(entries), unsearched_entries=unsearched, matches=matches, capped=capped
         )

@@ -674,7 +674,7 @@ To write your own, pass `notice=`, a function from a `ResetNotice` to the text:
 | `replies_logged` | Whether the work log records the model's replies (`WorkLog.record_text`) |
 | `cleared_messages` | Messages this reset removed |
 | `kept_first_request` | Whether the first user request was kept |
-| `kept_user_turns` | User turns after the first kept ahead of the tail |
+| `kept_user_turns` | User prompts after the first kept ahead of the tail |
 | `kept_messages` | Messages kept in the tail |
 | `kept_tool_calls` | Tool calls kept with their results in the tail |
 
