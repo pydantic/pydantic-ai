@@ -13,7 +13,7 @@ from collections import deque
 from collections.abc import AsyncGenerator, AsyncIterator, Awaitable, Callable, Iterable, Mapping, Sequence
 from contextlib import aclosing
 from dataclasses import KW_ONLY, dataclass, field
-from typing import Any, Literal
+from typing import Any
 
 from pydantic_ai import FunctionToolset, Tool, ToolKind
 from pydantic_ai._framing import second_model_prompt
@@ -33,9 +33,11 @@ from pydantic_ai.models import Model
 from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition, ToolSelector, matches_tool_selector
 from pydantic_ai.toolsets import AgentToolset
 from pydantic_ai.workspaces import WorkspaceError, WorkspaceReadOnlyError
+from pydantic_ai_harness._line_slice import MAX_READ_CHARS, MAX_READ_LINES, ReadUnit
 from pydantic_ai_harness._models import is_request_response_model
 from pydantic_ai_harness._typeguards import is_mapping, is_object_list, is_object_list_or_tuple
 from pydantic_ai_harness._usage import reserved_usage_limits
+from pydantic_ai_harness._work_log_kinds import WORK_LOG_READ_KIND, WORK_LOG_SEARCH_KIND
 from pydantic_ai_harness._workspace import METADATA_DIR, raise_tool_failure
 from pydantic_ai_harness.file_system import READ_FILE_KIND
 from pydantic_ai_harness.file_system._tool_kinds import step_aside_for_read_file
@@ -78,19 +80,19 @@ _EXEMPT_KINDS = frozenset(
     {
         READ_TOOL_RESULT_KIND.id,
         GREP_TOOL_RESULT_KIND.id,
+        WORK_LOG_READ_KIND.id,
+        WORK_LOG_SEARCH_KIND.id,
         LoadCapabilityReturnPart.tool_kind,
         ToolSearchReturnPart.tool_kind,
     }
 )
 """Kinds whose returns are never reduced, whatever `tool_filter` says.
 
-Besides the spill query tools, these are core's `load_capability` and `search_tools`: core re-reads their
-structured content from history to decide which capabilities are loaded and which tools are revealed,
-so a reduced return would leave those locked.
+The spill query tools and `WorkLog`'s `search_work_log` and `read_work_log` return a bounded page of a
+stored result, so reducing one would store the page a second time. The others are core's `load_capability` and
+`search_tools`: core re-reads their structured content from history to decide which capabilities are
+loaded and which tools are revealed, so a reduced return would leave those locked.
 """
-
-_ReadUnit = Literal['lines', 'bytes']
-"""What `read_tool_result`'s `offset` and `limit` count."""
 
 _DEFAULT_THRESHOLD = 10_000
 """Default band threshold (characters) -- below this, returns pass through untouched."""
@@ -333,7 +335,7 @@ class ToolOutputLimits(AbstractCapability[AgentDepsT]):
             limit: int = 200,
             from_end: bool = False,
             pattern: str | None = None,
-            unit: _ReadUnit = 'lines',
+            unit: ReadUnit = 'lines',
         ) -> str:
             """Read a slice of a spilled tool result.
 
@@ -898,12 +900,6 @@ def _head_tail_preview(text: str, preview_chars: int) -> str:
     return f'{text[:head_chars]}\n...[{omitted:,} chars omitted]...\n{text[-tail_chars:]}'
 
 
-_MAX_READ_LINES = 1_000
-"""Hard cap on lines returned by one `read_tool_result` call."""
-
-_MAX_READ_CHARS = 50_000
-"""Hard cap on characters (or bytes, with `unit='bytes'`) returned by one spill query."""
-
 _MAX_GREP_MATCHES = 200
 """Hard cap on matches returned by one `grep_tool_result` call."""
 
@@ -1014,7 +1010,7 @@ def _place(page: _Page, entry: _Entry, separate: bool) -> _Stop | None:
     if page.first is None:
         page.first = page.kept = entry.index
     text = ('--\n' if separate else '') + entry.prefix + _display(entry.text)
-    if page.size + len(text) <= _MAX_READ_CHARS:
+    if page.size + len(text) <= MAX_READ_CHARS:
         page.add(text, entry.match)
         return None
     if page.shown:
@@ -1025,10 +1021,10 @@ def _place(page: _Page, entry: _Entry, separate: bool) -> _Stop | None:
     page.kept = entry.index if entry.match else entry.index + 1
     if not entry.match:
         return None
-    if len(text) <= _MAX_READ_CHARS:
+    if len(text) <= MAX_READ_CHARS:
         page.add(text, entry.match)
         return None
-    kept = entry.text[: _MAX_READ_CHARS - len(entry.prefix)]
+    kept = entry.text[: MAX_READ_CHARS - len(entry.prefix)]
     page.add(entry.prefix + _display(kept), entry.match)
     page.cut = (entry.index, _byte_len(kept))
     return _Stop(omit=True)
@@ -1060,7 +1056,7 @@ class _Reader:
         return f'context lines {start + 1}-{end + 1} omitted ({self.call(f"offset={start}, limit={end - start + 1}")})'
 
     def cut(self, offset: int) -> str:
-        args = f"unit='bytes', offset={offset}, limit={_MAX_READ_CHARS}"
+        args = f"unit='bytes', offset={offset}, limit={MAX_READ_CHARS}"
         return f'the cut line continues at {self.call(args)}'
 
 
@@ -1077,7 +1073,7 @@ async def _capped(store: OverflowStore, page: _Page, more: str, reader: _Reader)
         notes.append(reader.cut(await _line_start(store, reader.handle, index) + shown_bytes))
     if more:
         notes.append(more)
-    return f', output capped at {_MAX_READ_CHARS:,} chars; {"; ".join(notes)}' if notes else ''
+    return f', output capped at {MAX_READ_CHARS:,} chars; {"; ".join(notes)}' if notes else ''
 
 
 async def _read_slice(
@@ -1087,7 +1083,7 @@ async def _read_slice(
     limit: int,
     from_end: bool,
     pattern: str | None,
-    unit: _ReadUnit,
+    unit: ReadUnit,
     reader_name: str,
 ) -> str:
     """Filter and slice a spilled payload for `read_tool_result`, bounded in both axes.
@@ -1104,8 +1100,8 @@ async def _read_slice(
     if unit == 'bytes' and pattern is not None:
         raise ModelRetry("`pattern` filters lines, so it cannot be combined with `unit='bytes'`.")
     if unit == 'bytes':
-        return await _guarded(handle, _byte_slice(store, handle, offset, min(limit, _MAX_READ_CHARS), from_end))
-    limit = min(limit, _MAX_READ_LINES)
+        return await _guarded(handle, _byte_slice(store, handle, offset, min(limit, MAX_READ_CHARS), from_end))
+    limit = min(limit, MAX_READ_LINES)
     reader = _Reader(handle, reader_name)
     return await _guarded(handle, _line_slice(store, handle, offset, limit, from_end, pattern, reader))
 

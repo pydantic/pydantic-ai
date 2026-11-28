@@ -1,8 +1,8 @@
 """The `search_conversation_history` toolset with dependency-free BM25 ranking.
 
-The ranking and rendering core is ported from VStorm's `pydantic-deepagents`
-(`pydantic_deep/features/history_archive/toolset.py`), with BM25 parameters taken from
-the owning capability. The corpus comes from a `HistorySource` (one document per
+The rendering core is ported from VStorm's `pydantic-deepagents`
+(`pydantic_deep/features/history_archive/toolset.py`); ranking is `_history_bm25`, with BM25
+parameters taken from the owning capability. The corpus comes from a `HistorySource` (one document per
 persisted message, across the runs selected by the configured scope); ranking is global
 within that scope, while context windows around a match stay within the match's run.
 """
@@ -12,15 +12,13 @@ from __future__ import annotations
 import inspect
 import json
 import math
-import re
 import typing
-from collections import Counter
 from dataclasses import dataclass
 from typing import TYPE_CHECKING, Literal, assert_never
 
 from pydantic_core import ErrorDetails
 
-from pydantic_ai import ModelRetry, RunContext
+from pydantic_ai import RunContext
 from pydantic_ai.messages import (
     CapabilityLoadDeltaPart,
     CapabilityPart,
@@ -44,6 +42,7 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.tools import AgentDepsT
 from pydantic_ai.toolsets import FunctionToolset
+from pydantic_ai_harness._history_bm25 import Bm25Params, bm25_rank, check_query, clip, tokenize
 from pydantic_ai_harness._message_text import capability_part_text, tool_return_text, user_prompt_texts
 from pydantic_ai_harness._warn import warn_default_changed
 from pydantic_ai_harness.conversation_search._source import SUMMARY_PREFIX, HistorySource, message_hash
@@ -92,22 +91,11 @@ SCOPE_DEFAULT_CHANGE_IMPACT = (
 )
 """Why the `scope` default change matters, for the deprecation warning both public entry points emit."""
 
-_TOKENIZE_RE = re.compile(r'\w+')
-"""Tokenizer regex: word runs (unicode letters, digits, underscore).
-
-Scripts written without spaces (Chinese, Japanese, Thai) form one token per unbroken run,
-so a query matches only the whole run, not a word inside it.
-"""
-
 _EXCERPT_CHARS = 500
 """Display cap for conversational text: prompts, replies, tool returns, retries, transcripts."""
 
 _SHORT_EXCERPT_CHARS = 200
 """Display cap for system text and tool-call arguments."""
-
-_MAX_QUERY_CHARS = 1_000
-_MAX_QUERY_TERMS = 32
-"""Query bounds, the same as `Memory`'s `search_memory`: ranking costs unique terms times scanned messages."""
 
 _ECHOED_QUERY_CHARS = 200
 """How much of the query the result header repeats back."""
@@ -120,101 +108,9 @@ a 32-term query over 2,000 short messages takes tens of milliseconds.
 """
 
 
-@dataclass(frozen=True)
-class _Bm25Params:
-    """BM25 tuning supplied by the owning capability."""
-
-    k1: float
-    b: float
-
-
-def _tokenize(text: str) -> list[str]:
-    return [match.group().lower() for match in _TOKENIZE_RE.finditer(text)]
-
-
-def _check_query(query: str) -> None:
-    """Reject a query whose ranking would hold the event loop, so the model can retry with a shorter one."""
-    if len(query) > _MAX_QUERY_CHARS:
-        raise ModelRetry(f'Search queries must be at most {_MAX_QUERY_CHARS} characters.')
-    if len(set(_tokenize(query))) > _MAX_QUERY_TERMS:
-        raise ModelRetry(f'Search queries must contain at most {_MAX_QUERY_TERMS} unique terms.')
-
-
 def _echo_query(query: str) -> str:
     """The query as the result header repeats it, cut to `_ECHOED_QUERY_CHARS`."""
     return query if len(query) <= _ECHOED_QUERY_CHARS else query[:_ECHOED_QUERY_CHARS] + '...'
-
-
-def _compute_idf(term: str, term_counts: list[Counter[str]]) -> float:
-    """Inverse document frequency, standard BM25 form `ln((N - df + 0.5)/(df + 0.5) + 1)`."""
-    n = len(term_counts)
-    df = sum(1 for counts in term_counts if term in counts)
-    if df == 0:
-        return 0.0
-    return math.log((n - df + 0.5) / (df + 0.5) + 1.0)
-
-
-def _bm25_score(
-    query_terms: list[str],
-    counts: Counter[str],
-    dl: int,
-    idf_scores: dict[str, float],
-    avgdl: float,
-    params: _Bm25Params,
-) -> float:
-    if dl == 0 or avgdl == 0:
-        return 0.0
-    score = 0.0
-    for term in query_terms:
-        tf = counts[term]
-        if tf == 0:
-            continue
-        numerator = tf * (params.k1 + 1.0)
-        denominator = tf + params.k1 * (1.0 - params.b + params.b * dl / avgdl)
-        score += idf_scores[term] * numerator / denominator
-    return score
-
-
-def _bm25_rank(query: str, documents: list[str], params: _Bm25Params) -> list[tuple[int, float]]:
-    """Rank documents by BM25 relevance, descending; only scores greater than zero."""
-    query_terms = list(dict.fromkeys(_tokenize(query)))
-    if not query_terms or not documents:
-        return []
-
-    # Tokenize each document once; df, tf, and length all read the same counts.
-    term_counts = [Counter(_tokenize(doc)) for doc in documents]
-    lengths = [counts.total() for counts in term_counts]
-    avgdl = sum(lengths) / len(lengths)
-    idf_scores = {term: _compute_idf(term, term_counts) for term in query_terms}
-
-    results: list[tuple[int, float]] = []
-    for index, (counts, dl) in enumerate(zip(term_counts, lengths)):
-        score = _bm25_score(query_terms, counts, dl, idf_scores, avgdl, params)
-        if score > 0:
-            results.append((index, score))
-
-    results.sort(key=lambda item: item[1], reverse=True)
-    return results
-
-
-def _clip(text: str, limit: int, terms: frozenset[str] | None) -> str:
-    """Cut `text` to about `limit` characters for display; `terms=None` keeps it whole for the index.
-
-    A head cut alone would report a match whose term the excerpt never shows, so when the
-    first query term ends past `limit` the window is centred on that term instead. It shifts
-    to keep a long term whole when it fits in `limit`, and ends with the text when the term
-    is near its end, so the excerpt keeps the full `limit`.
-    """
-    if terms is None or len(text) <= limit:
-        return text
-    focus = next((match for match in _TOKENIZE_RE.finditer(text) if match.group().lower() in terms), None)
-    if focus is None or focus.end() <= limit:
-        return text[:limit] + '...'
-    # Keep the whole term when it fits (a term longer than `limit // 2` would lose its tail to
-    # plain centring), and pull the window back near the end so a late term keeps the full `limit`.
-    start = min(max(focus.start() - limit // 2, focus.end() - limit), len(text) - limit)
-    end = start + limit
-    return ('...' if start else '') + text[start:end] + ('...' if end < len(text) else '')
 
 
 def _retry_text(content: list[ErrorDetails] | str) -> str:
@@ -234,15 +130,15 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
     """Render one request part to a searchable line, or `None` for non-content parts."""
     match part:
         case UserPromptPart():
-            return f'User: {_clip(" ".join(user_prompt_texts(part)), _EXCERPT_CHARS, terms)}'
+            return f'User: {clip(" ".join(user_prompt_texts(part)), _EXCERPT_CHARS, terms)}'
         case SystemPromptPart():
             # Defensive for sources that do not filter compaction artifacts;
             # `SnapshotHistorySource` already excludes them from the corpus.
             if part.content.startswith(SUMMARY_PREFIX):
                 return '[Compaction summary]'
-            return f'System: {_clip(part.content, _SHORT_EXCERPT_CHARS, terms)}'
+            return f'System: {clip(part.content, _SHORT_EXCERPT_CHARS, terms)}'
         case InstructionDeltaPart():
-            return f'System: {_clip(part.render(), _SHORT_EXCERPT_CHARS, terms)}'
+            return f'System: {clip(part.render(), _SHORT_EXCERPT_CHARS, terms)}'
         case ToolReturnPart():
             if part.outcome == 'retried':
                 # A retried call reads as a retry rather than a return: why a run changed course is what
@@ -250,28 +146,28 @@ def _format_request_part(part: ModelRequestPart, *, terms: frozenset[str] | None
                 # errors the way the model was shown them, unwrapped because the `{"error": ...}` envelope
                 # is a wire detail; `str(part.content)` would put a Python repr in the index.
                 retry = part.model_response_str(wrap_if_error=False)
-                return f'Retry [{part.tool_name}]: {_clip(retry, _EXCERPT_CHARS, terms)}'
+                return f'Retry [{part.tool_name}]: {clip(retry, _EXCERPT_CHARS, terms)}'
             # `tool_return_text` names each file instead of spelling out its bytes.
-            return f'Tool [{part.tool_name}]: {_clip(tool_return_text(part), _EXCERPT_CHARS, terms)}'
+            return f'Tool [{part.tool_name}]: {clip(tool_return_text(part), _EXCERPT_CHARS, terms)}'
         case RetryFeedbackPart():
             # The same feedback for a response that answered no particular call. No tool name: it is
             # never bound to a call.
-            return f'Retry: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
+            return f'Retry: {clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
         # TODO(v3): remove RetryPromptPart
         case RetryPromptPart():  # pyright: ignore[reportDeprecated]
             # The part the two above replaced. A stored history loads as one of them, but code that
             # builds one by hand and passes it as `message_history` still puts an instance here, and
             # this reads the history before the model translates it.
-            return f'Retry [{part.tool_name}]: {_clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
+            return f'Retry [{part.tool_name}]: {clip(_retry_text(part.content), _EXCERPT_CHARS, terms)}'
         case CompactionPart():
             # An application's own summary is conversation content; `SummarizingCompaction`'s are dropped upstream.
-            return f'Summary: {_clip(part.content, _EXCERPT_CHARS, terms)}' if part.content else None
+            return f'Summary: {clip(part.content, _EXCERPT_CHARS, terms)}' if part.content else None
         case SpeechPart():
             # A realtime user turn: index the spoken transcript so speech is searchable, not the
             # raw audio. `transcript` is optional, so an audio-only part contributes no text.
             if not part.transcript:
                 return None
-            return f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}'
+            return f'Speech [{part.speaker}]: {clip(part.transcript, _EXCERPT_CHARS, terms)}'
         case CapabilityPart():
             return _format_capability_part(part, terms=terms)
         # Tool-list, capability, instruction and effort bookkeeping rather than conversation. Listed explicitly so the
@@ -300,7 +196,7 @@ def _format_capability_part(part: CapabilityPart, *, terms: frozenset[str] | Non
     """
     if part.scope == 'request':
         return None
-    return f'[{part.kind}]: {_clip(capability_part_text(part), _EXCERPT_CHARS, terms)}'
+    return f'[{part.kind}]: {clip(capability_part_text(part), _EXCERPT_CHARS, terms)}'
 
 
 def _format_message(message: ModelMessage, *, terms: frozenset[str] | None) -> str:
@@ -319,16 +215,16 @@ def _format_message(message: ModelMessage, *, terms: frozenset[str] | None) -> s
     else:
         for part in message.parts:
             if isinstance(part, TextPart):
-                lines.append(f'Assistant: {_clip(part.content, _EXCERPT_CHARS, terms)}')
+                lines.append(f'Assistant: {clip(part.content, _EXCERPT_CHARS, terms)}')
             elif isinstance(part, ToolCallPart):
                 args = json.dumps(part.args_as_dict(), ensure_ascii=False)
-                lines.append(f'Tool Call [{part.tool_name}]: {_clip(args, _SHORT_EXCERPT_CHARS, terms)}')
+                lines.append(f'Tool Call [{part.tool_name}]: {clip(args, _SHORT_EXCERPT_CHARS, terms)}')
             elif isinstance(part, SpeechPart) and part.transcript:
                 # `SpeechPart` is in the response union too: a realtime assistant turn. Index the
                 # transcript so spoken replies are searchable. Any other response part (thinking,
                 # file, native-tool bookkeeping) is deliberately skipped rather than misrendered,
                 # so a new upstream part degrades to "not indexed" instead of crashing the run.
-                lines.append(f'Speech [{part.speaker}]: {_clip(part.transcript, _EXCERPT_CHARS, terms)}')
+                lines.append(f'Speech [{part.speaker}]: {clip(part.transcript, _EXCERPT_CHARS, terms)}')
 
     return '\n'.join(lines)
 
@@ -456,7 +352,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
             raise ValueError(f'max_matches must be non-negative, got {max_matches!r}.')
         if context_lines < 0:
             raise ValueError(f'context_lines must be non-negative, got {context_lines!r}.')
-        # A negative k1 can zero `_bm25_score`'s denominator (k1=-1, b=0, tf=1); `nan`
+        # A negative k1 can zero `bm25_score`'s denominator (k1=-1, b=0, tf=1); `nan`
         # and `inf` slip past an ordering check (`nan < 0` is false) and turn every
         # score into `nan`, which the `score > 0` filter then drops as a non-match.
         # The `bm25_b` range check already excludes both.
@@ -470,7 +366,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         self._max_scanned_messages = max_scanned_messages
         self._max_matches = max_matches
         self._context_lines = context_lines
-        self._params = _Bm25Params(k1=bm25_k1, b=bm25_b)
+        self._params = Bm25Params(k1=bm25_k1, b=bm25_b)
         self._scope: SearchScope = scope
         description = SEARCH_HISTORY_DESCRIPTION
         if scope == 'conversation':
@@ -497,7 +393,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
             run_id: Search only this run's history. Use it to resolve a run
                 another tool or a compaction receipt referenced.
         """
-        _check_query(query)
+        check_query(query)
         return await self._search(ctx, query, run_id)
 
     async def _search(self, ctx: RunContext[AgentDepsT], query: str, run_id: str | None) -> str:
@@ -550,7 +446,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
                 flat_index_lines.append(line)
                 locations.append((section_index, line_index))
 
-        ranked = _bm25_rank(query, flat_index_lines, self._params)
+        ranked = bm25_rank(query, flat_index_lines, self._params)
         echoed = _echo_query(query)
         searched = f'{total_messages} persisted messages'
         if len(flat_index_lines) < total_messages:
@@ -562,7 +458,7 @@ class ConversationSearchToolset(FunctionToolset[AgentDepsT]):
         if not ranked:
             return f"No matches for '{echoed}' in {searched}."
 
-        terms = frozenset(_tokenize(query))
+        terms = frozenset(tokenize(query))
         results: list[str] = []
         shown: set[tuple[int, int]] = set()
         for doc_index, score in ranked:

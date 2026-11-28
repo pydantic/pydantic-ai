@@ -143,6 +143,8 @@ class Combines:
     # `Any`: each check takes its own capability type, which no single parameter type admits.
     check: Callable[[Any], None]
     """Asserts what survived. Reads derived state too, not just the declared fields."""
+    companions: Callable[[AbstractCapability[None]], Sequence[AbstractCapability[None]]] = lambda _: ()
+    """What the agent needs beside one of these to run, such as the `WorkLog` a `ResetCompaction` names."""
 
 
 @dataclass

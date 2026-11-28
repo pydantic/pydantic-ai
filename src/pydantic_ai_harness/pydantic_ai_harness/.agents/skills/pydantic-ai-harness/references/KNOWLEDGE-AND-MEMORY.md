@@ -2,8 +2,9 @@
 
 Capabilities that give an agent knowledge beyond its prompt: `Memory` (a persistent Markdown
 notebook the model writes and searches across runs), `ConversationSearch` (BM25 recall over
-history `StepPersistence` already stored, including turns compaction dropped), `Skills` (Agent
-Skills `SKILL.md` files loaded on demand), and `PydanticAIDocs` (fetch Pydantic AI docs pages on
+history `StepPersistence` already stored, including turns compaction dropped), `WorkLog` (a log
+of every tool call with its full result, and the model's replies, that the model searches and reads
+back), `Skills` (Agent Skills `SKILL.md` files loaded on demand), and `PydanticAIDocs` (fetch Pydantic AI docs pages on
 demand), and `CurrentTime` (today's date or hour in the instructions). `Skills` and the optional Pixeltable
 integration require extras.
 
@@ -11,6 +12,7 @@ integration require extras.
 |---|---|
 | Facts/preferences that persist across runs or sessions | `Memory` |
 | Exact details from earlier turns or past runs of a conversation | `ConversationSearch` + `StepPersistence` |
+| Full tool results compaction cleared or `ToolOutputLimits` reduced, including calls inside Code Mode | `WorkLog` (with `ResetCompaction`, see CONTEXT-MANAGEMENT.md) |
 | Specialized instructions the model pulls in only when relevant | `Skills` |
 | Agent that writes Pydantic AI code and needs current docs | `PydanticAIDocs` |
 | Answers that depend on today's date | `CurrentTime` |
@@ -262,6 +264,53 @@ Gotchas:
   the excerpt shows the text around it. The `\w+` tokenizer cannot match a word inside unspaced
   CJK or Thai text.
 
+## WorkLog
+
+Records every tool call that ran, with its full result before `ToolOutputLimits` reduces it, plus
+the model's text replies, in one log per `conversation_id`. Calls a Code Mode script makes inside
+`run_code` get their own entries, with `run_code`'s call id as `parent_tool_call_id`. Adds two
+tools, usable from Code Mode code too: `search_work_log(query=None, tool_name=None,
+limit=10)` (BM25 over tool name, arguments and result; newest first without a query) and
+`read_work_log(seq, offset=0, limit=200, from_end=False, pattern=None, unit='lines')` (one entry in
+full, paged by line with `read_tool_result`'s caps: 1,000 lines, 50,000 characters, literal
+`pattern`; `unit='bytes'` pages raw bytes, and `cut_at` says where a line the cap cut continues).
+
+```python
+from pydantic_ai import Agent
+
+from pydantic_ai_harness import WorkLog
+from pydantic_ai_harness.work_log import FileWorkLogStore
+
+agent = Agent('test', capabilities=[WorkLog(FileWorkLogStore('work-logs'))])
+```
+
+Key parameters: `store` (required), then keyword-only `record_text=True`, `record_thinking=False`,
+`max_scanned_entries=2000` and `id='work_log'` (also the toolset's id). Stores: `InMemoryWorkLogStore` (call `discard(log_id)` when a
+conversation ends), `FileWorkLogStore(directory)` (one JSONL file per conversation; `forget(log_id)` drops its cached keys),
+`WorkspaceWorkLogStore(workspace=None)` (one file per entry under
+`.pydantic-ai-harness/work-log/<log>/` in the run's workspace), or your own `WorkLogStore`
+(`append`, `read`, `locate`).
+
+Gotchas:
+- Not logged: deferred or approval-gated calls until they run, argument-validation failures, the
+  work log's own tool calls, user prompts, and files (a placeholder names the media type).
+- It can't be loaded from an agent spec (`get_serialization_name()` returns `None`); build it in Python.
+- A search with a `query` scores only the newest `max_scanned_entries` entries that pass the
+  filters, and its `unsearched_entries` counts the older ones skipped. Queries over 1,000
+  characters or 32 unique terms raise `ModelRetry`.
+- `ModelRetry` is logged as `retried`; other exceptions as `failed`, by type only, and still raised. A result an outer hook rejects gets a `success` and a `retried` entry.
+- Both tools' returns are exempt from `ToolOutputLimits`. Both tools are `'redacted'` for UI
+  clients, since they return other tools' results, a `'private'` tool's included.
+- `ToolBridge`'s `tool_call` and the tool it runs share one `tool_call_id`.
+- `seq` follows the order calls finished, so a nested Code Mode call comes before its `run_code`.
+- It adds no instructions; `ResetCompaction`'s notice points the model at the log.
+- Under durable execution each recorded entry is one `append` operation. Every store supports one
+  writer process per log: with one worker use the file or workspace store, which survive a worker
+  restart; with several, write a `WorkLogStore` over storage that assigns `seq` atomically.
+- `conversation_id` is trusted as given: derive it from the authenticated user in multi-tenant apps.
+- Each search reads the whole log, so it slows as the log grows; the workspace store reads one file
+  per entry, one round trip each in a remote sandbox.
+
 ## Skills
 
 Loads Agent Skills (`<library>/<skill>/SKILL.md`) as deferred capabilities: the model sees each
@@ -403,6 +452,7 @@ agent = Agent('test', capabilities=[CurrentTime(timezone='Europe/Amsterdam')])
 
 - https://pydantic.dev/docs/ai/harness/memory/
 - https://pydantic.dev/docs/ai/harness/conversation-search/
+- https://pydantic.dev/docs/ai/harness/work-log/
 - https://pydantic.dev/docs/ai/harness/skills/
 - https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/
 - https://pydantic.dev/docs/ai/harness/current-time/

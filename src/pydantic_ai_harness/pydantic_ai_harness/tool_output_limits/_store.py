@@ -12,7 +12,6 @@ from __future__ import annotations
 import os
 import posixpath
 import re
-import stat
 import tempfile
 import threading
 import time
@@ -30,6 +29,7 @@ import anyio.to_thread
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend
 from pydantic_ai.workspaces.unavailable import NO_WORKSPACE
+from pydantic_ai_harness._private_dir import check_private_dir
 from pydantic_ai_harness._workspace import METADATA_DIR, is_unattached, metadata_dir, secondary_workspace
 
 SPILL_DIR = 'tool-output'
@@ -257,19 +257,7 @@ class LocalFileOverflowStore:
 
     def _check_root(self) -> None:
         """Refuse a symlinked root, then enforce POSIX ownership and permissions."""
-        st = self._root.lstat()
-        if stat.S_ISLNK(st.st_mode):
-            raise PermissionError(f'Overflow store root {str(self._root)!r} is a symbolic link; refusing to use it.')
-        geteuid = getattr(os, 'geteuid', None)
-        if geteuid is None:
-            return
-        if st.st_uid != geteuid():
-            raise PermissionError(
-                f'Overflow store root {str(self._root)!r} is not owned by the current user; '
-                'refusing to write spilled tool output there.'
-            )
-        if stat.S_IMODE(st.st_mode) & 0o077:
-            self._root.chmod(0o700)
+        check_private_dir(self._root, 'Overflow store root', 'write spilled tool output there')
 
     async def write(self, key: str, data: bytes) -> str:
         # Disk I/O runs in a worker thread so it never blocks the event loop.

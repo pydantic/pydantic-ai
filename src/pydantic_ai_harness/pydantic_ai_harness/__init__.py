@@ -30,6 +30,7 @@ if TYPE_CHECKING:
         PruneToolResults,
         RelevanceCompaction,
         ReportContextUsage,
+        ResetCompaction,
         SlidingWindowCompaction,
         SummarizingCompaction,
         TieredCompaction,
@@ -115,6 +116,7 @@ if TYPE_CHECKING:
     from .tool_output_limits import ToolOutputLimits
     from .trajectory_judge import TrajectoryJudge
     from .warn_on_cache_busts import WarnOnCacheBusts
+    from .work_log import WorkLog
     from .wrap_up_at_limits import DEFAULT_WRAP_UP_PROMPT, WrapUpAtLimits, wrapped_up_by
     from .youdotcom import YouResearch, YouSearch
 
@@ -220,6 +222,7 @@ __all__ = [
     'RepoContext',
     'RequireVerification',
     'Researcher',
+    'ResetCompaction',
     'SSHWorkspace',
     'SSHWorkspaceBackend',
     'Shell',
@@ -249,6 +252,7 @@ __all__ = [
     'TrajectoryJudge',
     'WarnNearLimits',
     'WarnOnCacheBusts',
+    'WorkLog',
     'WrapUpAtLimits',
     'wrapped_up_by',
     'YouResearch',
@@ -355,6 +359,7 @@ _LAZY_EXPORTS = {
     'ReportToolErrors': 'report_tool_errors',
     'RequireVerification': 'require_verification',
     'Researcher': 'researcher',
+    'ResetCompaction': 'compaction',
     'Shell': 'shell',
     'Skills': 'skills',
     'SlidingWindowCompaction': 'compaction',
@@ -384,6 +389,7 @@ _LAZY_EXPORTS = {
     'TrajectoryJudge': 'trajectory_judge',
     'WarnNearLimits': 'compaction',
     'WarnOnCacheBusts': 'warn_on_cache_busts',
+    'WorkLog': 'work_log',
     'WrapUpAtLimits': 'wrap_up_at_limits',
     'wrapped_up_by': 'wrap_up_at_limits',
     'YouResearch': 'youdotcom',

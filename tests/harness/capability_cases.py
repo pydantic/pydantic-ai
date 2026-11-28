@@ -79,6 +79,7 @@ from pydantic_ai_harness import (
     ReportToolErrors,
     RequireVerification,
     Researcher,
+    ResetCompaction,
     Shell,
     SlidingWindowCompaction,
     SmartSearch,
@@ -99,6 +100,7 @@ from pydantic_ai_harness import (
     ToolOutputLimits,
     TrajectoryJudge,
     WarnNearLimits,
+    WorkLog,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
 from pydantic_ai_harness.conversation_search import ConversationSearch, SnapshotHistorySource
@@ -116,6 +118,7 @@ from pydantic_ai_harness.slack import Slack
 from pydantic_ai_harness.step_persistence import InMemoryStepStore
 from pydantic_ai_harness.sub_agents import DelegationReports, DelegationTasks
 from pydantic_ai_harness.system_reminders import Reminder
+from pydantic_ai_harness.work_log import InMemoryWorkLogStore
 
 from ..append_only import CLOCK, Fixture, discover_capabilities
 from ..capability_cases import (
@@ -343,6 +346,16 @@ def _check_compact_on_request(merged: CompactOnRequest[None]) -> None:
 
 def _check_prune_tool_results(merged: PruneToolResults[None]) -> None:
     assert merged.placeholder == '[second]'
+
+
+def _check_reset(merged: ResetCompaction[None]) -> None:
+    assert merged.keep_messages == 7
+
+
+def _reset_compaction(_: Path) -> list[AbstractCapability[None]]:
+    # The reset requires the `WorkLog` it points the model at to be registered on the agent.
+    work_log = WorkLog[None](InMemoryWorkLogStore())
+    return [work_log, ResetCompaction[None](work_log, max_messages=6, keep_messages=2)]
 
 
 def _check_tool_output_limits(merged: ToolOutputLimits[None]) -> None:
@@ -800,6 +813,19 @@ CASES: dict[str, CapabilityCase] = {
         Anonymous('only a hook; each reports the run limits and its own `SpendLimits`')
     ),
     'ReportStaleFiles': CapabilityCase(Anonymous('only an event listener and a hook; two would send two notices')),
+    'ResetCompaction': CapabilityCase(
+        Combines(
+            'two would each clear the history, the second clearing what the first just kept',
+            lambda: (
+                ResetCompaction[None](WorkLog[None](InMemoryWorkLogStore()), max_messages=50, keep_messages=3),
+                ResetCompaction[None](WorkLog[None](InMemoryWorkLogStore()), max_messages=50, keep_messages=7),
+            ),
+            _check_reset,
+            # The reset requires the `WorkLog` it names to be registered beside it.
+            companions=lambda reset: [reset.work_log] if isinstance(reset, ResetCompaction) else [],
+        ),
+        build=_reset_compaction,
+    ),
     'SlidingWindowCompaction': CapabilityCase(
         Anonymous('composes as a tier under `TieredCompaction`'),
         build=lambda _: SlidingWindowCompaction(max_messages=6, keep_messages=2),
@@ -1066,6 +1092,22 @@ CASES: dict[str, CapabilityCase] = {
         ),
         build=Unbuildable('Launches Chrome when a run starts, which the offline suites have no binary for.'),
         requires='websockets',
+    ),
+    'WorkLog': CapabilityCase(
+        Narrows(
+            'one log per id under fixed tool names, and its store decides where raw tool results are kept',
+            lambda cls: (cls(InMemoryWorkLogStore()), cls(InMemoryWorkLogStore(), record_thinking=True)),
+        ),
+        build=lambda _: WorkLog[None](InMemoryWorkLogStore()),
+        calls=Calls(
+            (
+                ('search_work_log', {'query': 'tabs'}),
+                # An unknown entry asks the model to retry, which the operation records as data.
+                ('read_work_log', {'seq': 1}),
+            ),
+            lambda _: WorkLog[None](InMemoryWorkLogStore()),
+            durable_steps=('work_log.search', 'work_log.read'),
+        ),
     ),
     'ConversationSearch': CapabilityCase(
         Narrows(

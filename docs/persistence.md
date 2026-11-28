@@ -143,6 +143,8 @@ What it adds is a record of each run: an append-only event log of what the agent
 
 [`ConversationSearch`](https://pydantic.dev/docs/ai/harness/conversation-search/) builds on that without storing anything of its own: it ranks the history `StepPersistence` already wrote and gives the model a tool to pull earlier turns back into context on demand, including turns [compaction](capabilities/compaction.md) dropped. Pair the two on one store instance and recall needs no extra write path.
 
+[`WorkLog`](https://pydantic.dev/docs/ai/harness/work-log/) keeps a store of its own, keyed by `conversation_id`: each tool call with its full result, including calls made inside Code Mode, and the model's replies, in memory, in one file per conversation, or in the run's workspace. The model searches and reads it with its own tools, so after compaction clears a result from context it can read the result back instead of running the tool again.
+
 ## Remembering across conversations
 
 Everything above is scoped to a conversation. What an agent knows about someone *between* conversations — their preferences, a decision from last week, a correction they shouldn't have to repeat — has a different key and a different lifetime.

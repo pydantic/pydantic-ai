@@ -64,6 +64,10 @@ Compaction keeps the live history inside the context window, so an exact detail 
 - What a capability added to the conversation, such as a sub-agent's report or a background tool's result, is searchable, labeled with the part's `kind` rather than as user text. A part scoped to a single request (`scope='request'`) is not indexed.
 - Long messages are clipped to 500 characters for display (200 for system text and tool-call arguments). When the matched term lies past the cutoff, the excerpt shows the text around it instead of the start. The index always holds the full text.
 
+## Conversation Search or Work Log
+
+[Work Log](work-log.md) answers a nearby question. `ConversationSearch` searches the history `StepPersistence` saved, so it finds what the conversation held: user turns, replies, and tool results as the model saw them, after any `ToolOutputLimits` reduction. `WorkLog` keeps a log of its own: each tool call with its full result, including the calls a Code Mode script makes inside `run_code`, which never enter the history, and the model's replies, but no user prompts. Use `ConversationSearch` to recall what was said, and `WorkLog` to recall what tools returned; [`ResetCompaction`](compaction.md#resetcompaction-clear-the-context-keep-the-work-log) points the model at the work log when it clears the history. The two can run on one agent.
+
 ## How recovery works
 
 `StepPersistence` saves the full history at every step. A compaction that persists its edits (like `SummarizingCompaction`) changes later snapshots only, so the earlier snapshots of the same run still hold the originals.
@@ -145,6 +149,7 @@ started. Two identical ones now become one, and two that differ fail when the ag
 - [Pydantic AI capabilities](../capabilities/overview.md)
 - [Step Persistence](step-persistence.md) -- the substrate this capability reads
 - [Compaction](compaction.md) -- the capabilities whose drops this one recovers from
+- [Work Log](work-log.md) -- a log of tool calls with their full results
 
 ## API reference
 

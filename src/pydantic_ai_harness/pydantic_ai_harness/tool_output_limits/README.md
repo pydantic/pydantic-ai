@@ -44,7 +44,8 @@ literal substring (not a regex), so a model-supplied value cannot hang the host 
 backtracking. Their own returns are exempt from reduction, so a query result is never itself
 spilled or truncated. With `FileSystem` on the agent, both step aside for its tools for spills in
 the run's workspace, and `read_file` reads of spills are exempt too
-([Reading spills with `FileSystem`](#reading-spills-with-filesystem)). Core's `load_capability` and
+([Reading spills with `FileSystem`](#reading-spills-with-filesystem)).
+[`WorkLog`](../work_log/)'s `search_work_log` and `read_work_log` returns are exempt too: each returns a bounded page of a stored result, so reducing one would store the page a second time. With both on the agent, a spilled result is in two places: `read_tool_result` pages the spill a marker in the conversation names, and the work log keeps the whole result, findable by tool and arguments, after a reset has cleared the marker. Core's `load_capability` and
 `search_tools` returns are never reduced either: core reads them back from history to know which
 on-demand capabilities are loaded and which tools are revealed.
 

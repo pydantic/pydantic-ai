@@ -16,6 +16,7 @@ from pydantic_ai_harness.compaction._deduplicate_file_reads import DeduplicateFi
 from pydantic_ai_harness.compaction._fallback_compaction import FallbackCompaction
 from pydantic_ai_harness.compaction._pinning import reinject_pinned
 from pydantic_ai_harness.compaction._relevance_compaction import RelevanceCompaction
+from pydantic_ai_harness.compaction._reset_compaction import ResetCompaction
 from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     SupportsFocus,
@@ -136,6 +137,7 @@ class CompactOnRequest(AbstractCapability[AgentDepsT]):
                 RelevanceCompaction,
                 TieredCompaction,
                 FallbackCompaction,
+                ResetCompaction,
             ]
         )
 

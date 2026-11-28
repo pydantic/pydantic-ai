@@ -204,6 +204,7 @@ _CAPABILITY_PAGE_META = {
     'label-cross-model-history.md': ('label_cross_model_history', 'Label Cross Model History'),
     'step-persistence.md': ('step_persistence', 'Step Persistence'),
     'conversation-search.md': ('conversation_search', 'Conversation Search'),
+    'work-log.md': ('work_log', 'Work Log'),
     'current-time.md': ('current_time', 'Current Time'),
     'subagents.md': ('sub_agents', 'Subagents'),
     'peers.md': ('peers', 'Peers'),

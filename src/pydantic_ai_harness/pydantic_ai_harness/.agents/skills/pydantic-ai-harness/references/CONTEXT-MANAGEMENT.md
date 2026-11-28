@@ -1,7 +1,8 @@
 # Context Management
 
 Capabilities that keep a long run inside the model's context window and its prompt cache healthy:
-the compaction family (edit history before each request), `ToolOutputLimits` (shrink or spill big
+the compaction family (edit history before each request, including `ResetCompaction`, which clears it
+down to the task and points the model at a `WorkLog`), `ToolOutputLimits` (shrink or spill big
 tool returns when they are produced), `ToolBridge` (a fixed tool list in front of many tools),
 `WarnOnCacheBusts` (observe cache collapses), `LabelCrossModelHistory` (label turns another model
 wrote), and the media stores `StepPersistence` uses. None needs an extra, except `MongoMediaStore`,
@@ -24,6 +25,7 @@ message) and is compacted again on the next run, an extra summarizer call for LL
 | Summarization can fail (API error) and the run must survive | `FallbackCompaction` |
 | The model knows when a phase of work ends and should compact then | `CompactOnRequest` |
 | A fresh tool result is junk the model should stop re-reading | `PruneToolResults` |
+| Long autonomous run: clear history in one step and let the model read earlier results back | `ResetCompaction` with a `WorkLog` (see KNOWLEDGE-AND-MEMORY.md) and `ToolOutputLimits` |
 | One runaway response or tool-call arg blows the cap | `ClampOversizedMessages` |
 | Model should wrap up rather than have history rewritten | `WarnNearLimits` |
 | UI needs a live "context: 73%" gauge | `ReportContextUsage` |
@@ -281,6 +283,53 @@ refused in the tool return. Token triggers and `ReportContextUsage` anchor on th
 usage, which still counts the result until the next response. The span gets
 `compaction.model_requested`.
 
+### `ResetCompaction`
+
+`ResetCompaction(work_log, *, max_messages=None, max_tokens=None, max_fraction=None, context_window=None, fallback_context_window=DEFAULT_CONTEXT_WINDOW, keep_messages=2, keep_user_prompts=True, notice=default_reset_notice, restate=None, preserve_loaded_capabilities=True, tokenizer=None, id='reset_compaction')`:
+zero-LLM. Clears the history in one step down to the first user request, a notice (a
+`ResetNoticePart`, an instruction part in the application's voice, like a compaction receipt) that names the
+`WorkLog`'s handle and its search and read tools, pins, loaded-capability records, what the user
+wrote in each later turn (all in one request), and the newest `keep_messages` messages. The model reads earlier tool results
+back from the work log. Pass the `WorkLog` instance that is on the agent: `Agent(...)` raises
+`UserError` without one, and a run raises at its start when the registered `WorkLog` is a different
+one, or when it's registered without a trigger; as a strategy (a tier, a fallback entry,
+`CompactOnRequest`'s strategy, `compact_now`) it needs none. `notice=` takes a
+`ResetNotice -> str` callable (`number`, `work_log`, `search_tool`, `read_tool`, `replies_logged`,
+`cleared_messages`, `kept_first_request`, `kept_user_prompts`, `kept_messages`, `kept_tool_calls`); `default_reset_notice`
+is the default.
+`restate=` takes an async `RunContext -> str | CurrentStatePart | None` whose result goes in a
+`<current_state>` frame after the notice; a string is recorded as the callable's output
+(`ToolResultSource`), and a `CurrentStatePart` keeps the source you give it. It runs as the `restate` durable operation, and
+an exception it raises fails the request. The span gets `compaction.reset.number`.
+
+Gotchas: put it last in `TieredCompaction` and don't combine it with `SlidingWindowCompaction` or
+`SummarizingCompaction`, which drop or summarize the notice; `RelevanceCompaction` keeps it. If the
+kept history alone is over the trigger it resets after every response, so add `ToolOutputLimits` and
+set the trigger well above what `keep_messages` keeps and above a 50,000-character `read_work_log`
+page. A run continued from `result.conversation` resets again on its first request; continue from
+`result.all_messages()` to keep the reset history. The in-memory store shows no handle in the
+notice. It can't be loaded from an agent spec.
+
+```python
+from pydantic_ai import Agent
+from pydantic_ai.capabilities import LocalWorkspace
+
+from pydantic_ai_harness import ToolOutputLimits, WorkLog
+from pydantic_ai_harness.compaction import ResetCompaction
+from pydantic_ai_harness.work_log import WorkspaceWorkLogStore
+
+work_log = WorkLog(WorkspaceWorkLogStore())
+agent = Agent(
+    'test',
+    capabilities=[
+        LocalWorkspace('.'),
+        work_log,
+        ResetCompaction(work_log, max_fraction=0.6),
+        ToolOutputLimits(),
+    ],
+)
+```
+
 ## Observe instead of edit: WarnNearLimits and ReportContextUsage
 
 `WarnNearLimits(max_iterations=None, max_context_tokens=None, max_total_tokens=None, warn_on=None, warning_threshold=0.7, critical_remaining_iterations=3, *, max_context_fraction=None)`
@@ -426,7 +475,7 @@ Stores:
 
 Gotchas: both `ToolReturn.return_value` and text `content` are reduced (a return value holding
 files keeps them; only the data beside them is reduced); `ModelRetry` and tool errors
-are never reduced, nor are core `load_capability` / `search_tools` returns. Keep
+are never reduced, nor are core `load_capability` / `search_tools` returns or `WorkLog`'s `search_work_log` / `read_work_log` returns. Keep
 `Shell(max_output_chars=...)` above your thresholds. `Summarize` usage counts toward the run. Under
 durable execution spill writes and built-in summaries are journaled, so a replay reuses the recorded
 handle or summary; the payload is part of the operation input, and a custom `OverflowStore` should
@@ -533,6 +582,7 @@ Use `warn_on_cache_busts.WarnOnCacheBusts` (not `cache_stability` / `CacheStabil
 ## See also
 
 - https://pydantic.dev/docs/ai/harness/compaction/
+- https://pydantic.dev/docs/ai/harness/work-log/
 - https://pydantic.dev/docs/ai/harness/tool-output-limits/
 - https://pydantic.dev/docs/ai/harness/tool-bridge/
 - https://pydantic.dev/docs/ai/harness/warn-on-cache-busts/

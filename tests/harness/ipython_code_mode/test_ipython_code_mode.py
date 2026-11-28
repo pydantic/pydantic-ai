@@ -40,6 +40,8 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDenied
 from pydantic_ai.toolsets import AbstractToolset, FunctionToolset, WrapperToolset
 from pydantic_ai.usage import UsageLimits
+from pydantic_ai_harness import WorkLog
+from pydantic_ai_harness.work_log import InMemoryWorkLogStore
 from tests._timeouts import READINESS_WAIT_TIMEOUT
 from tests.conftest import try_import
 from tests.harness.conftest import IsDatetime, IsStr
@@ -359,6 +361,22 @@ class TestIPythonCodeModeTools:
                 },
             }
         )
+
+    async def test_the_work_log_records_calls_from_the_kernel_under_run_code(self, kernel: IPythonKernel) -> None:
+        def add(a: int, b: int) -> int:
+            return a + b
+
+        store = InMemoryWorkLogStore()
+        agent = Agent(_scripted('add(a=1, b=2)'), capabilities=[IPythonCodeMode(kernel=kernel), WorkLog(store)])
+        agent.tool_plain(add)
+
+        await agent.run('Run the code', conversation_id='conv')
+
+        assert [
+            (entry['tool_name'], entry['tool_call_id'], entry['parent_tool_call_id'])
+            for entry in await store.read('conv')
+            if entry['kind'] == 'tool'
+        ] == [('add', 'call_0__1', 'call_0'), ('run_code', 'call_0', None)]
 
     async def test_the_description_lists_the_functions(self, kernel: IPythonKernel) -> None:
         def get_weather(city: str) -> str:

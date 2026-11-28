@@ -950,6 +950,7 @@ To keep that history in your database with each message stored once, conflicting
 | --- | --- | --- |
 | [`StepPersistence`](https://pydantic.dev/docs/ai/harness/step-persistence/) | A record of each run for recovering it, not a session store: message snapshots taken at settled points in a run, alongside an event log and a tool-effect ledger, so a run that ends early can be continued or forked from its last settled point rather than restarted | `conversation_id` and `run_id` |
 | [`ConversationSearch`](https://pydantic.dev/docs/ai/harness/conversation-search/) | Nothing of its own: it ranks the history `StepPersistence` already stored and gives the model a tool to pull earlier turns back into context on demand, including turns [compaction](capabilities/compaction.md) dropped | `conversation_id` |
+| [`WorkLog`](https://pydantic.dev/docs/ai/harness/work-log/) | Each tool call with its full result, including calls made inside Code Mode, and the model's replies, which the model searches and reads back after [compaction](capabilities/compaction.md) cleared them from context | `conversation_id` |
 | [`Memory`](https://pydantic.dev/docs/ai/harness/memory/) | Markdown notes the agent writes and reads itself, deliberately outliving any single conversation | A namespace you choose |
 
 `StepPersistence` ships in-memory, file, SQLite, PostgreSQL, and MongoDB backends, and its store is a protocol you can implement against your own database.

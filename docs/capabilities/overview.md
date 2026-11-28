@@ -155,6 +155,7 @@ What the agent knows and remembers, loaded when relevant instead of carried in e
 | [Memory](https://pydantic.dev/docs/ai/harness/memory/) | Harness | A persistent, namespaced notebook: bounded prompt injection, on-demand search; in-memory/file/Postgres stores |
 | [Pixeltable](https://pydantic.dev/docs/ai/harness/pixeltable/) | Harness | Query and search allowed Pixeltable tables; persist the memory notebook in Pixeltable |
 | [Conversation Search](https://pydantic.dev/docs/ai/harness/conversation-search/) | Harness | BM25 search over stored history, including turns compaction dropped |
+| [Work Log](https://pydantic.dev/docs/ai/harness/work-log/) | Harness | Every tool call with its full result, including calls inside Code Mode, in a log the model searches and reads back |
 | [Skills](https://pydantic.dev/docs/ai/harness/skills/) | Harness | Load [Agent Skill](on-demand.md) (`SKILL.md`) instructions on demand |
 | [Repo Context](https://pydantic.dev/docs/ai/harness/repo-context/) | Harness | Start runs oriented: `AGENTS.md`/`CLAUDE.md` + repository structure |
 | [Pydantic AI Docs](https://pydantic.dev/docs/ai/harness/pydantic-ai-docs/) | Harness | On-demand Pydantic AI documentation lookup |

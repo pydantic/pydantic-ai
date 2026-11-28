@@ -401,6 +401,7 @@ ALLOWED: dict[str, Allowed] = {
     # With a 20-token trigger every request is over it, so each request with an older step outside the
     # one-token tail judges and rewrites it: two in this conversation.
     'RelevanceCompaction': Allowed(_COMPACTION, _HISTORY, max_moves=2),
+    'ResetCompaction': Allowed(_COMPACTION, _HISTORY),
     'SlidingWindowCompaction': Allowed(_COMPACTION, _HISTORY),
     # The compaction, which removes the load's reveal of `forecast` (sent as a system message) with the rest, and on
     # Chat Completions, which has no deferred-tool channel, the first run's reveal adding `forecast` to `tools`

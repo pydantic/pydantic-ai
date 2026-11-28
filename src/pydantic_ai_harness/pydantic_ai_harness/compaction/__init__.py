@@ -21,6 +21,13 @@ from pydantic_ai_harness.compaction._prune_tool_results import PruneToolResults
 from pydantic_ai_harness.compaction._receipts import CompactionReceiptPart, TranscriptHandleProvider
 from pydantic_ai_harness.compaction._relevance_compaction import RelevanceCompaction
 from pydantic_ai_harness.compaction._report_context_usage import ContextUsage, ReportContextUsage
+from pydantic_ai_harness.compaction._reset_compaction import (
+    CurrentStatePart,
+    ResetCompaction,
+    ResetNotice,
+    ResetNoticePart,
+    default_reset_notice,
+)
 from pydantic_ai_harness.compaction._shared import (
     CompactionStrategy,
     SupportsFocus,
@@ -42,9 +49,13 @@ __all__ = [
     'CompactionStrategy',
     'ContextUsage',
     'ContextUsageMeasuredEvent',
+    'CurrentStatePart',
     'REPORT_CONTEXT_USAGE_EVENTS',
     'RelevanceCompaction',
     'ReportContextUsage',
+    'ResetCompaction',
+    'ResetNotice',
+    'ResetNoticePart',
     'DeduplicateFileReads',
     'FallbackCompaction',
     'LimitWarningPart',
@@ -58,6 +69,7 @@ __all__ = [
     'WarnNearLimits',
     'WarningKind',
     'compact_now',
+    'default_reset_notice',
     'drain_summary_events',
     'estimate_context_tokens',
     'estimate_message_tokens',
