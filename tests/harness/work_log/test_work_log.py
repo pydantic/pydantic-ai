@@ -972,12 +972,12 @@ class TestWorkLogTools:
         empty = await _call_tools(InMemoryWorkLogStore(), ('read_work_log', {'seq': 1}))
 
         assert found == [
-            ['No work log entry has `seq` 5: entries run from 1 to 1.'],
+            ["No work log entry has `seq` 5. Search the work log to find an entry's `seq`."],
             ['`offset` must be >= 0.'],
             ['`limit` must be >= 1.'],
             ["`pattern` filters lines, so it cannot be combined with `unit='bytes'`."],
         ]
-        assert empty == ['No work log entry has `seq` 1: the work log is empty.']
+        assert empty == ["No work log entry has `seq` 1. Search the work log to find an entry's `seq`."]
 
     async def test_tool_output_limits_reduces_neither_search_nor_read(self, tmp_path: Path) -> None:
         store = InMemoryWorkLogStore()

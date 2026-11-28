@@ -268,9 +268,8 @@ class WorkLog(AbstractCapability[AgentDepsT]):
         store, log_id = self._target(ctx)
         found = await store.read(log_id, seq, seq + 1)
         if not found:
-            count = len(await store.read(log_id))
-            valid = f'entries run from 1 to {count}' if count else 'the work log is empty'
-            return RetryRequest(f'No work log entry has `seq` {seq}: {valid}.')
+            # Counting the entries would read the whole log on a wrong guess; a search lists them with their `seq`.
+            return RetryRequest(f"No work log entry has `seq` {seq}. Search the work log to find an entry's `seq`.")
         entry = found[0]
         if unit == 'bytes':
             chunk = slice_bytes(entry['content'], offset=offset, limit=limit, from_end=from_end)
