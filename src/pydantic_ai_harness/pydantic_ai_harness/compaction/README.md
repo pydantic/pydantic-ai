@@ -821,10 +821,12 @@ returns, the tool name. Retry feedback (the correction a rejected tool call or o
 summary records the correction, not the rejected call, as what happened; feedback answering no tool
 call is shown as the model saw it. Text resembling the transcript's tags or a Pydantic AI framing
 tag (`<system>`, `<pyai:context>`, `<pyai:tool_result>` and the rest), in any case or spacing, is escaped, so
-a tool return can't leave its message or end the transcript early. After escaping, each tool return
-and retry feedback is capped at `tool_return_max_chars` (default 500) characters with the same
-truncation marker as kept user turns; raise it, or set `None` to render them whole, when the
-summarizer's window can absorb them.
+a tool return can't leave its message or end the transcript early. Each tool return and retry
+feedback is rendered whole by default: a fact that only a tool result carries reaches the summary
+only if the summarizer sees it, and with `model=None` the summarized messages were already part of a
+request that model accepted. Set `tool_return_max_chars` to cap each one, after escaping, at that
+many characters with the same truncation marker as kept user turns, when `model` is a summarizer
+with a smaller context window than the run's model.
 
 Content a harness capability added on the user channel, with a `TextContent.metadata` `origin`
 starting with `pydantic-ai-harness.`, is not a user message: today a `BackgroundTools` result,
@@ -1161,6 +1163,6 @@ what compaction keeps or drops.
 
 These strategies compress or drop context *inside* the window. Moving large tool outputs *out* of
 it, to a file the agent (or a subagent) can query on demand, is the job of a separate capability,
-tool output limits. `SummarizingCompaction`'s `tool_return_max_chars` only tunes how much of each
-return the summarizer reads (`None` renders returns whole); prefer tool output limits when a payload
-must stay queryable in full.
+tool output limits. `SummarizingCompaction`'s summarizer reads tool returns whole unless
+`tool_return_max_chars` caps them, but the summary it writes is still lossy; prefer tool output
+limits when a payload must stay queryable in full.
