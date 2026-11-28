@@ -229,7 +229,9 @@ async def test_a_change_mid_run_appends_one_statement_and_keeps_the_prefix():
 
 @pytest.mark.parametrize('authority', ['none', 'user'])
 @pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in MAPPER_CASES])
-async def test_every_adapter_sends_lowered_instructions_on_the_user_channel(case: MapperCase, authority: Authority):
+async def test_every_adapter_sends_lowered_instructions_on_the_user_channel(
+    case: MapperCase[Any], authority: Authority
+):
     result = await scripted_agent(received=Received(), authority=authority).run('Hi', deps=Notes())
     body = await case.body(result.all_messages())
 
