@@ -932,9 +932,11 @@ class TestMCPToolsetIntegration:
         @server.tool()
         async def sample_text(ctx: Context) -> str:
             message = mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='Say hi'))
-            # A legacy session's server-initiated sampling request, which the 2026-07-28 protocol deprecates.
-            await ctx.session.create_message([message], max_tokens=5, related_request_id=ctx.request_id)  # pyright: ignore[reportDeprecated]
-            return 'sampled'
+            # A legacy session's server-initiated sampling request, which the 2026-07-28 protocol deprecates. The
+            # guard refuses it, so the tool never returns.
+            return str(
+                await ctx.session.create_message([message], max_tokens=5, related_request_id=ctx.request_id)  # pyright: ignore[reportDeprecated]
+            )
 
         limiter = ConcurrencyLimiter(1)
         # Only a legacy session lets the server send a request in the middle of a tool call.
