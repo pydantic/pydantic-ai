@@ -540,7 +540,7 @@ Bedrock supports three families of embedding models. See the [AWS Bedrock docume
 **Amazon Titan:**
 
 - `amazon.titan-embed-text-v1` — 1536 dimensions (fixed), 8K tokens
-- `amazon.titan-embed-text-v2:0` — 256/384/1024 dimensions (configurable, default: 1024), 8K tokens
+- `amazon.titan-embed-text-v2:0` — 256/512/1024 dimensions (configurable, default: 1024), 8K tokens
 
 **Cohere Embed:**
 

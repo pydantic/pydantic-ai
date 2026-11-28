@@ -72,7 +72,7 @@ class BedrockEmbeddingSettings(EmbeddingSettings, total=False):
     **Note on `dimensions` parameter support:**
 
     - **Titan v1** (`amazon.titan-embed-text-v1`): Not supported (fixed: 1536)
-    - **Titan v2** (`amazon.titan-embed-text-v2:0`): Supported (default: 1024, accepts 256/384/1024)
+    - **Titan v2** (`amazon.titan-embed-text-v2:0`): Supported (default: 1024, accepts 256/512/1024)
     - **Cohere v3** (`cohere.embed-english-v3`, `cohere.embed-multilingual-v3`): Not supported (fixed: 1024)
     - **Cohere v4** (`cohere.embed-v4:0`): Supported (default: 1536, accepts 256/512/1024/1536)
     - **Nova** (`amazon.nova-2-multimodal-embeddings-v1:0`): Supported (default: 3072, accepts 256/384/1024/3072)
