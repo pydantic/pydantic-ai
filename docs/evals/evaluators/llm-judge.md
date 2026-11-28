@@ -117,6 +117,9 @@ dataset = Dataset(
 
 Choose the judge model based on cost/quality tradeoffs:
 
+The examples on this page call `dataset.evaluate_sync()` without naming a model, so they use the
+default judge model and require `OPENAI_API_KEY` in the environment.
+
 ```python
 from pydantic_evals.evaluators import LLMJudge
 
@@ -598,6 +601,51 @@ in one API call; on Jev the one-evaluator-per-measure shape gives the advantage 
   it is in an answer, as a [decision model](../../models/decision.md) does, that confidence is the
   answer's reason. A `str` field the judge writes freely is reported as a label of its own, not as the
   reason for the other answers, so use `LLMJudge` when the reason is the point.
+
+### Calling the Judge Directly
+
+`StructuredJudge` is an evaluator, but the request it makes is also available on its own, to judge an
+output outside an evaluation run. [`judge_questions`][pydantic_evals.evaluators.llm_as_a_judge.judge_questions]
+takes the same questions — a mapping of rubrics or a model-like output type — plus the output, optional
+`inputs` and `expected_output`, a `model`, and `model_settings`, and answers them in one request:
+
+```python {test="skip"}
+import asyncio
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from pydantic_evals.evaluators.llm_as_a_judge import JudgeAnswer, judge_questions
+
+
+class ReplyReview(BaseModel):
+    """Judge a support reply against the support policy."""
+
+    policy: Literal['compliant', 'minor_issue', 'violation'] = Field(
+        description='Does the reply comply with the support policy?'
+    )
+    avoids_secrets: bool = Field(description='Does the reply avoid asking for a password or a login code?')
+
+
+async def main():
+    answers: dict[str, JudgeAnswer] = await judge_questions(
+        'I cannot reset your password, but you can do it yourself from the account page.',
+        ReplyReview,
+    )
+    print(answers['policy'].value)
+    #> compliant
+    print(answers['avoids_secrets'].value)
+    #> True
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+```
+
+Each [`JudgeAnswer`][pydantic_evals.evaluators.llm_as_a_judge.JudgeAnswer] carries the answer, validated
+as its question's field, and the `confidence` the judge reported for it — `None` when the judge reports
+none. The answers are keyed by question name, in the order the questions were declared. As with the
+evaluator, the examples here use the default judge model, which requires `OPENAI_API_KEY`.
 
 ## Validating a Judge Against Human Labels
 

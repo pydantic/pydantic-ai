@@ -451,11 +451,26 @@ class StructuredJudge(Evaluator[object, object, object]):
         inputs = ctx.inputs if self.include_input else None
         expected_output = ctx.expected_output if self.include_expected_output else None
         if isinstance(self.questions, str):
-            from .llm_as_a_judge import _judge_question  # pyright: ignore[reportPrivateUsage]
-
-            answer = await _judge_question(
-                ctx.output, self.questions, self.output_type, inputs, expected_output, self.model, self.model_settings
+            from .llm_as_a_judge import (  # pyright: ignore[reportPrivateUsage]
+                JudgeAnswer,
+                _answer_confidence,
+                _build_prompt,
+                _judge_questions_agent,
+                _resolve_judge_model,
             )
+
+            # One question, so the question is the instructions and its answer the output.
+            user_prompt, _ = _build_prompt(output=ctx.output, inputs=inputs, expected_output=expected_output)
+            result = await _judge_questions_agent.run(
+                user_prompt,
+                model=_resolve_judge_model(self.model),
+                model_settings=self.model_settings,
+                instructions=self.questions,
+                output_type=self.output_type,
+            )
+            confidence = _answer_confidence(result.response)
+            # A bare answer is one question, so it has one confidence, whatever the field wrapping it is called.
+            answer = JudgeAnswer(result.output, next(iter(confidence.values())) if len(confidence) == 1 else None)
             measure = _measure(self.get_default_evaluation_name(), answer)
             return {} if measure is None else measure
 

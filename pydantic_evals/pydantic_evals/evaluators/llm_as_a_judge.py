@@ -9,7 +9,6 @@ from pydantic import BaseModel, Field
 from pydantic.dataclasses import is_pydantic_dataclass
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import to_json
-from typing_extensions import TypeForm
 
 from pydantic_ai import Agent, StructuredDict, UserContent, models
 from pydantic_ai._utils import is_str_dict
@@ -578,31 +577,6 @@ async def judge_questions(
     if isinstance(questions, Mapping):
         _refuse_invalid_verdicts(questions, values)
     return {name: JudgeAnswer(values[name], confidence.get(asked_as)) for name, asked_as in fields.items()}
-
-
-# Only `StructuredJudge.evaluate` in `common.py` calls this, through the lazy import `LLMJudge` and `GEval` use for
-# their helpers, and no public wrapper here does, so pyright sees it as unused.
-async def _judge_question(  # pyright: ignore[reportUnusedFunction]
-    output: Any,
-    question: str,
-    output_type: TypeForm[object],
-    inputs: Any | None,
-    expected_output: Any | None,
-    model: models.Model | models.KnownModelName | str | None,
-    model_settings: ModelSettings | None,
-) -> JudgeAnswer:
-    """Ask one typed question about an output; the question is the instructions and its answer the output."""
-    user_prompt, _ = _build_prompt(output=output, inputs=inputs, expected_output=expected_output)
-    result = await _judge_questions_agent.run(
-        user_prompt,
-        model=_resolve_judge_model(model),
-        model_settings=model_settings,
-        instructions=question,
-        output_type=output_type,
-    )
-    confidence = _answer_confidence(result.response)
-    # A bare answer is one question, so it has one confidence, whatever the field wrapping it is called.
-    return JudgeAnswer(result.output, next(iter(confidence.values())) if len(confidence) == 1 else None)
 
 
 class GEvalOutput(BaseModel):
