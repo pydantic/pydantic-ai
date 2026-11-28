@@ -2210,7 +2210,7 @@ async def _get_lowered_instructions(
                 capability, block_id, ctx.deps.tool_manager.toolset, run_context, own=source.own
             )
         )
-        authority = capability._effective_authority  # pyright: ignore[reportPrivateUsage]
+        authority = capability._effective_instruction_authority  # pyright: ignore[reportPrivateUsage]
         authorities[block_id] = _messages._lower_authority(authorities.get(block_id, authority), authority)  # pyright: ignore[reportPrivateUsage]
     return parts, authorities
 

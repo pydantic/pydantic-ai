@@ -18,7 +18,15 @@ from typing import Any
 import pytest
 
 from pydantic_ai import Agent, RunContext
-from pydantic_ai.capabilities import Capability, CombinedCapability, Hooks, ModelFallback, PrefixTools
+from pydantic_ai.capabilities import (
+    Capability,
+    CombinedCapability,
+    DynamicCapability,
+    Hooks,
+    ModelFallback,
+    PrefixTools,
+    Toolset,
+)
 from pydantic_ai.exceptions import ModelAPIError
 from pydantic_ai.messages import (
     Authority,
@@ -41,6 +49,7 @@ from pydantic_ai.models import ModelRequestContext
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.toolsets import FunctionToolset
 
 from ._inline_snapshot import snapshot
 from .conftest import try_import
@@ -512,6 +521,143 @@ async def test_a_wrapped_lowered_capability_states_its_instructions_in_history(n
     ]
 
 
+@pytest.mark.parametrize('nested', [False, True])
+async def test_a_dynamic_capabilitys_ceiling_lowers_the_instructions_it_returns(nested: bool):
+    """A `DynamicCapability` applies its `with_authority` ceiling to the capability its factory returns."""
+    received = Received()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.instructions.append(info.instructions)
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    def factory(ctx: RunContext[Notes]) -> Capability[Notes] | CombinedCapability[Notes]:
+        if nested:
+            return CombinedCapability([notes_capability()])
+        return notes_capability()
+
+    agent = Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=Notes,
+        instructions='Be brief.',
+        capabilities=[DynamicCapability(factory).with_authority('none')],
+    )
+    result = await agent.run('Hi', deps=Notes())
+
+    assert received.instructions == ['Be brief.']
+    assert statements(result.all_messages()) == [
+        InstructionDeltaPart(id=NOTES_ID, content='Static note.\n\nThe count is 1.', authority='none')
+    ]
+
+
+@pytest.mark.parametrize('dynamic', [False, True])
+async def test_a_deferred_groups_instructions_are_stated_only_after_it_loads(dynamic: bool):
+    """Static and dynamic deferred groups hide member instructions until loaded, then state them as one block."""
+    received = Received()
+    responses = [ModelResponse(parts=[ToolCallPart('load_capability', {'id': 'notes_group'}, tool_call_id='load')])]
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.messages.append(messages)
+        return responses.pop(0) if responses else ModelResponse(parts=[TextPart('Done.')])
+
+    notes = notes_capability()
+    notes.toolsets = (FunctionToolset(instructions='Toolset note.'),)
+    group = CombinedCapability[Notes](
+        [notes], id='notes_group', description='Notes tools.', defer_loading=True
+    ).with_authority('none')
+    capability = DynamicCapability(lambda ctx: group).with_authority('none') if dynamic else group
+    agent = Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=Notes,
+        capabilities=[capability],
+    )
+    result = await agent.run('Hi', deps=Notes())
+
+    assert 'Static note.' not in str(received.messages[0])
+    assert 'Toolset note.' not in str(received.messages[0])
+    assert statements(result.all_messages()) == [
+        InstructionDeltaPart(
+            id=InstructionId(CapabilityInstructionSource('notes_group')),
+            content='Static note.\n\nThe count is 1.\n\nToolset note.',
+            authority='none',
+        )
+    ]
+    assert last_request_texts(received.messages[-1])[-1] == (
+        '<capability_instructions>\nStatic note.\n\nThe count is 1.\n\nToolset note.\n</capability_instructions>'
+    )
+
+
+async def test_a_dynamic_wrapper_keeps_its_nested_toolsets_instructions():
+    """Keeping the dynamic wrapper as the source preserves the owner of a nested toolset's instructions."""
+    received = Received()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.messages.append(messages)
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    docs = Toolset(FunctionToolset(instructions='Always search the docs first.'), id='docs')
+    wrapped = PrefixTools(wrapped=CombinedCapability([docs]), prefix='n')
+    agent = Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=type(None),
+        capabilities=[DynamicCapability(lambda ctx: wrapped).with_authority('none')],
+    )
+    result = await agent.run('Hi')
+
+    assert [(delta.content, delta.authority) for delta in statements(result.all_messages())] == [
+        ('Always search the docs first.', 'none')
+    ]
+
+
+async def test_a_lowered_wrapper_does_not_raise_a_nested_toolsets_authority():
+    """A block that combines a nested toolset keeps the lowest authority of everything it states."""
+    received = Received()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.messages.append(messages)
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    child = Capability[None](
+        id='child',
+        toolsets=(FunctionToolset(instructions='Always search the docs first.'),),
+    ).with_authority('none')
+    wrapped = PrefixTools(wrapped=CombinedCapability([child]), prefix='n').with_authority('user')
+    agent = Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=type(None),
+        capabilities=[wrapped],
+    )
+    result = await agent.run('Hi')
+
+    assert [(delta.content, delta.authority) for delta in statements(result.all_messages())] == [
+        ('Always search the docs first.', 'none')
+    ]
+
+
+@pytest.mark.parametrize('dynamic', [False, True])
+async def test_a_lowered_wrapper_keeps_a_combined_childs_instructions(dynamic: bool):
+    """Lowering a wrapper around a combined capability preserves the child's own instruction block."""
+    received = Received()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.messages.append(messages)
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    wrapped = PrefixTools(wrapped=CombinedCapability([notes_capability()]), prefix='n')
+    capability = (
+        DynamicCapability(lambda ctx: wrapped).with_authority('none') if dynamic else wrapped.with_authority('none')
+    )
+    agent = Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=Notes,
+        capabilities=[capability],
+    )
+    result = await agent.run('Hi', deps=Notes())
+
+    assert [(delta.content, delta.authority) for delta in statements(result.all_messages())] == [
+        ('Static note.\n\nThe count is 1.', 'none')
+    ]
+
+
 async def test_a_servers_reported_name_never_reaches_the_application_voice():
     """The note names the capability by its id, which the operator configures, never by what the server reports."""
     pytest.importorskip('fastmcp.server')
@@ -604,6 +750,16 @@ async def test_a_lowered_container_that_writes_its_own_instructions_is_one_block
     ]
 
 
+def test_a_lowered_containers_authority_ignores_deferred_instruction_sources():
+    visible = Capability[None](id='visible', instructions='Visible note.').with_authority('user')
+    deferred = Capability[None](id='deferred', description='A deferred note.', defer_loading=True).with_authority(
+        'none'
+    )
+    container = _AuthoringCombined([visible, deferred]).with_authority('user')
+
+    assert container._effective_instruction_authority == 'user'  # pyright: ignore[reportPrivateUsage]
+
+
 @dataclass
 class _ReplacingWrapper(PrefixTools[None]):
     def get_instructions(self) -> str:
@@ -630,6 +786,25 @@ async def test_a_wrapper_that_replaces_its_lowered_childs_instructions_is_what_t
 
     assert received.instructions == ['Replaced.']
     assert statements(result.all_messages()) == []
+
+
+async def test_a_lowered_wrapper_that_replaces_its_childs_instructions_states_its_own_block():
+    received = Received()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.instructions.append(info.instructions)
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    child = Capability[None](id='replaceable_child', instructions='Child note.').with_authority('none')
+    capability = _ReplacingWrapper(wrapped=CombinedCapability[None]([child]), prefix='n').with_authority('none')
+    result = await Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=type(None),
+        capabilities=[capability],
+    ).run('Hi')
+
+    assert received.instructions == [None]
+    assert [(delta.content, delta.authority) for delta in statements(result.all_messages())] == [('Replaced.', 'none')]
 
 
 async def test_an_operator_container_that_writes_its_own_instructions_warns_it_replaces_a_lowered_childs():

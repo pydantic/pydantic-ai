@@ -10,7 +10,11 @@ from pydantic_ai.exceptions import UserError
 from pydantic_ai.toolsets import AbstractToolset, AgentToolset
 from pydantic_ai.toolsets._dynamic import DynamicToolset
 
-from .abstract import AbstractCapability, CapabilityOrdering
+from .abstract import (
+    AbstractCapability,
+    CapabilityOrdering,
+    _LoweredInstructionSource,  # pyright: ignore[reportPrivateUsage]
+)
 from .wrapper import WrapperCapability
 
 CapabilityFunc: TypeAlias = Callable[
@@ -98,6 +102,7 @@ class DynamicCapability(AbstractCapability[AgentDepsT]):
             capability = await capability
         if capability is None:
             return None
+        capability = self._keep_authority(capability)
         assert ctx.agent is not None, 'CapabilityFunc requires an agent run context'
         # The factory's capability keeps its own authority through its lifecycle hooks, as any other does.
         capability = capability._keep_authority(capability.for_agent(ctx.agent))
@@ -123,6 +128,18 @@ class ResolvedDynamicCapability(WrapperCapability[AgentDepsT]):
 
     def get_toolset(self) -> DynamicToolset[AgentDepsT]:
         return self.dynamic_toolset
+
+    def _lowered_instruction_sources(self) -> list[_LoweredInstructionSource[AgentDepsT]]:
+        # A deferred group's members state their instructions only after the group is loaded.
+        if self.defer_loading is True:
+            return super()._lowered_instruction_sources()
+        from .combined import CombinedCapability
+
+        # A direct container keeps its members' block ids. For a wrapper around one, this dynamic wrapper must remain
+        # the source: it owns the outer toolset that gathers the nested toolsets' instructions.
+        if isinstance(self.wrapped, CombinedCapability):
+            return self.wrapped._lowered_instruction_sources()  # pyright: ignore[reportPrivateUsage]
+        return super()._lowered_instruction_sources()
 
     def get_ordering(self) -> CapabilityOrdering | None:
         # `CombinedCapability.for_run` re-sorts its (replaced) capabilities, so the resolved

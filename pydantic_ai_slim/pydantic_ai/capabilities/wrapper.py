@@ -3,7 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncIterable, Callable, Sequence
 from dataclasses import dataclass
 from datetime import datetime
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Self
 
 from pydantic import ValidationError
 
@@ -265,6 +265,23 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # carries the lower of its own authority and the wrapped one's: wrapping never raises a capability's authority.
         return _lower_authority(super()._effective_authority, self.wrapped._effective_authority)
 
+    @property
+    def _effective_instruction_authority(self) -> Authority:
+        return _lower_authority(
+            super()._effective_instruction_authority,
+            self.wrapped._effective_instruction_authority,
+        )
+
+    def with_authority(self, authority: Authority) -> Self:
+        """Return a copy whose wrapped capability and its descendants carry no more than `authority`."""
+        lowered = super().with_authority(authority)
+        new_wrapped = self.wrapped.with_authority(authority)
+        if new_wrapped is self.wrapped:
+            return lowered
+        new_self = replace_no_init(lowered, wrapped=new_wrapped)
+        new_self.__readopt_wrapped_identity()
+        return new_self
+
     def for_agent(self, agent: AbstractAgent[AgentDepsT, Any]) -> AbstractCapability[AgentDepsT]:
         new_wrapped = self.wrapped._keep_authority(self.wrapped.for_agent(agent))
         if new_wrapped is self.wrapped:
@@ -308,6 +325,12 @@ class WrapperCapability(AbstractCapability[AgentDepsT]):
         # capability it wraps, but a wrapper over a container has none to adopt and would
         # otherwise flatten every leaf's contribution into one unaddressable part.
         return self.wrapped._collect_instructions()
+
+    def _collect_block_instructions(self) -> list[SourcedInstruction[AgentDepsT]]:
+        relayed = self.wrapped._collect_block_instructions()
+        if type(self).get_instructions is not WrapperCapability.get_instructions:
+            return self._attribute_container_instructions(normalize_instructions(self.get_instructions()), relayed)
+        return relayed
 
     def _lowered_instruction_sources(self) -> list[_LoweredInstructionSource[AgentDepsT]]:
         # A wrapper at operator authority passes its wrapped capability's instructions along, so any below it are the
