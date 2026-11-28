@@ -5,6 +5,7 @@ import contextlib
 import json
 import os
 import shutil
+import sys
 from collections.abc import Sequence
 from dataclasses import replace
 from io import StringIO
@@ -1687,6 +1688,31 @@ def test_update_restarts_where_the_terminal_session_moved(
     cli.run()
     [(workspace, notice)] = resumed
     assert (workspace, notice.startswith('Resumed ')) == (str(project), True)
+
+
+def test_update_imports_the_agent_where_pax_started(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """The new build imports `--agent` from where Pax started, never from the directory the session moved to."""
+    project, other, _ = imported_project(tmp_path, 'claude')
+    monkeypatch.chdir(other)
+    monkeypatch.setattr(sys, 'path', list(sys.path))
+    for directory in (other, project):
+        (directory / 'relaunch_agent_15071.py').write_text(
+            f'from pydantic_ai import Agent\nagent = Agent(name={directory.name!r})\n', encoding='utf-8'
+        )
+    monkeypatch.setenv('CLAI_RELAUNCH_WORKSPACE', str(project))
+    argv = ['pax', '--database', str(tmp_path / 'config.db'), '--agent', 'relaunch_agent_15071:agent']
+    monkeypatch.setattr('sys.argv', argv)
+    seen: list[tuple[str | None, Path]] = []
+
+    async def launched(agent: Agent[None, str], *args: object, **kwargs: object) -> None:
+        seen.append((agent.name, await run_sync(Path.cwd)))
+
+    monkeypatch.setattr('pydantic_ai_pax.app.chat', launched)
+    try:
+        cli.run()
+    finally:
+        sys.modules.pop('relaunch_agent_15071', None)
+    assert seen == [('other', project)]
 
 
 @pytest.mark.parametrize(
