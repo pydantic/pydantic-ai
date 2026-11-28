@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import errno
 import math
 import ntpath
 import os
@@ -436,16 +437,30 @@ async def test_local_write_refuses_fifo_without_opening_it(tmp_path: Path) -> No
 
 
 @posix_only
-async def test_shell_realpath_leaves_a_symlink_loop_unresolved(tmp_path: Path) -> None:
-    (tmp_path / 'loop').symlink_to(tmp_path / 'loop')
-    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(tmp_path)))
+async def test_shell_realpath_raises_on_symlink_loop_and_past_link_limit(tmp_path: Path) -> None:
+    outside = tmp_path / 'outside.txt'
+    outside.write_text('outside')
+    root = tmp_path / 'root'
+    root.mkdir()
+    (root / 'inside.txt').write_text('inside')
+    (root / 'self_link').symlink_to('.')
+    (root / 'escape').symlink_to(outside)
+    (root / 'loop').symlink_to(root / 'loop')
+    (root / 'loop1').symlink_to('loop2')
+    (root / 'loop2').symlink_to('loop1')
+    workspace = Workspace(RunOnlyWorkspaceBackend(LocalWorkspaceBackend(root)))
 
-    (tmp_path / 'loop1').symlink_to('loop2')
-    (tmp_path / 'loop2').symlink_to('loop1')
-    # Like `os.path.realpath`: a loop is left unresolved rather than failing the call.
     with anyio.fail_after(30):
-        assert await workspace.realpath('loop') == str(tmp_path / 'loop')
-        assert await workspace.realpath('loop1/q') == str(tmp_path / 'loop1' / 'q')
+        # Exactly 40 symlinks followed by a regular file still resolves completely.
+        at_limit = '/'.join(['self_link'] * 40 + ['inside.txt'])
+        assert await workspace.realpath(at_limit) == str((root / 'inside.txt').resolve())
+
+        # Past the 40-symlink limit, another symlink fails with ELOOP instead of returning a partial path.
+        past_limit = '/'.join(['self_link'] * 40 + ['escape'])
+        for path in ('loop', 'loop1/q', past_limit):
+            with pytest.raises(OSError) as exc_info:
+                await workspace.realpath(path)
+            assert exc_info.value.errno == errno.ELOOP
 
 
 @posix_only
