@@ -22,8 +22,7 @@ HISTORY_COMPACTION: tuple[type[object], ...] = (
 )
 """Harness strategies that rewrite history the way the `compaction` plugin's chain does.
 
-`ClearToolResults`, which `Coder` binds, is not one: it only empties old tool results and works
-before the chain, so `coder` and `compaction` run together.
+The `coder` plugin binds `Coder(compaction=False)`, which binds none of these, so `coder` and `compaction` run together.
 """
 
 INCLUDED: Mapping[str, Mapping[str, Binds]] = {

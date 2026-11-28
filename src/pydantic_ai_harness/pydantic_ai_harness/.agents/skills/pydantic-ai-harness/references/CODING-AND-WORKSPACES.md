@@ -72,9 +72,10 @@ except UserError as e:
 ## Coder
 
 Combined capability: default instructions + `FileSystem` + `Shell` + `RepoContext` + `SubAgents` +
-`ClearToolResults(max_fraction=0.7)`, a `ToolOutputLimits`
-that truncates any tool result to 64,000 chars (no `read_tool_result`), `RepairToolArguments`, and
-prompt caching (unified `cache=True`).
+`FallbackCompaction` (above 85% of the window the run's model summarizes older messages, keeping at least
+the newest 50,000 tokens or 40% of the window, whichever is less; a model that can't summarize drops them;
+`compaction=False` leaves it out), a `ToolOutputLimits` that truncates any tool result to 64,000 chars (no
+`read_tool_result`), `RepairToolArguments`, and prompt caching (unified `cache=True`).
 
 ```bash
 uv add "pydantic-ai-harness[coder]"   # installs json-repair, and ripgrep (rg) on the agent host
@@ -115,7 +116,7 @@ the type is `Autonomy`),
 `unrestricted_filesystem=False` (`True` sets `FileSystem(root_dir='/', read_only_patterns=[])`),
 `repo_context=True` (`RepoContext` walking up to the repository root and surfacing nested instruction
 files as the agent reads, inlining up to 32,000 characters of them per conversation before switching to pointers; pass a
-`RepoContext` to use it in place of the bundled one, whose settings it replaces entirely), `sub_agents=True`,
+`RepoContext` to use it in place of the bundled one, whose settings it replaces entirely), `compaction=True`, `sub_agents=True`,
 `agent_folders=None`, `task_control=None` (a `TaskControl`
 is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `caching=True`,
 `strict=False`.
@@ -154,9 +155,11 @@ is passed to `SubAgents(task_control=...)`; it requires `sub_agents=True`), `cac
   `strict=None` leaves it to the provider. Tools bound next to Coder keep their own `strict`, but on
   Gemini a `strict=False` tool keeps the whole request on `AUTO`. See
   <https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#strict-mode>.
-- Your own `ClearToolResults` / `TieredCompaction` / `WarnNearLimits` next to `Coder` run as well (no id
-  clash), each at its own trigger. List your `ToolOutputLimits` **after** `Coder` so it sees raw returns;
-  listed before, it sees Coder's 64,000-char result. For `shell`, bands must sit under ~16,000 chars.
+- Your own `ClearToolResults` / `WarnNearLimits` next to `Coder` run as well (no id clash), each at its own
+  trigger. For your own history compaction (`TieredCompaction`, a different summarizer), pass
+  `Coder(compaction=False)` so two chains don't both rewrite history. List your `ToolOutputLimits`
+  **after** `Coder` so it sees raw returns; listed before, it sees Coder's 64,000-char result. For
+  `shell`, bands must sit under ~16,000 chars.
 
 `pydantic_ai_harness.coder:coder_agent` is a model-less `Agent(name='coder')` with
 `LocalWorkspace('.')` (cwd at import) and `Coder()`:

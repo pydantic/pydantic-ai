@@ -16,7 +16,7 @@ ROOT = Path(__file__).parent.parent
 # docs index and the README (comments and annotation markers excluded).
 MIRRORED_EXAMPLE_MARKERS = [
     'Advisor(',
-    'ClearToolResults(), ToolOutputLimits(), RepairToolArguments()',
+    'FallbackCompaction(...), ToolOutputLimits(), RepairToolArguments()',
     'class Sentiment(BaseModel):',
     'class ResearchWorkflow(PydanticAIWorkflow):',
     'ImageGenerator(',

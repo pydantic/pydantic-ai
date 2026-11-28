@@ -3531,12 +3531,11 @@ instructions, and a subdirectory's as the agent works there; `/plugins disable
 repo_context` turns that off.
 On Windows, the agent's workspace is a `WindowsWorkspace` on the launch directory, so commands run
 in PowerShell; Pax does not provide repository context or skills there yet.
-`coder` clears old tool results as the context fills.
 Pax sends every tool, MCP tool, and output tool with strict mode off, whatever the
 provider, and relies on argument repair and retries instead. A `NativeOutput` schema keeps
 the provider's mode, as Anthropic and Bedrock only offer native output in strict mode. The built-in `compaction`
-plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside it:
-it summarises older messages before the context runs out and adds `/compact`.
+plugin, [described in Compacting the conversation](#compacting-the-conversation), is on by default beside `coder`:
+it summarises older messages before the context runs out and adds `/compact`. It takes the place of harness `Coder`'s own compaction.
 The built-in `refinement` plugin adds `/refine`: the model reviews its last answer and gives it
 again, revised, as a turn of its own. Add words to say what to look at, such as
 `/refine check the error handling`. To have every answer reviewed without asking, add harness

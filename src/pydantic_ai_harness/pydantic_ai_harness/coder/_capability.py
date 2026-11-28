@@ -9,7 +9,14 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Any, get_args
 
 from pydantic_ai.capabilities import AbstractCapability, CombinedCapability, ValidatedToolArgs
-from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior
+from pydantic_ai.exceptions import (
+    FallbackExceptionGroup,
+    ModelAPIError,
+    ModelRetry,
+    ToolFailed,
+    UnexpectedModelBehavior,
+    UsageLimitExceeded,
+)
 from pydantic_ai.messages import InstructionPart, ToolCallPart
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.settings import ModelSettings
@@ -22,7 +29,12 @@ from pydantic_ai_harness.coder._instructions import (
     coder_instructions,
     model_specific_instructions,
 )
-from pydantic_ai_harness.compaction import ClearToolResults
+from pydantic_ai_harness.compaction import (
+    CannotSummarizeError,
+    FallbackCompaction,
+    SlidingWindowCompaction,
+    SummarizingCompaction,
+)
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
 from pydantic_ai_harness.repo_context import RepoContext
@@ -134,6 +146,39 @@ and discards its work.
 """
 
 
+COMPACTION_THRESHOLD = 0.85
+"""Fraction of the model's context window above which the history is compacted."""
+
+COMPACTION_KEEP_TOKENS = 50_000
+"""Tokens of the most recent messages that compaction keeps, on a model with a large enough window."""
+
+COMPACTION_KEEP_FRACTION = 0.4
+"""The largest fraction of the model's context window compaction keeps, so a small window still gets room back."""
+
+
+def _compaction(*, enabled: bool) -> list[FallbackCompaction[AgentDepsT]]:
+    """Summarize older messages with the run's model, and drop them when it cannot summarize; none if not `enabled`."""
+    if not enabled:
+        return []
+    chain = FallbackCompaction[AgentDepsT](
+        fallback_chain=[
+            # The chain triggers, so the strategies need none of their own.
+            # Its own id keeps a separately bound `SummarizingCompaction`'s durable operation apart.
+            SummarizingCompaction[AgentDepsT](
+                keep_tokens=COMPACTION_KEEP_TOKENS,
+                keep_fraction=COMPACTION_KEEP_FRACTION,
+                id='coder_summarizing_compaction',
+            ),
+            SlidingWindowCompaction[AgentDepsT](
+                keep_tokens=COMPACTION_KEEP_TOKENS, keep_fraction=COMPACTION_KEEP_FRACTION
+            ),
+        ],
+        fallback_on=(ModelAPIError, FallbackExceptionGroup, UsageLimitExceeded, CannotSummarizeError),
+        max_fraction=COMPACTION_THRESHOLD,
+    )
+    return [chain]
+
+
 @dataclass
 class _CoderGuidance(AbstractCapability[AgentDepsT]):
     """Literal coding guidance, with the delegate text chosen when this run is a delegate.
@@ -221,6 +266,11 @@ class Coder(CombinedCapability[AgentDepsT]):
     untrusted work, alongside `Coder()`. A run without a workspace fails at its
     start. Commands are unrestricted and can outlive runs.
 
+    Above 85% of the model's context window, the run's model summarizes older
+    messages, keeping the first user message and the most recent 50,000
+    tokens or 40% of the window, whichever is less; a model that cannot
+    summarize drops them instead.
+
     Args:
         workspace: Deprecated and ignored; attach a workspace capability instead.
         instructions: Appended to the default instructions.
@@ -240,6 +290,8 @@ class Coder(CombinedCapability[AgentDepsT]):
             own, so the instruction files are not loaded twice. Pass a
             `RepoContext` to use it in place of the bundled
             `RepoContext(walk_up='repo_root')`; e.g. `RepoContext()` loads only the working directory's instruction files.
+        compaction: Include the summarizing compaction described above. Pass `False`
+            when the agent binds its own.
         sub_agents: Add `delegate_task`, which hands a self-contained sub-task to a
             fresh run of the same agent `Coder` is bound to, including capabilities
             bound next to `Coder`. This requires binding `Coder` with
@@ -271,6 +323,7 @@ class Coder(CombinedCapability[AgentDepsT]):
         autonomy: Autonomy = 'high',
         unrestricted_filesystem: bool = False,
         repo_context: bool | RepoContext[AgentDepsT] = True,
+        compaction: bool = True,
         sub_agents: bool = True,
         agent_folders: str | Sequence[str | Path] | None = None,
         task_control: TaskControl | None = None,
@@ -342,7 +395,7 @@ class Coder(CombinedCapability[AgentDepsT]):
                 # The task-control tools, and the `ask_parent` tool each delegated run gets.
                 tool_names |= {*CONTROL_TOOL_NAMES, ASK_PARENT_TOOL_NAME}
         capabilities += [
-            ClearToolResults[AgentDepsT](max_fraction=0.7),
+            *_compaction(enabled=compaction),
             _BoundToolOutputs[AgentDepsT](
                 id='coder_tool_output_limits',
                 bands=[Band(over=MAX_OUTPUT_CHARS, action=Truncate(max_chars=MAX_OUTPUT_CHARS))],
