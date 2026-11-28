@@ -1,6 +1,6 @@
 from __future__ import annotations as _annotations
 
-from collections.abc import AsyncGenerator, Sequence
+from collections.abc import AsyncGenerator, Collection, Sequence
 from contextlib import AsyncExitStack, asynccontextmanager, suppress
 from dataclasses import dataclass, field
 from datetime import timedelta
@@ -35,7 +35,7 @@ from .._fallback import (
     stamp_continuation_pin,
 )
 from .._unsupported_settings import suppress_warnings as suppress_unsupported_setting_warnings
-from ..exceptions import ModelAPIError
+from ..exceptions import ModelAPIError, UserError
 from ..messages import (
     _PYDANTIC_AI_METADATA_KEY,  # pyright: ignore[reportPrivateUsage]
     ModelResponse,
@@ -73,6 +73,14 @@ __all__ = 'FallbackModel', 'FallbackOn', 'ExceptionHandler', 'ResponseHandler', 
 # (under `__pydantic_ai__`) to fold a post-rewind response as a replace. Duplicated as a literal rather
 # than imported because that constant is module-private (importing it trips `reportPrivateUsage`).
 _REPLACE_PREVIOUS_RESPONSE_KEY = 'replace_previous_response'
+
+
+class _NoFallbackProfileError(UserError, NotImplementedError):
+    """Raised when reading `FallbackModel.profile`, as its candidate models may each have a different one.
+
+    It is a `NotImplementedError`, as `Model.profile` has always raised for a `FallbackModel`, so a caller that falls
+    back for a model without a profile, like the framework's own checks, keeps doing so.
+    """
 
 
 @dataclass(init=False)
@@ -123,6 +131,10 @@ class FallbackModel(Model):
                 response the output token limit cut off, with `finish_reason='length'`. The agent only raises these
                 errors after a response is accepted, so in `fallback_on` each stands for that response.
 
+                Naming [`UnsupportedSettingWarning`][pydantic_ai.exceptions.UnsupportedSettingWarning] moves on
+                from a model that would ignore a setting the request relies on, like `stop_sequences`: the model
+                raises the warning as the attempt's error instead of emitting it, before anything is sent.
+
                 Response handlers only apply to non-streamed requests. A streamed request accepts
                 the response as is and emits a `UserWarning`. A request is streamed whenever
                 something consumes the run's events, including `run()` with an
@@ -133,7 +145,9 @@ class FallbackModel(Model):
         self.models = [infer_model(default_model), *[infer_model(m) for m in fallback_models]]
         self._entered_count = 0
 
-        self._predicates = FallbackPredicates.parse(fallback_on, owner='FallbackModel', default='(ModelAPIError,)')
+        self._predicates = FallbackPredicates.parse(
+            fallback_on, owner='FallbackModel', default='(ModelAPIError,)', judges_settings=True
+        )
 
     async def __aenter__(self) -> FallbackModel:
         """Enter all sub-models so their providers can manage HTTP client lifecycle."""
@@ -267,7 +281,7 @@ class FallbackModel(Model):
                 with suppress_unsupported_setting_warnings():
                     _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                 prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
-                with enforce_request_deadline(deadline):
+                with enforce_request_deadline(deadline), self._predicates.judging_settings():
                     response = await pinned.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if not await chain.falls_back(exc):
@@ -326,7 +340,7 @@ class FallbackModel(Model):
                 # Each inner model has its own profile, so re-run `prepare_messages` per model.
                 prepared_messages = model.prepare_messages(messages, model_request_parameters)
                 deadline = start_request_deadline(model, model_settings, stream=False)
-                with enforce_request_deadline(deadline):
+                with enforce_request_deadline(deadline), self._predicates.judging_settings():
                     response = await model.request(prepared_messages, model_settings, model_request_parameters)
             except Exception as exc:
                 if await chain.falls_back(exc):
@@ -392,11 +406,17 @@ class FallbackModel(Model):
                     with suppress_unsupported_setting_warnings():
                         _, prepared_parameters = pinned.prepare_request(model_settings, model_request_parameters)
                     prepared_messages = pinned.prepare_messages(messages, model_request_parameters)
-                    streamed_response = await stack.enter_async_context(
-                        request_stream_until_first_event(
-                            pinned, deadline, prepared_messages, model_settings, model_request_parameters, run_context
+                    with self._predicates.judging_settings():
+                        streamed_response = await stack.enter_async_context(
+                            request_stream_until_first_event(
+                                pinned,
+                                deadline,
+                                prepared_messages,
+                                model_settings,
+                                model_request_parameters,
+                                run_context,
+                            )
                         )
-                    )
                 except Exception as exc:
                     if not await chain.falls_back(exc):
                         self._set_span_attributes(pinned, prepared_parameters)
@@ -430,16 +450,17 @@ class FallbackModel(Model):
                             _, prepared_parameters = model.prepare_request(model_settings, model_request_parameters)
                         prepared_messages = model.prepare_messages(messages, model_request_parameters)
                         deadline = start_request_deadline(model, model_settings, stream=True)
-                        streamed_response = await stack.enter_async_context(
-                            request_stream_until_first_event(
-                                model,
-                                deadline,
-                                prepared_messages,
-                                model_settings,
-                                model_request_parameters,
-                                run_context,
+                        with self._predicates.judging_settings():
+                            streamed_response = await stack.enter_async_context(
+                                request_stream_until_first_event(
+                                    model,
+                                    deadline,
+                                    prepared_messages,
+                                    model_settings,
+                                    model_request_parameters,
+                                    run_context,
+                                )
                             )
-                        )
                     except Exception as exc:
                         if await chain.falls_back(exc):
                             self._record_failed_attempt(chain, model, exc, start)
@@ -504,7 +525,12 @@ class FallbackModel(Model):
 
     @cached_property
     def profile(self) -> ModelProfile:
-        raise NotImplementedError('FallbackModel does not have its own model profile.')
+        raise _NoFallbackProfileError(
+            '`FallbackModel` has no single model profile, as its candidate models may each have a different one: '
+            'inspect the profile of each model in `fallback_model.models` instead. In an agent, use '
+            '`Agent(model, capabilities=[ModelFallback(*fallback_models)])`, which resolves instructions and '
+            'model settings with `ctx.model` set to the model serving each attempt.'
+        )
 
     def _start_request_deadline(self, model_settings: ModelSettings | None, *, stream: bool) -> RequestDeadline | None:
         # Each model it tries gets fresh deadlines of its own instead.
@@ -537,10 +563,12 @@ class FallbackModel(Model):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return model_settings, model_request_parameters
 
-    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
+    def _warn_if_thinking_overridden(
+        self, layers: Sequence[_SettingsLayer], *, suppressed: Collection[str] = frozenset()
+    ) -> None:
         # Each candidate resolves `thinking` itself, and checks its own `settings` in its `prepare_request`.
         for model in self.models:
-            model._warn_if_thinking_overridden(layers)
+            model._warn_if_thinking_overridden(layers, suppressed=suppressed)
 
     def _unified_effort(self, model_settings: ModelSettings | None) -> ThinkingEffort | None:
         # The request is recorded before a candidate is chosen, so it names an effort only if every candidate would

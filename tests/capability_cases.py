@@ -40,6 +40,7 @@ from pydantic_ai.capabilities import (
     Instrumentation,
     LocalWorkspace,
     ModelFallback,
+    NativeCompaction,
     NativeTool,
     PrefixTools,
     PrepareOutputTools,
@@ -394,6 +395,10 @@ def _check_tool_search(merged: ToolSearch) -> None:
     assert merged.max_results == 20, 'a scalar takes the later value'
 
 
+def _check_native_compaction(merged: NativeCompaction) -> None:
+    assert merged.focus_as_system_prompt is True, 'a scalar takes the later value'
+
+
 def _check_thread_executor(merged: UseThreadExecutor) -> None:
     assert merged.executor is _SECOND_EXECUTOR, 'the executor that would have shadowed the other'
 
@@ -515,6 +520,13 @@ CASES: dict[str, CapabilityCase] = {
             'one tool-discovery configuration per agent',
             lambda: (ToolSearch(max_results=5), ToolSearch(max_results=20)),
             _check_tool_search,
+        )
+    ),
+    'NativeCompaction': CapabilityCase(
+        Combines(
+            'an agent compacts natively one way',
+            lambda: (NativeCompaction(), NativeCompaction(focus_as_system_prompt=True)),
+            _check_native_compaction,
         )
     ),
     'UseThreadExecutor': CapabilityCase(
@@ -834,6 +846,14 @@ vacuously. An exemption says why the tools can't run offline; one whose reason s
 case still to be backfilled, which `test_pending_calls_backfill` counts.
 """
 
+DEFAULT_ID_MATCHES_COMBINE = Contract('default_id_matches_combine', applies=lambda _name, _case: True)
+"""A capability's class declares a default `id`, as `_declares_default_id` reads it, exactly when its `combine`
+policy says two of it are one: `Combines` and `Narrows` declare one, so two meet and `combine` resolves them;
+`Anonymous`, `Collides` and `Rejected` declare none. A new policy fails it until it is classified. It reads the
+class, not an instance, so it applies to every case, the unbuildable and the private ones included. An exemption
+can still only name a public case, as `test_every_exemption_names_a_case_the_contract_applies_to` checks them
+against `PUBLIC`."""
+
 CONTRACTS = (
     RENAMED,
     UNSET_ID,
@@ -842,5 +862,6 @@ CONTRACTS = (
     FORWARDS_USAGE,
     WORKSPACE_FROM_FUNCTION,
     DECLARES_CALLS,
+    DEFAULT_ID_MATCHES_COMBINE,
 )
 """Every contract, so a meta-test can check each one's exemptions."""

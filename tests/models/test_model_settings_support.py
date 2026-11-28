@@ -36,6 +36,9 @@ that records only path, body and headers on a live transport, while `timeout` is
 - `cache` is excluded for the same reason as `thinking`: it is gated per model name via
   `supports_cache`, and a provider that caches implicitly (OpenAI's automatic caching; Google,
   which warns instead) supports it while sending nothing at all.
+- `thinking_summary` is excluded for the same reason too: whether it moves the payload depends on the
+  model's reasoning support and on `thinking`, and some classes take only one of its two values
+  (OpenAI's Responses API sends `True`, Cerebras and OpenRouter only `False`).
 
 `max_retries` leaves the request it governs unchanged and changes only how many times it is sent, so it
 has its own probe at the end of this file, which answers with a retryable error and counts the attempts.
@@ -84,6 +87,7 @@ with try_import() as openai_available:
     from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
     from pydantic_ai.models.cerebras import CerebrasModel
     from pydantic_ai.models.crusoe import CrusoeModel
+    from pydantic_ai.models.deepseek import DeepSeekResponsesModel
     from pydantic_ai.models.github_copilot import GitHubCopilotModel
     from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
@@ -95,6 +99,7 @@ with try_import() as openai_available:
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.crusoe import CrusoeProvider
+    from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -115,6 +120,7 @@ with try_import() as google_available:
 
     from pydantic_ai.models.google import GoogleModel
     from pydantic_ai.models.google_decisions import GoogleDecisionsModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.google import GoogleProvider
     from pydantic_ai.providers.google_cloud import GoogleCloudProvider
 
@@ -168,7 +174,7 @@ WARNED_SETTINGS = frozenset(
 )
 """The settings a model warns with `UnsupportedSettingWarning` about ignoring, rather than ignoring silently."""
 
-HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'cache'})
+HAND_MAINTAINED = frozenset({'citations', 'tool_choice', 'thinking', 'thinking_summary', 'cache'})
 """Fields a payload diff cannot adjudicate; see the module docstring."""
 
 FRAMEWORK_ENFORCED = frozenset({'request_timeout', 'first_event_timeout', 'framing_announcement'})
@@ -652,6 +658,11 @@ def _crusoe(client: httpx2.AsyncClient) -> Model:
     return CrusoeModel('openai/gpt-oss-120b', provider=CrusoeProvider(api_key=PROBE_KEY, http_client=client))
 
 
+def _deepseek_responses(client: httpx2.AsyncClient) -> Model:
+    # `deepseek-chat` doesn't think by default, so the sampling settings aren't dropped for reasoning.
+    return DeepSeekResponsesModel('deepseek-chat', provider=DeepSeekProvider(api_key=PROBE_KEY, http_client=client))
+
+
 def _github_copilot(client: httpx2.AsyncClient) -> Model:
     # A GPT id: the Anthropic ids that reject sampling settings drop `temperature`/`top_p` before the wire.
     return GitHubCopilotModel('gpt-5.4', provider=GitHubCopilotProvider(api_key=PROBE_KEY, http_client=client))
@@ -719,6 +730,10 @@ def _google_decisions(client: httpx2.AsyncClient) -> Model:
     return GoogleDecisionsModel('gemini-decision-1', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
 
 
+def _google_interactions(client: httpx2.AsyncClient) -> Model:
+    return GoogleInteractionsModel('gemini-3.8-flash', provider=GoogleProvider(api_key=PROBE_KEY, http_client=client))
+
+
 def _typesafe(client: httpx2.AsyncClient) -> Model:
     return TypeSafeModel('jev-latest', provider=TypeSafeProvider(api_key=PROBE_KEY, http_client=client))
 
@@ -761,6 +776,7 @@ CASES = [
     ),
     Case('CerebrasModel', ('Cerebras',), http_probe(_cerebras), _needs(openai_available, 'openai')),
     Case('CrusoeModel', ('Crusoe',), http_probe(_crusoe), _needs(openai_available, 'openai')),
+    Case('DeepSeekResponsesModel', ('DeepSeek',), http_probe(_deepseek_responses), _needs(openai_available, 'openai')),
     Case('GitHubCopilotModel', ('GitHub Copilot',), http_probe(_github_copilot), _needs(openai_available, 'openai')),
     Case('OllamaModel', ('Ollama',), http_probe(_ollama), _needs(openai_available, 'openai')),
     Case('OpenRouterModel', ('OpenRouter',), http_probe(_openrouter), _needs(openai_available, 'openai')),
@@ -782,7 +798,13 @@ CASES = [
     Case('GroqModel', ('Groq',), legacy_http_probe(_groq), _needs(groq_available, 'groq')),
     Case('MistralModel', ('Mistral',), http_probe(_mistral), _needs(mistral_available, 'mistral')),
     Case('CohereModel', ('Cohere',), legacy_http_probe(_cohere), _needs(cohere_available, 'cohere')),
-    Case('GoogleModel', ('Google',), http_probe(_google), _needs(google_available, 'google')),
+    Case(
+        'GoogleInteractionsModel',
+        ('Google', 'Google Interactions'),
+        http_probe(_google_interactions),
+        _needs(google_available, 'google'),
+    ),
+    Case('GoogleModel', ('Google', 'Google GenerateContent'), http_probe(_google), _needs(google_available, 'google')),
     Case('BedrockConverseModel', ('Bedrock',), bedrock_probe, _needs(bedrock_available, 'bedrock')),
     Case('HuggingFaceModel', ('HuggingFace',), huggingface_probe, _needs(huggingface_available, 'huggingface')),
     Case('XaiModel', ('xAI',), xai_probe, _needs(xai_available, 'xai')),
@@ -1076,6 +1098,7 @@ RETRY_CASES = [
     ),
     RetryCase('CerebrasModel', ('Cerebras',), _cerebras, (3, 1, 2), marks=_OPENAI),
     RetryCase('CrusoeModel', ('Crusoe',), _crusoe, (3, 1, 2), marks=_OPENAI),
+    RetryCase('DeepSeekResponsesModel', ('DeepSeek',), _deepseek_responses, (3, 1, 2), marks=_OPENAI),
     RetryCase('GitHubCopilotModel', ('GitHub Copilot',), _github_copilot, (3, 1, 2), marks=_OPENAI),
     RetryCase('OllamaModel', ('Ollama',), _ollama, (3, 1, 2), marks=_OPENAI),
     RetryCase('OpenRouterModel', ('OpenRouter',), _openrouter, (3, 1, 2), marks=_OPENAI),
@@ -1118,7 +1141,7 @@ RETRY_CASES = [
     # Without the provider's `retry_options`, the SDK's default delays apply, starting at a second.
     RetryCase(
         'GoogleModel',
-        ('Google',),
+        ('Google GenerateContent',),
         _google,
         (1, 1, 2),
         sdk_patches=(('google.genai._api_client._RETRY_MAX_DELAY', 0.001),),
@@ -1128,7 +1151,7 @@ RETRY_CASES = [
     # because the provider's `retry_options` say so.
     RetryCase(
         'GoogleModel[retry_options]',
-        ('Google',),
+        ('Google GenerateContent',),
         _google_with_client_retries,
         (4, 1, 2),
         status=418,

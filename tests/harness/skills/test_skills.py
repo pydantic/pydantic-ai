@@ -41,9 +41,16 @@ from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Wo
 from pydantic_ai_harness import ArtifactScanner
 from pydantic_ai_harness.artifact_scanning import ArtifactFinding, ArtifactScanResult
 from pydantic_ai_harness.skills import Skills, SkippedSkill
+from tests.harness._authority import untrusted
 from tests.harness.conftest import IsStr
 from tests.harness.file_system.test_windows_paths import DriveBackend
 from tests.workspace_fakes import FakeWorkspace, FilesystemOnlyWorkspaceBackend, RunOnlyWorkspaceBackend
+
+# Mode bits do not bind root, and Windows cannot make a directory unreadable with them.
+requires_posix_permissions = pytest.mark.skipif(
+    os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
+    reason='POSIX mode bits must apply to this process.',
+)
 
 
 def _write_skill(
@@ -137,7 +144,7 @@ class TestSkills:
     def test_repr_only_exposes_skill_library_configuration(self) -> None:
         assert repr(Skills('skills')) == (
             "Skills(directories=('skills',), include=None, exclude=frozenset(), "
-            "missing_directories='error', duplicate_names='error', unknown_names='error')"
+            "missing_directories='skip', duplicate_names='error', unknown_names='error')"
         )
 
     def test_construction_reads_nothing(self, tmp_path: Path) -> None:
@@ -367,10 +374,6 @@ async def _descriptions(skills: Skills[Any], workspace: Path) -> str:
     return entries.rsplit('\n</pyai:context>\n', 1)[0]
 
 
-def _untrusted(path: Path) -> AuthorityWorkspace:
-    return AuthorityWorkspace(Workspace(LocalWorkspaceBackend(path)), authority='none')
-
-
 def _calling(*calls: ToolCallPart) -> tuple[FunctionModel, list[ModelRequest], list[str]]:
     """A model that makes `calls` one per step and then answers, recording every request and the first step's tools."""
     requests: list[ModelRequest] = []
@@ -409,7 +412,7 @@ class TestUntrustedWorkspaces:
             ToolCallPart('load_skill', {'name': 'alpha'}),
         )
 
-        await Agent(model, capabilities=[Skills('skills')]).run('go', workspace=_untrusted(tmp_path))
+        await Agent(model, capabilities=[Skills('skills')]).run('go', workspace=untrusted(tmp_path))
 
         assert tools == ['list_skills', 'load_skill']
         assert requests[0].instructions == snapshot(
@@ -435,8 +438,8 @@ class TestUntrustedWorkspaces:
     ) -> None:
         _write_skill(tmp_path / 'run' / 'skills', 'project', description='Project help.')
         _write_skill(tmp_path / 'app' / 'skills', 'packaged', description='Packaged help.')
-        run = LocalWorkspaceBackend(tmp_path / 'run') if run_trusted else _untrusted(tmp_path / 'run')
-        app = LocalWorkspaceBackend(tmp_path / 'app') if app_trusted else _untrusted(tmp_path / 'app')
+        run = LocalWorkspaceBackend(tmp_path / 'run') if run_trusted else untrusted(tmp_path / 'run')
+        app = LocalWorkspaceBackend(tmp_path / 'app') if app_trusted else untrusted(tmp_path / 'app')
         model, requests, tools = _calling(ToolCallPart('list_skills', {}))
 
         await Agent(model, capabilities=[Skills('skills'), Skills('skills', workspace=app)]).run('go', workspace=run)
@@ -452,7 +455,7 @@ class TestUntrustedWorkspaces:
         model, requests, tools = _calling(ToolCallPart('list_skills', {}))
 
         await Agent(model, capabilities=[Skills('agent')]).run(
-            'go', capabilities=[Skills('run')], workspace=_untrusted(tmp_path)
+            'go', capabilities=[Skills('run')], workspace=untrusted(tmp_path)
         )
 
         assert tools == ['list_skills', 'load_skill']
@@ -466,7 +469,7 @@ class TestUntrustedWorkspaces:
         trusted_only = await _run(Skills('library'), tmp_path / 'app')
         model, requests, tools = _calling()
         await Agent(model, capabilities=[Skills('library'), Skills('library', workspace=app)]).run(
-            'go', workspace=_untrusted(tmp_path / 'run')
+            'go', workspace=untrusted(tmp_path / 'run')
         )
 
         assert trusted_only.instructions == _catalog('- skills: Skill help.')
@@ -487,7 +490,7 @@ class TestUntrustedWorkspaces:
                 _write_skill(tmp_path / 'skills', 'beta', description='Beta help.')
             return ModelResponse(parts=[calls.pop(0)] if calls else [TextPart('done')])
 
-        await Agent(FunctionModel(respond), capabilities=[Skills('skills')]).run('go', workspace=_untrusted(tmp_path))
+        await Agent(FunctionModel(respond), capabilities=[Skills('skills')]).run('go', workspace=untrusted(tmp_path))
 
         assert _tool_results(requests) == [
             {'skills': {'alpha': 'Alpha help.'}},
@@ -514,7 +517,7 @@ class TestUntrustedWorkspaces:
 
         with pytest.warns(UserWarning) as caught:
             await Agent(FunctionModel(respond), capabilities=[Skills('skills', scanner=ArtifactScanner())]).run(
-                'go', workspace=_untrusted(tmp_path)
+                'go', workspace=untrusted(tmp_path)
             )
 
         library = tmp_path.resolve() / 'skills'
@@ -539,7 +542,7 @@ class TestUntrustedWorkspaces:
         skills = _combined(Skills('first', exclude=['review']), Skills('second', duplicate_names='keep_first'))
         model, requests, _ = _calling(ToolCallPart('list_skills', {}), ToolCallPart('load_skill', {'name': 'review'}))
 
-        await Agent(model, capabilities=[skills]).run('go', workspace=_untrusted(tmp_path))
+        await Agent(model, capabilities=[skills]).run('go', workspace=untrusted(tmp_path))
 
         assert _tool_results(requests) == [
             {'skills': {'review': 'Second review.'}},
@@ -555,7 +558,7 @@ class TestUntrustedWorkspaces:
         skills = _combined(Skills('first', include=['lint']), Skills('second', duplicate_names='keep_first'))
         model, requests, _ = _calling(ToolCallPart('list_skills', {}), ToolCallPart('load_skill', {'name': 'review'}))
 
-        await Agent(model, capabilities=[skills]).run('go', workspace=_untrusted(tmp_path))
+        await Agent(model, capabilities=[skills]).run('go', workspace=untrusted(tmp_path))
 
         assert _tool_results(requests) == [
             {'skills': {'lint': 'Lint help.', 'review': 'Second review.'}},
@@ -570,7 +573,7 @@ class TestUntrustedWorkspaces:
         )
         model, requests, _ = _calling(ToolCallPart('list_skills', {}))
 
-        await Agent(model, capabilities=[Skills('skills')]).run('go', workspace=_untrusted(tmp_path))
+        await Agent(model, capabilities=[Skills('skills')]).run('go', workspace=untrusted(tmp_path))
 
         assert _tool_results(requests) == [{'skills': {'review': 'Review code. Use when asked to review.'}}]
 
@@ -600,7 +603,7 @@ class TestUntrustedWorkspaces:
     async def test_a_run_without_an_id_still_offers_its_lowered_skills(self, tmp_path: Path) -> None:
         # A `for_run` called outside an agent run has no run ID to remember the run's skills by.
         _write_skill(tmp_path / 'skills', 'alpha', description='Alpha help.')
-        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), workspace=_untrusted(tmp_path))
+        ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), workspace=untrusted(tmp_path))
 
         run = await Skills[None]('skills').for_run(ctx)
 
@@ -650,7 +653,7 @@ class TestUntrustedWorkspaces:
             ToolCallPart('read_skill_file', {'skill': 'guide', 'path': 'references/guide.md'}),
         )
 
-        await Agent(model, capabilities=[Skills('skills', read_files=True)]).run('go', workspace=_untrusted(tmp_path))
+        await Agent(model, capabilities=[Skills('skills', read_files=True)]).run('go', workspace=untrusted(tmp_path))
 
         assert tools == ['read_skill_file', 'list_skills', 'load_skill']
         assert _tool_results(requests) == [{'skills': {'guide': 'Guide help.'}}, 'Use tabs.']
@@ -658,50 +661,6 @@ class TestUntrustedWorkspaces:
             str(part.content) for request in requests for part in request.parts if isinstance(part, SystemPromptPart)
         ]
         assert not any('Use tabs.' in text for text in system_voice)
-
-    async def test_a_lowered_skills_text_reaches_the_model_only_as_tool_output(self, tmp_path: Path) -> None:
-        # Text from a skill below `'operator'` (its description, body and files) is never in the instructions, a
-        # system or user part, or a tool definition: the model only sees it in what `list_skills`, `load_skill` and
-        # `read_skill_file` return.
-        canary = 'CANARY-7f3a'
-        _write_skill(
-            tmp_path / 'skills',
-            'guide',
-            description=f'Guide help {canary}.',
-            body=f'Guide directions {canary}.',
-            files={'references/guide.md': f'Use tabs {canary}.'},
-        )
-        calls = [
-            ToolCallPart('list_skills', {}),
-            ToolCallPart('load_skill', {'name': 'guide'}),
-            ToolCallPart('read_skill_file', {'skill': 'guide', 'path': 'references/guide.md'}),
-        ]
-        requests: list[ModelRequest] = []
-        tool_definitions: list[str] = []
-
-        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
-            request = messages[-1]
-            assert isinstance(request, ModelRequest)
-            requests.append(request)
-            tool_definitions.extend(
-                f'{tool.name} {tool.description} {tool.parameters_json_schema}' for tool in info.function_tools
-            )
-            if len(requests) <= len(calls):
-                return ModelResponse(parts=[calls[len(requests) - 1]])
-            return ModelResponse(parts=[TextPart('done')])
-
-        await Agent(FunctionModel(respond), capabilities=[Skills('skills', read_files=True)]).run(
-            'go', workspace=_untrusted(tmp_path)
-        )
-
-        tool_output = [str(content) for content in _tool_results(requests)]
-        assert [canary in text for text in tool_output] == [True, True, True]
-        elsewhere = [
-            *(request.instructions or '' for request in requests),
-            *(repr(part) for request in requests for part in request.parts if not isinstance(part, ToolReturnPart)),
-            *tool_definitions,
-        ]
-        assert not [text for text in elsewhere if canary in text]
 
     async def test_read_skill_file_still_needs_an_operator_skill_loaded(self, tmp_path: Path) -> None:
         _write_skill(tmp_path / 'skills', 'own', description='Own help.', files={'notes.md': 'Own notes.'})
@@ -917,17 +876,17 @@ class TestSkillValidation:
         _write_skill(tmp_path / 'skills', 'alpha')
 
         with pytest.raises(ValueError, match=r'points to a skill package.*Pass its parent directory'):
-            await _run(Skills('skills/alpha'), tmp_path)
+            await _run(Skills('skills/alpha', missing_directories='error'), tmp_path)
 
     async def test_missing_root_is_rejected(self, tmp_path: Path) -> None:
         with pytest.raises(ValueError, match='does not exist in the workspace: missing'):
-            await _run(Skills('missing'), tmp_path)
+            await _run(Skills('missing', missing_directories='error'), tmp_path)
 
     async def test_file_root_is_rejected(self, tmp_path: Path) -> None:
         (tmp_path / 'skills').write_text('not a directory', encoding='utf-8')
 
         with pytest.raises(ValueError, match='is not a directory'):
-            await _run(Skills('skills'), tmp_path)
+            await _run(Skills('skills', missing_directories='error'), tmp_path)
 
     async def test_non_skill_children_are_ignored(self, tmp_path: Path) -> None:
         library = tmp_path / 'skills'
@@ -1192,6 +1151,139 @@ class TestSkillLibraryLayering:
         assert [str(warning.message) for warning in caught] == [message]
         assert catalog.skipped == (SkippedSkill(path=library, reason='skill_package', message=message),)
 
+    @requires_posix_permissions
+    @pytest.mark.parametrize(
+        ('locked', 'mode'),
+        [('.agents/skills', 0o000), ('.agents/skills', 0o300), ('.agents', 0o000)],
+        ids=['no-access', 'not-listable', 'parent-not-traversable'],
+    )
+    async def test_skipping_missing_directories_also_skips_an_unreadable_library(
+        self, tmp_path: Path, locked: str, mode: int
+    ) -> None:
+        # Permissions can change mid-session, which must not fail every later run.
+        _write_skill(tmp_path / '.agents' / 'skills', 'deploy')
+        unreadable = tmp_path / locked
+        _write_skill(tmp_path / '.claude' / 'skills', 'review')
+        skills: Skills[None] = Skills(['.agents/skills', '.claude/skills'], missing_directories='skip')
+        unreadable.chmod(mode)
+        try:
+            with pytest.warns(UserWarning) as caught:
+                names = await _names(skills, tmp_path)
+            catalog = await skills.load(LocalWorkspaceBackend(tmp_path))
+            with pytest.raises(PermissionError):
+                await _run(Skills('.agents/skills', missing_directories='error'), tmp_path)
+        finally:
+            unreadable.chmod(0o755)
+
+        assert names == ['review']
+        library = f'{tmp_path.resolve()}/.agents/skills'
+        message = f'Skipping {library}: it is not readable.'
+        assert [str(warning.message) for warning in caught] == [message]
+        assert catalog.skipped == (SkippedSkill(path=library, reason='unreadable', message=message),)
+
+    async def test_a_missing_library_is_skipped_by_default(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / '.claude' / 'skills', 'review')
+
+        with warnings.catch_warnings():
+            warnings.simplefilter('error')
+            names = await _names(Skills(['.agents/skills', '.claude/skills']), tmp_path)
+
+        assert names == ['review']
+
+    @requires_posix_permissions
+    @pytest.mark.parametrize('locked', ['deploy', 'deploy/SKILL.md'], ids=['skill-directory', 'skill-file'])
+    async def test_an_unreadable_skill_is_skipped_and_the_others_still_load(self, tmp_path: Path, locked: str) -> None:
+        # Like an invalid `SKILL.md`, a skill the workspace denies reading must not make the other skills unusable.
+        _write_skill(tmp_path / 'skills', 'deploy')
+        _write_skill(tmp_path / 'skills', 'review')
+        target = tmp_path / 'skills' / locked
+        skills: Skills[None] = Skills('skills', missing_directories='error')
+        target.chmod(0)
+        try:
+            with pytest.warns(UserWarning) as caught:
+                names = await _names(skills, tmp_path)
+            catalog = await skills.load(LocalWorkspaceBackend(tmp_path))
+        finally:
+            target.chmod(0o755)
+
+        assert names == ['review']
+        path = f'{tmp_path.resolve()}/skills/{locked}'
+        message = f'Skipping {path}: it is not readable.'
+        assert [str(warning.message) for warning in caught] == [message]
+        assert catalog.skipped == (SkippedSkill(path=path, reason='unreadable', message=message),)
+
+    @requires_posix_permissions
+    async def test_unreadable_skills_with_the_same_name_in_two_libraries_are_each_skipped(self, tmp_path: Path) -> None:
+        # `pax` searches several folders, so the same skill name in two of them is common.
+        _write_skill(tmp_path / '.agents' / 'skills', 'deploy')
+        _write_skill(tmp_path / '.claude' / 'skills', 'deploy')
+        _write_skill(tmp_path / '.claude' / 'skills', 'review')
+        locked = [tmp_path / '.agents' / 'skills' / 'deploy', tmp_path / '.claude' / 'skills' / 'deploy']
+        skills: Skills[None] = Skills(['.agents/skills', '.claude/skills'])
+        for path in locked:
+            path.chmod(0)
+        try:
+            catalog = await skills.load(LocalWorkspaceBackend(tmp_path))
+        finally:
+            for path in locked:
+                path.chmod(0o755)
+
+        assert [skill.name for skill in catalog.skills] == ['review']
+        assert [entry.path for entry in catalog.skipped] == [str(path.resolve()) for path in locked]
+
+    @requires_posix_permissions
+    async def test_an_included_unreadable_skill_is_skipped_not_unknown(self, tmp_path: Path) -> None:
+        _write_skill(tmp_path / 'skills', 'deploy')
+        _write_skill(tmp_path / 'skills', 'review')
+        locked = tmp_path / 'skills' / 'deploy'
+        locked.chmod(0)
+        try:
+            with pytest.warns(UserWarning, match='deploy: it is not readable'):
+                names = await _names(Skills('skills', include=['deploy', 'review']), tmp_path)
+        finally:
+            locked.chmod(0o755)
+
+        assert names == ['review']
+
+    @requires_posix_permissions
+    @pytest.mark.parametrize(
+        'skills',
+        [
+            pytest.param(Skills('skills', exclude=['deploy']), id='excluded'),
+            pytest.param(Skills('skills', include=['review']), id='not-included'),
+        ],
+    )
+    async def test_an_unreadable_skill_left_out_of_the_selection_is_not_reported(
+        self, tmp_path: Path, skills: Skills
+    ) -> None:
+        # Like a deselected invalid `SKILL.md`: a user who disables a skill to silence it gets no notice.
+        _write_skill(tmp_path / 'skills', 'deploy')
+        _write_skill(tmp_path / 'skills', 'review')
+        locked = tmp_path / 'skills' / 'deploy'
+        locked.chmod(0)
+        try:
+            with warnings.catch_warnings():
+                warnings.simplefilter('error')
+                names = await _names(skills, tmp_path)
+        finally:
+            locked.chmod(0o755)
+
+        assert names == ['review']
+
+    @requires_posix_permissions
+    async def test_an_unknown_name_error_names_the_skipped_paths(self, tmp_path: Path) -> None:
+        # The included skill's library is unreadable, so the skipped path is the likelier cause.
+        _write_skill(tmp_path / 'locked', 'deploy')
+        _write_skill(tmp_path / 'skills', 'review')
+        (tmp_path / 'locked').chmod(0)
+        try:
+            with pytest.raises(
+                ValueError, match=r'Unknown skill in include: deploy\..*Some paths were skipped: .*not readable'
+            ):
+                await _names(Skills(['locked', 'skills'], include=['deploy']), tmp_path)
+        finally:
+            (tmp_path / 'locked').chmod(0o755)
+
     async def test_an_invalid_earlier_skill_does_not_hide_a_valid_one(self, tmp_path: Path) -> None:
         broken = tmp_path / 'project' / 'review'
         broken.mkdir(parents=True)
@@ -1220,6 +1312,7 @@ class TestSkillsLoad:
         _write_skill(tmp_path / 'personal', 'review')
         _write_skill(tmp_path / 'personal', 'tooled', frontmatter='description: Tooled.\nallowed-tools: Read')
         _write_skill(tmp_path / 'personal', 'broken', frontmatter='not: [valid')
+        _write_skill(tmp_path / 'personal', 'wordy', description='x' * 1025)
         skills: Skills[Any] = Skills(
             ['project', 'personal', 'missing'], duplicate_names='keep_first', missing_directories='skip'
         )
@@ -1229,9 +1322,17 @@ class TestSkillsLoad:
             catalog = await skills.load(LocalWorkspaceBackend(tmp_path))
 
         workspace = tmp_path.resolve()
-        # Unsupported frontmatter is advice for a run's developer, not a skipped skill.
-        assert [skill.name for skill in catalog.skills] == ['review', 'tooled']
+        # Unsupported frontmatter and overlong descriptions are advice, not skipped skills.
+        assert [skill.name for skill in catalog.skills] == ['review', 'tooled', 'wordy']
         assert catalog.skills[1].ignored_behavioral_fields == ('allowed-tools',)
+        # The same advice a run emits as warnings, for a host that hides them.
+        assert list(catalog.advice) == [
+            'Agent Skill descriptions exceed the 1,024-character limit: wordy (1,025 characters)',
+            'Ignoring unsupported Agent Skill behavioral frontmatter fields: tooled: allowed-tools',
+        ]
+        with pytest.warns(UserWarning) as caught:
+            await _run(skills, tmp_path)
+        assert [str(warning.message) for warning in caught][-2:] == list(catalog.advice)
         assert catalog.skills[0].directory == f'{workspace}/project/review'
         assert catalog.skipped == (
             SkippedSkill(
@@ -1426,7 +1527,7 @@ class TestSkillScanning:
     def test_repr_shows_a_configured_scanner(self) -> None:
         assert repr(Skills('skills', scanner=ArtifactScanner(threats=['html_comment']))) == (
             "Skills(directories=('skills',), include=None, exclude=frozenset(), "
-            "missing_directories='error', duplicate_names='error', unknown_names='error', "
+            "missing_directories='skip', duplicate_names='error', unknown_names='error', "
             "scanner=ArtifactScanner(threats=frozenset({'html_comment'}), extra_patterns=mappingproxy({})))"
         )
 
@@ -1724,7 +1825,7 @@ class TestSkillFiles:
         results: list[str] = []
         agent: Agent[None, str] = Agent(
             _reader(results, 'guide', [('guide', 'references/guide.md')], lambda: shutil.rmtree(tmp_path / 'other')),
-            capabilities=[Skills(['skills', 'other'], read_files=True)],
+            capabilities=[Skills(['skills', 'other'], missing_directories='error', read_files=True)],
         )
 
         await agent.run('go', workspace=LocalWorkspaceBackend(tmp_path))

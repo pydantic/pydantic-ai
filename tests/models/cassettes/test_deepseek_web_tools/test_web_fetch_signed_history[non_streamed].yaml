@@ -1,0 +1,259 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.deepseek.com/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "271"
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    body:
+      type: json
+      content:
+        model: deepseek-flash
+        stream: false
+        input:
+        - role: user
+          content: >-
+            Read https://httpbin.org/json using the URL reading tool. Reply only READY,
+            without quoting the page.
+        reasoning:
+          effort: none
+        tool_choice: auto
+        tools:
+        - type: deepseek_read_url
+  response:
+    status: 200
+    headers:
+      access-control-allow-credentials:
+      - "true"
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      eo-cache-status:
+      - MISS
+      eo-log-uuid:
+      - "4285546824351998240"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - >-
+        accept-encoding,origin, access-control-request-method,
+        access-control-request-headers
+    body:
+      type: json
+      content:
+        id: 0d4425d9-7aa2-4870-8903-36ba4c1cf226
+        object: response
+        created_at: 1795749673
+        status: completed
+        background: false
+        completed_at: 1795749673
+        content_filters: null
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: deepseek-flash
+        moderation: null
+        output:
+        - type: web_search_call
+          id: srvtoolu_rl_00_e39a54b783be48e1a5b2db3a2132c6be
+          status: completed
+          kind: read_link
+          action:
+            type: open_page
+            url: https://httpbin.org/json
+          page:
+            url: https://httpbin.org/json
+            title: ""
+            published_at: null
+          signature: >-
+            bur03Ry858q6BrfTYC1oXXiPQQ2QYZZTjWl5PJ4YWnhWrrWiIM9OWwZaOK+vqs6SgLMDp94tEPsrWhuOgomOTVjdxZwg1j/mzkJbdcNl6FR3JRpQqW2tcVc58xRWbGD6cZqpaCjd1zC4yyp43Q+cCsHGk2jJNs8ho7vIaDw3gQPSxs/N07JRxpHX6aXjJsVmmhv84KKgImsCGuFBbljERPKIqXCAKBq61DvIjUYtFVVxK2AkyKzTvkauj7tiTdtvS20I6HRTMs2MuTBB/1hksc65gptILMWjEjkgf0U2eQocvJPKfD51NTUb08peN7nnWReCPqeFeoGHH3ZKC3dq5q/VibDQO3UEvs7fB1B3yh7QTbRBJH3TyAfmgHNeE/UImJCVNUVpipEJqQaWQHXBzOaWxD3eROWr6zs74sRThdlcTkEWEOD/3AogLZTqhOszwtT/LKUwXVqRySUzS7q/1swCQPDQzBe6QO8xMLxx/C0PfxxDxalBtQvqaiO5QuS2gbwT9HYg3ky7VMPJ0OEZOkB0o8vNmrUhEwL7FdT3XLnrv+96oQWyrQfc561Dd0oJnODfQpwxloW4Md6eQUYx6LsFi/m68ZCa3kq8oJ+/gycW5oAQLW3+Bvp7oxWHgQQgXSuhk1+L9SE5x33MWk6IxOstf4HzluriZnhMTiXUFwWW7O2aXdyYuyxmdFW1Jab4BeA1FnxCSMgcPF1LVqLuceTDiEUs0Bah/nS+AQSVdBnqtGl+5e0S6nQnEER1O0EvYFaGBmH70ksbUUaOEJg6fg==
+        - type: message
+          id: 6adc2174-bbe5-42bf-a547-3f2b0a376295
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: READY
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: null
+        reasoning:
+          effort: none
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: false
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: null
+        tool_choice: auto
+        tools: []
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 220
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens: 2
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 222
+          server_tool_use:
+            tool_search: 0
+            tool_fetch: 1
+            tool_image_search: 0
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-27T03:21:13.912486+00:00
+- request:
+    method: POST
+    uri: https://api.deepseek.com/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br
+      connection:
+      - keep-alive
+      content-length:
+      - "1424"
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    body:
+      type: json
+      content:
+        model: deepseek-flash
+        stream: false
+        input:
+        - role: user
+          content: >-
+            Read https://httpbin.org/json using the URL reading tool. Reply only READY,
+            without quoting the page.
+        - type: web_search_call
+          id: srvtoolu_rl_00_e39a54b783be48e1a5b2db3a2132c6be
+          kind: read_link
+          status: completed
+          action:
+            type: open_page
+            url: https://httpbin.org/json
+          page:
+            url: https://httpbin.org/json
+            title: ""
+            published_at: null
+          signature: >-
+            bur03Ry858q6BrfTYC1oXXiPQQ2QYZZTjWl5PJ4YWnhWrrWiIM9OWwZaOK+vqs6SgLMDp94tEPsrWhuOgomOTVjdxZwg1j/mzkJbdcNl6FR3JRpQqW2tcVc58xRWbGD6cZqpaCjd1zC4yyp43Q+cCsHGk2jJNs8ho7vIaDw3gQPSxs/N07JRxpHX6aXjJsVmmhv84KKgImsCGuFBbljERPKIqXCAKBq61DvIjUYtFVVxK2AkyKzTvkauj7tiTdtvS20I6HRTMs2MuTBB/1hksc65gptILMWjEjkgf0U2eQocvJPKfD51NTUb08peN7nnWReCPqeFeoGHH3ZKC3dq5q/VibDQO3UEvs7fB1B3yh7QTbRBJH3TyAfmgHNeE/UImJCVNUVpipEJqQaWQHXBzOaWxD3eROWr6zs74sRThdlcTkEWEOD/3AogLZTqhOszwtT/LKUwXVqRySUzS7q/1swCQPDQzBe6QO8xMLxx/C0PfxxDxalBtQvqaiO5QuS2gbwT9HYg3ky7VMPJ0OEZOkB0o8vNmrUhEwL7FdT3XLnrv+96oQWyrQfc561Dd0oJnODfQpwxloW4Md6eQUYx6LsFi/m68ZCa3kq8oJ+/gycW5oAQLW3+Bvp7oxWHgQQgXSuhk1+L9SE5x33MWk6IxOstf4HzluriZnhMTiXUFwWW7O2aXdyYuyxmdFW1Jab4BeA1FnxCSMgcPF1LVqLuceTDiEUs0Bah/nS+AQSVdBnqtGl+5e0S6nQnEER1O0EvYFaGBmH70ksbUUaOEJg6fg==
+        - role: assistant
+          content: READY
+        - role: user
+          content: What is the exact title of the first slide in the slideshow from that JSON page?
+        reasoning:
+          effort: none
+  response:
+    status: 200
+    headers:
+      access-control-allow-credentials:
+      - "true"
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      eo-cache-status:
+      - MISS
+      eo-log-uuid:
+      - "15325319105683379070"
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - >-
+        accept-encoding,origin, access-control-request-method,
+        access-control-request-headers
+    body:
+      type: json
+      content:
+        id: cb660f97-0909-4a4b-ae0f-57ce860ceed4
+        object: response
+        created_at: 1795749674
+        status: completed
+        background: false
+        completed_at: 1795749674
+        content_filters: null
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: deepseek-flash
+        moderation: null
+        output:
+        - type: message
+          id: d0cee673-cc66-491b-a19f-841787f768ce
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: The exact title of the first slide is "Wake up to WonderWidgets!"
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: null
+        reasoning:
+          effort: none
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: false
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: null
+        tool_choice: auto
+        tools: []
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 217
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens: 16
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 233
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-27T03:21:14.320547+00:00

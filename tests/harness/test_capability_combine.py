@@ -6,10 +6,11 @@ describes the answers and what picks between them; this one checks that each hol
 
 The core half of this lives in `pydantic-ai`'s `tests/test_capability_combine.py`.
 
-Two of the names imported below are private to pydantic-ai, which is right: the duplicate-resolution
+One of the names imported below is private to pydantic-ai, which is right: the duplicate-resolution
 pipeline is internal and no code in this package needs it. This file reaches in anyway rather than
-reimplementing the two questions the resolver asks -- a lookalike would drift from the real answer
-silently, which is the one thing the policy table exists to prevent. Both packages change in the
+reimplementing it -- a lookalike would drift from the real answer silently, which is the one thing the
+policy table exists to prevent. Whether a class declares a default `id` matching its policy is the
+`default_id_matches_combine` contract, in `test_capability_contracts.py`. Both packages change in the
 same pull request, so a rename fails this file alongside the change that made it.
 """
 
@@ -27,7 +28,6 @@ from pydantic_ai import Agent
 from pydantic_ai.capabilities import CombinedCapability, Thinking
 from pydantic_ai.capabilities.abstract import (
     _combine_duplicate_capabilities as combine_duplicate_capabilities,  # pyright: ignore[reportPrivateUsage]
-    _declares_default_id as declares_default_id,  # pyright: ignore[reportPrivateUsage]
     leaf_capabilities,
 )
 from pydantic_ai.exceptions import UserError
@@ -112,18 +112,9 @@ def test_capability_combine_policy_holds(name: str) -> None:
     capability_type = shipped[name]
 
     if isinstance(policy, (Anonymous, Collides, Rejected)):
-        # `declares_default_id` is the function the resolver itself uses, so this asks the same
-        # question rather than a lookalike: a default `id` written in the class body, and nothing
-        # else, is what makes two of a capability merge.
-        assert not declares_default_id(capability_type), (
-            f'{name} is declared `{type(policy).__name__}` but its class declares a default id '
-            f'{getattr(capability_type, "id", None)!r}, so two of them would merge'
-        )
+        # Two never meet, as the `default_id_matches_combine` contract checks: there is nothing to combine.
         return
 
-    assert declares_default_id(capability_type), (
-        f'{name} is declared `{type(policy).__name__}` but its class declares no default id, so two never meet'
-    )
     if isinstance(policy, Narrows):
         first, second = policy.make(capability_type)
         assert first.id is not None and first.id == second.id

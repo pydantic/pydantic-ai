@@ -67,7 +67,7 @@ where it can't run commands, they walk its files instead, as `find_files` and
 
 | Tool | Purpose |
 |---|---|
-| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP) or PDF up to 5 MB is returned as the file itself, so a model that takes files sees it. With `max_image_side` set (`Coder` sets 1024), a larger image is downscaled to fit first. Other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, where `offset` is the 1-indexed line to start from, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
+| `read_file` | Read a text file with line numbers and a content hash. An image (PNG, JPEG, GIF, WebP), PDF or video (MP4, QuickTime, WebM, FLV, MPEG, WMV, 3GP) up to 5 MB is returned as the file itself, so a model that takes that kind of file sees it, and a model that doesn't gets a note in its place. With `max_image_side` set (`Coder` sets 1024), a larger image is downscaled to fit first. Other binary files are described by size, media type and their first 64 bytes in hex. Supports `offset`/`limit` paging, where `offset` is the 1-indexed line to start from, at most `max_read_lines` lines per call; with `max_read_chars`, the whole result (header and hint included) fits the cap unless the cap is smaller than the header and hint themselves, the window ends on the last complete line that fits, and the continuation hint names the first line not shown. A file over 64 MiB is described by its size, not read. |
 | `write_file` | Create or overwrite a file. Optional `expected_hash` rejects stale writes (optimistic concurrency). |
 | `edit_file` | Exact-string replacement: one `old_text`/`new_text` pair, or a `replacements` batch applied in order. Each `old_text` must match exactly once; a batch is checked in memory and written only if every replacement matches. Optional `expected_hash`. |
 | `list_directory` | List a directory's entries with type indicators and sizes. |
@@ -86,7 +86,7 @@ For remote workspaces, use the file tools (`grep`, `find_files`, `read_file`) ra
 
 Without `rg`, command-capable POSIX workspaces use one in-sandbox git/grep/find command for `grep`, `list_files`, and `search_files` (after an initial `rg` probe).
 
-Filesystem-only and read-only workspaces use slower, bounded file walks in Python, whose regex engine has no time limit, so they refuse a regex that repeats a repeating group, such as `(a+)+`: that shape can take exponential time. A bounded repeat of a bounded group, such as `([0-9]{1,3}[.]){3}`, is allowed. The check is a heuristic for that shape, not a time limit: other slow shapes, such as overlapping alternatives (`(a|aa)+`) or runs of quantifiers (`a*a*a*a*b`), still run.
+Filesystem-only and read-only workspaces use slower, bounded file walks in Python. They match the regex with a linear-time engine (pydantic-core's Rust regex), so no pattern, such as `(a+)+$` or `a*a*a*a*b`, can stall the run. That engine doesn't support some of Python's syntax, such as lookarounds (`(?=`, `(?<!`), backreferences (`\1`), `\Z`, atomic groups and possessive quantifiers, and limits how large a compiled pattern can be, so such a pattern is refused there with a message asking the model to rewrite it.
 
 The POSIX fallback honors nested `.gitignore` in repositories and search-root `.ignore` with git available; nested `.ignore` rules are not applied by the POSIX fallback, and rg-specific regex features require `rg`. Without git, the POSIX fallback cannot apply ignore files. With git, it also searches files git tracks even though `.gitignore` lists them, which `rg` skips. The first search that falls back in a workspace logs one debug message saying so.
 
@@ -188,8 +188,8 @@ def paths_read(messages: list[ModelMessage]) -> list[str]:
 `read_file` also has a typed return part, `ReadFileReturnPart`, for a return
 whose outcome is `'success'`, which includes a `Path not found: <path>` result and the
 description `read_file` returns for a file over 64 MiB, so neither means the file's content was read.
-Its `content` is the text with its header, or `[header, BinaryContent]` for an
-image or PDF. The kind declares no content shape, since `ToolKind` takes a class
+Its `content` is the text with its header, or `[header, BinaryContent]` for a
+file `read_file` returns as itself. The kind declares no content shape, since `ToolKind` takes a class
 and not a union, so `typed_content` is untyped. The other tools return text
 written for the model rather than a format to parse, so their returns stay plain
 `ToolReturnPart`s that carry the kind as `tool_kind`; the [events](#events)
@@ -361,21 +361,26 @@ applies the same rule to absolute symlink targets.
   directories or 100,000 entries and end their result with a
   `[... walk cut short ...]` line.
 - **Binary detection.** `read_file` does not decode binary bytes into the model
-  context. It returns an image (PNG, JPEG, GIF, WebP) or PDF as `BinaryContent`,
-  recognized by its leading bytes rather than its extension, which Pydantic AI
-  sends [inside the tool result or on the user channel](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-return-file-provenance)
-  depending on the model. If the model can't take that kind of file (an image on
-  a model without vision, or a PDF on Groq), Pydantic AI raises when it builds
-  the next request, which ends the run
-  ([input support by model](https://pydantic.dev/docs/ai/core-concepts/input/)).
+  context. It returns an image, PDF or video as `BinaryContent`, recognized by
+  its leading bytes rather than its extension. Pydantic AI sends it
+  [inside the tool result or on the user channel](https://pydantic.dev/docs/ai/tools-toolsets/tools-advanced/#tool-return-file-provenance)
+  depending on the model. If the model can't take that kind of file, as its
+  profile's file-input flags say, the file is replaced by a note naming it, or
+  described first by [`FileUnderstanding`](https://pydantic.dev/docs/ai/capabilities/file-understanding/)
+  when that is on the agent ([input support by model](https://pydantic.dev/docs/ai/core-concepts/input/)).
+  Office documents, audio and Matroska video stay described rather than sent:
+  some models whose profile admits the kind reject the format (Gemini takes no
+  Office documents or Matroska, and OpenAI-compatible endpoints report audio
+  input for models that reject it), which would fail the request rather than
+  become a note.
   With `max_image_side` set (`Coder` sets 1024), an image larger than that on
   its longest side is downscaled to it first, in its own format and aspect
-  ratio, and the header names both sizes; the hash is still that of the file.
-  An image over 25 megapixels (for a baseline JPEG, at the 1/2 to 1/8 scale it
-  decodes at) is described instead of decoded.
-  Downscaling needs Pillow, which the `coder` extra installs; setting
-  `max_image_side` without it raises an `ImportError`. A file still over 5 MB after that, the strictest mainstream per-image
-  limit, is described instead, as is any other binary file.
+  ratio, and the header names both sizes; the hash is still that of the file. An
+  image over 25 megapixels (for a baseline JPEG, at the 1/2 to 1/8 scale it
+  decodes at) is described instead of decoded. Downscaling needs Pillow, which
+  the `coder` extra installs; setting `max_image_side` without it raises an
+  `ImportError`. A file still over 5 MB after that, the strictest mainstream
+  per-image limit, is described instead, as is any other binary file.
 - **Optimistic concurrency.** `write_file`/`edit_file` accept an
   `expected_hash` so an agent operating on a stale read is told to re-read
   rather than overwriting newer content.

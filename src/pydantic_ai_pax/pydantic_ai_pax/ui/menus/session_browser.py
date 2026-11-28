@@ -563,10 +563,11 @@ class SessionBrowser:
                 dirty = False
             try:
                 key = self.key_source()
-                dirty = bool(key)
-                result = self.handle_key(key)
-                if result is not None:
-                    return result
+                if key:
+                    dirty = True
+                    result = self.handle_key(key)
+                    if result is not None:
+                        return result
                 # Only while no key arrives: a held arrow key must never wait on storage.
                 if not key and time.monotonic() - refreshed >= 0.5:
                     try:

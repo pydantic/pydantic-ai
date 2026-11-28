@@ -751,7 +751,8 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _instance_profile_defaults(self, profile: ModelProfile) -> ModelProfile:
         """Turn off defaults that haven't been checked live on this provider.
 
-        Azure clients and the gateway lose the Batch API and Responses WebSockets. Azure clients and every provider
+        Azure clients and the gateway lose the Batch API and Responses WebSockets, and the gateway loses on-demand
+        compaction. Azure clients and every provider
         class except `OpenAIProvider` and `BedrockMantleProvider` lose the native `ComputerTool`. The check is on the
         provider class, so the gateway's OpenAI route and `OpenAIProvider(base_url=...)` keep the tool.
 
@@ -765,6 +766,9 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         if is_azure(self._provider.client, self._provider.name) or is_gateway_provider(self._provider):
             # Azure batches need a batch deployment; the gateway doesn't serve the Batch API yet.
             profile = merge_profile(profile, OpenAIModelProfile(openai_supports_batch_api=False))
+        if is_gateway_provider(self._provider):
+            # The gateway doesn't serve the `/responses/compact` endpoint (probed live).
+            profile = merge_profile(profile, OpenAIModelProfile(supports_compaction_on_demand=False))
         # An Azure-named custom provider may advertise socket support with an ordinary OpenAI client.
         is_azure_client = isinstance(self._provider.client, AsyncAzureOpenAI)
         if is_azure_client or is_gateway_provider(self._provider):
@@ -1265,7 +1269,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             parts=items
             if response.status in (None, 'completed')
             else block_computer_calls(items, model_request_parameters),
-            usage=map_usage(response, self._provider.name, self._provider.base_url, self.model_name),
+            usage=self._map_usage(response),
             model_name=response.model,
             provider_response_id=response.id,
             timestamp=timestamp,
@@ -1276,6 +1280,22 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             state=state,
             provider_details=provider_details or None,
         )
+
+    def _map_usage(self, response: responses.Response) -> usage.RequestUsage:
+        """Map a response's usage.
+
+        This method may be overridden by subclasses of `OpenAIResponsesModel` to provide their own usage mapping.
+        """
+        return map_usage(response, self._provider.name, self._provider.base_url, self.model_name)
+
+    def _map_web_search_call(
+        self, item: responses.ResponseFunctionWebSearch
+    ) -> tuple[NativeToolCallPart, NativeToolReturnPart]:
+        """Map a `web_search_call` output item to its call and return parts.
+
+        This method may be overridden by subclasses of `OpenAIResponsesModel` whose API extends the item.
+        """
+        return map_web_search_tool_call(item, self.system)
 
     def _map_output_items(  # noqa: C901
         self,
@@ -1306,7 +1326,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
                 case responses.ResponseCodeInterpreterToolCall():
                     items.extend(self._map_code_interpreter_call(item))
                 case responses.ResponseFunctionWebSearch():
-                    items.extend(map_web_search_tool_call(item, self.system))
+                    items.extend(self._map_web_search_call(item))
                 case responses.ResponseToolSearchCall():
                     items.extend(self._map_tool_search_call(item, tool_search_outputs))
                 case responses.ResponseToolSearchOutputItem():
@@ -1352,7 +1372,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             # follows a generated image, or `text=null` from gateways like Bifrost) doesn't make a part.
             if not isinstance(content, responses.ResponseOutputText) or not content.text:
                 continue
-            citations = map_responses_citations(content.annotations, content.text)
+            citations = map_responses_citations(
+                content.annotations,
+                content.text,
+                content_offsets=self.profile.get('openai_responses_url_citation_content_offsets', False),
+            )
             part_provider_details: dict[str, Any] = {}
             if citations:
                 part_provider_details.update(responses_citations_provider_details(content.annotations))
@@ -1428,6 +1452,14 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             if output_item := tool_search_outputs.get(call_part.tool_call_id):
                 yield build_tool_search_return_part(call_part.tool_call_id, output_item, self.system)
 
+    @property
+    def _streamed_response_cls(self) -> type[OpenAIResponsesStreamedResponse]:
+        """Returns the `StreamedResponse` type that will be used for streamed responses.
+
+        This method may be overridden by subclasses of `OpenAIResponsesModel` to provide their own `StreamedResponse` type.
+        """
+        return OpenAIResponsesStreamedResponse
+
     async def _process_streamed_response(
         self,
         response: AsyncStream[responses.ResponseStreamEvent] | ResponsesWebSocketStream,
@@ -1477,7 +1509,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
 
             # A retry can overflow to HTTP after this request copy reserved a socket lane.
             is_websocket = isinstance(response, ResponsesWebSocketStream)
-        streamed_response = OpenAIResponsesStreamedResponse(
+        streamed_response = self._streamed_response_cls(
             model_request_parameters=model_request_parameters,
             _model_name=model_name,
             _model_settings=model_settings,
@@ -1490,6 +1522,7 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             _is_websocket=is_websocket,
             _tool_call_ids_are_response_scoped=tool_call_ids_are_response_scoped,
             _process_provider_details=self._process_provider_details,
+            _citation_content_offsets=self.profile.get('openai_responses_url_citation_content_offsets', False),
         )
         streamed_response.canonical_system = self._canonical_system_stamp
         if tool_call_ids_are_response_scoped:
@@ -2345,6 +2378,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         set_reasoning_context(reasoning, reasoning_context, self.profile)
         if reasoning_summary:
             reasoning['summary'] = reasoning_summary
+        elif model_settings.get('thinking_summary') and self._request_thinks(model_settings, model_request_parameters):
+            # Every reasoning model accepts `auto`, unlike `concise`. Summaries aren't requested by default because
+            # they may require organization verification.
+            reasoning['summary'] = 'auto'
         return reasoning or OMIT
 
     def _request_thinks(
@@ -2357,6 +2394,10 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         # `_translate_thinking` sends an explicit effort instead of the one unified `thinking` maps to.
         return ('openai_reasoning_effort',) if model_settings.get('openai_reasoning_effort') is not None else ()
+
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_translate_thinking` sends an explicit summary instead of the one `thinking_summary` asks for.
+        return ('openai_reasoning_summary',) if model_settings.get('openai_reasoning_summary') else ()
 
     def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
         return model_settings.get('openai_reasoning_effort') is not None
@@ -3292,6 +3333,16 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             param['namespace'] = synthesized_ns
         return param
 
+    def _map_native_tool_call_replay(
+        self, item: NativeToolCallPart, message: ModelResponse
+    ) -> list[responses.ResponseInputItemParam] | None:
+        """The input items that send `item` back in place of the default mapping, or `None` to map it as usual.
+
+        This method may be overridden by subclasses of `OpenAIResponsesModel` whose API extends a native tool's items.
+        An empty list sends nothing for the call.
+        """
+        return None
+
     def _map_response_native_tool_call_part(
         self,
         item: NativeToolCallPart,
@@ -3301,6 +3352,11 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
         from_same_provider: bool,
         should_send_item_id: bool,
     ) -> None:
+        if (replay := self._map_native_tool_call_replay(item, response_context.message)) is not None:
+            context.openai_messages.extend(replay)
+            # Text after the call starts a new message item.
+            response_context.message_item = None
+            return
         # Hosted tool-search items carry their state inline, so they replay to any provider
         # that accepts this one's stateless data; their IDs stay with the same provider.
         if (

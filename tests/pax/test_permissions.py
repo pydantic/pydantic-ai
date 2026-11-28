@@ -181,6 +181,7 @@ async def test_permissions_command_shows_and_sets_the_mode(tmp_path: Path) -> No
     assert 'Permissions: Read only: every file write and command asks first.' in text
     assert 'Usage: /permissions [full|auto|read-only]' in text
     assert shell.context.settings.permissions == 'read-only'
+    assert 'read-only' in shell.status.text()
     assert shell.commands.get('permissions').complete([]) == ('full', 'auto', 'read-only')  # pyright: ignore[reportOptionalMemberAccess]
 
 

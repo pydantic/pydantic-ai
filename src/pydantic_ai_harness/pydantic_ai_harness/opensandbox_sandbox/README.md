@@ -298,8 +298,10 @@ Before you rely on it:
 
 A deleted sandbox takes its files with it. To keep a workspace's files after you delete its sandbox, pass `volumes` to `OpenSandboxBackend`: the SDK's own `Volume` objects, for a host directory, a named volume (a Kubernetes PVC or a Docker named volume) or an OSSFS bucket, passed to `Sandbox.create` unchanged. Mount the volume at the working directory and a later sandbox created with the same volume starts with the files the last one left:
 
-```python {test="skip"}
+```python {test="skip" names="defined"}
 from opensandbox.models.sandboxes import PVC, Volume
+
+from pydantic_ai_harness.opensandbox_sandbox import OpenSandboxBackend
 
 backend = OpenSandboxBackend(
     image='python:3.13-slim',

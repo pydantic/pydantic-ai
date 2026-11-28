@@ -48,6 +48,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelSettingsDeltaPart,
     NativeToolCallPart,
     NativeToolReturnPart,
     PartDeltaEvent,
@@ -81,6 +82,7 @@ from pydantic_ai.exceptions import (
     ModelHTTPError,
     ModelRateLimitError,
     ModelRetry,
+    OutputTokenLimitExceeded,
     UnexpectedModelBehavior,
     UserError,
 )
@@ -7038,7 +7040,7 @@ async def test_google_failed_tool_return_keeps_files_out_of_error_payload(google
 
 
 async def test_google_prepends_empty_user_turn_when_first_content_is_model(google_provider: GoogleProvider):
-    """Test that an empty user turn is prepended when contents start with a model response.
+    """Test that an empty user turn is prepended when contents start with a model function call.
 
     This happens when there's a conversation history with a model response (containing tool calls)
     followed by tool results, but no initial user prompt. The Gemini API requires that function
@@ -7087,6 +7089,72 @@ async def test_google_prepends_empty_user_turn_when_first_content_is_model(googl
                     },
                 ],
             },
+        ]
+    )
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_google_leading_text_model_turn_sent_as_is(
+    allow_model_requests: None, google_provider: GoogleProvider, vcr: Cassette
+):
+    """Gemini accepts contents that start with a text model turn, so no empty user turn is prepended."""
+    agent = Agent(GoogleModel('gemini-3.8-flash', provider=google_provider))
+
+    result = await agent.run(
+        'What is its population? Answer in one sentence.',
+        message_history=[ModelResponse(parts=[TextPart(content='Hi! I can tell you about Paris.')])],
+    )
+
+    assert single_request_body(vcr)['contents'] == snapshot(
+        [
+            {'parts': [{'text': 'Hi! I can tell you about Paris.'}], 'role': 'model'},
+            {'parts': [{'text': 'What is its population? Answer in one sentence.'}], 'role': 'user'},
+        ]
+    )
+    assert result.output == snapshot(
+        'The city of Paris has a population of approximately 2.1 million residents, expanding to over 12 million in its greater metropolitan area.'
+    )
+
+
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_google_cloud_leading_text_model_turn_sent_as_is(
+    allow_model_requests: None, vertex_provider: GoogleProvider, vcr: Cassette
+):
+    """Google Cloud also accepts contents that start with a text model turn, so no empty user turn is prepended."""
+    agent = Agent(GoogleModel('gemini-3.8-flash', provider=vertex_provider))
+
+    result = await agent.run(
+        'What is its population? Answer in one sentence.',
+        message_history=[ModelResponse(parts=[TextPart(content='Hi! I can tell you about Paris.')])],
+    )
+
+    assert single_request_body(vcr)['contents'] == snapshot(
+        [
+            {'parts': [{'text': 'Hi! I can tell you about Paris.'}], 'role': 'model'},
+            {'parts': [{'text': 'What is its population? Answer in one sentence.'}], 'role': 'user'},
+        ]
+    )
+    assert result.output == snapshot(
+        'As of recent estimates, the city proper of Paris has a population of approximately 2.1 million people, with over 12 million living in its greater metropolitan area.'
+    )
+
+
+async def test_google_prepends_empty_user_turn_when_only_content_is_model(google_provider: GoogleProvider):
+    """A model turn with nothing after it still gets an empty user turn first.
+
+    Only a text model turn followed by more turns was verified to be accepted without it, and some models reject a
+    request whose only turn is a model turn, so the empty user turn stays for this case.
+    Unit test (not VCR): an agent run never sends a request that ends with a model turn.
+    """
+    m = GoogleModel('gemini-3.8-flash', provider=google_provider)
+
+    messages: list[ModelMessage] = [ModelResponse(parts=[TextPart(content='Hi! I can tell you about Paris.')])]
+    _, contents = await m._map_messages(messages, ModelRequestParameters())  # pyright: ignore[reportPrivateUsage]
+
+    assert contents == snapshot(
+        [
+            {'role': 'user', 'parts': [{'text': ''}]},
+            {'role': 'model', 'parts': [{'text': 'Hi! I can tell you about Paris.'}]},
         ]
     )
 
@@ -7397,6 +7465,8 @@ async def test_google_prompt_feedback_streaming(
     response_msg = body_json[0]
     assert response_msg['parts'] == []
     assert response_msg['finish_reason'] == 'content_filter'
+    # A blocked prompt ends the stream without a chunk that reports a finish reason.
+    assert response_msg['state'] == 'complete'
     assert response_msg['provider_details']['block_reason'] == 'PROHIBITED_CONTENT'
     if with_details:
         assert response_msg['provider_details']['block_reason_message'] == 'The prompt was blocked.'
@@ -8033,3 +8103,116 @@ async def test_google_non_json_response_body_raises_model_api_error(
     cause = errors.UnknownApiResponseError if call == 'stream' else json.JSONDecodeError
     assert isinstance(exc_info.value.__cause__, cause)
     assert exc_info.value.message.startswith('Failed to decode response as JSON')
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_google_tool_output_cut_off_by_max_tokens(allow_model_requests: None, gemini_api_key: str, stream: bool):
+    """An output tool call the token limit cut off raises right away instead of re-prompting the model with the same limit.
+
+    Gemini drops a function call it cut off: the response has no parts (or only an empty text part carrying a thought
+    signature when streamed), though it used up the output tokens, so it's reported as cut off before any output.
+    """
+    model = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
+
+    class City(BaseModel):
+        name: str
+        country: str
+
+    class Cities(BaseModel):
+        cities: list[City]
+
+    agent = Agent(
+        model, output_type=ToolOutput(Cities), model_settings=GoogleModelSettings(max_tokens=300, thinking='minimal')
+    )
+    prompt = 'List the 100 largest cities in the world.'
+
+    with capture_run_messages() as messages:
+        with pytest.raises(
+            OutputTokenLimitExceeded,
+            match=r'Model token limit \(300\) exceeded before any response was generated\.',
+        ):
+            if stream:
+                # With no output in the response, `run_stream()` raises as it's entered.
+                async with agent.run_stream(prompt):
+                    pass
+            else:
+                await agent.run(prompt)
+
+    if stream:
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content='List the 100 largest cities in the world.', timestamp=IsDatetime()),
+                        ModelSettingsDeltaPart(settings={'thinking': 'minimal'}, top_level=True),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[
+                        TextPart(
+                            content='',
+                            provider_name='google',
+                            provider_details={
+                                'thought_signature': 'EqEBCp4BAWkUfRP7ynS1W6zbP4Tp9cpWW3iHvlW+gwxxMPouEuK+44kwIPmeHQgD3QMVR4TF47Pkyo5YnJT2e2LMzwBQV0IEeoUwAf0VgZhXjY2Elj0CY2RTio+viAJAuY9/CSNvVNent6fHRHe7qJ276p6SMv/qwVkcPLRzXVCw2rMAXwU/2OTwJr2Z2RrXtEWO79BNLfJ0rQPWKb7QeY1sCsA='
+                            },
+                        )
+                    ],
+                    usage=RequestUsage(
+                        details={'text_prompt_tokens': 93},
+                        input_tokens=93,
+                        input_text_tokens=93,
+                        output_tokens=296,
+                        cost=Decimal('0.00117975'),
+                    ),
+                    model_name='gemini-3.8-flash',
+                    model_id='google:gemini-3.8-flash',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
+                    provider_details={'finish_reason': 'MAX_TOKENS'},
+                    provider_response_id='kv8Fa6fZEbCeqtsPmZODqAo',
+                    finish_reason='length',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )
+    else:
+        assert messages == snapshot(
+            [
+                ModelRequest(
+                    parts=[
+                        UserPromptPart(content='List the 100 largest cities in the world.', timestamp=IsDatetime()),
+                        ModelSettingsDeltaPart(settings={'thinking': 'minimal'}, top_level=True),
+                    ],
+                    timestamp=IsDatetime(),
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+                ModelResponse(
+                    parts=[],
+                    usage=RequestUsage(
+                        details={'text_prompt_tokens': 93},
+                        input_tokens=93,
+                        input_text_tokens=93,
+                        output_tokens=296,
+                        cost=Decimal('0.00117975'),
+                    ),
+                    model_name='gemini-3.8-flash',
+                    model_id='google:gemini-3.8-flash',
+                    timestamp=IsDatetime(),
+                    provider_name='google',
+                    provider_url='https://generativelanguage.googleapis.com/',
+                    canonical_system='google',
+                    provider_details={'finish_reason': 'MAX_TOKENS'},
+                    provider_response_id='if8Fa47rLrGnmtkPt7uUmAE',
+                    finish_reason='length',
+                    run_id=IsStr(),
+                    conversation_id=IsStr(),
+                ),
+            ]
+        )

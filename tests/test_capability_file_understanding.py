@@ -11,6 +11,7 @@ from unittest.mock import AsyncMock, patch
 
 import anyio
 import pytest
+import sniffio
 
 from pydantic_ai import (
     Agent,
@@ -42,10 +43,12 @@ from tests._timeouts import READINESS_WAIT_TIMEOUT
 
 from ._inline_snapshot import snapshot
 from .conftest import IsStr, try_import
+from .models.conftest import scale_download_limits, serve_text_files
 
 with try_import() as imports_successful:
     from pydantic_ai.models.anthropic import AnthropicModel
     from pydantic_ai.models.google import GoogleModel
+    from pydantic_ai.models.google_interactions import GoogleInteractionsModel
     from pydantic_ai.providers.anthropic import AnthropicProvider
     from pydantic_ai.providers.google import GoogleProvider
 
@@ -559,18 +562,118 @@ async def test_a_text_document_by_url_is_downloaded_once_per_conversation():
         assert download.call_count == 1
 
 
+def _text_document_agent(seen: list[list[ModelMessage]]) -> Agent[None, str]:
+    def capture(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        seen.append(messages)
+        return ModelResponse(parts=[TextPart('ok')])
+
+    text_only = FunctionModel(capture, profile=ModelProfile(supports_document_input=False))
+    return Agent(text_only, capabilities=[FileUnderstanding(fallback_subagent_model=FunctionModel(Describer()))])
+
+
+async def test_text_documents_by_url_are_downloaded_one_at_a_time(monkeypatch: pytest.MonkeyPatch):
+    """Text documents share the request's download total, and are downloaded one after another.
+
+    Each download in flight reserves up to the per-file limit of the total, so 11 at once would leave the last one
+    nothing, however small the files are. One at a time, only the bytes actually downloaded count. The limits are
+    scaled down: 1 KiB per file and 10 KiB in total.
+
+    Not a VCR test: the files are served locally to count the downloads in flight, and the model's reply plays no
+    part.
+    """
+    if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
+        pytest.skip('Agent.run() requires asyncio')
+    sizes = {f'small{i}': 5 for i in range(11)}
+    in_flight = serve_text_files(monkeypatch, sizes)
+    seen: list[list[ModelMessage]] = []
+    agent = _text_document_agent(seen)
+
+    scale_download_limits(monkeypatch)
+
+    await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
+
+    assert in_flight == [1] * 11
+    assert [len(item.splitlines()[1]) for item in last_prompt(seen) if isinstance(item, str)] == [5] * 11
+
+
+async def test_text_documents_by_url_are_downloaded_while_the_total_has_room(monkeypatch: pytest.MonkeyPatch):
+    """With most of the total already downloaded, each small document still gets what is left of it.
+
+    A cap of downloads in flight would not do: with 9 KiB of the 10 KiB total held, ten small documents in flight at
+    once can't each reserve the 1 KiB per-file limit.
+
+    Not a VCR test: the files are served locally at sizes set against the total, and the model's reply plays no part.
+    """
+    if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
+        pytest.skip('Agent.run() requires asyncio')
+    sizes = {**{f'big{i}': 1000 for i in range(9)}, **{f'small{i}': 5 for i in range(10)}}
+    serve_text_files(monkeypatch, sizes)
+    seen: list[list[ModelMessage]] = []
+    agent = _text_document_agent(seen)
+
+    scale_download_limits(monkeypatch)
+
+    await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
+
+    assert [len(item.splitlines()[1]) for item in last_prompt(seen) if isinstance(item, str)] == [1000] * 9 + [5] * 10
+
+
+@pytest.mark.parametrize(
+    ('sizes', 'error'),
+    [
+        pytest.param(
+            {f'doc{i}': 1000 for i in range(11)},
+            'File URL downloads for one model request exceed the total of 10240 bytes; '
+            'pass large files as `BinaryContent` instead.',
+            id='past-the-total',
+        ),
+        pytest.param({'doc': 2000}, 'Download exceeds the maximum size of 1024 bytes.', id='past-the-per-file-limit'),
+    ],
+)
+async def test_text_documents_by_url_are_refused_past_the_download_limits(
+    sizes: dict[str, int], error: str, monkeypatch: pytest.MonkeyPatch
+):
+    """The text documents one request downloads are refused past the per-request total and the per-file limit.
+
+    Not a VCR test: the request is refused before any model request is sent.
+    """
+    if sniffio.current_async_library() != 'asyncio':  # pragma: no cover
+        pytest.skip('Agent.run() requires asyncio')
+    serve_text_files(monkeypatch, sizes)
+    agent = _text_document_agent([])
+
+    scale_download_limits(monkeypatch)
+
+    with pytest.raises(ValueError) as exc_info:
+        await agent.run([DocumentUrl(f'https://93.184.215.14/{name}.txt') for name in sizes])
+
+    assert str(exc_info.value) == error
+
+
 @pytest.mark.skipif(not imports_successful(), reason='anthropic or google not installed')
 @pytest.mark.vcr()
+@pytest.mark.parametrize('api_family', ['generate-content', 'interactions'], ids=['google', 'google-interactions'])
 async def test_a_real_adapter_that_cannot_read_a_video_gets_a_real_description(
-    allow_model_requests: None, anthropic_api_key: str, gemini_api_key: str, video_content: BinaryContent
+    allow_model_requests: None,
+    anthropic_api_key: str,
+    gemini_api_key: str,
+    video_content: BinaryContent,
+    api_family: str,
 ):
     # Claude takes no video, so without the capability this request raises in the Anthropic adapter.
     claude = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
-    gemini = GoogleModel('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
+    model_class = GoogleInteractionsModel if api_family == 'interactions' else GoogleModel
+    gemini = model_class('gemini-3.8-flash', provider=GoogleProvider(api_key=gemini_api_key))
     agent = Agent(claude, capabilities=[FileUnderstanding(fallback_subagent_model=gemini)])
 
     result = await agent.run(['What happens in this video? Answer in one short sentence.', video_content])
 
+    if isinstance(gemini, GoogleInteractionsModel):
+        assert result.output == snapshot(
+            'A black digital camera on a tripod, set up on a remote desert dirt road at golden hour, shows its monitor displaying the same canyon landscape that stretches out behind it.'
+        )
+        assert result.usage.requests == 2
+        return
     assert result.output == snapshot(
         'This file describes a still photograph, not a video, showing a camera on a tripod in a red rock canyon, with its screen displaying a dirt road leading toward distant mountains.'
     )

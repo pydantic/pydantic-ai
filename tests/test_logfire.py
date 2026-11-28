@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import json
 import warnings
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -10,6 +11,7 @@ import pytest
 from dirty_equals import IsJson, IsList
 
 # `StatusCode` lives in `opentelemetry-api`, a core dependency, so it needs no guard.
+from opentelemetry import baggage as otel_baggage, context as otel_context
 from opentelemetry.trace import StatusCode
 from pydantic import BaseModel, TypeAdapter, ValidationError, model_serializer
 from typing_extensions import TypedDict
@@ -28,7 +30,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapModelRequestHandler
+from pydantic_ai.capabilities import AbstractCapability, Hooks, ProcessHistory, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.conversation import Conversation
 from pydantic_ai.exceptions import (
@@ -50,7 +52,7 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
-from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
+from tests.function_model_prefix import HOOK_REWRITES_REQUEST, INSTRUCTIONS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics, try_import
@@ -471,6 +473,7 @@ def test_logfire(
                                 'metadata': None,
                                 'timeout': None,
                                 'durable': None,
+                                'ui_visibility': None,
                                 'defer_loading': False,
                                 'toolset_id': None,
                                 'unless_native': None,
@@ -1304,6 +1307,7 @@ def test_instructions_with_structured_output_exclude_content_v2_v3(
                                 'metadata': None,
                                 'timeout': None,
                                 'durable': None,
+                                'ui_visibility': None,
                                 'defer_loading': False,
                                 'toolset_id': '<output>',
                                 'unless_native': None,
@@ -5217,6 +5221,108 @@ async def test_nested_delegation_spans_sum_to_the_runs_total(capfire: CaptureLog
 
 
 @pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_sub_agent_cost_rolls_up_to_the_root_conversation(capfire: CaptureLogfire) -> None:
+    """Adding up chat-span tokens by top-level conversation counts every sub-agent's tokens in the chat.
+
+    The middle run gets its own `conversation_id`, as `SubAgents` gives each child, so adding up by
+    `gen_ai.conversation.id` alone leaves its tokens out of the chat. Its spans also carry
+    `pydantic_ai.root_conversation_id`. The leaf, started from the middle run, reuses the chat's
+    `conversation_id`, so like the top-level run its spans don't carry the attribute, and the sum
+    uses `gen_ai.conversation.id` for them, as the docs say to.
+
+    This is not a VCR test: it checks which attributes the spans carry, which a recorded provider
+    response wouldn't change, and fixed token counts keep the sums easy to check.
+    """
+
+    def leaf_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        return ModelResponse(parts=[TextPart('leaf')], usage=RequestUsage(input_tokens=1))
+
+    leaf = Agent(FunctionModel(leaf_fn), name='leaf', capabilities=[Instrumentation()])
+
+    def delegating_fn(tool_name: str, tokens: int):
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            usage = RequestUsage(input_tokens=tokens)
+            if len(messages) == 1:
+                return ModelResponse(parts=[ToolCallPart(tool_name, {})], usage=usage)
+            return ModelResponse(parts=[TextPart('done')], usage=usage)
+
+        return fn
+
+    middle = Agent(FunctionModel(delegating_fn('ask_leaf', 10)), name='middle', capabilities=[Instrumentation()])
+
+    @middle.tool_plain
+    async def ask_leaf() -> str:
+        return (await leaf.run('x', conversation_id='chat')).output
+
+    top = Agent(FunctionModel(delegating_fn('ask_middle', 100)), name='top', capabilities=[Instrumentation()])
+
+    @top.tool_plain
+    async def ask_middle() -> str:
+        return (await middle.run('x', conversation_id='middle-conversation')).output
+
+    await top.run('go', conversation_id='chat')
+
+    cost_by_chat: dict[str, int] = {}
+    for span in capfire.exporter.exported_spans_as_dict():
+        attributes = span['attributes']
+        if attributes.get('gen_ai.operation.name') == 'chat':
+            chat = attributes.get('pydantic_ai.root_conversation_id', attributes['gen_ai.conversation.id'])
+            cost_by_chat[chat] = cost_by_chat.get(chat, 0) + attributes['gen_ai.usage.input_tokens']
+    assert cost_by_chat == snapshot({'chat': 221})
+
+    root_by_run = {
+        span['attributes']['gen_ai.agent.name']: span['attributes'].get('pydantic_ai.root_conversation_id')
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'invoke_agent'
+    }
+    assert root_by_run == snapshot({'leaf': None, 'middle': 'chat', 'top': None})
+    leaf_chat_roots = {
+        span['attributes'].get('pydantic_ai.root_conversation_id')
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'chat'
+        and span['attributes']['gen_ai.agent.name'] == 'leaf'
+    }
+    assert leaf_chat_roots == snapshot({None})
+    root_by_tool = {
+        span['attributes']['gen_ai.tool.name']: span['attributes'].get('pydantic_ai.root_conversation_id')
+        for span in capfire.exporter.exported_spans_as_dict()
+        if span['attributes'].get('gen_ai.operation.name') == 'execute_tool'
+    }
+    assert root_by_tool == snapshot({'ask_middle': None, 'ask_leaf': 'chat'})
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+async def test_root_conversation_id_ignores_incoming_baggage(capfire: CaptureLogfire) -> None:
+    """A top-level conversation ID sent in a request's baggage header doesn't reach the run's spans.
+
+    A web app's OTel setup fills baggage from the `baggage` header of each request, and Logfire
+    copies every baggage key onto each span it starts. Without the agent run removing the key, a
+    client could make a top-level run's cost count under a conversation it picked. The baggage is
+    attached by hand here, as an OTel HTTP integration would.
+
+    This is not a VCR test: it checks which attributes the spans carry, which a recorded provider
+    response wouldn't change.
+    """
+    agent = Agent(TestModel(), name='top', capabilities=[Instrumentation()])
+
+    token = otel_context.attach(otel_baggage.set_baggage('pydantic_ai.root_conversation_id', 'someone-elses-chat'))
+    try:
+        await agent.run('hi', conversation_id='chat')
+    finally:
+        otel_context.detach(token)
+
+    spans = capfire.exporter.exported_spans_as_dict()
+    assert [
+        (
+            span['name'],
+            span['attributes'].get('gen_ai.conversation.id'),
+            span['attributes'].get('pydantic_ai.root_conversation_id'),
+        )
+        for span in spans
+    ] == snapshot([('chat test', 'chat', None), ('invoke_agent top', 'chat', None)])
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
 @pytest.mark.parametrize('include_content', [True, False])
 def test_model_request_exception_events_honor_include_content(capfire: CaptureLogfire, include_content: bool) -> None:
     """The model request span follows the same rule as the tool and agent run spans.
@@ -5496,3 +5602,145 @@ def test_a_retry_past_the_budget_records_its_cause_alone(
     assert {key: value for key, value in tool_span.items() if '.retry.' in key} == {
         'pydantic_ai.tool.retry.cause': 'model_retry'
     }
+
+
+def _sends(messages: list[ModelMessage], prompt: str) -> bool:
+    """Whether the request being sent carries the user prompt `prompt`."""
+    return any(isinstance(part, UserPromptPart) and part.content == prompt for part in messages[-1].parts)
+
+
+def _answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # A provider rejects an empty request, as when the history repair drops every part of one.
+    if _sends(messages, 'fail') or not messages[-1].parts:
+        raise RuntimeError('the model failed')
+    if _sends(messages, 'call a tool'):
+        return ModelResponse(parts=[ToolCallPart('a_tool')])
+    if info.output_tools:
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': 1})])
+    return ModelResponse(parts=[TextPart('an answer')])
+
+
+def a_tool() -> str:
+    return 'done'
+
+
+@dataclass(frozen=True)
+class RunSpanIndexCase:
+    id: str
+    prompts: tuple[str | None, ...]
+    """One run per prompt, each given the previous run's messages; the span checked is the last run's."""
+    expected_index: int | None
+    """`None` when the span leaves `pydantic_ai.new_message_index` out, which reads as 0."""
+    failed_run_tail: list[object] | None = None
+    """`pydantic_ai.all_messages` from the index on, for a last run that fails.
+
+    A last run that succeeds is checked against its `new_messages()` instead.
+    """
+    history: tuple[ModelMessage, ...] = ()
+    system_prompt: str | tuple[str, ...] = ()
+    output_type: type[str] | type[int] = str
+    capabilities: tuple[AbstractCapability[object], ...] = ()
+    marks: tuple[pytest.MarkDecorator, ...] = ()
+
+
+RUN_SPAN_INDEX_CASES = [
+    RunSpanIndexCase(
+        # The system prompt and the user prompt of the first request make two `all_messages` entries.
+        id='system-prompt-second-run',
+        prompts=('question 1', 'question 2'),
+        system_prompt='Be brief.',
+        expected_index=3,
+    ),
+    RunSpanIndexCase(
+        # Each run's prompt merges into the request that returned the previous run's output.
+        id='structured-output-third-run',
+        prompts=('question 1', 'question 2', 'question 3'),
+        output_type=int,
+        expected_index=5,
+    ),
+    RunSpanIndexCase(
+        # The processor drops the earlier run, so every message recorded is this run's.
+        id='history-processor-trims-earlier-runs',
+        prompts=('question 1', 'question 2'),
+        capabilities=(ProcessHistory(lambda messages: messages[-1:]),),
+        expected_index=None,
+        marks=(pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST),),
+    ),
+    RunSpanIndexCase(
+        id='resumed-without-prompt',
+        prompts=(None,),
+        history=(
+            ModelRequest(parts=[UserPromptPart('question 1')]),
+            ModelResponse(parts=[TextPart('an answer')]),
+            ModelRequest(parts=[UserPromptPart('question 2')]),
+        ),
+        expected_index=3,
+    ),
+    # A failed run keeps the index it had when it started, which can be off:
+    # https://github.com/pydantic/pydantic-ai/issues/14963. The two cases below pin failed runs where
+    # that index is right, which a fix there has to keep.
+    RunSpanIndexCase(
+        # The resumed request is the history the run was given, so the run added nothing.
+        id='resumed-without-prompt-model-fails',
+        prompts=(None,),
+        history=(
+            ModelRequest(parts=[UserPromptPart('question 1')]),
+            ModelResponse(parts=[TextPart('an answer')]),
+            ModelRequest(parts=[UserPromptPart('fail')]),
+        ),
+        expected_index=3,
+        failed_run_tail=[],
+    ),
+    RunSpanIndexCase(
+        # The processor drops the tool call this run added, the history repair then drops its orphaned
+        # tool return, and the model fails on the empty request: nothing the run added is recorded.
+        id='history-processor-drops-the-runs-tool-call-model-fails',
+        prompts=('call a tool',),
+        history=(
+            ModelRequest(parts=[UserPromptPart('question 1')]),
+            ModelResponse(parts=[TextPart('an answer')]),
+        ),
+        capabilities=(ProcessHistory(lambda messages: [*messages[:2], *messages[2:][-1:]]),),
+        expected_index=2,
+        failed_run_tail=[],
+        marks=(pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST),),
+    ),
+]
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in RUN_SPAN_INDEX_CASES])
+def test_run_span_new_message_index(
+    case: RunSpanIndexCase, capfire: CaptureLogfire, get_logfire_summary: Callable[[], LogfireSummary]
+) -> None:
+    """`pydantic_ai.new_message_index` is where the run's own messages start in `pydantic_ai.all_messages`.
+
+    This is not a VCR test: it checks which attributes the run span carries, which a recorded provider
+    response wouldn't change.
+    """
+    settings = InstrumentationSettings()
+    agent = Agent(
+        FunctionModel(_answer),
+        system_prompt=case.system_prompt,
+        output_type=case.output_type,
+        tools=[a_tool],
+        capabilities=[*case.capabilities, Instrumentation(settings=settings)],
+    )
+    history = list(case.history)
+    *earlier_prompts, prompt = case.prompts
+    for earlier_prompt in earlier_prompts:
+        history = agent.run_sync(earlier_prompt, message_history=history).all_messages()
+    capfire.exporter.clear()
+
+    if case.failed_run_tail is None:
+        result = agent.run_sync(prompt, message_history=history)
+        expected_tail = settings.messages_to_otel_messages(result.new_messages())
+    else:
+        with pytest.raises(RuntimeError):
+            agent.run_sync(prompt, message_history=history)
+        expected_tail = case.failed_run_tail
+
+    run_span = get_logfire_summary().attributes[0]
+    index = run_span.get('pydantic_ai.new_message_index')
+    assert index == case.expected_index
+    assert json.loads(run_span['pydantic_ai.all_messages'])[index or 0 :] == expected_tail

@@ -37,6 +37,7 @@ from pydantic_monty import (
     CollectString,
     ExcType,
     ExternalExceptionData,
+    ExternalModule,
     ExternalResult,
     ExternalReturnValue,
     ExternalSettledResult,
@@ -425,6 +426,7 @@ async def run_monty_turn(
     *,
     os_policy: OSPolicy,
     mount: MountDir | list[MountDir] | None,
+    external_modules: Mapping[str, ExternalModule] | None,
 ) -> MontyTurn:
     """Run one turn on a session checked out of `pool`, and store the state it leaves.
 
@@ -440,6 +442,9 @@ async def run_monty_turn(
         type_check=request.type_check_stubs is not None,
         type_check_stubs=request.type_check_stubs,
         os_policy=os_policy,
+        # Imports are answered here, in the turn. Calls into the modules leave it like tool calls,
+        # so the workflow runs them the same way whether or not turns are activities.
+        external_modules=external_modules,
         ephemeral=False,
     ) as session:
         turn = await _run_turn(session, request, mount=mount, capture=capture)

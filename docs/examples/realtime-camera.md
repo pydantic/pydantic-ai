@@ -26,7 +26,7 @@ Add credentials for a picker model to the repository-root `.env`, for example:
 GOOGLE_API_KEY=your-google-api-key
 ```
 
-The sketch-redraw tool delegates to a separate drawing agent — `google:gemini-3.5-flash` by
+The sketch-redraw tool delegates to a separate drawing agent — `google:gemini-4-hydrogen` by
 default, which reuses the same `GOOGLE_API_KEY`. Set `CAMERA_DRAW_MODEL` to any other
 `provider:model` your credentials cover, or `CAMERA_DRAW=false` to disable drawing; the rest of the
 assistant works either way.

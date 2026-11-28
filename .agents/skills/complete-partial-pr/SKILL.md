@@ -77,10 +77,16 @@ BASE_REF_NAME=$(gh pr view "$PR_NUMBER" --json baseRefName -q .baseRefName)
 [ -n "$BASE_REF_NAME" ] || { echo "no base ref; stop"; exit 1; }
 git fetch upstream "$BASE_REF_NAME" || git fetch origin "$BASE_REF_NAME"
 POLICY_BASE_DIR="$(mktemp -d)/policy-base"
-git worktree add --detach "$POLICY_BASE_DIR" "$(git rev-parse FETCH_HEAD)"
+slimtree new --detach "$(git rev-parse FETCH_HEAD)" --path "$POLICY_BASE_DIR"
 # ... complete the workflow below, launching subagents from "$POLICY_BASE_DIR" ...
-git worktree remove --force "$POLICY_BASE_DIR"
+slimtree rm --force --no-archive "$POLICY_BASE_DIR"
 ```
+
+Use [slimtree](https://pypi.org/project/slimtree/) 0.4.0 or later when it is installed: it checks
+out the commit without a second copy of the files. slimtree is optional. Without it, or when
+`slimtree new` fails, run `git worktree add --detach "$POLICY_BASE_DIR" "$(git rev-parse FETCH_HEAD)"`,
+and remove the policy base with `git worktree remove --force "$POLICY_BASE_DIR"`. Remove the policy
+base with the tool that made it.
 
 The branch-context files and `CLAUDE.local.md` have no policy-base version — they are per-worktree
 state that lives on no branch. Read the branch-context files as the local notes they are, and do not

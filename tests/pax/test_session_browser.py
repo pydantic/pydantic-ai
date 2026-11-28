@@ -233,6 +233,43 @@ def test_empty_search_and_scripted_loop() -> None:
     assert widget.handle_key(Key.ESCAPE) == ''
 
 
+def test_delete_confirmation_survives_idle_poll_then_y_deletes() -> None:
+    widget, entries = browser(keys=['', Key.ENTER, Key.DOWN, 'd', '', 'y', 'ctrl-c'])
+    scripted = widget.key_source
+    seen: list[tuple[str, bool]] = []
+
+    def poll() -> str:
+        pending = scripted()
+        seen.append((pending, bool(widget.confirm)))
+        return pending
+
+    widget.key_source = poll
+    assert widget.loop() == ''
+    assert [key for key, _ in seen[:4]] == ['', Key.ENTER, Key.DOWN, 'd']
+    assert seen[4] == ('', True)  # idle poll with the delete confirmation open
+    assert widget.confirm is None
+    assert len(entries) == 2
+
+
+def test_delete_confirmation_survives_idle_poll_then_n_cancels() -> None:
+    widget, entries = browser(keys=['', Key.ENTER, Key.DOWN, 'd', '', '', 'n', 'ctrl-c'])
+    scripted = widget.key_source
+    seen: list[tuple[str, bool]] = []
+
+    def poll() -> str:
+        pending = scripted()
+        seen.append((pending, bool(widget.confirm)))
+        return pending
+
+    widget.key_source = poll
+    assert widget.loop() == ''
+    assert [key for key, _ in seen[:4]] == ['', Key.ENTER, Key.DOWN, 'd']
+    assert seen[4] == ('', True)  # idle polls with the delete confirmation open
+    assert seen[5] == ('', True)
+    assert widget.confirm is None
+    assert len(entries) == 3
+
+
 @pytest.mark.parametrize('workspace', ['/a/project', '/b/project', '/missing/clai2/worktree'])
 def test_resume_without_directory_confirmation(workspace: str) -> None:
     widget, entries = browser(keys=[Key.ENTER, '', Key.ENTER, '', 'ctrl-c'])

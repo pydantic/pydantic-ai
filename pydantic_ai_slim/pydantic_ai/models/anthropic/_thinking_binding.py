@@ -35,7 +35,7 @@ class AnthropicStaleThinkingBlockWarning(Warning):
     Claude Fable 5.1 and 5.2, Claude Mythos 5.2, Claude Opus 5.5, Claude Sonnet 5.5, and Claude Haiku 5.5 bind each
     thinking block to the conversation prefix that produced it and reject a replay once that prefix changes — which a
     dynamic [instructions][pydantic_ai.Agent.instructions] function and a
-    [filtered toolset](../toolsets.md#filtering-tools) both do by design. Fable 5.2 and Mythos 5.2 enforce the check
+    [filtered toolset](../../toolsets.md#filtering-tools) both do by design. Fable 5.2 and Mythos 5.2 enforce the check
     on every account; the other models enforce it for accounts created on or after 2026-08-31, and for older accounts
     record the mismatch and act on it only if the request asks it to.
 

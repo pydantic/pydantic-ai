@@ -13,17 +13,17 @@ pre-agent-steps:
       # Pax's published `-p` command is the headless interface used by this
       # engine. The agent hooks and MCP composition require Pydantic AI 2.54, and
       # GITHUB_COPILOT_INTEGRATION_ID below requires 2.59.
-      python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}" "pydantic-clai2==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0" "cryptography>=48.0.1"
+      python3 -P -m pip install --quiet --user --disable-pip-version-check "pydantic-ai-harness[coder]==${GH_AW_ENGINE_VERSION}" "pydantic-ai-pax==${GH_AW_ENGINE_VERSION}" "pydantic-ai-slim[anthropic,openai,mcp,spec]>=2.59.0" "cryptography>=48.0.1"
       # Logfire 4.39.0 is pydantic-ai-slim's compatibility floor. Install it only
       # when gh-aw supplies an OTLP endpoint, so other runs pay no installation cost.
       if [ -n "${OTEL_EXPORTER_OTLP_ENDPOINT:-}" ]; then
         python3 -P -m pip install --quiet --user --disable-pip-version-check "logfire>=4.39.0"
       fi
-      "$HOME/.local/bin/clai2" --help
+      "$HOME/.local/bin/pax" --help
       python3 -P -c "from pydantic_ai_harness import Coder"
 engine:
   id: pydantic-ai
-  version: "0.75.0"
+  version: "0.77.0"
   display-name: Pydantic AI
   description: Pax headless runner for Pydantic AI agents with MCP tool support
   mcp: true
@@ -61,7 +61,7 @@ engine:
         openai: api.openai.com
         codex: api.openai.com
     execution:
-      command-name: clai2
+      command-name: pax
       step-name: Execute Pydantic AI CLI
       model-env-var: PAI_MODEL
       write-timestamp: true
@@ -137,7 +137,7 @@ engine:
           sequence += 1
       `;
 
-      // `clai2 -a` takes one target, either an import path or a JSON/YAML agent
+      // `pax -a` takes one target, either an import path or a JSON/YAML agent
       // spec, and the spec format resolves capability names through a closed
       // registry that the harness capabilities are not part of, so the coder
       // composition cannot be expressed as a spec. It is written as a Python
@@ -468,7 +468,7 @@ engine:
       telemetry_enabled = False
       metadata = None
       try:
-          importlib.import_module('pydantic_clai2')
+          importlib.import_module('pydantic_ai_pax')
           telemetry_path = os.environ.get('PAI_OTEL_EXPORT_PATH')
           if telemetry_path or os.environ.get('OTEL_EXPORTER_OTLP_ENDPOINT'):
               import atexit
@@ -525,9 +525,12 @@ engine:
               if not isinstance(loaded_metadata, dict) or not all(isinstance(key, str) for key in loaded_metadata):
                   raise TypeError('PAI_RESULT_METADATA must refer to a dictionary with string keys')
               metadata = loaded_metadata
+          # Pax runs on the environment this step prepared. Set after the agent module imports, so the
+          # step environment the default agent hands its commands stays as it was.
+          os.environ['PYTHON_DOTENV_DISABLED'] = '1'
           # Read in-process: workflow context can exceed the OS argv limit.
-          sys.argv = ['clai2', *cli_args, '-p', Path(prompt_file).read_text(encoding='utf-8')]
-          runpy.run_module('pydantic_clai2', run_name='__main__', alter_sys=True)
+          sys.argv = ['pax', *cli_args, '-p', Path(prompt_file).read_text(encoding='utf-8')]
+          runpy.run_module('pydantic_ai_pax', run_name='__main__', alter_sys=True)
       except SystemExit as exc:
           if isinstance(exc.code, int):
               exit_code = exc.code
@@ -632,7 +635,7 @@ engine:
 
         const env = { ...process.env };
         delete env.GH_AW_SESSION_CAPTURE_FD;
-        // `pip install --user` puts `clai2` here. The runner tool cache that holds
+        // `pip install --user` puts `pax` here. The runner tool cache that holds
         // `uv` and the interpreter's own bin directory is under /opt, which the
         // sandbox exposes read-only, but the home directory is where the CLI and
         // its user site-packages actually live.

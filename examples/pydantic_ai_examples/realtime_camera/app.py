@@ -106,11 +106,11 @@ PROACTIVE = _truthy(os.environ.get('CAMERA_PROACTIVE'))
 AFFECTIVE = _truthy(os.environ.get('CAMERA_AFFECTIVE'))
 # Sketch-to-diagram: the `redraw_diagram` tool passes the realtime model's text description of a
 # sketch to a separate drawing agent that renders it as clean HTML. The default drawing model reuses
-# the `GOOGLE_API_KEY` the default realtime model already needs, and is a fast small model because
-# the user is waiting on a live call: output tokens dominate the redraw's latency, and a larger
-# model mostly adds thinking time. `CAMERA_DRAW_MODEL` takes any `provider:model` string.
+# the `GOOGLE_API_KEY` the default realtime model already needs, and the agent thinks at low effort
+# because the user is waiting on a live call: output tokens dominate the redraw's latency, and more
+# thinking mostly adds time. `CAMERA_DRAW_MODEL` takes any `provider:model` string.
 DRAW = _truthy(os.environ.get('CAMERA_DRAW', 'true'))
-DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'google:gemini-3.5-flash')
+DRAW_MODEL = os.environ.get('CAMERA_DRAW_MODEL', 'google:gemini-4-hydrogen')
 # Web search (the `WebSearch` capability) — on by default, but only enabled for a session when the
 # selected model supports web search natively (see `_web_search_supported`), so switching models
 # drops the capability instead of failing the session.
@@ -233,7 +233,7 @@ def _draw_agent() -> Agent[None, str]:
         DRAW_MODEL,
         name='diagram_drawer',
         instructions=DRAW_INSTRUCTIONS,
-        model_settings={'max_tokens': 16_384},
+        model_settings={'max_tokens': 16_384, 'thinking': 'low'},
         capabilities=[Caching()],
     )
 

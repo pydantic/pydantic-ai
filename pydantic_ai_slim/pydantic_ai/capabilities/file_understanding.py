@@ -2,9 +2,12 @@ from __future__ import annotations
 
 import hashlib
 from collections.abc import Iterator
+from contextlib import nullcontext
+from contextvars import ContextVar
 from dataclasses import KW_ONLY, dataclass, replace
 from typing import TYPE_CHECKING, TypeGuard, TypeVar
 
+import anyio
 from pydantic import TypeAdapter, ValidationError
 
 from pydantic_ai._file_input import SendableFile, inferred_media_type, unsupported_file_input
@@ -18,7 +21,12 @@ from pydantic_ai.messages import (
     ToolReturnPart,
     UserPromptPart,
 )
-from pydantic_ai.models import KnownModelName, Model, download_item
+from pydantic_ai.models import (
+    KnownModelName,
+    Model,
+    _open_request_download_budget,  # pyright: ignore[reportPrivateUsage]
+    download_item,
+)
 from pydantic_ai.profiles import ModelProfile
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai.usage import RunUsage
@@ -37,6 +45,13 @@ _FRAMEWORK_METADATA_KEY = '__pydantic_ai__'
 """The namespace in `metadata` reserved for framework state, which the UI adapters never send to or read from a client."""
 
 _NAMESPACE_KEY = 'file_understanding'
+
+# Each download in flight reserves up to the per-file limit of the request's total, so text documents downloaded at
+# the same time would be refused once the text already held leaves less than that per download. They are downloaded
+# one at a time instead, so only the bytes actually downloaded count. A durable engine that runs each operation from
+# its serialized inputs, such as Temporal, runs `_describe` where this and the total don't reach, so each download
+# there has the per-file limit only.
+_text_download_lock: ContextVar[anyio.Lock | None] = ContextVar('_text_download_lock', default=None)
 
 _DEFAULT_INSTRUCTIONS = (
     'Describe this file in detail, so that someone who cannot see it can answer questions about it. '
@@ -84,10 +99,12 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
     back, so a conversation whose history the client holds describes the file again each turn, and a new
     description can differ, which changes earlier requests and costs the cached prefix.
 
-    The distinct files a request needs described are described concurrently. Each describing call is a run of its
-    own, but its requests, tokens and cost are added to the agent run's [usage][pydantic_ai.usage.RunUsage], and
-    the run's [usage limits][pydantic_ai.usage.UsageLimits] are checked before any is sent, as if the describing
-    requests were the run's next ones.
+    The distinct files a request needs described are described concurrently, while the text documents given by URL
+    are downloaded one after another, within a total of their own of 500 MiB per request (under a durable engine that
+    runs each operation from its serialized inputs, such as Temporal, within the 50 MiB per-file limit only). Each
+    describing call is a run of its own, but its requests, tokens and cost are added to the agent run's
+    [usage][pydantic_ai.usage.RunUsage], and the run's [usage limits][pydantic_ai.usage.UsageLimits] are checked before
+    any is sent, as if the describing requests were the run's next ones.
     """
 
     fallback_subagent_model: Model | KnownModelName | str
@@ -127,25 +144,10 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
 
         # Every file is found first, so the distinct ones can be described at once rather than one after another.
         recorded = self._recorded_descriptions([*ctx.messages, *request_context.messages])
-        descriptions: dict[str, str] = {}
-        pending: dict[str, SendableFile] = {}
-        unaccepted = False
-        for content in _file_content(request_context.messages):
-            if (item := _unaccepted_file(content, profile)) is None:
-                continue
-            unaccepted = True
-            if _is_text_bytes(item):
-                # Decoded where it is inlined: that costs nothing, so it isn't described or cached.
-                continue
-            identity = _identity(item)
-            if identity in descriptions or identity in pending:
-                continue
-            if (found := recorded.get(identity)) is not None:
-                descriptions[identity] = found
-            else:
-                pending[identity] = item
-        if not unaccepted:
+        found = _split_unaccepted_files(request_context.messages, profile, recorded)
+        if found is None:
             return request_context
+        descriptions, pending = found
 
         if pending:
             await self._describe_pending(ctx, pending, descriptions)
@@ -209,7 +211,13 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
             if requests:
                 usage_limits.check_before_request(ctx.usage + RunUsage(requests=requests))
 
-        results = await gather(*(self._describe(item) for item in pending.values()))
+        token = _text_download_lock.set(anyio.Lock())
+        try:
+            # A total of its own: the model request this hook prepares opens another for the files it downloads.
+            with _open_request_download_budget():
+                results = await gather(*(self._describe(item) for item in pending.values()))
+        finally:
+            _text_download_lock.reset(token)
         for identity, (description, usage) in zip(pending, results):
             # usage-attribution: ok, the run's total only; the describing run's own span reports these requests
             ctx.usage.incr(usage)
@@ -226,13 +234,44 @@ class FileUnderstanding(AbstractCapability[AgentDepsT]):
         from pydantic_ai.agent import Agent
 
         if isinstance(item, DocumentUrl) and _text_media_type(item) is not None:
-            return (await download_item(item, data_format='text'))['data'], RunUsage()
+            # Waited for inside the operation rather than before it is scheduled, so a durable engine still sees
+            # every `describe` operation of the request scheduled at once.
+            lock = _text_download_lock.get()
+            async with lock if lock is not None else nullcontext():
+                return (await download_item(item, data_format='text'))['data'], RunUsage()
 
         agent: Agent[None, str] = Agent(
             self.fallback_subagent_model, output_type=str, instructions=self.instructions or _DEFAULT_INSTRUCTIONS
         )
         result = await agent.run([item])
         return result.output, result.usage
+
+
+def _split_unaccepted_files(
+    messages: list[ModelMessage], profile: ModelProfile, recorded: dict[str, str]
+) -> tuple[dict[str, str], dict[str, SendableFile]] | None:
+    """The descriptions and the files still to describe, by identity, of the files in `messages` the model doesn't accept.
+
+    A file `recorded` holds a description of is not described again. `None` when the model accepts every file.
+    """
+    descriptions: dict[str, str] = {}
+    pending: dict[str, SendableFile] = {}
+    unaccepted = False
+    for content in _file_content(messages):
+        if (item := _unaccepted_file(content, profile)) is None:
+            continue
+        unaccepted = True
+        if _is_text_bytes(item):
+            # Decoded where it is inlined: that costs nothing, so it isn't described or cached.
+            continue
+        identity = _identity(item)
+        if identity in descriptions or identity in pending:
+            continue
+        if (found := recorded.get(identity)) is not None:
+            descriptions[identity] = found
+        else:
+            pending[identity] = item
+    return (descriptions, pending) if unaccepted else None
 
 
 def _file_content(messages: list[ModelMessage]) -> Iterator[object]:
@@ -270,28 +309,29 @@ def _substitute(message: ModelMessage, profile: ModelProfile, descriptions: dict
     if not isinstance(message, ModelRequest):
         return message
 
-    def text_for(content: _T) -> _T | str:
-        if (item := _unaccepted_file(content, profile)) is None:
-            return content
-        # What goes back is prose about the file, so it is text whatever the file was. A text-like document is
-        # inlined as its own content instead of described, and that one keeps the media type it came with.
-        media_type = _text_media_type(item) or 'text/plain'
-        if _is_text_bytes(item):
-            description = item.data.decode('utf-8')
-        else:
-            description = descriptions[_identity(item)]
-        return format_inlined_text_file(description, media_type=media_type, identifier=item.identifier)
-
     original_parts = list(message.parts)
     parts: list[ModelRequestPart] = []
     for part in original_parts:
         if isinstance(part, UserPromptPart) and not isinstance(part.content, str):
-            part = replace(part, content=[text_for(item) for item in part.content])
+            part = replace(part, content=[_text_for(item, profile, descriptions) for item in part.content])
         elif isinstance(part, ToolReturnPart) and part.files:
-            items = [text_for(item) for item in part.content_items()]
+            items = [_text_for(item, profile, descriptions) for item in part.content_items()]
             part = replace(part, content=items if isinstance(part.content, list) else items[0])
         parts.append(part)
     return replace(message, parts=parts) if parts != original_parts else message
+
+
+def _text_for(content: _T, profile: ModelProfile, descriptions: dict[str, str]) -> _T | str:
+    if (item := _unaccepted_file(content, profile)) is None:
+        return content
+    # What goes back is prose about the file, so it is text whatever the file was. A text-like document is
+    # inlined as its own content instead of described, and that one keeps the media type it came with.
+    media_type = _text_media_type(item) or 'text/plain'
+    if _is_text_bytes(item):
+        description = item.data.decode('utf-8')
+    else:
+        description = descriptions[_identity(item)]
+    return format_inlined_text_file(description, media_type=media_type, identifier=item.identifier)
 
 
 def _identity(item: SendableFile) -> str:

@@ -65,6 +65,7 @@ from pydantic_ai import (
     UserContent,
     UserPromptPart,
     WebCitationSource,
+    capture_run_messages,
 )
 from pydantic_ai._agent_graph import ModelRequestNode
 from pydantic_ai._framing import lookalike_note_announcement
@@ -79,7 +80,7 @@ from pydantic_ai.capabilities import (
     ToolSearch,
 )
 from pydantic_ai.capabilities.instrumentation import Instrumentation
-from pydantic_ai.exceptions import ContentFilterError, UnexpectedModelBehavior, UserError
+from pydantic_ai.exceptions import ContentFilterError, IncompleteToolCall, UnexpectedModelBehavior, UserError
 from pydantic_ai.messages import (
     CompactionPart,
     InstructionPart,
@@ -2372,7 +2373,7 @@ async def test_anthropic_thinking_drops_the_sampling_settings_it_rejects(
     assert result.output.strip() == snapshot('4')
     body = request_capture.body('/v1/messages')
     assert {key: value for key, value in body.items() if key in ('temperature', 'top_p', 'top_k', 'thinking')} == (
-        snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 10000}})
+        snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}})
     )
 
 
@@ -2451,7 +2452,7 @@ async def test_anthropic_thinking_keeps_sampling_settings_without_the_restrictio
     )
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 10000}
+    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}
     assert kwargs['extra_body'] == {'temperature': 0.5, 'top_p': 0.9, 'top_k': 40}
 
 
@@ -6987,11 +6988,13 @@ async def test_anthropic_refusal_content_filter_error_message_streaming(allow_mo
 @pytest.mark.parametrize(
     'thinking_value,expected_thinking,expected_effort',
     [
-        pytest.param(True, {'type': 'adaptive'}, None, id='true-adaptive'),
-        pytest.param('high', {'type': 'adaptive'}, 'high', id='high-adaptive-with-effort'),
-        pytest.param('low', {'type': 'adaptive'}, 'low', id='low-adaptive-with-effort'),
-        pytest.param('medium', {'type': 'adaptive'}, 'medium', id='medium-adaptive-with-effort'),
-        pytest.param('xhigh', {'type': 'adaptive'}, 'max', id='xhigh-maps-to-max'),
+        pytest.param(True, {'type': 'adaptive', 'display': 'summarized'}, None, id='true-adaptive'),
+        pytest.param('high', {'type': 'adaptive', 'display': 'summarized'}, 'high', id='high-adaptive-with-effort'),
+        pytest.param('low', {'type': 'adaptive', 'display': 'summarized'}, 'low', id='low-adaptive-with-effort'),
+        pytest.param(
+            'medium', {'type': 'adaptive', 'display': 'summarized'}, 'medium', id='medium-adaptive-with-effort'
+        ),
+        pytest.param('xhigh', {'type': 'adaptive', 'display': 'summarized'}, 'max', id='xhigh-maps-to-max'),
     ],
 )
 async def test_anthropic_unified_thinking_adaptive_model(
@@ -7041,7 +7044,7 @@ async def test_anthropic_unified_thinking_non_adaptive_model(allow_model_request
     await agent.run('What is 2+2?')
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 16384}
+    assert kwargs['thinking'] == {'type': 'enabled', 'budget_tokens': 16384, 'display': 'summarized'}
     # Non-adaptive models don't support effort
     assert kwargs.get('output_config') is None or kwargs['output_config'] is OMIT
 
@@ -7135,7 +7138,7 @@ async def test_anthropic_unified_thinking_opus_47_xhigh(allow_model_requests: No
     await agent.run('What is 2+2?')
 
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
-    assert kwargs['thinking'] == {'type': 'adaptive'}
+    assert kwargs['thinking'] == {'type': 'adaptive', 'display': 'summarized'}
     assert kwargs['output_config'] == {'effort': 'xhigh'}
 
 
@@ -7294,9 +7297,14 @@ async def test_anthropic_api_version_2026_10_21_drops_sampling_settings(
     m = AnthropicModel(model_name, provider=AnthropicProvider(anthropic_client=mock_client))
     agent = Agent(m, model_settings=AnthropicModelSettings(temperature=0, extra_body={'metadata': {'keep': True}}))
 
-    with pytest.warns(UserWarning, match='Sampling parameters'):
+    with pytest.warns(UserWarning) as recorded:
         await agent.run('What is 2+2?')
 
+    assert [str(w.message) for w in recorded if 'Sampling parameters' in str(w.message)] == snapshot(
+        [
+            "Sampling parameters ['temperature'] are rejected by Anthropic API version '2026-10-21'; send `anthropic-version: 2023-06-01` via the client's `default_headers` or the `extra_headers` model setting to keep them. These settings will be ignored."
+        ]
+    )
     kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
     assert kwargs['extra_body'] == {'metadata': {'keep': True}}
 
@@ -7430,7 +7438,14 @@ async def test_anthropic_adaptive_thinking_keeps_tool_output_unforced(
 
     assert result.output == snapshot(CityLocation(city='Paris', country='France'))
     assert [(body['thinking'], body['tool_choice']) for body in request_capture.bodies()] == snapshot(
-        [({'type': 'adaptive'}, {'type': 'auto'})]
+        [
+            (
+                {'type': 'adaptive', 'display': 'summarized'}
+                if not provider_specific_thinking
+                else {'type': 'adaptive'},
+                {'type': 'auto'},
+            )
+        ]
     )
 
 
@@ -18170,3 +18185,43 @@ async def test_text_plain_response_body_raises_model_api_error(allow_model_reque
 
     assert type(exc_info.value) is ModelAPIError
     assert exc_info.value.message == snapshot("Expected a JSON response, got: 'upstream connect error'")
+
+
+@pytest.mark.parametrize('stream', [False, True])
+async def test_anthropic_tool_output_cut_off_by_max_tokens(
+    allow_model_requests: None, anthropic_api_key: str, stream: bool
+):
+    """An output tool call the token limit cut off raises right away instead of re-prompting the model with the same limit.
+
+    Anthropic doesn't send the partial arguments: the tool call comes back with `{}` as its input, or no input when streamed.
+    """
+    model = AnthropicModel('claude-haiku-5-5', provider=AnthropicProvider(api_key=anthropic_api_key))
+
+    class City(BaseModel):
+        name: str
+        country: str
+
+    class Cities(BaseModel):
+        cities: list[City]
+
+    agent = Agent(
+        model, output_type=ToolOutput(Cities), model_settings=AnthropicModelSettings(max_tokens=40, thinking=False)
+    )
+    prompt = 'List the 20 largest cities in the world.'
+
+    with capture_run_messages() as messages:
+        with pytest.raises(
+            IncompleteToolCall,
+            match=r'Model token limit \(40\) exceeded while generating a tool call, resulting in incomplete arguments\.',
+        ):
+            if stream:
+                async with agent.run_stream(prompt) as result:
+                    await result.get_output()
+            else:
+                await agent.run(prompt)
+
+    [response] = [message for message in messages if isinstance(message, ModelResponse)]
+    assert response.finish_reason == 'length'
+    assert response.provider_details == {'finish_reason': 'max_tokens'}
+    assert response.tool_calls == [IsInstance(ToolCallPart)]
+    assert response.tool_calls[0].args == ('' if stream else {})

@@ -42,6 +42,8 @@ from pydantic_ai_pax.runtime.live_runtimes import LiveRuntimes
 from pydantic_ai_pax.runtime.process import ClaiProcess
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust
+from tests._timeouts import READINESS_WAIT_TIMEOUT
+from tests.pax.test_plugin_flag import PROBE
 
 
 class Recorder(Plugin):
@@ -894,3 +896,43 @@ async def test_run_web_opens_more_sessions_in_their_own_folders(
             assert Path.cwd() == launch
             group.cancel_scope.cancel()
     assert Path.cwd() == launch
+
+
+async def test_run_web_loads_launched_plugins_in_every_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """`pax --web -x NAME` loads `NAME` in the sessions the browser opens too, and saves it as disabled as it was."""
+    opened: list[str] = []
+    monkeypatch.setattr('pydantic_ai_pax.builtin_plugins.web.open_browser', opened.append)
+    monkeypatch.setattr(web_module, 'STOCK_PLUGINS', [*web_module.STOCK_PLUGINS, PROBE])
+    monkeypatch.chdir(tmp_path)
+    shells: list[SessionRuntime[None, str]] = []
+    build = web_module._web_session  # pyright: ignore[reportPrivateUsage]
+
+    def recorded(**kwargs: object) -> SessionRuntime[None, str]:
+        shell = build(**kwargs)  # pyright: ignore[reportArgumentType]
+        shells.append(shell)
+        return shell
+
+    monkeypatch.setattr(web_module, '_web_session', recorded)
+    store = SettingsStore(tmp_path / 'config.db')
+    output = _Output()
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with anyio.create_task_group() as group:
+            group.start_soon(
+                lambda: run_web(
+                    settings_for=lambda project: Settings(model='test'),
+                    store=store,
+                    project=ProjectSettings(),
+                    console=Console(file=output, force_terminal=False, width=500),
+                    token='secret',
+                    port=0,
+                    launch_plugins=['probe'],
+                )
+            )
+            await output.ready.wait()
+            await shells[0].process.live.new()
+            assert [
+                [entry.name for entry in shell.loader.entries() if entry.name == 'probe' and entry.loaded is not None]
+                for shell in shells
+            ] == [['probe'], ['probe']]
+            group.cancel_scope.cancel()
+    assert [plugin.enabled for plugin in store.plugins() if plugin.id == 'probe'] == [False]
