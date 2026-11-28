@@ -18,6 +18,7 @@ from pydantic_ai_pax.ui.stderr_relay import relay_stderr
 if TYPE_CHECKING:
     from collections.abc import Callable, Generator, Sequence
 
+    from pydantic_ai_harness.step_persistence.conversations import ConversationSummary
     from pydantic_ai_pax.cli.self_update import Relaunch, WebHandoff
     from pydantic_ai_pax.config import Settings, UpdateChannel
     from pydantic_ai_pax.config.project_settings import ProjectSettings
@@ -442,20 +443,38 @@ def _enter_worktree(*, name: str, headless: bool, store: 'SettingsStore') -> 'Wo
 
 
 def _enter_launch_directory(args: argparse.Namespace, *, store: 'SettingsStore') -> 'Worktree | None':
-    """Change into the `--worktree` checkout, returning it, or the directory a `--resume-claude` or `--resume-codex` ID ran in."""
+    """Change into the `--worktree` checkout, returning it, or the directory a resumed Claude Code or Codex session ran in."""
     if args.worktree is not None:
         return _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web, store=store)
-    if args.resume_from is not None and args.resume:
-        _enter_imported_project(args.resume_from, args.resume)
+    if args.resume:
+        _enter_imported_project(args.resume_from, args.resume, store=store)
     return None
 
 
-def _enter_imported_project(source: 'ImportSource', native_id: str) -> None:
-    """Change into the directory the Claude Code or Codex session `native_id` was saved in, to start there."""
-    from pydantic_ai_pax.runtime.imported_sessions import find_import
+def _enter_imported_project(source: 'ImportSource | None', session_id: str, *, store: 'SettingsStore') -> None:
+    """Change into the directory a Claude Code or Codex session was saved in, to start there.
+
+    Without `source`, `session_id` is a Pax ID, and only Pax's copy of such a session moves, as after `/update`.
+    """
+    from pydantic_ai_pax.runtime.imported_sessions import find_import, source_of
     from pydantic_ai_pax.runtime.session_workspace import workspace_directory
 
-    os.chdir(workspace_directory(find_import(source, native_id).summary.workspace))
+    if source is not None:
+        summary = find_import(source, session_id).summary
+    elif (summary := asyncio.run(_saved_summary(store, session_id))) is None or source_of(summary) is None:
+        return
+    os.chdir(workspace_directory(summary.workspace))
+
+
+async def _saved_summary(store: 'SettingsStore', conversation_id: str) -> 'ConversationSummary | None':
+    """The saved conversation `conversation_id`, or `None` when there is none, which resuming it reports."""
+    from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
+
+    conversations = SqliteSessionStore(database=store.path.with_name('sessions.db'))
+    try:
+        return (await conversations.get(conversation_id=conversation_id)).summary
+    except LookupError:
+        return None
 
 
 def _launched_worktree(*, relaunched: str | None) -> 'Worktree | None':

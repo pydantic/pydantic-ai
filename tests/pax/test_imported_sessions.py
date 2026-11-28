@@ -1,5 +1,8 @@
 """Claude Code and Codex sessions: reading their transcripts, listing them in `/resume`, and importing them."""
 
+import argparse
+import asyncio
+import contextlib
 import json
 import os
 from collections.abc import Sequence
@@ -65,6 +68,7 @@ from pydantic_ai_pax.runtime.imported_history import (
 )
 from pydantic_ai_pax.runtime.imported_sessions import (
     ImportCatalog,
+    ImportSource,
     find_import,
     import_source,
     imported_from,
@@ -1515,20 +1519,50 @@ async def test_terminal_resume_moves_into_the_imported_project(
 
 
 @pytest.mark.parametrize('source', ['claude', 'codex'])
-def test_cli_resume_flag_starts_in_the_imported_project(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+@pytest.mark.parametrize('mode', ['chat', 'prompt', 'web', 'relaunch'])
+def test_cli_resume_starts_in_the_imported_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: ImportSource, mode: str
 ) -> None:
+    """`--resume-claude ID` and `--resume-codex ID` start in the session's directory, as `/update` restarting Pax does."""
     project, other, native_id = imported_project(tmp_path, source)
     monkeypatch.chdir(other)
-    monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'config.db'), f'--resume-{source}', native_id])
+    flags = [f'--resume-{source}', native_id]
+    if mode == 'relaunch':
+        store = SqliteSessionStore(database=tmp_path / 'sessions.db')
+        copy = asyncio.run(save_import(store, find_import(source, native_id)))
+        launch = argparse.Namespace(web=False, agent=None, model=None, request_limit=None, database=None)
+        flags = cli.relaunch_argv(launch, executable='pax', session_id=copy)[1:]
+    extra = {'prompt': ['-p', 'hi'], 'web': ['--web']}.get(mode, [])
+    monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'config.db'), *extra, *flags])
     seen: list[tuple[Path, Path | None]] = []
 
-    async def fake_chat(*args: object, project: ProjectSettings, **kwargs: object) -> None:
+    async def launched(*args: object, project: ProjectSettings, **kwargs: object) -> int:
         seen.append((await run_sync(Path.cwd), project.root))
+        return 0
 
-    monkeypatch.setattr('pydantic_ai_pax.app.chat', fake_chat)
-    cli.run()
+    monkeypatch.setattr('pydantic_ai_pax.app.chat', launched)
+    monkeypatch.setattr(headless, 'run_headless', launched)
+    monkeypatch.setattr('pydantic_ai_pax.cli.web.run_web', launched)
+    with contextlib.suppress(SystemExit):
+        cli.run()
     assert seen == [(project, project)]
+
+
+def test_cli_resume_of_a_pax_session_stays_here(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    other = tmp_path / 'other'
+    other.mkdir()
+    monkeypatch.chdir(other)
+    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
+    saved = asyncio.run(store.save(summary=ConversationSummary(workspace=str(tmp_path)), messages=[]))
+    monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'config.db'), '--resume', saved.id])
+    seen: list[Path] = []
+
+    async def launched(*args: object, **kwargs: object) -> None:
+        seen.append(await run_sync(Path.cwd))
+
+    monkeypatch.setattr('pydantic_ai_pax.app.chat', launched)
+    cli.run()
+    assert seen == [other.resolve()]
 
 
 @pytest.mark.parametrize(
