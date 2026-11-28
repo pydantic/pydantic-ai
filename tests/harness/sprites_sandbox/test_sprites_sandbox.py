@@ -1047,6 +1047,20 @@ class TestSpritesSandbox:
         )
         assert (result.exit_code, result.stdout, result.stderr) == (124, '/bin/sh base command', 'error')
 
+    @pytest.mark.parametrize('env', [{}, {'A': '1'}], ids=['no-env', 'env'])
+    async def test_argv_named_like_a_shell_builtin_runs_the_program(
+        self, transport: SpriteTransport, env: dict[str, str]
+    ) -> None:
+        """The wrapper's `sh` must not resolve `argv[0]` as a builtin; only a real `sh` shows that, not a recording."""
+        backend = SpritesSandboxBackend()
+        # `/bin/echo` prints the backslash as is; dash's builtin `echo` would turn `\n` into a newline.
+        assert (await backend.run(['echo', 'a\\nb'], env=env)).stdout == 'a\\nb\n'
+        # No `cd` or `exit` program is on `PATH`, so both exit 127, and `exit` leaves the wrapper to report stderr.
+        assert (await backend.run(['cd', '/'], env=env)).exit_code == 127
+        result = await backend.run(['exit', '3'], env=env)
+        assert result.exit_code == 127
+        assert 'exit' in result.stderr
+
     async def test_env_is_added_to_the_sprite_environment(
         self, transport: SpriteTransport, monkeypatch: pytest.MonkeyPatch
     ) -> None:

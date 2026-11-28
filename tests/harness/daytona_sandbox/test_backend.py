@@ -58,7 +58,7 @@ def no_retry_delay(monkeypatch: pytest.MonkeyPatch) -> None:
 
 
 # Every command runs under a `sh` that sends its stdout and stderr to per-command files.
-_WRAPPER = 'sh -c \'"$@" </dev/null >/tmp/MARK.out 2>/tmp/MARK.err\' sh'
+_WRAPPER = 'sh -c \'exec "$@" </dev/null >/tmp/MARK.out 2>/tmp/MARK.err\' sh'
 
 
 def _unmarked(command: str | None) -> str:
@@ -215,6 +215,20 @@ class TestCommands:
         with anyio.fail_after(5):
             result = await backend.run(['sh', '-c', 'if read line; then echo unexpected; else echo eof; fi'])
         assert result.stdout == 'eof\n'
+
+    @posix_only
+    @pytest.mark.parametrize('env', [{}, {'A': '1'}], ids=['no-env', 'env'])
+    async def test_argv_named_like_a_shell_builtin_runs_the_program(
+        self, fake_daytona: FakeDaytona, tmp_path: Path, env: dict[str, str]
+    ) -> None:
+        """The wrapper's `sh` must not resolve `argv[0]` as a builtin; only a real `sh` shows that, not a recording."""
+        fake_daytona.host_root = tmp_path.resolve()
+        backend = await started()
+        # `/bin/echo` prints the backslash as is; dash's builtin `echo` would turn `\n` into a newline.
+        assert (await backend.run(['echo', 'a\\nb'], env=env)).stdout == 'a\\nb\n'
+        # No `cd` or `exit` program is on `PATH`, so both exit 127 instead of acting on the wrapper.
+        assert (await backend.run(['cd', '/'], env=env)).exit_code == 127
+        assert (await backend.run(['exit', '3'], env=env)).exit_code == 127
 
     async def test_large_output_is_exact_and_a_timeout_keeps_a_bounded_tail(self, fake_daytona: FakeDaytona) -> None:
         backend = await started()
