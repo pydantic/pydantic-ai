@@ -34,7 +34,7 @@ from ._utils import (
     run_in_executor,
     takes_run_context,
 )
-from .messages import ToolReturn
+from .messages import FileUrl, ToolReturn
 
 if TYPE_CHECKING:
     from .tools import DocstringFormat, ObjectJsonSchema
@@ -264,10 +264,12 @@ def function_schema(
         schema_context.fields, schema_context.var_kwargs_schema, core_config
     )
     schema = gen_schema.clean_schema(schema)
+    schema, has_file_url = _strip_file_url_force_download_node(schema)
     parameter_fields, definitions = _cleaned_fields(schema)
-    schema_validator = _schema_validator(schema, function, core_config, config_wrapper.plugin_settings)
+    validator_schema = _wrap_reset_file_url_force_download(schema) if has_file_url else schema
+    schema_validator = _schema_validator(validator_schema, function, core_config, config_wrapper.plugin_settings)
     json_schema = schema_generator().generate(schema)
-    revalidator = _by_name_revalidator(schema, function, core_config, config_wrapper.plugin_settings)
+    revalidator = _by_name_revalidator(validator_schema, function, core_config, config_wrapper.plugin_settings)
     json_parameter_serializers, json_kwargs_serializer = _json_argument_serializers(
         schema, single_arg_name, core_config
     )
@@ -327,6 +329,91 @@ def function_schema(
         json_parameter_serializers=json_parameter_serializers,
         json_kwargs_serializer=json_kwargs_serializer,
     )
+
+
+def _reset_file_url_force_download(value: Any, _seen: set[int] | None = None) -> Any:
+    if isinstance(value, FileUrl):
+        if value.force_download is not False:
+            value.force_download = False
+        return value
+    if _seen is None:
+        _seen = set()
+    obj_id = id(value)
+    if obj_id in _seen:
+        return value
+    if isinstance(value, dict):
+        _seen.add(obj_id)
+        for v in cast(dict[Any, Any], value).values():
+            _reset_file_url_force_download(v, _seen)
+    elif isinstance(value, (list, tuple, set, frozenset)):
+        _seen.add(obj_id)
+        for item in cast(Any, value):
+            _reset_file_url_force_download(item, _seen)
+    elif hasattr(value, '__pydantic_fields__'):
+        _seen.add(obj_id)
+        for field_name in value.__pydantic_fields__:
+            _reset_file_url_force_download(getattr(value, field_name, None), _seen)
+    elif hasattr(value, '__dataclass_fields__'):
+        _seen.add(obj_id)
+        for field_name in value.__dataclass_fields__:
+            _reset_file_url_force_download(getattr(value, field_name, None), _seen)
+    return value
+
+
+def _wrap_reset_file_url_force_download(schema: core_schema.CoreSchema) -> core_schema.CoreSchema:
+    """Wrap `schema` so any `FileUrl` produced by validation has `force_download` reset to `False`."""
+    if schema['type'] == 'definitions':
+        return {
+            **schema,
+            'schema': core_schema.no_info_after_validator_function(
+                _reset_file_url_force_download, schema['schema']
+            ),
+        }
+    return core_schema.no_info_after_validator_function(_reset_file_url_force_download, schema)
+
+
+def _strip_file_url_force_download_node(schema: Any) -> tuple[Any, bool]:
+    if is_list(schema):
+        changed = False
+        new_list: list[Any] = []
+        for item in schema:
+            new_item, item_changed = _strip_file_url_force_download_node(item)
+            if item_changed:
+                changed = True
+            new_list.append(new_item)
+        return (new_list, True) if changed else (schema, False)
+
+    if not is_str_dict(schema):
+        return schema, False
+
+    if (
+        schema.get('type') == 'dataclass'
+        and isinstance(cls := schema.get('cls'), type)
+        and issubclass(cls, FileUrl)
+        and is_str_dict(inner := schema.get('schema'))
+        and inner.get('type') == 'dataclass-args'
+        and is_list(fields := inner.get('fields'))
+    ):
+        new_fields = [f for f in fields if not (is_str_dict(f) and f.get('name') == 'force_download')]
+        if len(new_fields) != len(fields):
+            new_inner = {**inner, 'fields': new_fields}
+            new_dc = {**schema, 'schema': new_inner}
+            if is_list(dc_fields := schema.get('fields')):
+                new_dc['fields'] = [f for f in dc_fields if f != 'force_download']
+            return new_dc, True
+        return schema, True
+
+    changed = False
+    new_dict: dict[str, Any] = {}
+    for key, value in schema.items():
+        if key in _NON_SCHEMA_KEYS:
+            new_dict[key] = value
+            continue
+        new_value, val_changed = _strip_file_url_force_download_node(value)
+        if val_changed:
+            changed = True
+        new_dict[key] = new_value
+    return (new_dict, True) if changed else (schema, False)
 
 
 def _cleaned_fields(

@@ -199,3 +199,70 @@ def test_builtin_function():
     assert _takes_ctx(len) is False
     assert _takes_ctx(str) is False
     assert _takes_ctx(int) is False
+
+
+def test_file_url_tool_arguments_strip_force_download():
+    """FileUrl tool parameters must omit force_download from schema and ignore model-supplied values."""
+    import json
+
+    from pydantic import TypeAdapter, create_model
+    from pydantic.json_schema import GenerateJsonSchema
+
+    from pydantic_ai._function_schema import function_schema
+    from pydantic_ai.messages import AudioUrl, DocumentUrl, FileUrl, ImageUrl, VideoUrl
+
+    file_url_types: list[type[FileUrl]] = [ImageUrl, DocumentUrl, AudioUrl, VideoUrl]
+
+    for url_cls in file_url_types:
+        # Single model-like parameter
+        def single_tool(file: Any) -> str:  # pragma: no cover
+            return str(file)
+
+        single_tool.__annotations__['file'] = url_cls
+        fs_single = function_schema(single_tool, GenerateJsonSchema)
+        assert 'force_download' not in json.dumps(fs_single.json_schema)
+
+        for bad_mode in (True, 'allow-local'):
+            validated = fs_single.validator.validate_python(
+                {'url': 'https://example.com/file', 'force_download': bad_mode}
+            )
+            assert isinstance(validated['file'], url_cls)
+            assert validated['file'].force_download is False
+
+            validated_json = fs_single.validator.validate_json(
+                json.dumps({'url': 'https://example.com/file', 'force_download': bad_mode})
+            )
+            assert isinstance(validated_json['file'], url_cls)
+            assert validated_json['file'].force_download is False
+
+        # Multi-argument and nested model/list parameters
+        Wrapper = create_model('Wrapper', primary=(url_cls, ...), extras=(list[url_cls], []))
+
+        def nested_tool(wrapper: Any, direct: Any) -> str:  # pragma: no cover
+            return f'{wrapper}{direct}'
+
+        nested_tool.__annotations__['wrapper'] = Wrapper
+        nested_tool.__annotations__['direct'] = url_cls
+        fs_nested = function_schema(nested_tool, GenerateJsonSchema)
+        assert 'force_download' not in json.dumps(fs_nested.json_schema)
+
+        validated_nested = fs_nested.validator.validate_python(
+            {
+                'wrapper': {
+                    'primary': {'url': 'https://example.com/a', 'force_download': 'allow-local'},
+                    'extras': [{'url': 'https://example.com/b', 'force_download': True}],
+                },
+                'direct': {'url': 'https://example.com/c', 'force_download': 'allow-local'},
+            }
+        )
+        assert validated_nested['wrapper'].primary.force_download is False
+        assert validated_nested['wrapper'].extras[0].force_download is False
+        assert validated_nested['direct'].force_download is False
+
+        # Non-tool TypeAdapter validation must remain unaffected
+        direct_adapter = TypeAdapter(url_cls)
+        assert 'force_download' in json.dumps(direct_adapter.json_schema())
+        direct_obj = direct_adapter.validate_python(
+            {'url': 'https://example.com/d', 'force_download': 'allow-local'}
+        )
+        assert direct_obj.force_download == 'allow-local'
