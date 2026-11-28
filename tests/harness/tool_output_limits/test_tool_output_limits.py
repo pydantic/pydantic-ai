@@ -1601,7 +1601,11 @@ class TestReadBack:
             unit='lines',
             reader_name=READ_TOOL_NAME,
         )
-        assert out == "[handle 'h/1.0': 2 matching line(s); showing 0]"
+        hint = f"read_tool_result(handle='h/1.0', offset=0, limit=5{', from_end=True' if from_end else ''})"
+        assert (
+            out
+            == f"[handle 'h/1.0': 2 matching line(s); showing 0; offset={sys.maxsize + 1} is past the end; the nearest lines are at {hint}]"
+        )
 
     async def test_read_slice_uses_an_overridden_read(self, tmp_path: Path):
         class UpperStore(LocalFileOverflowStore):
@@ -1648,6 +1652,36 @@ class TestReadBack:
         assert 'hello' in out
 
 
+class TestReadToolResultPastEnd:
+    @pytest.mark.parametrize(
+        ('args', 'header'),
+        [
+            (
+                {'offset': 30, 'limit': 5},
+                "20 matching line(s); showing 0; offset=30 is past the end; the nearest lines are at read_tool_result(handle='<h>', offset=15, limit=5)]",
+            ),
+            (
+                {'offset': 20, 'limit': 5, 'from_end': True},
+                "20 matching line(s); showing 0; offset=20 is past the end; the nearest lines are at read_tool_result(handle='<h>', offset=15, limit=5, from_end=True)]",
+            ),
+            (
+                {'offset': 3, 'limit': 2, 'pattern': 'ERROR'},
+                "3 matching line(s); showing 0; offset=3 is past the end; the nearest lines are at read_tool_result(handle='<h>', offset=1, limit=2, pattern='ERROR')]",
+            ),
+        ],
+    )
+    async def test_offset_past_the_end_names_the_nearest_read(
+        self, tmp_path: Path, args: dict[str, object], header: str
+    ) -> None:
+        payload = '\n'.join(f'ERROR {i}' if i in {5, 7, 15} else f'line {i}' for i in range(1, 21))
+        out = await query_spill(tmp_path, payload, READ_TOOL_NAME, args)
+        assert out.endswith(f': {header}')
+
+    async def test_no_matching_lines_has_no_hint(self, tmp_path: Path) -> None:
+        out = await query_spill(tmp_path, 'line\n' * 20, READ_TOOL_NAME, {'offset': 3, 'pattern': 'ERROR'})
+        assert out.endswith(': 0 matching line(s); showing 0]')
+
+
 class TestReadToolResultBytes:
     @pytest.mark.parametrize('from_end', [False, True])
     async def test_streams_in_chunks_like_a_whole_slice(
@@ -1665,8 +1699,8 @@ class TestReadToolResultBytes:
             end = max(0, len(data) - offset) if from_end else min(offset + 11, len(data))
             start = max(0, end - 11) if from_end else min(offset, len(data))
             body = data[start:end].decode('utf-8', errors='replace')
-            header = f': bytes {start}-{end} of {len(data)} (end exclusive)]'
-            assert out.endswith(f'{header}\n{body}' if body else header)
+            header = f': bytes {start}-{end} of {len(data)} (end exclusive)'
+            assert f'{header}]\n{body}' in out if body else f'{header}; offset={offset} is past the end' in out
 
     async def test_slice(self, tmp_path: Path) -> None:
         payload = '{"a":' + '1' * 100 + '}'
@@ -1680,9 +1714,28 @@ class TestReadToolResultBytes:
 
     async def test_range_is_clamped(self, tmp_path: Path) -> None:
         past = await query_spill(tmp_path, 'x' * 100, READ_TOOL_NAME, {'unit': 'bytes', 'offset': 500})
-        assert past.endswith(': bytes 100-100 of 100 (end exclusive)]')
+        assert ': bytes 100-100 of 100 (end exclusive); offset=500 is past the end' in past
         whole = await query_spill(tmp_path, 'x' * 60_000, READ_TOOL_NAME, {'unit': 'bytes', 'limit': 100_000})
         assert whole.split('\n', 1)[0].endswith(': bytes 0-50000 of 60000 (end exclusive)]')
+
+    @pytest.mark.parametrize(
+        ('args', 'hint'),
+        [
+            (
+                {'offset': 500},
+                "offset=500 is past the end; the nearest bytes are at read_tool_result(handle='<h>', unit='bytes', offset=0, limit=200)]",
+            ),
+            (
+                {'offset': 100, 'limit': 30, 'from_end': True},
+                "offset=100 is past the end; the nearest bytes are at read_tool_result(handle='<h>', unit='bytes', offset=70, limit=30, from_end=True)]",
+            ),
+        ],
+    )
+    async def test_offset_past_the_end_names_the_nearest_read(
+        self, tmp_path: Path, args: dict[str, object], hint: str
+    ) -> None:
+        out = await query_spill(tmp_path, 'x' * 100, READ_TOOL_NAME, {'unit': 'bytes', **args})
+        assert out.endswith(f' of 100 (end exclusive); {hint}')
 
     async def test_cut_utf8_sequence_renders_as_replacement_character(self, tmp_path: Path) -> None:
         payload = 'é' * 60
