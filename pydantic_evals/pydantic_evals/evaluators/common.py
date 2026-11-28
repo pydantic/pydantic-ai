@@ -16,6 +16,7 @@ from ..otel.span_tree import SpanQuery
 from .agentic import ArgumentCorrectness, MaxModelRequests, MaxToolCalls, ToolCorrectness, TrajectoryMatch
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
+from .tool_policy import ToolPolicyCompliance
 
 __all__ = (
     'Equals',
@@ -388,6 +389,7 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     ArgumentCorrectness,
     MaxToolCalls,
     MaxModelRequests,
+    ToolPolicyCompliance,
     GEval,
 )
 
