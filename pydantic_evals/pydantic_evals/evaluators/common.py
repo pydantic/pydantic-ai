@@ -6,7 +6,7 @@ from datetime import timedelta
 from enum import Enum
 from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
-from pydantic import Field, GetPydanticSchema, RootModel, TypeAdapter
+from pydantic import Field, GetPydanticSchema, TypeAdapter
 from pydantic.json_schema import SkipJsonSchema
 from pydantic_core import core_schema
 from typing_extensions import TypedDict, TypeForm
@@ -430,22 +430,9 @@ class StructuredJudge(Evaluator[object, object, object]):
                 '`output_type` only applies to a single question: a rubric is answered yes or no, '
                 'and a field is answered with its own type'
             )
-        if isinstance(self.questions, Mapping):
-            names: Mapping[str, str] = self.questions
-        elif not is_model_like(self.questions):
-            raise ValueError(
-                '`questions` must be a question, a mapping of measure name to rubric, '
-                'or a Pydantic model, dataclass or `TypedDict` whose fields are the questions'
-            )
-        elif issubclass(self.questions, RootModel):
-            # A root model has one unnamed value, so there is no question to name a measure after.
-            raise ValueError('`questions` must be a model with named fields, not a `RootModel`')
-        else:
-            from .llm_as_a_judge import _question_fields  # pyright: ignore[reportPrivateUsage]
+        from .llm_as_a_judge import _question_fields  # pyright: ignore[reportPrivateUsage]
 
-            names = _question_fields(self.questions)
-        if not names:
-            raise ValueError('`questions` must contain at least one question')
+        _question_fields(self.questions)
 
     async def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
         inputs = ctx.inputs if self.include_input else None

@@ -42,6 +42,7 @@ with try_import() as imports_successful:
     from pydantic_evals.evaluators.llm_as_a_judge import (
         _GEvalResult,  # pyright: ignore[reportPrivateUsage]
         _GradingResult,  # pyright: ignore[reportPrivateUsage]
+        judge_questions,
     )
     from pydantic_evals.otel._errors import SpanTreeRecordingError
     from pydantic_evals.otel.span_tree import SpanQuery
@@ -925,6 +926,25 @@ def test_structured_judge_refuses_a_root_model():
         StructuredJudge(RootModel[bool])
 
 
+async def test_judge_questions_refuses_what_structured_judge_refuses():
+    """Called directly, `judge_questions` refuses the questions the evaluator refuses, before any request is sent."""
+    calls: list[JudgeCall] = []
+    model = structured_judge_model({}, calls)
+
+    class Empty(BaseModel):
+        """Judge nothing."""
+
+    with pytest.raises(ValueError, match='A class passed as `questions` must be a Pydantic model, dataclass or'):
+        await judge_questions('30 days.', Tone, model=model)
+    with pytest.raises(ValueError, match='`questions` must be a model with named fields, not a `RootModel`'):
+        await judge_questions('30 days.', RootModel[bool], model=model)
+    with pytest.raises(ValueError, match='`questions` must contain at least one question'):
+        await judge_questions('30 days.', {}, model=model)
+    with pytest.raises(ValueError, match='`questions` must contain at least one question'):
+        await judge_questions('30 days.', Empty, model=model)
+    assert calls == []
+
+
 class Tone(StrEnum):
     polite = 'polite'
     curt = 'curt'
@@ -1116,7 +1136,7 @@ def test_structured_judge_output_type_is_for_a_single_question():
         StructuredJudge({'is_polite': 'The reply is polite.'}, output_type=Tone)
     with pytest.raises(ValueError, match='`output_type` only applies to a single question'):
         StructuredJudge(ReplyReview, output_type=Tone)
-    with pytest.raises(ValueError, match='`questions` must be a question, a mapping of measure name to rubric'):
+    with pytest.raises(ValueError, match='A class passed as `questions` must be a Pydantic model, dataclass or'):
         StructuredJudge(Tone)
 
 

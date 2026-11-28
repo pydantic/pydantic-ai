@@ -5,14 +5,14 @@ from dataclasses import dataclass, fields as dataclass_fields, is_dataclass
 from textwrap import dedent
 from typing import Any
 
-from pydantic import AliasChoices, BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, RootModel
 from pydantic.dataclasses import is_pydantic_dataclass
 from pydantic.fields import FieldInfo
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, StructuredDict, UserContent, models
-from pydantic_ai._utils import is_str_dict
+from pydantic_ai._utils import is_model_like, is_str_dict
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES, ModelResponse
 from pydantic_ai.models.fallback import FallbackModel
@@ -468,7 +468,30 @@ class JudgeAnswer:
     """
 
 
-def _question_fields(questions: type[object]) -> dict[str, str]:
+def _question_fields(questions: type[object] | Mapping[str, str]) -> dict[str, str]:
+    """Each question, mapped to the name it is asked under, refusing questions that name no measure.
+
+    `StructuredJudge` calls this at construction and `judge_questions` before its request, so both refuse the same
+    questions with the same error. A rubric is asked under its key, and a field as `_model_fields` says.
+    """
+    if isinstance(questions, Mapping):
+        fields = {name: name for name in questions}
+    elif not is_model_like(questions):
+        raise ValueError(
+            'A class passed as `questions` must be a Pydantic model, dataclass or `TypedDict` whose fields are the '
+            'questions'
+        )
+    elif issubclass(questions, RootModel):
+        # A root model has one unnamed value, so there is no question to name a measure after.
+        raise ValueError('`questions` must be a model with named fields, not a `RootModel`')
+    else:
+        fields = _model_fields(questions)
+    if not fields:
+        raise ValueError('`questions` must contain at least one question')
+    return fields
+
+
+def _model_fields(questions: type[object]) -> dict[str, str]:
     """Each field of a model-like type, mapped to the name it is asked under.
 
     A model, a dataclass and a `TypedDict` all answer with an object of named fields, but only Pydantic's own
@@ -537,7 +560,12 @@ async def judge_questions(
     Returns:
         The answers keyed by question name, in the order the questions were declared, each with the
         confidence the judge reported for it.
+
+    Raises:
+        ValueError: Before any request, if `questions` is empty, a `RootModel`, or a class that is not a model,
+            dataclass or `TypedDict`; after it, if a rubric is answered with anything but a yes or a no.
     """
+    fields = _question_fields(questions)
     user_prompt, context = _build_prompt(output=output, inputs=inputs, expected_output=expected_output)
     considering = f', taking {" and ".join(context)} into account' if context else ''
     # The framing that applies to every question goes in the instructions rather than the prompt,
@@ -561,10 +589,8 @@ async def judge_questions(
             name='Grading',
             description='Judge an output against each rubric.',
         )
-        fields = {name: name for name in questions}
     else:
         output_type = questions
-        fields = _question_fields(questions)
     result = await _judge_questions_agent.run(
         user_prompt,
         model=_resolve_judge_model(model),
