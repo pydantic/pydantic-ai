@@ -716,6 +716,7 @@ _BEDROCK_OPENAI_30_MINUTE_CACHE_MODELS = frozenset(
         'gpt-6-astra',
         'gpt-6.1-sol',
         'gpt-6.1-terra',
+        'gpt-6.2-sol',
     }
 )
 
@@ -727,6 +728,7 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-astra.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-sol.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-1-terra.html
+    # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-2-sol.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-sol.html
     # https://docs.aws.amazon.com/bedrock/latest/userguide/model-card-openai-gpt-6-luna.html
     if model_name in {
@@ -738,6 +740,7 @@ def bedrock_openai_model_profile(model_name: str) -> ModelProfile | None:
         'gpt-6-astra',
         'gpt-6.1-sol',
         'gpt-6.1-terra',
+        'gpt-6.2-sol',
     }:
         # Converse rejects `temperature`, `top_p` and `top_k` for these. Reasoning effort takes the Responses API
         # shape, `{'reasoning': {'effort': ...}}`: Converse rejects the flat `reasoning_effort` that gpt-oss takes as an
