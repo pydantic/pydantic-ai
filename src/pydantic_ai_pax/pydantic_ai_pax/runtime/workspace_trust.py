@@ -12,7 +12,8 @@ submodule, a clone) gets its own. Outside a repository it is kept for the folder
 home folder, or the filesystem root, it holds for the session only, so Pax asks again next time.
 
 Harness `RepoContext` and `Skills` read `Workspace.authority`: an untrusted folder's instruction files and skills
-reach the model as the repository's, not in the instructions. TODO(#11839): disk sub-agents don't read it yet, so an
+reach the model as the repository's, not in the instructions. The `mcp` plugin gives each server from an accepted
+project MCP file the folder's authority (`MCPServers.authority`). TODO(#11839): disk sub-agents don't read it yet, so an
 untrusted folder's agents still load as before. TODO: a `/sandbox` conversation's workspace comes from the sandbox
 plugin, which doesn't take this decision yet.
 """

@@ -265,9 +265,11 @@ sends the ones above it as the repository's data, and marks the ones it surfaces
 works in a subfolder. Agent Skills, your own skill
 folders included, stay out of the skill catalog: the model lists them with `list_skills` and
 reads one with `load_skill`, as tool output. The read-only Review specialist keeps the authority
-for the directory it is sent to. Agent folders do not check it yet, and load as before in both
-cases. A `/sandbox` conversation works in the sandbox's own workspace, which does not take the
-decision yet.
+for the directory it is sent to. A project MCP server you accepted with `/mcp trust accept` gets the
+folder's authority: in an untrusted folder, Pax lowers its capability to `'none'`, and its tool names
+and descriptions still reach the model as the server wrote them. Agent folders do not check it yet,
+and load as before in both cases. A `/sandbox` conversation works in the sandbox's own workspace,
+which does not take the decision yet.
 
 ### Startup
 

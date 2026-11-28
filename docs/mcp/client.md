@@ -266,6 +266,8 @@ async def main():
     print(result.output)
 ```
 
+The loaded servers are configured by your code, wherever the file is, so they have the application's [authority](../capabilities/custom.md#where-the-content-came-from), like an `MCPToolset` you construct yourself.
+
 ## Tool call customization
 
 `MCPToolset` accepts a `process_tool_call` callback that lets you customize tool call requests and their responses. A common use case is to inject metadata that the server-side handler needs to read:
