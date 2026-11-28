@@ -30,8 +30,10 @@ def _routes_to_ollama_cloud(provider: Provider[AsyncOpenAI], model_name: str) ->
 
     - The provider's `base_url` is on `ollama.com`, meaning the request goes directly
       to Ollama Cloud.
-    - The model name ends with the `-cloud` suffix, which a local Ollama daemon
-      forwards to the same upstream.
+    - The model name ends with a cloud tag, which a local Ollama daemon forwards to
+      the same upstream. Models that also run locally use a size-qualified `-cloud`
+      tag (`gpt-oss:20b-cloud`), while cloud-only models use a bare `:cloud` tag
+      (`glm-5.3:cloud`).
 
     Ollama Cloud accepts `response_format` with `json_schema` without error but does
     not apply grammar-constrained decoding, so structured-output schemas are not
@@ -40,7 +42,7 @@ def _routes_to_ollama_cloud(provider: Provider[AsyncOpenAI], model_name: str) ->
     [ollama/ollama#12362](https://github.com/ollama/ollama/issues/12362).
     """
     hostname = urlparse(provider.base_url).hostname or ''
-    return hostname == 'ollama.com' or hostname.endswith('.ollama.com') or model_name.endswith('-cloud')
+    return hostname == 'ollama.com' or hostname.endswith('.ollama.com') or model_name.endswith(('-cloud', ':cloud'))
 
 
 @dataclass(init=False)
@@ -56,8 +58,8 @@ class OllamaModel(OpenAIChatModel):
     [pydantic-ai#4917](https://github.com/pydantic/pydantic-ai/issues/4917) and
     [ollama/ollama#12362](https://github.com/ollama/ollama/issues/12362)). When
     this model detects a Cloud path — either a `base_url` on `ollama.com` or a
-    model name ending in `-cloud` — it disables `supports_json_schema_output`
-    on the resolved profile. With that flag off,
+    model name ending in `-cloud` or `:cloud` — it disables
+    `supports_json_schema_output` on the resolved profile. With that flag off,
     [`NativeOutput`][pydantic_ai.output.NativeOutput] raises a clear
     [`UserError`][pydantic_ai.exceptions.UserError] so users pick a mode that
     actually works on Cloud ([`ToolOutput`][pydantic_ai.output.ToolOutput] —
