@@ -465,8 +465,8 @@ def _enter_launch_directory(
 ) -> 'Worktree | None':
     """Change into the `--worktree` checkout, returning it, or the directory the session works in.
 
-    That is `moved_to`, where the session worked before `/update` restarted Pax, or the directory a
-    `--resume-claude` or `--resume-codex` ID ran in.
+    That is `moved_to`, where the session worked before `/update` restarted Pax, or the directory the
+    Claude Code or Codex session `--resume-claude`, `--resume-codex`, or `--resume` names ran in.
     """
     if args.worktree is not None:
         return _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web, store=store)
@@ -474,6 +474,8 @@ def _enter_launch_directory(
         os.chdir(moved_to)
     elif args.resume_from is not None and args.resume:
         _enter_imported_project(args.resume_from, args.resume)
+    elif args.resume:
+        _enter_copy_project(args.resume, store=store)
     return None
 
 
@@ -483,6 +485,23 @@ def _enter_imported_project(source: 'ImportSource', native_id: str) -> None:
     from pydantic_ai_pax.runtime.session_workspace import workspace_directory
 
     os.chdir(workspace_directory(find_import(source, native_id).summary.workspace))
+
+
+def _enter_copy_project(conversation_id: str, *, store: 'SettingsStore') -> None:
+    """Change into the directory of Pax's copy of a Claude Code or Codex session, while it exists, as `/resume` does.
+
+    Pax's own sessions, and an ID no session has, which resuming it reports, start where Pax was launched.
+    """
+    from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
+    from pydantic_ai_pax.runtime.imported_sessions import source_of
+
+    conversations = SqliteSessionStore(database=store.path.with_name('sessions.db'))
+    try:
+        summary = asyncio.run(conversations.get(conversation_id=conversation_id)).summary
+    except LookupError:
+        return
+    if source_of(summary) is not None and Path(summary.workspace).is_dir():
+        os.chdir(summary.workspace)
 
 
 def _launched_worktree(*, relaunched: str | None) -> 'Worktree | None':

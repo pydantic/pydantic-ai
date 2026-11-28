@@ -2860,8 +2860,9 @@ with an ID. Only one of `--resume`, `--resume-claude`, and `--resume-codex` can 
 given.
 
 Pax continues such a session in the directory it was started in, wherever you
-launched Pax: `--resume-claude SESSION-ID` and `--resume-codex SESSION-ID` start
-there, and resuming one inside Pax moves the session there between turns. The
+launched Pax: `--resume-claude SESSION-ID`, `--resume-codex SESSION-ID`, and
+`--resume` of Pax's copy start there, and resuming one inside Pax moves the
+session there between turns. The
 session stays there, also after `/new`, and `/update` restarts Pax there. That
 directory's project file, instruction files, skills, plugins, and project MCP
 servers then apply, as if Pax had started there: read afresh from the directory,
