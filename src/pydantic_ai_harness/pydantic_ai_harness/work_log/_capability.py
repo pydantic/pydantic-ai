@@ -95,13 +95,14 @@ class WorkLog(AbstractCapability[AgentDepsT]):
     """Where the log is kept: an `InMemoryWorkLogStore`, which lasts as long as the process, a
     `FileWorkLogStore`, a `WorkspaceWorkLogStore`, or your own `WorkLogStore`."""
 
+    _: KW_ONLY
+
     record_text: bool = True
     """Record the model's text replies."""
 
     record_thinking: bool = False
     """Record the model's thinking."""
 
-    _: KW_ONLY
     max_scanned_entries: int = DEFAULT_MAX_SCANNED_ENTRIES
     """How many of the newest matching entries one search with a `query` scores. Must be positive.
 

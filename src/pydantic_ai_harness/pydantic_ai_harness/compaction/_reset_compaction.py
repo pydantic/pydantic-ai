@@ -161,7 +161,7 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
 
     When the history passes a trigger, everything is cleared except the first user request, what
     the user wrote in later turns, pinned content, loaded capabilities and the last `keep_messages`
-    messages. A notice on the user channel says the conversation was cleared and names the
+    messages. A notice in the application's voice says the conversation was cleared and names the
     `WorkLog`'s tools, so the model can search and read the full results of its earlier work instead
     of running it again. No model is called. A later reset replaces the notice rather than adding
     another.
@@ -183,13 +183,13 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
     work_log: WorkLog[AgentDepsT]
     """The `WorkLog` registered on the same agent, whose log the notice points at."""
 
+    _: KW_ONLY
+
     max_messages: int | None = None
     """Reset when the history has more messages than this. `None` disables."""
 
     max_tokens: int | None = None
     """Reset when the history's estimated tokens exceed this. `None` disables."""
-
-    _: KW_ONLY
 
     max_fraction: float | None = None
     """Reset when estimated tokens exceed this fraction of the request's model's context window.
