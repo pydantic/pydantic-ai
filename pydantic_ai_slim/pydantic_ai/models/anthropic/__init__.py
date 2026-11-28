@@ -784,7 +784,7 @@ class AnthropicModelSettings(ModelSettings, total=False):
     asks for citations, with [`Citations`][pydantic_ai.capabilities.Citations] and text output or, for
     web fetch, [`enable_citations`][pydantic_ai.native_tools.AnthropicWebFetchToolSettings.enable_citations],
     Pydantic AI sends `['direct']` on those versions of the cited tools on the Anthropic API, unless the
-    request needs code execution. See [Web Tool Callers](../models/anthropic.md#web-tool-callers).
+    request needs code execution. See [Web Tool Callers](../../models/anthropic.md#web-tool-callers).
 
     Set `['direct']` to have the model always call the web tools itself with no sandbox, which turns off
     dynamic filtering and makes the tools eligible for Zero Data Retention. A value set here is sent

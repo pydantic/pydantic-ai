@@ -51,7 +51,7 @@ class OpenAICompaction(AbstractCapability[AgentDepsT]):
       Requires either `message_count_threshold` or a custom `trigger` callable. When it's met, a
       `before_model_request` hook [requests compaction][pydantic_ai.tools.RunContext.request_compaction],
       which this capability serves like [`NativeCompaction`][pydantic_ai.capabilities.NativeCompaction],
-      through the [compaction hook](../capabilities/compaction.md#the-compaction-hook), on any
+      through the [compaction hook](../../capabilities/compaction.md#the-compaction-hook), on any
       `OpenAIResponsesModel` whatever its profile's `supports_compaction_on_demand` says. It serves
       compaction another capability requests too. A focus the model's compaction can't take is
       dropped, so a focus merged in from elsewhere never stops it compacting at its own trigger.
