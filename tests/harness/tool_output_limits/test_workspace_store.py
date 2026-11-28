@@ -239,10 +239,56 @@ class TestWorkspaceOverflowStore:
         store = WorkspaceOverflowStore()
         directory = f'{tmp_path.resolve()}/.pydantic-ai-harness/tool-output'
         handle = await store.write(workspace, 'run-1/../call 1.0', b'payload')
-        assert handle == f'{directory}/run-1/_/call_1.0'
+        assert handle == f'{directory}/run-1/_/call%201.0'
         assert await store.read(workspace, handle) == b'payload'
-        assert await store.read(workspace, 'run-1/_/call_1.0') == b'payload'
+        assert await store.read(workspace, 'run-1/_/call%201.0') == b'payload'
         assert await store.write(workspace, '', b'empty') == f'{directory}/_'
+
+    async def test_distinct_keys_do_not_overwrite_each_other(self, tmp_path: Path):
+        workspace = Workspace(LocalWorkspaceBackend(tmp_path))
+        store = WorkspaceOverflowStore()
+        keys = [
+            'run/call:one.0',
+            'run/call?one.0',
+            'run/call_one.0',
+            'run/call%3Aone.0',
+            'run/call一one.0',
+            f'run/{"?" * 86}.0',
+            f'run/{"!" * 86}.0',
+            'run/call\udcff.0',
+            'run/' + '\udcff' * 30 + '.0',
+            f'run/{"~" * 256}.0',
+            '%hd0b5bb29766f52583f0c34b87952fcd73ccac686669cc4fe0da622695f710379',
+            '/'.join(['?' * 80] * 18),
+            '/'.join(['!' * 80] * 18),
+        ]
+        payloads = [f'payload {i}'.encode() for i in range(len(keys))]
+        handles = [await store.write(workspace, key, payload) for key, payload in zip(keys, payloads)]
+        assert len(set(handles)) == len(keys)
+        assert [await store.read(workspace, handle) for handle in handles] == payloads
+        assert await store.write(workspace, keys[0], b'replaced') == handles[0]
+        assert await store.read(workspace, handles[0]) == b'replaced'
+        assert [await store.read(workspace, handle) for handle in handles[1:]] == payloads[1:]
+
+    async def test_legacy_handle_still_reads_the_old_file(self, tmp_path: Path):
+        directory = tmp_path / '.pydantic-ai-harness' / 'tool-output' / 'run'
+        directory.mkdir(parents=True)
+        legacy = directory / 'call_one.0'
+        legacy.write_bytes(b'legacy')
+        workspace = Workspace(LocalWorkspaceBackend(tmp_path))
+        store = WorkspaceOverflowStore()
+        assert await store.read(workspace, str(legacy)) == b'legacy'
+        handle = await store.write(workspace, 'run/call:one.0', b'new')
+        assert await store.read(workspace, handle) == b'new'
+        assert await store.read(workspace, str(legacy)) == b'legacy'
+
+    async def test_long_ordinary_path_is_not_renamed(self, tmp_path: Path):
+        key = '/'.join(['ordinary-0123456789'] * 18)
+        workspace = Workspace(LocalWorkspaceBackend(tmp_path))
+        store = WorkspaceOverflowStore()
+        handle = await store.write(workspace, key, b'ordinary')
+        assert handle.endswith(f'/tool-output/{key}')
+        assert await store.read(workspace, handle) == b'ordinary'
 
     @pytest.mark.parametrize('handle', ['../secret.txt', '/etc/passwd', '.'])
     async def test_read_outside_directory_is_refused(self, tmp_path: Path, handle: str):
