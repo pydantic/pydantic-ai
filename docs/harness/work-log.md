@@ -84,7 +84,7 @@ Each match has the entry's `seq`, `context`, `kind` and `tool_name`, its argumen
 - `limit` is clamped to 1,000 lines, and the returned text to 50,000 characters. `capped` says the character cap cut the text, keeping its start, or its end with `from_end=True`; `next_offset` then points at the first line not returned in full, passing over a line the cap cut. `cut_at` is the byte offset where the cut line's missing part starts.
 - `unit='bytes'` reads the content's UTF-8 bytes instead, for output without useful line breaks such as minified JSON: `offset`, `limit`, `next_offset` and `total` then count bytes, `limit` is clamped to 50,000, and `pattern` can't be used. `read_work_log(seq, unit='bytes', offset=cut_at, limit=50_000)` returns the rest of a cut line.
 - `next_offset` is the `offset` that reads on, or `None` when the window reached the end (the start, with `from_end=True`).
-- An unknown `seq`, a negative `offset` or a `limit` below 1 asks the model to retry, with the valid range of `seq` in the message.
+- An unknown `seq`, a negative `offset` or a `limit` below 1 asks the model to retry. For an unknown `seq`, the message points it at `search_work_log`, which lists each entry's `seq`, rather than reading the whole log to count it.
 
 Both tools return `TypedDict`s, so [Code Mode](code-mode.md) shows their return types to the model, and a script can search and read the log in one `run_code` call. Both are exempt from `ToolOutputLimits`, as its own `read_tool_result` and `grep_tool_result` are: each result is already bounded, and a spilled one would need a second tool to read.
 

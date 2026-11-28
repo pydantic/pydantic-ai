@@ -134,8 +134,9 @@ entry: the call with its arguments in full and its outcome, plus a window of the
   limit=50_000)` returns the rest of a cut line.
 - `next_offset` is the `offset` that reads on, or `None` when the window reached the end (the
   start, with `from_end=True`).
-- An unknown `seq`, a negative `offset` or a `limit` below 1 asks the model to retry, with the
-  valid range of `seq` in the message.
+- An unknown `seq`, a negative `offset` or a `limit` below 1 asks the model to retry. For an
+  unknown `seq`, the message points it at `search_work_log`, which lists each entry's `seq`, rather
+  than reading the whole log to count it.
 
 Both tools return `TypedDict`s, so [Code Mode](../code_mode/) shows their return types to the
 model, and a script can search and read the log in one `run_code` call. Both are exempt from
