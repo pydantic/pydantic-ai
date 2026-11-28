@@ -7,9 +7,12 @@ from collections.abc import Callable, Mapping, Sequence
 from pathlib import Path
 
 import pytest
+from opentelemetry.sdk.trace import TracerProvider
+from opentelemetry.sdk.trace.export import SimpleSpanProcessor
+from opentelemetry.sdk.trace.export.in_memory_span_exporter import InMemorySpanExporter
 
 from pydantic_ai import Agent, DeferredToolRequests, Tool
-from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, LocalWorkspace
+from pydantic_ai.capabilities import AbstractCapability, HandleDeferredToolCalls, Instrumentation, LocalWorkspace
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -21,9 +24,11 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.tools import DeferredToolResults, RunContext, ToolApproved
 from pydantic_ai.toolsets import FunctionToolset
 from pydantic_ai.workspaces import CommandResult, Workspace, WorkspaceCommand, WorkspaceRef
+from pydantic_ai_harness.code_mode import CodeMode
 from pydantic_ai_harness.file_system import WRITE_FILE_KIND, FileSystem
 from pydantic_ai_harness.permissions import (
     DEFAULT_ASK_COMMANDS,
@@ -857,3 +862,144 @@ class TestPermissionRules:
             'auto',
             [PermissionRule('deny', tools=['run_command'], command='git push')],
         )
+
+
+def _lookup(x: int = 0) -> str:
+    raise NotImplementedError
+
+
+async def _decisions(
+    rules: Sequence[PermissionRule],
+    mode: PermissionMode,
+    *calls: tuple[str, Mapping[str, object]],
+    include_content: bool = False,
+    person: _Person | None = None,
+) -> list[dict[str, object]]:
+    """Run `calls` with core instrumentation on, and return the `permissions.*` attributes of each tool span."""
+    exporter = InMemorySpanExporter()
+    provider = TracerProvider()
+    provider.add_span_processor(SimpleSpanProcessor(exporter))
+    settings = InstrumentationSettings(tracer_provider=provider, include_content=include_content)
+    handler = [] if person is None else [HandleDeferredToolCalls[None](approval_ask(person))]
+    agent = Agent[None, 'str | DeferredToolRequests'](
+        _calls(*calls),
+        deps_type=type(None),
+        output_type=[str, DeferredToolRequests],
+        tools=[_SHELL_TOOL, Tool(_lookup, name='lookup')],
+        capabilities=[Instrumentation(settings), Permissions(mode, rules=rules), *handler],
+    )
+    await agent.run('go', conversation_id='c')
+    return [
+        {key: value for key, value in (span.attributes or {}).items() if key.startswith('permissions.')}
+        for span in exporter.get_finished_spans()
+        if span.name.startswith('execute_tool')
+    ]
+
+
+class TestPermissionsTelemetry:
+    @pytest.mark.parametrize('include_content', [False, True])
+    async def test_a_denied_call_records_the_decision_and_the_reason_only_with_content(
+        self, include_content: bool
+    ) -> None:
+        reason = {'permissions.reason': 'No recursive deletes.'} if include_content else {}
+
+        assert await _decisions(
+            _RULES, 'full', ('run_command', {'command': 'rm -rf /'}), include_content=include_content
+        ) == [{'permissions.decision': 'deny', 'permissions.source': 'rule', 'permissions.mode': 'full', **reason}]
+
+    @pytest.mark.parametrize(
+        ('mode', 'call', 'expected'),
+        [
+            ('full', ('run_command', {'command': 'git status'}), {'decision': 'allow', 'source': 'rule'}),
+            ('full', ('run_command', {'command': 'cat x'}), {'decision': 'allow', 'source': 'mode'}),
+            ('read-only', ('run_command', {'command': 'cat x'}), {'decision': 'ask', 'source': 'mode'}),
+            ('full', ('run_command', {'command': 'git push'}), {'decision': 'ask', 'source': 'rule'}),
+            ('full', ('lookup', {'x': 1}), {'decision': 'ask', 'source': 'rule'}),
+        ],
+    )
+    async def test_each_call_records_the_decision_and_what_made_it(
+        self, mode: PermissionMode, call: tuple[str, Mapping[str, object]], expected: dict[str, str]
+    ) -> None:
+        rules = [*_RULES, PermissionRule('ask', tools=['lookup'], reason='Lookups need a look.')]
+
+        assert await _decisions(rules, mode, call) == [
+            {
+                'permissions.decision': expected['decision'],
+                'permissions.source': expected['source'],
+                'permissions.mode': mode,
+            }
+        ]
+
+    @pytest.mark.parametrize(
+        ('rules', 'mode', 'reason'),
+        [
+            ([], 'read-only', 'Read-only mode asks before every command.'),
+            ([PermissionRule('allow', command='cat', reason='Reading is safe.')], 'read-only', 'Reading is safe.'),
+            ([PermissionRule('ask', command='cat', reason='Check what it reads.')], 'full', 'Check what it reads.'),
+        ],
+    )
+    async def test_allowed_and_asked_calls_record_the_reason_with_content(
+        self, rules: list[PermissionRule], mode: PermissionMode, reason: str
+    ) -> None:
+        [decision] = await _decisions(rules, mode, ('run_command', {'command': 'cat x'}), include_content=True)
+
+        assert decision['permissions.reason'] == reason
+
+    async def test_a_call_denied_inside_code_mode_records_the_decision_on_its_own_span(self) -> None:
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        agent = Agent[None, str](
+            _calls(('run_code', {'code': 'await lookup(x=1)'})),
+            deps_type=type(None),
+            tools=[Tool(_lookup, name='lookup')],
+            capabilities=[
+                Instrumentation(InstrumentationSettings(tracer_provider=provider, include_content=False)),
+                CodeMode(),
+                Permissions(rules=[PermissionRule('deny', tools=['lookup'])]),
+            ],
+        )
+
+        await agent.run('go')
+
+        assert {
+            span.name: {key: value for key, value in (span.attributes or {}).items() if key.startswith('permissions.')}
+            for span in exporter.get_finished_spans()
+            if span.name.startswith('execute_tool')
+        } == {
+            'execute_tool lookup': {
+                'permissions.decision': 'deny',
+                'permissions.source': 'rule',
+                'permissions.mode': 'full',
+            },
+            'execute_tool run_code': {
+                'permissions.decision': 'allow',
+                'permissions.source': 'mode',
+                'permissions.mode': 'full',
+            },
+        }
+
+    async def test_an_uninstrumented_run_leaves_the_current_span_alone(self) -> None:
+        """Without `Instrumentation`, the open span is the application's own, not a tool span."""
+        exporter = InMemorySpanExporter()
+        provider = TracerProvider()
+        provider.add_span_processor(SimpleSpanProcessor(exporter))
+        agent = _rules_agent(_calls(('run_command', {'command': 'rm -rf /'})), _RULES)
+
+        with provider.get_tracer('app').start_as_current_span('request'):
+            await agent.run('go')
+
+        [span] = exporter.get_finished_spans()
+        assert not [key for key in span.attributes or {} if key.startswith('permissions.')]
+
+    async def test_approved_and_remembered_calls_say_why_they_ran(self) -> None:
+        person = _Person(PermissionDecision(approved=True, remember=True))
+        call = ('run_command', {'command': 'cat x'})
+
+        decisions = await _decisions([], 'read-only', call, call, person=person)
+
+        assert [(d['permissions.decision'], d['permissions.source']) for d in decisions] == [
+            ('ask', 'mode'),
+            ('allow', 'approved'),
+            ('allow', 'remembered'),
+        ]
