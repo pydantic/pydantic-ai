@@ -11,7 +11,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1536"
+      - "1443"
       content-type:
       - application/json
       host:
@@ -48,10 +48,7 @@ interactions:
         - content: Sunny, 21C
           role: tool
           tool_call_id: 2pESUE4jw
-        - content: |-
-            Use the English city name.
-
-            Fix the errors and try again.
+        - content: "{\"error\":\"Use the English city name.\"}"
           role: tool
           tool_call_id: l4LUGq9qS
         - content: Cloudy, 15C
@@ -70,11 +67,6 @@ interactions:
         - content: Rainy, 12C
           role: tool
           tool_call_id: aB3dE5gH9
-        - role: assistant
-          content:
-          - text: OK
-            type: text
-          prefix: false
         - content: >-
             Summarize the weather in those three cities in one sentence, without calling
             tools.
@@ -111,7 +103,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 01a146c5-9ff4-79b3-8b87-5bf9d43e7740
+      - 01a21a02-d4b5-773d-a152-616a81f6f27d
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -119,12 +111,12 @@ interactions:
     body:
       type: json
       content:
-        id: 94f1cd377ff94cc7b65d33599af684d0
-        created: 1792188719
+        id: c93a902a1dc64b568b0f7667319244c0
+        created: 1795732723
         model: voxtral-small-latest
         usage:
-          prompt_tokens: 300
-          total_tokens: 337
+          prompt_tokens: 295
+          total_tokens: 332
           completion_tokens: 37
           prompt_tokens_details:
             cached_tokens: 0
@@ -139,7 +131,7 @@ interactions:
             content: >-
               The weather in Paris is sunny and 21C, in London it is rainy and 12C, and in
               Berlin it is cloudy and 15C.
-  recorded_at: 2026-10-16T22:11:59.598183+00:00
+  recorded_at: 2026-11-26T22:38:43.382405+00:00
 - request:
     method: POST
     uri: https://api.mistral.ai/v1/chat/completions
@@ -151,7 +143,7 @@ interactions:
       connection:
       - keep-alive
       content-length:
-      - "1536"
+      - "1443"
       content-type:
       - application/json
       host:
@@ -188,10 +180,7 @@ interactions:
         - content: Sunny, 21C
           role: tool
           tool_call_id: 2pESUE4jw
-        - content: |-
-            Use the English city name.
-
-            Fix the errors and try again.
+        - content: "{\"error\":\"Use the English city name.\"}"
           role: tool
           tool_call_id: l4LUGq9qS
         - content: Cloudy, 15C
@@ -210,11 +199,6 @@ interactions:
         - content: Rainy, 12C
           role: tool
           tool_call_id: aB3dE5gH9
-        - role: assistant
-          content:
-          - text: OK
-            type: text
-          prefix: false
         - content: >-
             Summarize the weather in those three cities in one sentence, without calling
             tools.
@@ -251,7 +235,7 @@ interactions:
       content-type:
       - application/json
       mistral-correlation-id:
-      - 01a146c5-a258-7961-b7e1-ad199df351a4
+      - 01a21a02-d710-7585-861a-47081a74d169
       strict-transport-security:
       - max-age=15552000; includeSubDomains; preload
       transfer-encoding:
@@ -259,15 +243,15 @@ interactions:
     body:
       type: json
       content:
-        id: 775efbcd327d4243afc6578d90a986e9
-        created: 1792188719
+        id: ecd2ca8f8e704e2bbc772bb275a356f5
+        created: 1795732723
         model: voxtral-small-latest
         usage:
-          prompt_tokens: 300
-          total_tokens: 337
+          prompt_tokens: 295
+          total_tokens: 332
           completion_tokens: 37
           prompt_tokens_details:
-            cached_tokens: 0
+            cached_tokens: 256
           service_tier: standard
         object: chat.completion
         choices:
@@ -279,4 +263,4 @@ interactions:
             content: >-
               The weather in Paris is sunny and 21C, in London it is rainy and 12C, and in
               Berlin it is cloudy and 15C.
-  recorded_at: 2026-10-16T22:12:00.259959+00:00
+  recorded_at: 2026-11-26T22:38:43.926681+00:00

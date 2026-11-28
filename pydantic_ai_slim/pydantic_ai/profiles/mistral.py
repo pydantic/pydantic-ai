@@ -22,6 +22,15 @@ class MistralModelProfile(ModelProfile, total=False):
     `thinking=False` to `'none'` if accepted, else the lowest accepted effort.
     """
 
+    mistral_supports_user_message_after_tool_message: bool
+    """Whether the API accepts a `user` message directly after a `tool` message.
+
+    When `False`, `MistralModel` puts an assistant message with the text `'OK'` between the two, for endpoints
+    that reject the sequence with `Unexpected role 'user' after role 'tool'`. When unset, `MistralModel` decides by
+    the host of the provider's base URL: `True` on Mistral's own API (`api.mistral.ai`), `False` on any other host,
+    such as a self-hosted or Mistral-compatible endpoint. An explicit value in the model's `profile=` wins.
+    """
+
 
 def mistral_model_profile(model_name: str) -> ModelProfile:
     """Get the model profile for a Mistral model."""
