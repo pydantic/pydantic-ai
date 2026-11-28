@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import sys
 import warnings
-from collections.abc import AsyncGenerator, Awaitable, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Collection, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -204,7 +204,7 @@ class WrapperModel(Model):
         *,
         instructions: str | None = None,
     ) -> ModelResponse:
-        return await self.wrapped.compact_messages(request_context, instructions=instructions)  # pragma: no cover
+        return await self.wrapped.compact_messages(request_context, instructions=instructions)
 
     @asynccontextmanager
     async def request_stream(
@@ -229,8 +229,10 @@ class WrapperModel(Model):
     ) -> tuple[ModelSettings | None, ModelRequestParameters]:
         return self.wrapped.prepare_request(model_settings, model_request_parameters)
 
-    def _warn_if_thinking_overridden(self, layers: Sequence[_SettingsLayer]) -> None:
-        self.wrapped._warn_if_thinking_overridden(layers)
+    def _warn_if_thinking_overridden(
+        self, layers: Sequence[_SettingsLayer], *, suppressed: Collection[str] = frozenset()
+    ) -> None:
+        self.wrapped._warn_if_thinking_overridden(layers, suppressed=suppressed)
 
     def _unified_effort(self, model_settings: ModelSettings | None) -> ThinkingEffort | None:
         return self.wrapped._unified_effort(model_settings)

@@ -211,11 +211,11 @@ async def test_included_content_images_tools_and_usage_are_traced(recorder: Reco
         {
             'local': True,
             'send_to_logfire': 'if-token-present',
-            'service_name': 'pydantic-clai2',
+            'service_name': 'pydantic-ai-pax',
             'console': False,
             'inspect_arguments': False,
-            'config_dir': tmp_path / 'config/pydantic-clai2/logfire',
-            'data_dir': tmp_path / 'config/pydantic-clai2/logfire',
+            'config_dir': tmp_path / 'config/pydantic-ai-pax/logfire',
+            'data_dir': tmp_path / 'config/pydantic-ai-pax/logfire',
             'base_url': None,
         }
     ]
@@ -224,6 +224,14 @@ async def test_included_content_images_tools_and_usage_are_traced(recorder: Reco
     assert metrics.get_meter_provider() is meter
     assert propagate.get_global_textmap() is propagator
     assert agent.instrument is None
+
+
+@pytest.mark.parametrize('saved', [{}, {'service_name': 'my-clai'}])
+async def test_service_name_defaults_to_the_package_name(recorder: Recorder, saved: dict[str, JsonValue]) -> None:
+    """A saved `pydantic-clai2`, the old default, is migrated in the settings store; see `test_settings_compatibility`."""
+    plugin = load_logfire(make_host(**saved))
+    await close(plugin)
+    assert [options['service_name'] for options in recorder.options] == [saved.get('service_name', 'pydantic-ai-pax')]
 
 
 async def test_agents_built_elsewhere_are_traced_while_loaded(recorder: Recorder) -> None:
@@ -708,7 +716,7 @@ async def test_relative_config_home_does_not_read_the_checkout(
     host = make_host()
     plugin = load_logfire(host)
     await close(plugin)
-    assert recorder.options[0]['config_dir'] == tmp_path / 'home/.config/pydantic-clai2/logfire'
+    assert recorder.options[0]['config_dir'] == tmp_path / 'home/.config/pydantic-ai-pax/logfire'
     assert recorder.options[0]['data_dir'] == recorder.options[0]['config_dir']
 
 
@@ -729,7 +737,7 @@ async def test_repository_cannot_select_telemetry_destination(
     host = make_host()
     plugin = load_logfire(host)
     await close(plugin)
-    assert recorder.options[0]['config_dir'] == tmp_path / 'config/pydantic-clai2/logfire'
+    assert recorder.options[0]['config_dir'] == tmp_path / 'config/pydantic-ai-pax/logfire'
     assert recorder.options[0]['data_dir'] == recorder.options[0]['config_dir']
     assert recorder.instances[0].config.token is None
 
@@ -984,7 +992,7 @@ async def test_menu_saves_every_option_and_reloads_with_them(
             'httpx': ['logfire-httpx'],
             'variables_key': ['logfire-variables-key'],
         }
-        assert [options['service_name'] for options in recorder.options] == ['pydantic-clai2', 'my-clai']
+        assert [options['service_name'] for options in recorder.options] == ['pydantic-ai-pax', 'my-clai']
         assert recorder.api_keys == [None, 'lf-read-variables-key']
         assert recorder.options[-1]['send_to_logfire'] is False
         assert recorder.exporters[0].closed
@@ -1028,7 +1036,7 @@ def test_menu_validates_resets_and_notes_credentials(monkeypatch: pytest.MonkeyP
     assert source.problem(rows['send_to_logfire'], 'always') is not None
     assert source.problem(rows['service_name'], 'true') is None
     assert source.reset(rows['service_name']) == 'Reset Service name.'
-    assert source.current(rows['service_name']) == 'pydantic-clai2'
+    assert source.current(rows['service_name']) == 'pydantic-ai-pax'
     assert source.current(rows['include_content']) == 'false'
     variables_key = rows['variables_key']
     assert source.current(variables_key) == 'LOGFIRE_API_KEY, if set'

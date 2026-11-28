@@ -332,6 +332,8 @@ This avoids double-counting in observability backends that aggregate usage attri
 
 An agent run span reports what that run spent. A run that [delegates to another agent](multi-agent-applications.md#agent-delegation) does not include the delegate's tokens, whether or not the delegate is instrumented: if it is, its own run span reports them. So the agent run spans in a trace can be added up as they are — the total matches the sum of the `gen_ai.usage.*` attributes on the model request spans underneath them.
 
+To add up cost per conversation instead of per trace, sub-agents included, use the `pydantic_ai.root_conversation_id` attribute described in [Correlating runs with `run_id` and `conversation_id`](message-history.md#correlating-runs-with-run_id-and-conversation_id).
+
 !!! note "Custom namespace"
     The `gen_ai.aggregated_usage.*` namespace is a custom extension not part of the [OpenTelemetry Semantic Conventions for GenAI](https://opentelemetry.io/docs/specs/semconv/gen-ai/). It was introduced to work around double-counting in observability backends. If OpenTelemetry introduces an official convention for aggregated usage in the future, this namespace may be updated or deprecated.
 
@@ -355,6 +357,8 @@ Versions 2, 3, and 4 are deprecated compatibility formats. Passing one of these 
 Version 6 is opt-in: it changes the role of messages you already receive, so pass it explicitly once your telemetry consumer is ready for the new role.
 
 Agent run spans carry the agent name under both `agent_name` and `gen_ai.agent.name` at every version, so a dashboard keyed on either name keeps working when you change versions.
+
+An agent run span records the run's conversation under `pydantic_ai.all_messages`, and `pydantic_ai.new_message_index` marks where the run's own messages start in it: for a run that completes, `all_messages[new_message_index:]` is its [`new_messages()`][pydantic_ai.agent.AgentRunResult.new_messages] in the same format. The index counts `pydantic_ai.all_messages` entries, not [`ModelMessage`][pydantic_ai.messages.ModelMessage]s: a request becomes one entry per role, so a system prompt and a user prompt are two. The attribute is left out when the index would be 0. For a run that fails, the index can be off; this existing limitation is tracked in [#14963](https://github.com/pydantic/pydantic-ai/issues/14963).
 
 #### Version 2 (deprecated)
 
@@ -443,6 +447,8 @@ Agent.instrument_all(instrumentation_settings)
 ### Excluding binary content
 
 When `include_binary_content=False`, Pydantic AI excludes binary file data, including images, audio, and documents, from telemetry for user prompts, model responses, tool returns, the agent's output, output-function arguments, and run and tool deferral metadata. The media type remains recorded everywhere. When a value is recorded as a file rather than a message part, its vendor metadata and identifier are recorded too; Pydantic AI derives the identifier from the content when you do not set one.
+
+Media in what a tool or output function returns ([`BinaryContent`][pydantic_ai.messages.BinaryContent], media URLs and [`UploadedFile`][pydantic_ai.messages.UploadedFile]s) is recorded as the same `blob`, `uri` or `file` message part as in a user prompt, so a backend that renders media in messages renders it in tool results too. Like a prompt's, such a part keeps only its media type and modality when binary content is excluded.
 
 Binary content is found inside dictionaries, lists and [`ToolReturn`][pydantic_ai.messages.ToolReturn]s, but not inside your own types: a [`BinaryContent`][pydantic_ai.messages.BinaryContent] held as a field of a model or dataclass you define is still recorded in full.
 

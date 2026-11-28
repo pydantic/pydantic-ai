@@ -3083,7 +3083,7 @@ async def test_bedrock_adaptive_thinking_keeps_tool_output_unforced(
 
     assert len(sent_requests) == 1
     sent = sent_requests[0]
-    assert sent['additionalModelRequestFields']['thinking'] == {'type': 'adaptive'}
+    assert sent['additionalModelRequestFields']['thinking'] == {'type': 'adaptive', 'display': 'summarized'}
     assert sent['toolConfig']['toolChoice'] == {'auto': {}}
     assert output == 42
 
@@ -3103,7 +3103,7 @@ async def test_bedrock_opus_5_thinking_uses_native_output(
     assert len(sent_requests) == 1
     sent = sent_requests[0]
     assert sent.get('additionalModelRequestFields', {}) == (
-        {'thinking': {'type': 'adaptive'}} if model_settings else {}
+        {'thinking': {'type': 'adaptive', 'display': 'summarized'}} if model_settings else {}
     )
     assert 'toolConfig' not in sent
     assert sent['outputConfig']['textFormat']['type'] == 'json_schema'
@@ -3143,7 +3143,7 @@ async def test_bedrock_anthropic_unified_max_effort(allow_model_requests: None, 
 
     assert result.output
     assert [sent['additionalModelRequestFields'] for sent in sent_requests] == snapshot(
-        [{'thinking': {'type': 'adaptive'}, 'output_config': {'effort': 'max'}}]
+        [{'thinking': {'type': 'adaptive', 'display': 'summarized'}, 'output_config': {'effort': 'max'}}]
     )
 
 
@@ -8913,6 +8913,75 @@ async def test_bedrock_leading_assistant_message_prepended_for_nova(bedrock_prov
     )
 
 
+@pytest.mark.parametrize('model_name', ['mistral.mistral-large-3-675b-instruct', 'mistral.ministral-3-8b-instruct'])
+@pytest.mark.vcr(additional_matchers=['body'])
+async def test_bedrock_mistral_3_leading_assistant_and_tool_result_with_text_and_image(
+    allow_model_requests: None,
+    bedrock_provider: BedrockProvider,
+    vcr: Cassette,
+    image_content: BinaryContent,
+    model_name: str,
+):
+    """Mistral Large 3 and Ministral 3 accept a leading assistant turn, and text and an image next to a `toolResult`.
+
+    So the history is sent without a synthetic leading user turn, and the tool result and the next prompt share one
+    user turn instead of being split by a synthetic assistant turn. Pixtral Large still needs both.
+    """
+    agent = Agent(BedrockConverseModel(model_name, provider=bedrock_provider))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return '18C and sunny'  # pragma: no cover
+
+    result = await agent.run(
+        ['Should I bring a jacket, and what fruit is in this image? Answer in one sentence.', image_content],
+        message_history=[
+            ModelResponse(parts=[TextPart(content='Hi! I can look up the weather for you.')]),
+            ModelRequest(parts=[UserPromptPart(content='What is the weather in Paris?')]),
+            ModelResponse(
+                parts=[ToolCallPart(tool_name='get_weather', args={'city': 'Paris'}, tool_call_id='weather01')]
+            ),
+            ModelRequest(
+                parts=[ToolReturnPart(tool_name='get_weather', content='18C and sunny', tool_call_id='weather01')]
+            ),
+        ],
+    )
+
+    assert single_request_body(vcr)['messages'] == snapshot(
+        [
+            {'role': 'assistant', 'content': [{'text': 'Hi! I can look up the weather for you.'}]},
+            {'role': 'user', 'content': [{'text': 'What is the weather in Paris?'}]},
+            {
+                'role': 'assistant',
+                'content': [{'toolUse': {'toolUseId': 'weather01', 'name': 'get_weather', 'input': {'city': 'Paris'}}}],
+            },
+            {
+                'role': 'user',
+                'content': [
+                    {
+                        'toolResult': {
+                            'toolUseId': 'weather01',
+                            'content': [{'text': '18C and sunny'}],
+                            'status': 'success',
+                        }
+                    },
+                    {'text': 'Should I bring a jacket, and what fruit is in this image? Answer in one sentence.'},
+                    {'image': {'format': 'jpeg', 'source': {'bytes': IsStr()}}},
+                ],
+            },
+        ]
+    )
+    expected_outputs = {
+        'mistral.mistral-large-3-675b-instruct': snapshot(
+            "You don't necessarily need a jacket in Paris right now as it's **18°C and sunny**, and the fruit in the image is a kiwi."
+        ),
+        'mistral.ministral-3-8b-instruct': snapshot(
+            "No, you don't need a jacket since it's sunny at **18°C in Paris**, and the fruit in the image is a **kiwi**."
+        ),
+    }
+    assert result.output == expected_outputs[model_name]
+
+
 async def test_bedrock_empty_history_prepended_for_anthropic(bedrock_provider: BedrockProvider):
     """Even Anthropic needs a synthetic user turn when there are no messages, since Converse requires at least one.
 
@@ -9207,7 +9276,12 @@ async def test_bedrock_default_output_mode_stays_put_when_thinking_toggles_per_s
     assert [tool['toolSpec']['name'] for tool in first['toolConfig']['tools']] == ['get_population', 'final_result']
     assert [
         (kwargs['toolConfig']['toolChoice'], kwargs.get('additionalModelRequestFields')) for kwargs in (first, second)
-    ] == snapshot([({'any': {}}, None), ({'auto': {}}, {'thinking': {'type': 'enabled', 'budget_tokens': 10000}})])
+    ] == snapshot(
+        [
+            ({'any': {}}, None),
+            ({'auto': {}}, {'thinking': {'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}}),
+        ]
+    )
 
 
 async def test_bedrock_default_output_mode_resolves_again_where_the_kept_one_is_invalid(
@@ -9528,7 +9602,9 @@ async def test_bedrock_claude_thinking_drops_the_sampling_settings_it_rejects(
     assert result.output.strip() == snapshot('4')
     sent = single_request_body(vcr)
     assert sent.get('inferenceConfig') == snapshot({'maxTokens': 64000})
-    assert sent['additionalModelRequestFields'] == snapshot({'thinking': {'type': 'enabled', 'budget_tokens': 10000}})
+    assert sent['additionalModelRequestFields'] == snapshot(
+        {'thinking': {'type': 'enabled', 'budget_tokens': 10000, 'display': 'summarized'}}
+    )
 
 
 @pytest.mark.vcr(additional_matchers=['body'])

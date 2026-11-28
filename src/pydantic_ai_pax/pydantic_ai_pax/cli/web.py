@@ -1,14 +1,14 @@
 """`pax --web`: Pax with no terminal prompt, driven only from the web UI, logging the conversation as it goes."""
 
 import os
-from collections.abc import Callable
+from collections.abc import Callable, Sequence
 from pathlib import Path
 
 from anyio import CancelScope, create_task_group, get_cancelled_exc_class, to_thread
 from rich.console import Console
 
 from pydantic_ai.usage import UsageLimits
-from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 from pydantic_ai_pax.app import STOCK_PLUGINS, create_stock_agent
 from pydantic_ai_pax.builtin_plugins.web import WebPlugin
 from pydantic_ai_pax.cli.self_update import WebHandoff
@@ -41,10 +41,12 @@ async def run_web(
     port: int | None = None,
     token: str | None = None,
     restart: WebHandoff | None = None,
+    launch_plugins: Sequence[str] = (),
 ) -> None:
     """Load the stock plugins and `web`, start the web UI, and run turns the browser enters until Ctrl+C.
 
-    `console` gets the transcript as plain text. Nothing saved changes: `web` loads for this launch only.
+    `console` gets the transcript as plain text. Nothing saved changes: `web` loads for this launch only, as do
+    `launch_plugins`, in every session.
     `resume`, `session_id`, and `fork_session` work as for `chat`, except that `resume` needs an ID.
 
     `project` is the launch directory's project file and `settings_for` the settings Pax starts with
@@ -73,6 +75,7 @@ async def run_web(
         console=console,
         workspace=workspace,
         store=store,
+        launch_plugins=launch_plugins,
     )
     if (notice := undecided_notice(shell.session.trust)) is not None:
         console.print(notice, markup=False)
@@ -108,6 +111,7 @@ def _web_session(
     workspace: Path | None,
     store: SettingsStore | None = None,
     process: ClaiProcess[None] | None = None,
+    launch_plugins: Sequence[str] = (),
 ) -> SessionRuntime[None, str]:
     """A session of `pax --web` in `workspace`: over a new process with `store`, or joining `process`."""
     settings = settings_for(project)
@@ -127,6 +131,7 @@ def _web_session(
         # Ctrl+C reaches the session Pax started with, which ends Pax; the others are interrupted from the browser.
         signals=process is None,
         settings_for=settings_for,
+        launch_plugins=launch_plugins,
     )
     SessionWorkspace(
         session=shell.session,
@@ -227,7 +232,7 @@ async def serve_again(loader: SessionPlugins[DepsT], handoff: WebHandoff) -> str
 
 async def _start_in(*, store: SettingsStore, conversation_id: str) -> tuple[Path, ProjectSettings] | None:
     """The directory a resumed session was saved in, with its project file; `None` when it is here."""
-    conversations = SqliteConversationStore(database=store.path.with_name('sessions.db'))
+    conversations = SqliteSessionStore(database=store.path.with_name('sessions.db'))
     try:
         workspace = (await conversations.get(conversation_id=conversation_id)).summary.workspace
     except LookupError:

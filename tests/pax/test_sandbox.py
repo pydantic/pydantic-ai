@@ -14,22 +14,27 @@ import os
 import re
 import shlex
 import stat
+import struct
 import subprocess
 import sys
 import uuid
+import zlib
 from collections.abc import AsyncIterator, Callable, Iterator, Mapping
 from dataclasses import dataclass, field
 from importlib.util import find_spec
 from pathlib import Path
+from types import SimpleNamespace
 from typing import TYPE_CHECKING, Literal, cast
 
 import anyio
 import pytest
 from anyio import to_thread
+from pydantic import JsonValue
 from rich.console import Console
 
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import AbstractCapability
+from pydantic_ai.computer_use import Click, Point, Region
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.messages import (
     ModelMessage,
@@ -50,6 +55,14 @@ from pydantic_ai.workspaces import (
     WorkspaceUnavailableError,
 )
 from pydantic_ai_harness import Shell
+from pydantic_ai_harness.computer_use import (
+    Display,
+    DisplayAction,
+    SupportsCursorPosition,
+    SupportsDisplay,
+    SupportsZoom,
+    UnsupportedActionError,
+)
 from pydantic_ai_pax import Session
 from pydantic_ai_pax.builtin_plugins import sandbox
 from pydantic_ai_pax.builtin_plugins.sandbox import SandboxPlugin, history_sandbox
@@ -76,7 +89,7 @@ from pydantic_ai_pax.builtin_plugins.sandbox.seed import (
     seed,
     snapshot,
 )
-from pydantic_ai_pax.config import Settings
+from pydantic_ai_pax.config import PERMISSIONS_SETTING, Settings
 from pydantic_ai_pax.config.api_keys import load_keys, save_key
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
@@ -110,6 +123,50 @@ if TYPE_CHECKING:
 CLONE_URL = 'https://github.com/owner/repo.git'
 
 
+def make_png(width: int = 8, height: int = 6, color: tuple[int, int, int] = (20, 40, 80)) -> bytes:
+    """Minimal valid RGB PNG of the given dimensions, without Pillow."""
+    raw = b''.join(b'\x00' + bytes(color) * width for _ in range(height))
+
+    def chunk(kind: bytes, data: bytes) -> bytes:
+        body = kind + data
+        return struct.pack('>I', len(data)) + body + struct.pack('>I', zlib.crc32(body) & 0xFFFFFFFF)
+
+    return (
+        b'\x89PNG\r\n\x1a\n'
+        + chunk(b'IHDR', struct.pack('>IIBBBBB', width, height, 8, 2, 0, 0, 0))
+        + chunk(b'IDAT', zlib.compress(raw))
+        + chunk(b'IEND', b'')
+    )
+
+
+PNG_A = make_png(1280, 800, (10, 20, 30))
+
+
+class FakeDisplay:
+    """In-memory `Display` implementing zoom and cursor position for desktop sandbox tests."""
+
+    def __init__(self, *, png: bytes = PNG_A, size: tuple[int, int] = (1280, 800)) -> None:
+        self.png = png
+        self.size = size
+        self.actions: list[DisplayAction] = []
+
+    async def display_size(self) -> tuple[int, int]:
+        return self.size
+
+    async def screenshot(self) -> bytes:
+        return self.png
+
+    async def act(self, action: DisplayAction) -> None:
+        self.actions.append(action)
+
+    async def zoom(self, region: Region) -> bytes:
+        del region
+        return self.png
+
+    async def cursor_position(self) -> Point:
+        return Point(x=100, y=200)
+
+
 def git(directory: Path, *args: str) -> str:
     result = subprocess.run(['git', '-C', str(directory), *args], capture_output=True, text=True, check=True)
     return result.stdout.rstrip()
@@ -118,13 +175,20 @@ def git(directory: Path, *args: str) -> str:
 class FakeSandboxBackend(LocalWorkspaceBackend):
     """A local folder that reports the fake provider's reference, as a cloud sandbox's backend would."""
 
-    def __init__(self, ref: WorkspaceRef, directory: Path, *, env: Mapping[str, str]) -> None:
+    def __init__(
+        self, ref: WorkspaceRef, directory: Path, *, env: Mapping[str, str], display: Display | None = None
+    ) -> None:
         super().__init__(directory, env=env)
         self._sandbox_ref = ref
+        self._display = display
 
     @property
     def ref(self) -> WorkspaceRef:
         return self._sandbox_ref
+
+    @property
+    def display(self) -> Display | None:
+        return self._display
 
 
 @dataclass
@@ -137,20 +201,29 @@ class FakeProvider:
     title: str = 'Fake'
     working_dir: str = '/home/user/workspace'
     token_in_sandbox: bool = False
+    desktop_at_create: bool = False
     requirement: str | None = None
+    display: Display | None = None
+    """The screen of every sandbox made or reopened with `desktop=True`."""
     created: list[GitHubCredential | None] = field(default_factory=list[GitHubCredential | None])
+    created_desktop: list[bool] = field(default_factory=list[bool])
     reopened: list[WorkspaceRef] = field(default_factory=list[WorkspaceRef])
+    reopened_desktop: list[bool] = field(default_factory=list[bool])
     deleted: list[WorkspaceRef] = field(default_factory=list[WorkspaceRef])
     closed: list[WorkspaceRef] = field(default_factory=list[WorkspaceRef])
     creating: anyio.Event | None = None
     """When set, `create` waits for it after starting, as a slow provider would."""
     delete_error: Exception | None = None
 
-    def missing(self) -> str | None:
+    def missing(self, *, desktop: bool = False) -> str | None:
+        del desktop
         return self.requirement
 
-    async def create(self, *, github: GitHubCredential | None) -> tuple[WorkspaceRef, FakeSandboxBackend]:
+    async def create(
+        self, *, github: GitHubCredential | None, desktop: bool = False
+    ) -> tuple[WorkspaceRef, FakeSandboxBackend]:
         self.created.append(github)
+        self.created_desktop.append(desktop)
         if self.creating is not None:
             await self.creating.wait()
         env = {**SANDBOX_ENV, 'GH_TOKEN': 'stand-in'} if github is not None else SANDBOX_ENV
@@ -160,11 +233,12 @@ class FakeProvider:
         # A fresh global config per sandbox, as a new sandbox has.
         rewrite = f'[url "{self.upstream.parent}/"]\n\tinsteadOf = https://github.com/owner/\n'
         await anyio.Path(f'{folder}.gitconfig').write_text(rewrite, encoding='utf-8')
-        return ref, self._backend(ref, env)
+        return ref, self._backend(ref, env, desktop=desktop)
 
-    def reopen(self, ref: WorkspaceRef) -> FakeSandboxBackend:
+    def reopen(self, ref: WorkspaceRef, *, desktop: bool = False) -> FakeSandboxBackend:
         self.reopened.append(ref)
-        return self._backend(ref, {})
+        self.reopened_desktop.append(desktop)
+        return self._backend(ref, {}, desktop=desktop)
 
     async def delete(self, ref: WorkspaceRef) -> None:
         if self.delete_error is not None:
@@ -177,9 +251,10 @@ class FakeProvider:
     def folder(self, ref: WorkspaceRef) -> Path:
         return self.root / ref.id
 
-    def _backend(self, ref: WorkspaceRef, env: Mapping[str, str]) -> FakeSandboxBackend:
+    def _backend(self, ref: WorkspaceRef, env: Mapping[str, str], *, desktop: bool) -> FakeSandboxBackend:
         git_env = {'GIT_CONFIG_GLOBAL': f'{self.folder(ref)}.gitconfig', 'GIT_CONFIG_NOSYSTEM': '1'}
-        return FakeSandboxBackend(ref, self.folder(ref), env={**env, **git_env})
+        display = self.display if desktop else None
+        return FakeSandboxBackend(ref, self.folder(ref), env={**env, **git_env}, display=display)
 
 
 @pytest.fixture(autouse=True)
@@ -246,13 +321,21 @@ def provider(tmp_path: Path, upstream: Path, monkeypatch: pytest.MonkeyPatch) ->
     return fake
 
 
-def load(directory: Path, conversation: Transcript | None = None, *, terminal: bool = False) -> LoadedPlugin[None]:
+def load(
+    directory: Path,
+    conversation: Transcript | None = None,
+    *,
+    terminal: bool = False,
+    settings: Mapping[str, JsonValue] | None = None,
+) -> LoadedPlugin[None]:
+    """The plugin on a host whose Pax `settings` (a test may change them) default to `/permissions full`."""
     host = PluginHost[None](
         name='sandbox',
         console=Console(file=io.StringIO(), force_terminal=terminal),
         settings={},
         conversation=conversation or Transcript(),
         workspace=lambda: directory,
+        setting=(settings or {PERMISSIONS_SETTING: 'full'}).__getitem__,
     )
     return load_plugin(SandboxPlugin, host)
 
@@ -444,7 +527,7 @@ class TestCommand:
         # The response only names the sandbox: with no parts, the model is not made to have said anything.
         assert isinstance(response, ModelResponse)
         assert (response.parts, response.workspace_ref) == ([], WorkspaceRef(provider='fake', id='sbx-1'))
-        assert [segment() for segment in loaded.status_segments] == ['fake sandbox']
+        assert [segment() for segment in loaded.status_segments] == ['fake sandbox', '']
         assert await plugin.command([]) == (
             'This conversation runs in Fake sandbox sbx-1, in /home/user/workspace. /sandbox delete deletes it.'
         )
@@ -722,7 +805,7 @@ class TestLifecycle:
         provider.folder(ref).mkdir()
         loaded = load(checkout, Transcript(messages=worked_in(ref)))
         plugin = plugin_of(loaded)
-        assert [segment() for segment in loaded.status_segments] == ['fake sandbox']
+        assert [segment() for segment in loaded.status_segments] == ['fake sandbox', '']
         current = plugin.current()
         assert current is not None
         backend = current.open()
@@ -756,7 +839,7 @@ class TestLifecycle:
     async def test_history_in_an_unknown_workspace_runs_here(self, checkout: Path, provider: FakeProvider) -> None:
         loaded = load(checkout, Transcript(messages=worked_in(WorkspaceRef(provider='retired', id='sb-1'))))
         assert plugin_of(loaded).current() is None
-        assert [segment() for segment in loaded.status_segments] == ['']
+        assert [segment() for segment in loaded.status_segments] == ['', '']
 
     async def test_reopen_needs_the_requirement(self, checkout: Path, provider: FakeProvider) -> None:
         provider.requirement = 'Add your Fake key in /keys.'
@@ -778,9 +861,8 @@ async def test_runs_use_the_sandbox(checkout: Path, provider: FakeProvider) -> N
 
     loaded = load(checkout)
     plugin = plugin_of(loaded)
-    [capability] = loaded.capabilities
     agent = Agent(TestModel(call_tools=[], custom_output_text='done'), deps_type=type(None))
-    session = Session(agent, deps=None, plugins=[capability, Probe()], workspace=checkout)
+    session = Session(agent, deps=None, plugins=[*loaded.capabilities, Probe()], workspace=checkout)
     loaded.host.conversation = session
     await session.prompt('here')
     # A conversation with history refuses `/sandbox`, so start the sandboxed one fresh.
@@ -794,7 +876,7 @@ async def test_runs_use_the_sandbox(checkout: Path, provider: FakeProvider) -> N
 
     # A background `/fork` keeps its sandbox after `/new` puts a local conversation on screen.
     fork = Session(
-        agent, deps=None, plugins=[capability, Probe()], workspace=checkout, message_history=session.messages
+        agent, deps=None, plugins=[*loaded.capabilities, Probe()], workspace=checkout, message_history=session.messages
     )
     assert fork.conversation_id != session.conversation_id
     loaded.host.conversation = Transcript(conversation_id='shown')
@@ -878,7 +960,7 @@ async def test_a_shell_line_reports_a_sandbox_it_cannot_use(
     async def stopped(self: FakeSandboxBackend, command: WorkspaceCommand, **kwargs: object) -> CommandResult:
         raise WorkspaceUnavailableError('The Fake sandbox stopped.')
 
-    def unreachable(self: object, ref: WorkspaceRef) -> object:
+    def unreachable(self: object, ref: WorkspaceRef, messages: object) -> object:
         raise RuntimeError('The Fake API returned 502.')
 
     loaded = load(checkout)
@@ -1105,7 +1187,7 @@ class TestRequestEnv:
         await plugin_of(loaded).command(['fake'])
         await session.prompt('run the evals')
         assert returns == [expected]
-        assert plugin_of(loaded).sandbox(WorkspaceRef(provider='fake', id='sbx-1')).env == {}
+        assert plugin_of(loaded).sandbox(WorkspaceRef(provider='fake', id='sbx-1'), session.messages).env == {}
 
     async def test_a_key_deleted_while_picking(
         self, checkout: Path, provider: FakeProvider, monkeypatch: pytest.MonkeyPatch
@@ -1119,7 +1201,7 @@ class TestRequestEnv:
         await plugin_of(loaded).command(['fake'])
         await session.prompt('run the evals')
         assert returns == ['The user did not give ANTHROPIC_API_KEY.']
-        assert plugin_of(loaded).sandbox(WorkspaceRef(provider='fake', id='sbx-1')).env == {}
+        assert plugin_of(loaded).sandbox(WorkspaceRef(provider='fake', id='sbx-1'), session.messages).env == {}
 
     @pytest.mark.parametrize('terminal', [True, False], ids=['on this machine', 'no terminal'])
     async def test_not_offered(self, checkout: Path, provider: FakeProvider, terminal: bool) -> None:
@@ -1341,6 +1423,26 @@ class TestBoxd:
         assert account.secrets == {}
         assert ref.id not in account.specs
         reopened = provider.reopen(ref)
+        # `watch live` links to the machine's Desktop view in boxd's console; the fake's records leave out
+        # `access`, which the SDK builds from the console's address and the machine's name.
+        from boxd.models import MachineAccess
+
+        from tests.harness.boxd_sandbox.fake_boxd import FakeMachine
+
+        record = FakeMachine.record
+
+        def with_access(machine: FakeMachine, status: str | None = None) -> 'Machine':
+            access = MachineAccess(
+                ssh_port=None,
+                domain='boxd.sh',
+                url='',
+                desktop_url=f'https://app.boxd.sh/desktop/{machine.name}',
+                custom_domains=[],
+            )
+            return record(machine, status).model_copy(update={'access': access})
+
+        monkeypatch.setattr(FakeMachine, 'record', with_access)
+        assert await provider.desktop_url(reopened) == f'https://app.boxd.sh/desktop/{fake.find(ref.id).name}'
         await provider.delete(ref)
         # The clients made for workspaces stay open until clai is done with them.
         await provider.close(backend)
@@ -1563,7 +1665,6 @@ class FakeDaytonaSecrets:
     numbers: Iterator[int] = field(default_factory=lambda: itertools.count(1))
 
     async def create(self, params: object) -> object:
-        from types import SimpleNamespace
 
         number = next(self.numbers)
         name, value, hosts = getattr(params, 'name'), getattr(params, 'value'), getattr(params, 'hosts')
@@ -1662,6 +1763,23 @@ class TestDaytona:
         assert ref == backend.ref == WorkspaceRef(provider='daytona', id='sb-1')
         reopened = provider.reopen(ref)
         assert reopened.ref == ref
+        # Daytona adds a desktop to a sandbox already running, so a reopen asked for one has a display.
+        with_desktop = provider.reopen(ref, desktop=True)
+        assert isinstance(with_desktop, SupportsDisplay) and with_desktop.display is not None
+
+        # `watch live` gets a new signed link to the desktop's noVNC page, after starting the desktop.
+        signed: list[tuple[int, int | None]] = []
+
+        async def sign(port: int, expires_in_seconds: int | None = None) -> SimpleNamespace:
+            signed.append((port, expires_in_seconds))
+            return SimpleNamespace(url=f'https://{port}-token.proxy.daytona.works/')
+
+        made.create_signed_preview_url = sign  # type: ignore[attr-defined]
+        assert (
+            await provider.desktop_url(with_desktop) == 'https://6080-token.proxy.daytona.works/vnc.html?autoconnect=1'
+        )
+        assert signed == [(6080, 3600)] and made.computer_use.started
+        await provider.close(with_desktop)
         # `request_env`'s keys reach a command as its own `env`.
         assert (await reopened.run(['printenv', 'API_KEY'], env={'API_KEY': 'sk-1'})).stdout == 'sk-1\n'
         await provider.close(reopened)
@@ -2359,7 +2477,8 @@ class TestLocal:
         assert (boxlite.name, boxlite.title, boxlite.token_in_sandbox) == ('local boxlite', 'BoxLite', True)
         assert 'local' not in sandbox.PROVIDERS
         plugin = plugin_of(load(checkout))
-        [command] = plugin.get_commands()
+        [command, computer_use_command] = plugin.get_commands()
+        assert computer_use_command.name == 'computer-use'
         assert command.description == (
             'Run a new conversation in a sandbox (local smol, local boxlite, e2b, boxd, daytona, opensandbox, modal, '
             'render, sprites, kubernetes; local ones run a VM on this machine), or show where it runs'
@@ -2663,7 +2782,7 @@ class TestCompaction:
         self, checkout: Path, provider: FakeProvider, ending: str
     ) -> None:
         from pydantic_ai_harness.compaction import SlidingWindowCompaction
-        from pydantic_ai_harness.step_persistence.conversations import SqliteConversationStore
+        from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
 
         working_dirs: list[str] = []
 
@@ -2695,7 +2814,7 @@ class TestCompaction:
             deps=None,
             plugins=[*loaded.capabilities, compaction, Probe()],
             workspace=checkout,
-            conversations=SqliteConversationStore(database=checkout.parent / 'sessions.db'),
+            conversations=SqliteSessionStore(database=checkout.parent / 'sessions.db'),
         )
         loaded.host.conversation = session
         await plugin_of(loaded).command(['fake'])
@@ -2716,3 +2835,141 @@ class TestCompaction:
         assert isinstance(kept, ModelResponse)
         assert (kept.text, kept.workspace_ref) == ('second answer', ref)
         assert working_dirs[-1] == str(provider.folder(ref))
+
+
+def test_opensandbox_has_no_desktop() -> None:
+    assert 'no desktop' in (opensandbox_provider.OpenSandboxProvider().missing(desktop=True) or '')
+
+
+async def test_smol_missing_and_reached_display(monkeypatch: pytest.MonkeyPatch) -> None:
+    smol_p = local_provider.SmolProvider()
+    monkeypatch.setattr(local_provider, 'find_spec', not_installed)
+    monkeypatch.setattr(local_provider.sys, 'platform', 'win32')
+    assert 'no Windows build' in (smol_p.missing(desktop=True) or '')
+    monkeypatch.setattr(local_provider.sys, 'platform', 'linux')
+    assert 'needs smolmachines' in (smol_p.missing(desktop=True) or '')
+
+    fake_display = FakeDisplay()
+    inner_backend = FakeSandboxBackend(
+        WorkspaceRef(provider='smol', id='vm-1'), Path('.'), env={}, display=fake_display
+    )
+    reached = local_provider._Reached(inner_backend)  # pyright: ignore[reportPrivateUsage]
+    display = reached.display
+    assert display is not None and display is reached.display
+    assert isinstance(display, SupportsZoom) and isinstance(display, SupportsCursorPosition)
+    assert reached.reached is False
+    assert await display.display_size() == (1280, 800)
+    assert reached.reached is True
+    assert await display.screenshot() == PNG_A
+    await display.act(Click(x=1, y=2))
+    assert await display.zoom(Region(left=0, top=0, right=10, bottom=10)) == PNG_A
+    assert await display.cursor_position() == Point(x=100, y=200)
+
+    class _MinimalDisplay:
+        async def display_size(self) -> tuple[int, int]:
+            raise WorkspaceUnavailableError('gone')
+
+        async def screenshot(self) -> bytes:
+            return PNG_A
+
+        async def act(self, action: DisplayAction) -> None:
+            del action
+
+    min_backend = FakeSandboxBackend(
+        WorkspaceRef(provider='smol', id='vm-2'), Path('.'), env={}, display=_MinimalDisplay()
+    )
+    min_reached = local_provider._Reached(min_backend)  # pyright: ignore[reportPrivateUsage]
+    min_display = min_reached.display
+    assert min_display is not None
+    assert isinstance(min_display, SupportsZoom) and isinstance(min_display, SupportsCursorPosition)
+    with pytest.raises(WorkspaceUnavailableError):
+        await min_display.display_size()
+    assert min_reached.reached is False
+    assert await min_display.screenshot() == PNG_A
+    await min_display.act(Click(x=1, y=2))
+    with pytest.raises(UnsupportedActionError):
+        await min_display.zoom(Region(left=0, top=0, right=10, bottom=10))
+    with pytest.raises(UnsupportedActionError):
+        await min_display.cursor_position()
+
+
+@pytest.mark.parametrize(
+    ('prov', 'ref_prov', 'ref_id'),
+    [
+        pytest.param(
+            boxd_provider.BoxdProvider(),
+            'boxd',
+            'm1',
+            id='boxd',
+            marks=pytest.mark.skipif(find_spec('boxd') is None, reason='boxd not installed'),
+        ),
+        pytest.param(
+            e2b_provider.E2BProvider(),
+            'e2b',
+            'e1',
+            id='e2b',
+            marks=pytest.mark.skipif(find_spec('e2b') is None, reason='e2b not installed'),
+        ),
+        pytest.param(
+            modal_provider.ModalProvider(),
+            'modal',
+            'mod1',
+            id='modal',
+            marks=pytest.mark.skipif(find_spec('modal') is None, reason='modal not installed'),
+        ),
+        pytest.param(
+            render_provider.RenderProvider(),
+            'render',
+            'r1',
+            id='render',
+            marks=pytest.mark.skipif(find_spec('render') is None, reason='render not installed'),
+        ),
+        pytest.param(
+            sprites_provider.SpritesProvider(),
+            'sprites',
+            'sp1',
+            id='sprites',
+            marks=pytest.mark.skipif(find_spec('sprites') is None, reason='sprites not installed'),
+        ),
+        pytest.param(
+            kubernetes_provider.KubernetesProvider(),
+            'kubernetes',
+            'default/k1',
+            id='kubernetes',
+            marks=pytest.mark.skipif(
+                find_spec('k8s_agent_sandbox') is None or find_spec('grpc') is None,
+                reason='k8s_agent_sandbox not installed',
+            ),
+        ),
+        pytest.param(
+            local_provider.SmolProvider(),
+            'local-smol',
+            f'pydantic-ai-{"0" * 32}',
+            id='local-smol',
+            marks=pytest.mark.skipif(find_spec('smol') is None, reason='smol not installed'),
+        ),
+        pytest.param(
+            local_provider.BoxLiteProvider(),
+            'local-boxlite',
+            f'pydantic-ai-{"0" * 32}',
+            id='local-boxlite',
+            marks=pytest.mark.skipif(find_spec('boxlite') is None, reason='boxlite not installed'),
+        ),
+    ],
+)
+async def test_provider_reopen_desktop_wiring(
+    prov: sandbox.SandboxProvider, ref_prov: str, ref_id: str, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    monkeypatch.setenv(boxd_provider.KEY_NAME, 'boxd-key')
+    monkeypatch.setenv(e2b_provider.KEY_NAME, 'e2b-key')
+    monkeypatch.setenv(opensandbox_provider.DOMAIN_NAME, 'localhost:8080')
+    monkeypatch.setenv(render_provider.KEY_NAME, 'r-key')
+    monkeypatch.setenv(render_provider.WORKSPACE_KEY_NAME, 'tea-1')
+    monkeypatch.setenv(sprites_provider.KEY_NAME, 's-key')
+    backend = await anyio.to_thread.run_sync(
+        lambda: prov.reopen(WorkspaceRef(provider=ref_prov, id=ref_id), desktop=True)
+    )
+    assert isinstance(backend, SupportsDisplay) and backend.display is not None, prov.name
+    # Only these can't add a desktop to a running sandbox, so `/computer-use on` asks for a new one.
+    assert prov.desktop_at_create is (prov.name in {'e2b', 'modal', 'local boxlite'}), prov.name
+    await prov.close(backend)

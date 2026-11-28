@@ -1,0 +1,266 @@
+# description: Runs the harness live-service suites daily before the usual release time against the floating upstream image tags and files each failing suite as an issue.
+name: Live service images daily
+
+# `ci.yml` pins each harness live-service image by version and digest, so a new upstream image
+# cannot fail a merge group or a tag. This workflow runs the same suites against the floating tags
+# those pins track, so upstream drift shows up here, as an issue, before a pin bump meets it.
+#
+# It runs at 21:30 UTC, half an hour before releases usually go out (around 17:00 UTC-5), so a
+# failure is fresh when someone is about to tag one.
+#
+# Each job copies its `ci.yml` job except for the image and the first step, which records the digest
+# the tag resolved to. `.github/scripts/test_ci_content_classifier.py` checks that they stay in step.
+# `harness-kubernetes-integration` pulls no image: `sandbox-live-nightly.yml` runs the newest
+# sandboxd. `harness-localstack-integration` is disabled in `ci.yml`.
+#
+# The report job files one issue per failing suite, labeled `pydanty:triage-issue`, comments on it
+# for each later failure, and comments once when the suite passes again. Unlike the canary's issues
+# it sets no priority: with the image pinned the failure blocks nothing, so triage judges its
+# urgency. A manual run reports nothing; its result is on its own page.
+
+on:
+  schedule:
+    - cron: "30 21 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: live-service-images-daily-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  harness-mongodb-integration:
+    name: harness MongoDB integration tests on the floating tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
+    services:
+      mongodb:
+        image: quay.io/mongodb/mongodb-community-server:9.0-ubuntu2204
+        ports:
+          - 27017:27017
+        options: >-
+          --health-cmd "mongosh --quiet --eval 'db.adminCommand({ping:1})'"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # An unreachable server is a skip locally and must be a failure here.
+      MONGODB_REQUIRE_LIVE: "1"
+      MONGODB_TEST_URL: mongodb://127.0.0.1:27017
+    steps:
+      - id: image
+        env:
+          CONTAINER: ${{ job.services.mongodb.id }}
+        run: echo "digest=$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" | xargs docker image inspect --format '{{index .RepoDigests 0}}')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-mongodb
+
+      - run: make integration-mongodb
+
+  harness-postgres-integration:
+    name: harness Postgres integration tests on the floating tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
+    services:
+      postgres:
+        image: postgres:17
+        ports:
+          - 5432:5432
+        env:
+          POSTGRES_PASSWORD: postgres
+        options: >-
+          --health-cmd "pg_isready -U postgres"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      # An unreachable server is a skip locally and must be a failure here.
+      POSTGRES_REQUIRE_LIVE: "1"
+      POSTGRES_TEST_URL: postgresql://postgres:postgres@127.0.0.1:5432/postgres
+    steps:
+      - id: image
+        env:
+          CONTAINER: ${{ job.services.postgres.id }}
+        run: echo "digest=$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" | xargs docker image inspect --format '{{index .RepoDigests 0}}')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-postgres
+
+      - run: make integration-postgres
+
+  harness-redis-integration:
+    name: harness Redis integration tests on the floating tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
+    services:
+      redis:
+        image: redis:8
+        ports:
+          - 6379:6379
+        options: >-
+          --health-cmd "redis-cli ping"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      REDIS_REQUIRE_LIVE: "1"
+      REDIS_TEST_URL: redis://127.0.0.1:6379
+      REDIS_CLUSTER_TEST_URL: redis://127.0.0.1:6380
+    steps:
+      - id: image
+        env:
+          CONTAINER: ${{ job.services.redis.id }}
+        run: echo "digest=$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" | xargs docker image inspect --format '{{index .RepoDigests 0}}')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-redis
+
+      # One node in cluster mode that owns every slot: enough for the server to refuse a script
+      # whose keys span slots with `CROSSSLOT`, which the standalone service above never does. A
+      # step rather than a service because a service cannot pass `redis-server` its arguments or
+      # assign the slots once it is up.
+      # Redis 8.12 exits on an unauthenticated cluster bus unless its protected mode is off; the bus port, 16380, is not published.
+      - name: Start a single-node Redis Cluster
+        timeout-minutes: 2
+        run: |
+          docker run -d --name redis-cluster -p 6380:6380 redis:8 \
+            redis-server --port 6380 --cluster-enabled yes --cluster-announce-ip 127.0.0.1 --cluster-bus-port-protected-mode no
+          until docker exec redis-cluster redis-cli -p 6380 ping; do sleep 1; done
+          docker exec redis-cluster redis-cli -p 6380 cluster addslotsrange 0 16383
+          until docker exec redis-cluster redis-cli -p 6380 cluster info | grep -q cluster_state:ok; do sleep 1; done
+
+      - run: make integration-redis
+
+  harness-azure-durable-task-integration:
+    name: harness Azure Durable Task integration tests on the floating tag
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      digest: ${{ steps.image.outputs.digest }}
+    services:
+      dts-emulator:
+        # The emulator publishes no floating tag but `latest`, and floating is this workflow's purpose.
+        image: mcr.microsoft.com/dts/dts-emulator:latest # zizmor: ignore[unpinned-images]
+        ports:
+          - 8080:8080
+    env:
+      AZURE_DURABLE_TASK_REQUIRE_LIVE: "1"
+      AZURE_DURABLE_TASK_TEST_ENDPOINT: 127.0.0.1:8080
+      AZURE_DURABLE_TASK_TEST_TASKHUB: default
+    steps:
+      - id: image
+        env:
+          CONTAINER: ${{ job.services.dts-emulator.id }}
+        run: echo "digest=$(docker inspect --format '{{.Config.Image}}' "$CONTAINER" | xargs docker image inspect --format '{{index .RepoDigests 0}}')" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.14"
+          enable-cache: true
+          cache-suffix: harness-azure-durable-task
+
+      - run: make integration-azure-durable-task
+
+  report:
+    needs:
+      - harness-mongodb-integration
+      - harness-postgres-integration
+      - harness-redis-integration
+      - harness-azure-durable-task-integration
+    # A green run reports too: it is how an issue learns its suite passed again. A fork only runs the tests.
+    if: ${{ !cancelled() && github.event_name == 'schedule' && github.repository == 'pydantic/pydantic-ai' }}
+    # Filing lists the open issues and then creates the missing ones, so two reports at once could
+    # file one suite twice.
+    concurrency:
+      group: live-service-images-daily-report
+      cancel-in-progress: false
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    permissions:
+      issues: write
+    steps:
+      - name: File or update the drift issues
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          NEEDS: ${{ toJSON(needs) }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          prefix='Live service images daily:'
+          # `--search` matches words rather than the phrase, so it narrows the listing and the exact
+          # title is compared below.
+          open="$(gh issue list --state open --author app/github-actions --search "${prefix} in:title" \
+            --limit 100 --json number,title)"
+          for job in $(jq -r 'keys[]' <<<"$NEEDS"); do
+            result="$(jq -r --arg job "$job" '.[$job].result' <<<"$NEEDS")"
+            digest="$(jq -r --arg job "$job" '.[$job].outputs.digest // ""' <<<"$NEEDS")"
+            # The digest comes from a third-party image; only a well-formed one reaches an issue.
+            if [[ "$digest" =~ ^[a-z0-9._/-]+@sha256:[0-9a-f]{64}$ ]]; then
+              image="\`${digest}\`"
+            else
+              image='the floating tag, whose digest is in the run log'
+            fi
+            title="${prefix} \`${job}\` fails on its floating tag"
+            number="$(jq -r --arg title "$title" '[.[] | select(.title == $title) | .number][0] // ""' <<<"$open")"
+            case "$result" in
+              failure | cancelled)
+                if [ -n "$number" ]; then
+                  gh issue comment "$number" --body "Failed again on ${image}: ${RUN_URL}"
+                  continue
+                fi
+                printf '%s\n' \
+                  "The daily run of \`${job}\` failed on ${image}: ${RUN_URL}" \
+                  '' \
+                  '`ci.yml` pins this image by version and digest, so the failure blocks no merge and no release. It shows what the next pin bump, and users of the current upstream release, will run into.' \
+                  '' \
+                  'This issue gets a comment for each later failure, and one when a run passes again. Close it once the pin in `ci.yml` moves to a passing digest or the cause is fixed.' \
+                  > "${RUNNER_TEMP}/issue.md"
+                gh issue create --title "$title" --body-file "${RUNNER_TEMP}/issue.md" --label pydanty:triage-issue
+                ;;
+              success)
+                # Only this workflow's own comments say whether it already reported the pass: triage and
+                # maintainers comment on these issues too.
+                if [ -n "$number" ] \
+                  && ! gh issue view "$number" --json comments \
+                    --jq '[.comments[] | select(.author.login == "github-actions")] | last | .body // ""' \
+                  | grep -q '^Passed'; then
+                  gh issue comment "$number" --body "Passed on ${image}: ${RUN_URL}"
+                fi
+                ;;
+            esac
+          done

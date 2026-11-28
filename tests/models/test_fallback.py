@@ -4624,6 +4624,34 @@ def test_context_window_is_smallest_known_candidate_window() -> None:
     assert WrapperModel(FallbackModel(windowed(200_000), windowed(128_000))).context_window == 128_000
 
 
+async def test_capability_reading_profile_under_fallback_model_points_to_model_fallback() -> None:
+    """A capability reading `ctx.model.profile` under a `FallbackModel` gets a `UserError` naming `ModelFallback`.
+
+    It is still a `NotImplementedError`, so callers that fall back for a model without a profile keep doing so.
+    """
+
+    @dataclass
+    class ProfileInstructions(AbstractCapability[None]):
+        def get_instructions(self) -> Callable[[RunContext[None]], str]:
+            def instructions(ctx: RunContext[None]) -> str:
+                assert isinstance(ctx.model, FallbackModel)
+                return f'Thinking: {ctx.model.profile.get("supports_thinking")}'
+
+            return instructions
+
+    agent = Agent(
+        FallbackModel(FunctionModel(success_response), FunctionModel(success_response)),
+        deps_type=type(None),
+        capabilities=[ProfileInstructions()],
+    )
+    with pytest.raises(UserError) as exc_info:
+        await agent.run('hello')
+    assert isinstance(exc_info.value, NotImplementedError)
+    assert str(exc_info.value) == snapshot(
+        '`FallbackModel` has no single model profile, as its candidate models may each have a different one: inspect the profile of each model in `fallback_model.models` instead. In an agent, use `Agent(model, capabilities=[ModelFallback(*fallback_models)])`, which resolves instructions and model settings with `ctx.model` set to the model serving each attempt.'
+    )
+
+
 # --- Failed attempt spans ---
 
 

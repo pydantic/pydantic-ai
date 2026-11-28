@@ -26,6 +26,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    NativeToolCallPart,
     NativeToolReturnPart,
     SystemPromptPart,
     TextContent,
@@ -575,6 +576,37 @@ async def test_interrupted_response_starts_a_new_thread(allow_model_requests: No
     assert _user_texts(api.bodies[1]) == ['Hi', 'OK', 'Again']
 
 
+async def test_cut_off_stream_starts_a_new_thread(allow_model_requests: None):
+    """A stream that ended before `message_delta` and `message_stop` isn't continued, like an interrupted response."""
+    message: dict[str, Any] = {
+        'id': 'msg_1',
+        'type': 'message',
+        'role': 'assistant',
+        'model': 'claude-sonnet-4-5',
+        'content': [],
+        'stop_reason': None,
+        'usage': {'input_tokens': 5, 'output_tokens': 1},
+    }
+    events: list[dict[str, Any]] = [
+        {'type': 'message_start', 'message': message},
+        {'type': 'content_block_start', 'index': 0, 'content_block': {'type': 'text', 'text': ''}},
+        {'type': 'content_block_delta', 'index': 0, 'delta': {'type': 'text_delta', 'text': 'Hel'}},
+    ]
+    body = ''.join(f'event: {event["type"]}\ndata: {json.dumps(event)}\n\n' for event in events)
+    cut_off = httpx2.Response(200, headers={'content-type': 'text/event-stream'}, content=body.encode())
+    api = _Api(replies=[cut_off], stream=True)
+    async with _model(api) as model:
+        agent = Agent(model, model_settings=_SETTINGS)
+        first = await _run(agent, 'Hi', [], stream=True)
+        await _run(agent, 'Again', first, stream=True)
+
+    assert api.bodies[1]['thread'] == {'type': 'create'}
+    assert _user_texts(api.bodies[1]) == ['Hi', 'Hel', 'Again']
+    response = first[-1]
+    assert isinstance(response, ModelResponse)
+    assert response.state == 'incomplete'
+
+
 async def test_changed_skills_start_a_new_thread(allow_model_requests: None):
     """`container.skills` is fixed for a thread, so changing it creates a new thread."""
     api = _Api()
@@ -916,6 +948,28 @@ def test_response_part_metadata_is_not_digested():
         return continuation_digest(history_hasher([request], None), [replace(part, metadata=metadata)])
 
     assert digest({'handle': object()}) == digest(None)
+
+
+@pytest.mark.parametrize(
+    'part',
+    [
+        NativeToolCallPart(tool_name='web_search', args={'query': 'q'}, provider_name='anthropic'),
+        NativeToolReturnPart(tool_name='web_search', content='ok', provider_name='anthropic'),
+    ],
+)
+def test_ui_visibility_stamp_is_not_digested(part: NativeToolCallPart | NativeToolReturnPart):
+    """A response part's `ui_visibility` stamp is left out of the digest, as it's never sent.
+
+    A UI adapter run with a non-public `default_ui_visibility` stamps native tool parts after the response's digest
+    was taken, so a stamp in the digest would end the thread on the next request. A unit test, as a native tool turn
+    through a UI adapter needs a server tool recording.
+    """
+    request = ModelRequest.user_text_prompt('Hi')
+
+    def digest(stamped: NativeToolCallPart | NativeToolReturnPart) -> str:
+        return continuation_digest(history_hasher([request], None), [stamped])
+
+    assert digest(replace(part, ui_visibility='redacted')) == digest(part)
 
 
 @pytest.mark.parametrize('stream', [False, True])

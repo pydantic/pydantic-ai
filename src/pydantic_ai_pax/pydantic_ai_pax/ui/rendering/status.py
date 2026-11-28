@@ -25,7 +25,7 @@ from pydantic_ai.messages import (
     ToolCallPart,
     ToolCallPartDelta,
 )
-from pydantic_ai_pax.config import DEFAULT_FOOTER_FIELDS, FooterField, TrustLevel
+from pydantic_ai_pax.config import DEFAULT_FOOTER_FIELDS, FooterField, PermissionMode, TrustLevel
 from pydantic_ai_pax.ui.rendering import theme
 from pydantic_ai_pax.ui.rendering.duration import format_duration
 from pydantic_ai_pax.ui.rendering.spinners import BUILTIN_SPINNERS, DEFAULT_SPINNER, Spinner
@@ -35,7 +35,31 @@ from pydantic_ai_pax.ui.rendering.usage_report import format_cost
 TEXT_TIME = 'clai2_last_text_at'
 """Local text-observation time stored in response metadata, not sent to the provider."""
 
-StatusSegment = Callable[[], str]
+LINK_MARK = '↗'
+"""Follows a link's text in the status row, so it reads as clickable."""
+
+
+@dataclass(frozen=True, kw_only=True)
+class StatusLink:
+    """A status-row fragment that opens `url` when clicked; the row shows `text` followed by `LINK_MARK`."""
+
+    text: str
+    url: str
+
+
+class LinkText(str):
+    """Toolbar text that a click opens; every painter that ignores links sees a plain string."""
+
+    url: str
+
+    def __new__(cls, text: str, *, url: str) -> Self:
+        """Keep `url` beside the text."""
+        linked = super().__new__(cls, text)
+        linked.url = url
+        return linked
+
+
+StatusSegment = Callable[[], str | StatusLink]
 """One short status-row fragment supplied by a plugin; see `PluginHost.status_segment`."""
 
 
@@ -48,8 +72,8 @@ class Status:
     text_updates: int = 0
     last_text_at: float | None = None
     """Main-assistant text time, independent of the subagent whose figures are shown."""
-    updates: StatusSegment = lambda: ''
-    live: StatusSegment = lambda: ''
+    updates: Callable[[], str] = lambda: ''
+    live: Callable[[], str] = lambda: ''
     queued: Callable[[], int] = lambda: 0
     _text_response: ModelResponse | None = field(default=None, init=False, repr=False)
     _streamed_text: bool = field(default=False, init=False, repr=False)
@@ -58,6 +82,8 @@ class Status:
     """The session's working directory; hidden while empty."""
     trust: Callable[[], TrustLevel | None] = lambda: None
     """Whether you trust the session's directory, painted after it; hidden for `None`, as for a host that decides."""
+    permissions: Callable[[], PermissionMode | None] = lambda: None
+    """The session's `/permissions` mode, read on each paint; hidden for `None`, as for a host without one."""
     context_tokens: int | None = None
     context_estimated: bool = False
     """`context_tokens` is a character estimate, made before any response reported usage; painted with `~`."""
@@ -91,6 +117,7 @@ class Status:
         ('hide', 'live'),
         ('hide', 'workspace'),
         ('hide', 'plugins'),
+        ('hide', 'permissions'),
         ('shorten', 'context'),
         ('hide', 'model'),
     )
@@ -231,29 +258,24 @@ class Status:
             'output': [(theme.LITHIUM, output), (theme.MUTED, f' {output_label}')],
             'cost': [(theme.MUTED, cost)],
             'activity': activity,
-            'plugins': [(theme.MUTED, self._plugin_text().removeprefix(' | '))],
+            'plugins': self._plugin_fragments(),
             'updates': [(theme.MUTED, self.updates())],
             'live': [(theme.MUTED, self.live())],
             'queued': [(theme.MUTED, f'queued: {queued}' if queued else '')],
             'assistant_age': [(theme.MUTED, age)],
+            'permissions': _permission_fragments(self.permissions()),
         }, shorter
 
-    def _plugin_text(self) -> str:
-        """Plugin fragments, separated and prefixed; a fragment that raises or returns a non-string is reported."""
-        shown: list[str] = []
-        for segment in self.status_segments:
-            try:
-                # Plugins may be untyped, so validate the runtime result despite the callable's contract.
-                text = cast(object, segment())
-                if not isinstance(text, str):
-                    # A non-string cannot be joined; report its type instead of raising out of the painter.
-                    text = f'!{type(text).__name__}' if text else ''
-                if text:
-                    # Sanitized here rather than only in the row painter: the toolbar draws fragments too.
-                    shown.append(_printable(text))
-            except Exception as exc:  # noqa: BLE001 -- a plugin fragment must not take down the footer.
-                shown.append(f'!{type(exc).__name__}')
-        return '' if not shown else ' | ' + ' | '.join(shown)
+    def _plugin_fragments(self) -> list[tuple[str, str]]:
+        """Plugin fragments separated by ` | `: plain text runs as one fragment, and each link as its own, keeping its URL."""
+        texts: list[str] = []
+        for text in filter(None, map(_segment_text, self.status_segments)):
+            for piece in (' | ', text) if texts else (text,):
+                if texts and not isinstance(texts[-1], LinkText) and not isinstance(piece, LinkText):
+                    texts[-1] += piece
+                else:
+                    texts.append(piece)
+        return [(theme.MUTED, text) for text in texts]
 
     def text(self, frame: str = '') -> str:
         """Show compact used/max context, with `?` for unknown counts."""
@@ -383,6 +405,16 @@ class StatusLine:
             await anyio.sleep(max(0, min(0.1, self.spinner().interval)))
 
 
+_PERMISSION_LABELS: dict[PermissionMode, str] = {'full': 'full access', 'auto': 'auto mode', 'read-only': 'read-only'}
+
+
+def _permission_fragments(mode: PermissionMode | None) -> list[tuple[str, str]]:
+    """The mode's label; `full access`, which runs everything without asking, in the warning colour."""
+    if mode is None:
+        return []
+    return [(theme.WARNING if mode == 'full' else theme.MUTED, _PERMISSION_LABELS[mode])]
+
+
 def _workspace_with_trust(path: str, trust: list[tuple[str, str]]) -> list[tuple[str, str]]:
     if path and trust:
         return [(theme.MUTED, path), (theme.MUTED, ' | '), *trust]
@@ -420,5 +452,21 @@ def _short_path(path: str, limit: int = 40) -> str:
     return path if len(path) <= limit else '…' + path[-(limit - 1) :]
 
 
+def _segment_text(segment: StatusSegment) -> str:
+    """A plugin fragment's sanitized text, a link's as `LinkText`; one that raises or returns another type is reported."""
+    try:
+        # Plugins may be untyped, so validate the runtime result despite the callable's contract.
+        shown = cast(object, segment())
+        if isinstance(shown, StatusLink):
+            return LinkText(f'{_printable(shown.text)} {LINK_MARK}', url=_printable(shown.url))
+    except Exception as exc:  # noqa: BLE001 -- a plugin fragment must not take down the footer.
+        return f'!{type(exc).__name__}'
+    if isinstance(shown, str):
+        # Sanitized here rather than only in the row painter: the toolbar draws fragments too.
+        return _printable(shown)
+    # Another type cannot be joined; report its type instead of raising out of the painter.
+    return f'!{type(shown).__name__}' if shown else ''
+
+
 def _printable(text: str) -> str:
-    return ''.join(char if char.isascii() and char.isprintable() else '?' for char in text)
+    return ''.join(char if (char.isascii() and char.isprintable()) or char == LINK_MARK else '?' for char in text)

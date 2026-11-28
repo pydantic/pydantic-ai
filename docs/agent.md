@@ -297,6 +297,28 @@ if __name__ == '__main__':
 
 _(This example is complete, it can be run "as is")_
 
+#### Replaced responses {#replaced-responses}
+
+One request step can stream more than one response. A capability like [`ModelFallback`][pydantic_ai.capabilities.ModelFallback] or [`RetryOnModelErrors`][pydantic_ai.capabilities.RetryOnModelErrors] attempts the model again when the first attempt fails before streaming anything, a `wrap_model_request` hook can stop the model's stream and stream a response of its own instead, and under [durable execution](durable_execution/overview.md) the engine can run a model request again after it already streamed part of a response.
+
+Each model-stream event ([`PartStartEvent`][pydantic_ai.messages.PartStartEvent], [`PartDeltaEvent`][pydantic_ai.messages.PartDeltaEvent], [`PartEndEvent`][pydantic_ai.messages.PartEndEvent] and [`FinalResultEvent`][pydantic_ai.messages.FinalResultEvent]) carries the [`ModelResponseOrigin`][pydantic_ai.messages.ModelResponseOrigin] it came from as `origin`: the run and request step, the attempt at that step, and the engine's execution of that attempt. Its [`response_id`][pydantic_ai.messages.ModelResponseOrigin.response_id] is the same for every execution of one attempt. A consumer that renders the stream keeps the latest origin it has seen for each request step and drops the events of any origin a later one [`supersedes`][pydantic_ai.messages.ModelResponseOrigin.supersedes]:
+
+```python {title="replaced_responses.py"}
+from pydantic_ai import ModelResponseOrigin
+
+latest: dict[tuple[str, int], ModelResponseOrigin] = {}
+
+
+def is_current(origin: ModelResponseOrigin) -> bool:
+    key = (origin.run_id, origin.run_step)
+    if (previous := latest.get(key)) is not None and previous.supersedes(origin):
+        return False  # a later attempt or execution replaced this response
+    latest[key] = origin
+    return True
+```
+
+Check every event, not only the first of each origin: a superseded execution's events can still arrive after its successor's. `origin` is left out of event equality and `repr()`, so read it from the event.
+
 ### Custom Events
 
 Alongside the framework's own events, a tool or code driving [`agent.iter()`](#iterating-over-an-agents-graph) can emit its own [`CustomEvent`][pydantic_ai.messages.CustomEvent]s into the same stream. This is useful for surfacing progress updates, intermediate results, or status information from long-running work to whoever is consuming the stream, without adding anything to the model's context.
@@ -1286,7 +1308,7 @@ except UsageLimitExceeded as e:
 Like `output_tokens_limit`, this is checked after each response, since a response's output cost isn't known until it arrives. Setting `count_tokens_before_request=True` additionally prices the counted input tokens and rejects the request up front when that lower bound alone exceeds the limit.
 
 !!! note
-    Cost is best-effort: it's `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for, including models released after your install unless you [keep prices up to date](#keeping-model-prices-up-to-date). With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Usage extraction is also best-effort, and an unexpected extraction failure emits [`UsageExtractionFailedWarning`][pydantic_ai.exceptions.UsageExtractionFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
+    Cost is best-effort: `usage.cost` is `None` for models and providers [genai-prices](https://github.com/pydantic/genai-prices) has no pricing data for, including models released after your install unless you [keep prices up to date](#keeping-model-prices-up-to-date) (calling [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost] directly raises `LookupError` in that case). With a [`cost_limit`][pydantic_ai.usage.UsageLimits.cost_limit], a run that could not be priced at all emits [`CostNotFoundWarning`][pydantic_ai.exceptions.CostNotFoundWarning] rather than being silently unconstrained; an unexpected pricing failure emits [`CostCalculationFailedWarning`][pydantic_ai.exceptions.CostCalculationFailedWarning]. Usage extraction is also best-effort, and an unexpected extraction failure emits [`UsageExtractionFailedWarning`][pydantic_ai.exceptions.UsageExtractionFailedWarning]. Don't rely on `cost_limit` as a hard billing guarantee — pair it with [`request_limit`][pydantic_ai.usage.UsageLimits.request_limit] or your provider's own spend controls.
 
 !!! note
     Token and cost limits rely on provider-reported usage. When a completed response omits usage, [`RunUsage.unmeasured_requests`][pydantic_ai.usage.RunUsage.unmeasured_requests] counts it, and known token totals and cost remain lower bounds. Independently known costs, such as native tool fees, still contribute to the subtotal; any known token or cost subtotal that exceeds a limit still raises [`UsageLimitExceeded`][pydantic_ai.exceptions.UsageLimitExceeded]. Calling [`ModelResponse.cost()`][pydantic_ai.messages.ModelResponse.cost] on an individual response with no usage raises `ValueError`. If a token or cost limit is configured, Pydantic AI emits [`UsageLimitUnavailableWarning`][pydantic_ai.exceptions.UsageLimitUnavailableWarning] and returns the result by default. Request and tool-call limits do not depend on reported usage and do not emit this warning. To abort when usage is unavailable, configure Python's warning filter to treat the category as an error:
@@ -1322,7 +1344,7 @@ from pydantic_ai.models.google import GoogleModel
 
 # 1. Model-level defaults
 model = GoogleModel(
-    '{{ google:medium.name }}',
+    '{{ google:small.name }}',
     settings=ModelSettings(temperature=0.8, max_tokens=500)  # Base defaults
 )
 
@@ -1465,7 +1487,7 @@ from google.genai.types import HarmBlockThreshold, HarmCategory
 from pydantic_ai import Agent, UnexpectedModelBehavior
 from pydantic_ai.models.google import GoogleModelSettings
 
-agent = Agent('{{ google:medium }}')
+agent = Agent('{{ google:small }}')
 
 try:
     result = agent.run_sync(

@@ -100,7 +100,7 @@ the last 16,000 bytes of output after `[... output truncated, N earlier bytes om
 log's path (`.pydantic-ai-harness/shell/<id>/output.log`), and its commands outlive the run;
 `delegate_task` has one delegate, `self`):
 
-- `read_file(path, offset=0, limit=None)`, `write_file(path, content)`,
+- `read_file(path, offset=1, limit=None)`, `write_file(path, content)`,
   `edit_file(path, old_text=None, new_text=None, replacements=None)`
 - `list_files(path='.', glob=None)`,
   `grep(pattern, path='.', glob=None, file_type=None, ignore_case=False, literal=False, context=0)`
@@ -213,21 +213,23 @@ agent = Agent(
 ```
 
 Tool arguments (scripted tests need them; `expected_hash` exists only with `content_hashes=True`, the default):
-`read_file(path, offset=0, limit=None)`, `write_file(path, content, expected_hash=None)`,
+`read_file(path, offset=1, limit=None)`, `write_file(path, content, expected_hash=None)`,
 `edit_file(path, old_text=None, new_text=None, replacements=None, expected_hash=None)`,
 `list_directory(path='.')`, `search_files(pattern, path='.', include_glob=None)`,
 `find_files(pattern, path='.')`, `create_directory(path)`, `file_info(path)`; `list_files` and `grep`
 as under Coder.
 
-`read_file` returns `[header, BinaryContent]` for a PNG, JPEG, GIF, WebP or PDF up to 5 MB (detected
-from its leading bytes, not its extension), and a text description (size, media type, and for other
-binary files the first 64 bytes in hex) for any other binary file; text files come back as a string.
-With `max_image_side` set (`Coder` sets 1024; `FileSystem` defaults to `None`), an image longer than that
-on either side is downscaled first, in its own format; the header adds a
-`Shown downscaled from WxH to wxh pixels.` line and keeps the file's own size and hash; one over 25
-megapixels at its decoding scale is described as too large. It needs Pillow
-(the `coder` extra); setting `max_image_side` without it raises `ImportError`.
-A file over 64 MiB is described by its size instead of read: find the lines with `search_files` or `grep`.
+`read_file` returns `[header, BinaryContent]` up to 5 MB for an image (PNG, JPEG, GIF, WebP), PDF or
+video (MP4, QuickTime, WebM, FLV, MPEG, WMV, 3GP), detected from its leading bytes, not its extension. A
+model whose profile says it can't take that kind of file gets a note in its place, or a description when
+`FileUnderstanding` is on the agent. Office documents, audio and Matroska stay described, since some
+models whose profile admits the kind reject the format. Any other binary file gets a text description
+(size, media type and the first 64 bytes in hex); text files come back as a string. With `max_image_side`
+set (`Coder` sets 1024; `FileSystem` defaults to `None`), an image longer than that on either side is
+downscaled first, in its own format; the header adds a `Shown downscaled from WxH to wxh pixels.` line
+and keeps the file's own size and hash; one over 25 megapixels at its decoding scale is described as too
+large. It needs Pillow (the `coder` extra); setting `max_image_side` without it raises `ImportError`. A
+file over 64 MiB is described by its size instead of read: find the lines with `search_files` or `grep`.
 
 `read_file` has the tool kind `READ_FILE_KIND` (`file_system.read_file`). `ToolOutputLimits`'
 `read_tool_result` and `grep_tool_result`, `Memory`'s `read_memory` and `RepoContext`'s inventory tool step aside for it when

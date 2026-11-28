@@ -2,6 +2,7 @@ from __future__ import annotations as _annotations
 
 import inspect
 import warnings
+import weakref
 from collections.abc import Awaitable, Callable, Sequence
 from contextvars import ContextVar
 from dataclasses import dataclass, field
@@ -41,11 +42,12 @@ from ._deferred import (
 from ._json_schema import UseEnumMemberDocstrings
 from ._run_context import AgentDepsT, RunContext
 from ._warnings import PydanticAIDeprecationWarning
-from .exceptions import UserError
+from .exceptions import EnumDocstringsUnavailableWarning, UserError
 from .function_signature import FunctionSignature
 from .messages import (
     ToolPartKind,
     ToolReturn,
+    ToolUIVisibility as ToolUIVisibility,
     _tool_kind_id,  # pyright: ignore[reportPrivateUsage]
 )
 from .native_tools import AbstractNativeTool
@@ -70,6 +72,7 @@ __all__ = (
     'Tool',
     'ObjectJsonSchema',
     'ToolDefinition',
+    'ToolUIVisibility',
     'DeferredToolRequests',
     'DeferredToolResults',
     'ToolApproved',
@@ -294,6 +297,21 @@ DocstringFormat: TypeAlias = Literal['google', 'numpy', 'sphinx', 'auto']
 
 A = TypeVar('A')
 
+_warned_enum_source_unavailable: weakref.WeakSet[type[Enum]] = weakref.WeakSet()
+
+
+def _warn_enum_source_unavailable(enum_cls: type[Enum]) -> None:
+    """Say once per enum that it opted into its member docstrings, but they could not be read."""
+    if enum_cls in _warned_enum_source_unavailable:
+        return
+    _warned_enum_source_unavailable.add(enum_cls)
+    warnings.warn(
+        f'`{enum_cls.__qualname__}` mixes in `UseEnumMemberDocstrings`, but its source could not be read, so its '
+        'members are described to the model by their values alone. Define it with a `class` statement in a module '
+        'or notebook cell, or describe the options with `Choices`.',
+        EnumDocstringsUnavailableWarning,
+    )
+
 
 class GenerateToolJsonSchema(GenerateJsonSchema):
     def enum_schema(self, schema: core_schema.EnumSchema) -> JsonSchemaValue:
@@ -317,6 +335,9 @@ class GenerateToolJsonSchema(GenerateJsonSchema):
         # for; `setdefault` keeps the canonical name's own docstring when both have one, since `__members__`
         # lists a member before its aliases.
         declared = _utils.enum_member_docstrings(enum_cls)
+        if declared is None:
+            _warn_enum_source_unavailable(enum_cls)
+            return json_schema
         docstrings: dict[str, str] = {}
         for name, member in enum_cls.__members__.items():
             if (docstring := declared.get(name)) is not None:
@@ -378,6 +399,7 @@ class Tool(Generic[ToolAgentDepsT]):
     tool_kind: ToolPartKind | None
     timeout: float | None
     durable: bool | None
+    ui_visibility: ToolUIVisibility | None
     defer_loading: bool
     include_return_schema: bool | None
     function_schema: _function_schema.FunctionSchema
@@ -412,6 +434,7 @@ class Tool(Generic[ToolAgentDepsT]):
         tool_kind: _messages.ToolKindLike | None = None,
         timeout: float | None = None,
         durable: bool | None = None,
+        ui_visibility: ToolUIVisibility | None = None,
         defer_loading: bool = False,
         include_return_schema: bool | None = None,
         function_schema: _function_schema.FunctionSchema | None = None,
@@ -486,6 +509,9 @@ class Tool(Generic[ToolAgentDepsT]):
             durable: Where a [durable execution](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) engine runs this tool: `False` runs it
                 outside its durable unit, in workflow code, and `True` keeps the engine's default placement.
                 Defaults to `None`, the engine's default placement.
+            ui_visibility: What a [UI adapter](../ui/overview.md#tool-visibility) sends a client for this tool's calls
+                and returns: `'public'`, `'redacted'` or `'private'`.
+                Defaults to `None`, the adapter's `default_ui_visibility`.
             defer_loading: Whether to hide this tool until it's revealed by tool search, `load_capability`,
                 or another tool's `ToolReturn.tools`. Defaults to False.
                 See [Tool Search](../tools-advanced.md#tool-search) for more info.
@@ -519,6 +545,7 @@ class Tool(Generic[ToolAgentDepsT]):
         self.tool_kind = _tool_kind_id(tool_kind)
         self.timeout = timeout
         self.durable = durable
+        self.ui_visibility = ui_visibility
         self.defer_loading = defer_loading
         self.include_return_schema = include_return_schema
 
@@ -595,6 +622,7 @@ class Tool(Generic[ToolAgentDepsT]):
             tool_kind=self.tool_kind,
             timeout=self.timeout,
             durable=self.durable,
+            ui_visibility=self.ui_visibility,
             defer_loading=self.defer_loading and not (without_toolset and self._defer_loading_from_toolset),
             kind='unapproved' if self.requires_approval else 'function',
             return_schema=self.function_schema.return_schema,
@@ -802,6 +830,28 @@ class ToolDefinition:
     earlier `durable=False`, but not an opt-out in the engine's own per-tool config, such as Temporal's
     `tool_activity_config`. An engine's own metadata key, such as `metadata={'temporal': ...}`, wins when it's set
     on the tool.
+
+    Not sent to the model.
+    """
+
+    ui_visibility: ToolUIVisibility | None = None
+    """What a [UI adapter](../ui/overview.md#tool-visibility) sends a client for this tool's calls and returns.
+
+    - `'public'`: the call and the result, in full.
+    - `'redacted'`: the call, with its arguments, and a placeholder instead of the result.
+    - `'private'`: neither the call nor the result.
+
+    `None` (the default) means the adapter's `default_ui_visibility`, which is `'public'` unless you set it.
+    The value is stamped on the call and return parts when the model calls the tool, and the adapters read the
+    stamp, so a conversation reloaded from history is sent the way it was streamed. The stored history always
+    keeps the full return.
+
+    An `'external'` tool is always `'public'`, since its result comes from the client, as is an output tool, whose
+    arguments are the run's answer. An `'unapproved'` tool set to `'private'` is shown as `'redacted'`, so the user
+    can see the call they're asked to approve; so is a `'private'` tool that defers its call at runtime.
+
+    It covers the call and its return value. Content sent with [`ToolReturn.content`][pydantic_ai.messages.ToolReturn]
+    is a separate user message, which `dump_messages` sends to the client as one.
 
     Not sent to the model.
     """

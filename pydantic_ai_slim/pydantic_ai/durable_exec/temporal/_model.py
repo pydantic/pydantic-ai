@@ -66,6 +66,24 @@ class _CancelParams:
 TemporalProviderFactory = Callable[[RunContext[AgentDepsT], str], Provider[Any]]
 
 
+def _model_registry(model: Model | None, models: Mapping[str, Model] | None) -> dict[str, Model]:
+    """The model registry: the wrapped model as `'default'`, then `models` by their IDs."""
+    models_by_id: dict[str, Model] = {}
+    if model is not None:
+        models_by_id['default'] = model
+    if models:
+        for model_id, model_instance in models.items():
+            if model_id == 'default':
+                raise UserError("Model ID 'default' is reserved for the agent's primary model.")
+            models_by_id[model_id] = model_instance
+
+    if not models_by_id:
+        raise UserError(
+            "The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time."
+        )
+    return models_by_id
+
+
 class TemporalModel(WrapperModel):
     def __init__(
         self,
@@ -80,20 +98,7 @@ class TemporalModel(WrapperModel):
         provider_factory: TemporalProviderFactory[AgentDepsT] | None = None,
         agent: AbstractAgent[Any, Any] | None = None,
     ):
-        # Build models_by_id registry from wrapped model and models parameter
-        self._models_by_id: dict[str, Model] = {}
-        if model is not None:
-            self._models_by_id['default'] = model
-        if models:
-            for model_id, model_instance in models.items():
-                if model_id == 'default':
-                    raise UserError("Model ID 'default' is reserved for the agent's primary model.")
-                self._models_by_id[model_id] = model_instance
-
-        if not self._models_by_id:
-            raise UserError(
-                "The wrapped agent's `model` or the TemporalAgent's `models` parameter must provide at least one Model instance to be used with Temporal. Models cannot be set at agent run time."
-            )
+        self._models_by_id = _model_registry(model, models)
 
         # Use provided model if available, otherwise first registered model
         primary_model = model or next(iter(self._models_by_id.values()))
@@ -577,7 +582,7 @@ class TemporalModel(WrapperModel):
         `prepare_messages` decides from `self.profile`, and a registered model is the same instance on
         both sides of the boundary, so its workflow-side pass already saw the right profile. A runtime
         model *string* isn't: the workflow infers it without constructing a provider, and a client can
-        narrow the inferred profile — `AsyncAnthropicFoundry` turns off `supports_inline_system_prompts`,
+        narrow the inferred profile — `AsyncAnthropicFoundry` turns off `supports_mid_conversation_effort`,
         which the string-inferred profile advertises. Whatever the workflow prepared was decided against
         a profile the request is not being sent under.
 

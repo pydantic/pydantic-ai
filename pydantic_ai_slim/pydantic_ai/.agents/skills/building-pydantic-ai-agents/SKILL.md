@@ -77,7 +77,7 @@ import random
 from pydantic_ai import Agent, RunContext
 
 agent = Agent(
-    'google:gemini-3-flash-preview',
+    'google:gemini-4-hydrogen',
     name='dice_game_agent',
     deps_type=str,
     instructions=(
@@ -118,12 +118,12 @@ class CityLocation(BaseModel):
     country: str
 
 
-agent = Agent('google:gemini-3-flash-preview', name='city_location_agent', output_type=CityLocation)
+agent = Agent('google:gemini-4-hydrogen', name='city_location_agent', output_type=CityLocation)
 result = agent.run_sync('Where were the olympics held in 2012?')
 print(result.output)
 #> city='London' country='United Kingdom'
 print(result.usage)
-#> RunUsage(cost=Decimal('0.0000525'), input_tokens=57, output_tokens=8, requests=1)
+#> RunUsage(cost=Decimal('0.0001455'), input_tokens=57, output_tokens=8, requests=1)
 ```
 
 ### Dependency Injection
@@ -214,7 +214,7 @@ async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> 
 agent = Agent('openai:gpt-5.2', name='hooks_agent', capabilities=[hooks])
 ```
 
-For a custom capability hook that performs I/O under Temporal, DBOS, or Prefect, mark a fixed method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names, so keep it stable even if the Python method is renamed. For dynamically contributed handlers, return them from `get_durable_operations()` and invoke a typed handle with `ctx.durable_operation(self, name, handler)`. Always set a stable capability `id`; without a durability capability both forms call the original async handler directly. Arguments and results must be serializable like durable tool inputs and outputs.
+For a custom capability hook that performs I/O under Temporal, DBOS, or Prefect, mark a fixed method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names, so keep it stable even if the Python method is renamed. Always set a stable capability `id`; without a durability capability the method calls the original async handler directly. Arguments and results must be serializable like durable tool inputs and outputs.
 
 ### Define Agent from YAML Spec
 
@@ -405,6 +405,12 @@ Key facts for building realtime agents:
 - **Mute with server VAD**: keep sending zero-valued PCM16 frames at the normal cadence. Sending
   nothing can leave an open speech segment open; pure tones do not reliably trigger speech VAD.
   Under manual turn control, stop sending and call `clear_audio()` instead.
+- **Tools revealed mid-session**: on a model whose profile sets `supports_tool_updates` (OpenAI `gpt-realtime`,
+  GPT-Live, Azure, xAI), loading a `defer_loading=True` capability, a `search_tools` match, or `ToolReturn.tools`
+  sends the revealed tools ahead of the result (a `ToolAvailabilityDeltaPart` in history, as in a standard run).
+  Gemini Live, Eleven Realtime, and ElevenLabs Agents keep their opening tools, so a session there with a
+  `defer_loading=True` tool or tool-contributing deferred capability raises `UserError` before connecting, unless
+  `message_history` already revealed or loaded it. Deferred capabilities contributing native tools raise everywhere.
 - **Tools**: every tool runs in the background, so a slow tool never blocks the session. Whether
   the model keeps speaking and answering meanwhile is the profile's `async_tool_call_mode`:
   `'always'` (OpenAI, Azure, GPT-Live, xAI, `gemini-3.8-live-extended-thinking`), `'optional'`
@@ -470,6 +476,7 @@ Load only the most relevant reference first. Read additional references only if 
 | Call the model directly, expose A2A, use durable execution, embeddings, image generation, evals, or third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
 | Compare abstractions, output modes, decorators, or model-string patterns | [Architecture and Decision Guide](./references/ARCHITECTURE.md) |
 | See how open source projects structure a large Pydantic AI system, or find a library that builds on Pydantic AI | [Built with Pydantic AI](https://pydantic.dev/docs/ai/overview/built-with/): each entry says what the project runs on Pydantic AI, grouped by kind of system |
+| Use Pydantic AI Harness capabilities (compaction strategies, spend limits, step persistence, sandboxes, sub-agents, memory, skills) | The `pydantic-ai-harness` skill, which ships with the `pydantic-ai-harness` package |
 | Follow an older link into `COMMON-TASKS.md` | [Task Reference Map](./references/COMMON-TASKS.md) |
 
 ## Architecture and Decisions

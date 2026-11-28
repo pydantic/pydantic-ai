@@ -61,9 +61,9 @@ The HTTP transport, the provider SDK and a durable execution engine all re-send 
 
 How many attempts the SDK makes by default, and whether `max_retries` can bring it down to one, depends on the provider: most make 3, Google, Mistral and Hugging Face make 1 unless you configure retries, AWS Bedrock makes 5, and xAI up to 5. [Setting the SDK retry count per request](#setting-the-sdk-retry-count-per-request) has the numbers for each, and how to make one attempt where the setting doesn't apply. A retrying transport works with every provider whose SDK takes an `httpx2` client; see [Using with `httpx2`-compatible providers](#using-with-httpx2-compatible-providers) for the exceptions.
 
-With one owner, a failing model request is retried on the wire at most as many times as that owner allows: `K` for a transport stopped by `stop_after_attempt(K)`, `1 + N` for an SDK allowed `N` retries, or the engine's maximum attempts. The exception is a streamed Google [long decode](models/google.md#long-decode) on `google-genai` 2.31.0 and later, whose SDK can send a later request that fails up to 4 times that. Each model in a [`ModelFallback`](capabilities/model-fallback.md) chain gets that budget again, so a chain of `F` models allows `F` times as many. To fall back sooner, give the models before the last one a smaller budget, as in [Setting the SDK retry count per request](#setting-the-sdk-retry-count-per-request).
+With one owner, a failing model request is retried on the wire at most as many times as that owner allows: `K` for a transport stopped by `stop_after_attempt(K)`, `1 + N` for an SDK allowed `N` retries, or the engine's maximum attempts. The exception is a streamed Google [long decode](models/google.md#long-decode), whose SDK can send a later request that fails up to 4 times that. Each model in a [`ModelFallback`](capabilities/model-fallback.md) chain gets that budget again, so a chain of `F` models allows `F` times as many. To fall back sooner, give the models before the last one a smaller budget, as in [Setting the SDK retry count per request](#setting-the-sdk-retry-count-per-request).
 
-When the transport owns retrying, setting `max_retries` to `0` matters even for errors you'd expect only the transport to see. The Anthropic and Groq SDKs retry *any* exception the HTTP client raises, including the `HTTPStatusError` a `validate_response` like the one in [A retrying client](#a-retrying-client) raises after the transport's last attempt. With the SDK's default of 2 retries, a 503 that a transport stopped by `stop_after_attempt(3)` gives up on goes on the wire 9 times before it's raised, as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with that status. `google-genai` 2.31.0 and later send a later request of a streamed Google [long decode](models/google.md#long-decode) that fails this way 3 more times, whatever `max_retries` says, so that 503 goes on the wire 12 times.
+When the transport owns retrying, setting `max_retries` to `0` matters even for errors you'd expect only the transport to see. The Anthropic and Groq SDKs retry *any* exception the HTTP client raises, including the `HTTPStatusError` a `validate_response` like the one in [A retrying client](#a-retrying-client) raises after the transport's last attempt. With the SDK's default of 2 retries, a 503 that a transport stopped by `stop_after_attempt(3)` gives up on goes on the wire 9 times before it's raised, as a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with that status. `google-genai` sends a later request of a streamed Google [long decode](models/google.md#long-decode) that fails this way 3 more times, whatever `max_retries` says, so that 503 goes on the wire 12 times.
 
 When a durable engine owns retrying, configure its retry policy for model requests and turn the SDK's retries off. On Temporal:
 
@@ -378,6 +378,57 @@ client = create_custom_retry_client()
 # Client will retry server errors (5xx) and network errors, but not client errors (4xx)
 ```
 
+#### Retrying based on the response body {#retrying-on-response-body}
+
+`validate_response` is synchronous (so it can't `await response.aread()`) and runs **before** the response body is read, so accessing `response.text` or `response.content` inside it raises `httpx2.ResponseNotRead`.
+
+For 4xx and 5xx responses, the transport reads the error body right after `validate_response` raises, before tenacity's `retry` predicate runs. So to retry an error status only for certain bodies, raise in `validate_response` and inspect `exc.response.text` inside `retry_if_exception`:
+
+```python {title="retry_on_error_body.py"}
+import httpx2
+from tenacity import retry_if_exception, stop_after_attempt, wait_exponential
+
+from pydantic_ai.models import create_async_httpx2_client
+from pydantic_ai.retries import AsyncHTTPX2TenacityTransport, RetryConfig
+
+
+def validate_response(response: httpx2.Response) -> None:
+    if response.status_code == 404 or response.status_code >= 500:
+        response.raise_for_status()
+
+
+def should_retry(exc: BaseException) -> bool:
+    if isinstance(exc, httpx2.HTTPStatusError):
+        if exc.response.status_code >= 500:
+            return True
+        if exc.response.status_code == 404:
+            # Retry only transient 404s (e.g. a resource that isn't ready yet)
+            try:
+                return 'not ready yet' in exc.response.text
+            except httpx2.ResponseNotRead:
+                return False
+    return isinstance(exc, (httpx2.TimeoutException, httpx2.ConnectError))
+
+
+transport = AsyncHTTPX2TenacityTransport(
+    config=RetryConfig(
+        retry=retry_if_exception(should_retry),
+        wait=wait_exponential(multiplier=1, max=30),
+        stop=stop_after_attempt(4),
+        reraise=True,
+    ),
+    validate_response=validate_response,
+)
+client = create_async_httpx2_client(transport=transport)
+```
+
+Two limits to keep in mind:
+
+- Any status `validate_response` raises for still raises `httpx2.HTTPStatusError` when `should_retry` returns `False` — it won't be returned as a normal `Response`.
+- If `validate_response` raises for a 2xx or 3xx status, the transport closes the response without reading its body, so `exc.response.text` raises `httpx2.ResponseNotRead` in `should_retry`.
+
+If you need non-matching responses returned normally, or need to retry based on a 2xx response's body, handle those retries outside the transport.
+
 ### Using with `httpx2`-compatible providers
 
 The retry transports work with any provider whose `http_client` argument accepts an `httpx2.AsyncClient`. See each
@@ -464,25 +515,16 @@ agent = Agent(model, model_settings={'max_retries': 0})
 
 ### Error handling
 
-The retry transports re-raise the last exception once they run out of attempts, and the model raises it as a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] like any other failed request: an error status your `validate_response` rejected becomes a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] with that status and its [error category](models/overview.md#handling-model-api-errors). A connection error or timeout becomes a [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] or [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError]. Either way, a [fallback model](#model-fallback-is-not-a-retry) moves on from it by default. Some recoveries a model runs for an error response still run for a status the transport gave up on, like Anthropic's retries for an [expired code execution container](models/anthropic.md#code-execution-containers) and a [stale thinking block](models/anthropic.md#thinking-block-binding). Others don't, so that fallback moves on: see [Azure content filters](models/azure.md#content-filters) and OpenAI [background mode](models/openai.md#background-mode). Make sure to handle these appropriately in your application:
+Once the transport runs out of attempts, it re-raises the last exception, and the model converts it into a [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError] (a [`ModelHTTPError`][pydantic_ai.exceptions.ModelHTTPError] for rejected HTTP statuses, or a [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] / [`ModelTimeoutError`][pydantic_ai.exceptions.ModelTimeoutError] for network failures). A [fallback model](#model-fallback-is-not-a-retry) moves on from any of these by default.
 
-```python {title="error_handling_example.py" requires="smart_retry_example.py"}
-from pydantic_ai import Agent
-from pydantic_ai.models.openai import OpenAIChatModel
-from pydantic_ai.providers.openai import OpenAIProvider
+When `validate_response` raises for a 4xx or 5xx status, [`AsyncHTTPX2TenacityTransport`][pydantic_ai.retries.AsyncHTTPX2TenacityTransport] and [`HTTPX2TenacityTransport`][pydantic_ai.retries.HTTPX2TenacityTransport] read the error body before closing the response. The final error then keeps its [`body`][pydantic_ai.exceptions.ModelAPIError.body], parsed [error category](models/overview.md#handling-model-api-errors) (such as [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] or [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError]), [`provider_error_code`][pydantic_ai.exceptions.ModelAPIError.provider_error_code], [`provider_error_type`][pydantic_ai.exceptions.ModelAPIError.provider_error_type], and (for Google) [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after]. An OpenAI image generation request blocked for content moderation raises [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. If reading the error body fails, the transport still closes the response and raises `validate_response`'s exception with `body=None`. The deprecated [`TenacityTransport`][pydantic_ai.retries.TenacityTransport] and [`AsyncTenacityTransport`][pydantic_ai.retries.AsyncTenacityTransport] close rejected responses without reading them, so `body` is `None` and only the status sets the error category.
 
-from smart_retry_example import create_retrying_client
-
-client = create_retrying_client()
-model = OpenAIChatModel('{{ openai:medium.name }}', provider=OpenAIProvider(http_client=client))
-agent = Agent(model, model_settings={'max_retries': 0})
-```
-
-Before retrying or re-raising an error status, `AsyncHTTPX2TenacityTransport` and `HTTPX2TenacityTransport` read the response body, so the error keeps its [`body`][pydantic_ai.exceptions.ModelAPIError.body] and gets what Pydantic AI parses from it: the error category, like an exhausted quota's [`ModelQuotaExceededError`][pydantic_ai.exceptions.ModelQuotaExceededError] or an overloaded provider's [`ModelOverloadedError`][pydantic_ai.exceptions.ModelOverloadedError], the provider's [`provider_error_code`][pydantic_ai.exceptions.ModelAPIError.provider_error_code] and [`provider_error_type`][pydantic_ai.exceptions.ModelAPIError.provider_error_type], and, for Google, the wait in [`retry_after`][pydantic_ai.exceptions.ModelAPIError.retry_after]. An OpenAI image generation request blocked for content moderation raises a [`ContentFilterError`][pydantic_ai.exceptions.ContentFilterError]. Each rejected attempt therefore downloads its error body, and once the download completes, its connection goes back to the pool. A success status your `validate_response` rejects is closed without reading its body. If reading an error body fails, the transport closes the response and still raises the exception from your `validate_response`, and the error's `body` is `None`. The deprecated [`TenacityTransport`][pydantic_ai.retries.TenacityTransport] and [`AsyncTenacityTransport`][pydantic_ai.retries.AsyncTenacityTransport] close a rejected response without reading it, so its error's `body` is `None` and only its status sets its category.
+Some provider-specific recoveries still run after a transport gives up (such as Anthropic's [expired code execution container](models/anthropic.md#code-execution-containers) and [stale thinking block](models/anthropic.md#thinking-block-binding) retries), while others don't so fallback can take over (see [Azure content filters](models/azure.md#content-filters) and OpenAI [background mode](models/openai.md#background-mode)).
 
 ### Performance considerations
 
 - Retries add latency to requests, especially with exponential backoff
+- Each rejected 4xx/5xx attempt downloads its error body before returning its connection to the pool
 - Consider the total timeout for your application when configuring retry behavior
 - Monitor retry rates to detect systemic issues
 - Use async transports for better concurrency when handling multiple requests
@@ -549,7 +591,7 @@ Not every SDK can take the setting per request, and they don't all start from th
 | Anthropic | 3 | ✅ | Full feature support, including `AsyncAnthropicBedrock`, `AsyncAnthropicVertex` and `AsyncAnthropicFoundry` clients |
 | Groq | 3 | ✅ | Full feature support |
 | Cohere | 3 for status 408, 409, 429 and 5xx, 1 for a connection error or timeout | ✅ | Full feature support |
-| Google | 1, unless the provider has `retry_options` | ✅ | Limited parameter support: keeps the delays and status codes of the provider's `retry_options`, or the SDK's defaults when those aren't set. With `google-genai` 2.31.0 and later, a later request of a streamed [long decode](models/google.md#long-decode) that fails with an error the HTTP client raises is sent 3 more times, which `max_retries` can't turn off. A connection that can't be opened, or a timeout before the response arrives, is also retried up to `max_retries` times on each of those requests |
+| Google | 1, unless the provider has `retry_options` | ✅ | Limited parameter support: keeps the delays and status codes of the provider's `retry_options`, or the SDK's defaults when those aren't set. A later request of a streamed [long decode](models/google.md#long-decode) that fails with an error the HTTP client raises is sent 3 more times, which `max_retries` can't turn off. A connection that can't be opened, or a timeout before the response arrives, is also retried up to `max_retries` times on each of those requests |
 | Mistral | 1, unless the client has a `retry_config` | ✅ | Limited parameter support: `0` only. The SDK bounds retries by elapsed time, not count, so `0` turns off a `retry_config` set on the client and other values are ignored |
 | TypeSafe | 3 | ✅ | Limited parameter support: the request's other `RetryPolicy` options are the SDK defaults, not the client's |
 | AWS Bedrock | 5, in boto3's default `legacy` retry mode | ❌ | boto3 retries per client, so for one attempt, pass a `bedrock_client` built with `Config(retries={'max_attempts': 0})`; see [Configuring Retries](models/bedrock.md#configuring-retries) |

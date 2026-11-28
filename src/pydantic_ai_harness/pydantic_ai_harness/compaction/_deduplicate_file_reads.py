@@ -11,6 +11,7 @@ from pydantic_ai.messages import ModelMessage, ToolCallPart
 from pydantic_ai.tools import AgentDepsT, RunContext
 from pydantic_ai_harness.compaction._context_window import DEFAULT_CONTEXT_WINDOW
 from pydantic_ai_harness.compaction._shared import (
+    PartPosition,
     compact_with_span,
     context_for_request,
     estimate_token_count,
@@ -115,14 +116,14 @@ class DeduplicateFileReads(AbstractCapability[AgentDepsT]):
             if key is not None:
                 latest_order[key] = pair.order
 
-        clear_return_ids: set[str] = set()
+        clear_return_positions: set[PartPosition] = set()
         for pair, key in zip(pairs, keys):
             if key is not None and latest_order[key] != pair.order:
-                clear_return_ids.add(pair.tool_call_id)
+                clear_return_positions.add(pair.return_position)
 
-        if not clear_return_ids:
+        if not clear_return_positions:
             return messages
-        return rebuild_with_cleared(messages, clear_return_ids, set(), self.placeholder)
+        return rebuild_with_cleared(messages, clear_return_positions, set(), self.placeholder)
 
     async def before_model_request(
         self,

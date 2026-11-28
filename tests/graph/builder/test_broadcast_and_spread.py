@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
+from typing import Literal
 
 import anyio
 import pytest
@@ -333,9 +334,19 @@ async def test_nested_broadcasts():
     assert sorted(result) == [16, 30]
 
 
-async def test_map_then_broadcast():
-    """Test mapping followed by broadcasting from each map item."""
-    g = GraphBuilder(state_type=CounterState, output_type=list[int])
+@pytest.mark.parametrize(
+    ('preferred_parent_fork', 'expected_groups'),
+    [('farthest', [[11, 12, 21, 22]]), ('closest', [[11, 12], [21, 22]])],
+)
+async def test_map_then_broadcast(
+    preferred_parent_fork: Literal['farthest', 'closest'], expected_groups: list[list[int]]
+):
+    """Test mapping followed by broadcasting from each map item.
+
+    A join of the broadcast's branches that prefers its closest parent fork joins per map item: the broadcast under
+    the map counts as a parent fork.
+    """
+    g = GraphBuilder(state_type=CounterState, output_type=list[list[int]])
 
     @g.step
     async def generate_list(ctx: StepContext[CounterState, None, None]) -> list[int]:
@@ -349,20 +360,22 @@ async def test_map_then_broadcast():
     async def add_two(ctx: StepContext[CounterState, None, int]) -> int:
         return ctx.inputs + 2
 
-    collect = g.join(reduce_list_append, initial_factory=list[int])
+    collect = g.join(reduce_list_append, initial_factory=list[int], preferred_parent_fork=preferred_parent_fork)
+    regroup = g.join(reduce_list_append, initial_factory=list[list[int]])
 
     g.add(
         g.edge_from(g.start_node).to(generate_list),
         g.edge_from(generate_list).map().to(add_one, add_two),
         g.edge_from(add_one, add_two).to(collect),
-        g.edge_from(collect).to(g.end_node),
+        g.edge_from(collect).to(regroup),
+        g.edge_from(regroup).to(g.end_node),
     )
 
     graph = g.build()
     result = await graph.run(state=CounterState())
     # From 10: 11, 12
     # From 20: 21, 22
-    assert sorted(result) == [11, 12, 21, 22]
+    assert sorted(sorted(group) for group in result) == expected_groups
 
 
 async def test_multiple_sequential_maps():

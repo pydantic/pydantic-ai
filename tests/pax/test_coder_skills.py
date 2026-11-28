@@ -15,12 +15,13 @@ from rich.console import Console
 from pydantic_ai import Agent, RunContext
 from pydantic_ai.capabilities import (
     AgentCapability,
+    Capability,
     CombinedCapability,
     LocalWorkspace,
     WrapperCapability,
 )
-from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, UserPromptPart
-from pydantic_ai.models.function import AgentInfo, FunctionModel
+from pydantic_ai.messages import ModelMessage, ModelRequest, ModelResponse, TextPart, ToolReturnPart, UserPromptPart
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.workspaces import WorkspaceRef
 from pydantic_ai_harness.coder import Coder
@@ -43,6 +44,8 @@ from pydantic_ai_pax.plugins import (
 )
 from pydantic_ai_pax.plugins.loader import PluginLoader
 from pydantic_ai_pax.runtime.session_runtime import create_shell
+from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust, trust_scope
+from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
 from tests.pax.dialog_script import Back, Pick, ScriptedDialogs
 
 PromptT = TypeVar('PromptT')
@@ -133,6 +136,26 @@ def commands_of(loaded: LoadedPlugin[None]) -> Commands:
 
 def has_skills(loaded: LoadedPlugin[None]) -> bool:
     return Skills in bound_types(loaded)
+
+
+def per_run_plugin(sandbox: Path | None = None) -> LoadedPlugin[None]:
+    """A plugin whose capability function returns a `LocalWorkspace` at `sandbox`, or nothing without one."""
+
+    class PerRun(Plugin[NoSettings, None]):
+        def get_capabilities(self) -> Sequence[AgentCapability[None]]:
+            return (self.for_run,)
+
+        def for_run(self, ctx: RunContext[None]) -> LocalWorkspace[None] | None:
+            return None if sandbox is None else LocalWorkspace[None](sandbox)
+
+    return load_plugin(PerRun, PluginHost[None](name='per_run', console=Console(file=io.StringIO()), settings={}))
+
+
+def first_instructions(messages: Sequence[ModelMessage]) -> str:
+    """The instructions on the first request in `messages`."""
+    request = messages[0]
+    assert isinstance(request, ModelRequest)
+    return request.instructions or ''
 
 
 class TestSkillFolders:
@@ -343,7 +366,42 @@ class TestSkillFoldersAboveTheLaunchDirectory:
 
         assert list(loaded.commands) == []
 
+    async def test_a_nearer_folder_of_any_name_takes_precedence(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        (project / '.git').mkdir()
+        write_skill(project / '.agents' / 'skills', 'review', description='Root review.')
+        src = project / 'src'
+        write_skill(src / '.claude' / 'skills', 'review', description='Src review.')
+        monkeypatch.chdir(src)
+
+        with pytest.warns(UserWarning, match="skill name 'review' is already taken"):
+            loaded, output = await load_coder()
+            seen = await run_once(loaded, src)
+
+        assert '- review: Src review.' in seen.instructions
+        assert output.getvalue() == (
+            f'Skipping {project.resolve()}/.agents/skills/review/SKILL.md: skill name '
+            f"'review' is already taken by {src.resolve()}/.claude/skills/review/SKILL.md.\n"
+        )
+
+    def test_each_directory_is_searched_for_every_relative_folder_before_its_parent(self) -> None:
+        # Not a VCR test: pure path ordering with no model request. The run above covers it end to end.
+        settings = CoderSettings()
+
+        assert settings.skill_libraries(home=Path('/home/tester'), parents=[Path('/repo/pkg'), Path('/repo')]) == [
+            '.agents/skills',
+            '.claude/skills',
+            '/repo/pkg/.agents/skills',
+            '/repo/pkg/.claude/skills',
+            '/repo/.agents/skills',
+            '/repo/.claude/skills',
+            '/home/tester/.agents/skills',
+            '/home/tester/.claude/skills',
+        ]
+
     def test_relative_folders_expand_across_parents_in_place(self) -> None:
+        # Absolute and `~/` folders between relative ones keep their place in the precedence order.
         settings = CoderSettings(skill_folders=['.agents/skills', '~/skills', '/abs', '.claude/skills'])
 
         assert settings.skill_libraries(home=Path('/home/tester'), parents=[Path('/repo/pkg'), Path('/repo')]) == [
@@ -466,14 +524,57 @@ class TestSkillCatalog:
         os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
         reason='POSIX mode bits must apply to this process.',
     )
-    async def test_an_unreadable_folder_turns_skills_off_but_keeps_coder(self, project: Path) -> None:
+    async def test_an_unreadable_folder_is_skipped_at_load_and_mid_session(self, project: Path, home: Path) -> None:
         library = project / '.agents' / 'skills'
         write_skill(library, 'review')
+        write_skill(home / '.agents' / 'skills', 'release', description='Personal release.')
         library.chmod(0)
         try:
             loaded, output = await load_coder()
         finally:
             library.chmod(0o755)
+
+        assert [command.name for command in loaded.commands] == ['release']
+        assert output.getvalue() == f'Skipping {library.resolve()}: it is not readable.\n'
+
+        library.chmod(0)
+        try:
+            with pytest.warns(UserWarning, match='it is not readable'):
+                seen = await run_once(loaded, project)
+        finally:
+            library.chmod(0o755)
+        assert '- release: Personal release.' in seen.instructions
+
+    # Mode bits do not bind root, and Windows cannot make a directory unreadable with them.
+    @pytest.mark.skipif(
+        os.name == 'nt' or getattr(os, 'geteuid', lambda: 1)() == 0,
+        reason='POSIX mode bits must apply to this process.',
+    )
+    async def test_an_unreadable_skill_directory_is_skipped_with_a_notice(self, project: Path) -> None:
+        skill = write_skill(project / '.agents' / 'skills', 'review')
+        write_skill(project / '.agents' / 'skills', 'deploy')
+        skill.chmod(0)
+        try:
+            loaded, output = await load_coder()
+        finally:
+            skill.chmod(0o755)
+
+        assert Skills in bound_types(loaded)
+        assert [command.name for command in loaded.commands] == ['deploy']
+        assert output.getvalue() == f'Skipping {skill.resolve()}: it is not readable.\n'
+
+    async def test_a_skill_folder_that_fails_to_load_turns_skills_off_but_keeps_coder(
+        self, project: Path, monkeypatch: pytest.MonkeyPatch
+    ) -> None:
+        # Not a VCR test: no model request. `Skills` skips what it can't read, so an OS error it doesn't
+        # expect is simulated to reach the guard that keeps the file and shell tools loading.
+        write_skill(project / '.agents' / 'skills', 'review')
+
+        async def fail(self: Skills[None], workspace: object) -> None:
+            raise PermissionError(13, 'Permission denied')
+
+        monkeypatch.setattr(Skills, 'load', fail)
+        loaded, output = await load_coder()
 
         assert bound_types(loaded) == [Coder]
         assert output.getvalue().startswith('Skills are off: [Errno 13] Permission denied')
@@ -524,6 +625,190 @@ class TestSkillCatalog:
         # A sandbox the capability function supplies still wins over the project directory.
         expected = (sandbox if supplies_workspace else project).resolve()
         assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(expected))
+
+    @pytest.mark.parametrize('plugin_function', [False, True], ids=['without-function', 'with-function'])
+    async def test_skill_catalog_with_a_plugin_capability_function(self, project: Path, plugin_function: bool) -> None:
+        write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
+        coder, _ = await load_coder()
+        session = Session(
+            create_stock_agent(TestModel(call_tools=[], custom_output_text='done')),
+            deps=None,
+            workspace=project,
+            plugins=[*coder.capabilities, *(per_run_plugin().capabilities if plugin_function else ())],
+        )
+        session.trust = WorkspaceTrust(scope=trust_scope(project))
+        result = await session.prompt('go')
+
+        instructions = first_instructions(result.new_messages())
+        assert '- review: Project review.' not in instructions
+        assert 'call `list_skills`' in instructions
+
+    async def test_skill_catalog_with_a_plugin_capability_function_and_every_skill_off(self, project: Path) -> None:
+        write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
+        coder, _ = await load_coder({'disabled_skills': ['review']})
+        session = Session(
+            create_stock_agent(TestModel(call_tools=[], custom_output_text='done')),
+            deps=None,
+            workspace=project,
+            plugins=[*coder.capabilities, *per_run_plugin().capabilities],
+        )
+        session.trust = WorkspaceTrust(scope=trust_scope(project))
+        result = await session.prompt('go')
+
+        instructions = first_instructions(result.new_messages())
+        assert '- review: Project review.' not in instructions
+        assert 'list_skills' not in instructions
+
+    async def test_skill_catalog_with_a_plugin_capability_function_that_supplies_a_sandbox(
+        self, tmp_path: Path, project: Path
+    ) -> None:
+        write_skill(project / '.agents' / 'skills', 'review', description='Project review.', body='Review it.')
+        sandbox = tmp_path / 'sandbox'
+        sandbox.mkdir()
+        returns: dict[str, object] = {}
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            request = messages[-1]
+            assert isinstance(request, ModelRequest)
+            if parts := [part for part in request.parts if isinstance(part, ToolReturnPart)]:
+                returns.update({part.tool_name: part.content for part in parts})
+                yield 'done'
+            else:
+                yield {
+                    0: DeltaToolCall(name='list_skills', json_args='{}', tool_call_id='list'),
+                    1: DeltaToolCall(name='load_skill', json_args='{"name": "review"}', tool_call_id='load'),
+                }
+
+        coder, _ = await load_coder()
+        session = Session(
+            create_stock_agent(FunctionModel(stream_function=stream)),
+            deps=None,
+            workspace=project,
+            plugins=[*coder.capabilities, *per_run_plugin(sandbox).capabilities],
+        )
+        session.trust = WorkspaceTrust(scope=trust_scope(project))
+        result = await session.prompt('go')
+
+        instructions = first_instructions(result.new_messages())
+        assert '- review: Project review.' not in instructions
+        assert 'call `list_skills`' in instructions
+        assert returns['list_skills'] == {'skills': {'review': 'Project review.'}}
+        assert 'Review it.' in str(returns['load_skill'])
+        assert result.response.workspace_ref == WorkspaceRef(provider='local', id=str(sandbox.resolve()))
+
+    @pytest.mark.moves_cache_prefix(reason=INSTRUCTIONS_CHANGE_MID_RUN)
+    async def test_skill_catalog_with_a_plugin_capability_function_across_two_prompts(
+        self, tmp_path: Path, project: Path
+    ) -> None:
+        write_skill(project / '.agents' / 'skills', 'review', description='Project review.')
+        coder, _ = await load_coder()
+        session = Session(
+            create_stock_agent(TestModel(call_tools=[], custom_output_text='done')),
+            deps=None,
+            workspace=project,
+            plugins=[*coder.capabilities, *per_run_plugin().capabilities],
+        )
+        trust = WorkspaceTrust(scope=trust_scope(project))
+        session.trust = trust
+
+        first = await session.prompt('go')
+        trust.decide(SettingsStore(tmp_path / 'config.db'), trusted=True)
+        second = await session.prompt('again')
+
+        assert '- review: Project review.' not in first_instructions(first.new_messages())
+        assert '- review: Project review.' in first_instructions(second.new_messages())
+
+    @pytest.mark.parametrize('decided', [True, False], ids=['decided', 'no-decision'])
+    async def test_skill_files_with_a_plugin_capability_function_that_supplies_a_sandbox(
+        self, tmp_path: Path, project: Path, decided: bool
+    ) -> None:
+        sandbox = tmp_path / 'sandbox'
+        for root, guide in ((project, 'Project guide.'), (sandbox, 'Sandbox guide.')):
+            references = write_skill(root / 'team', 'deploy', description='Team deploy.') / 'references'
+            references.mkdir()
+            (references / 'guide.md').write_text(guide, encoding='utf-8')
+        read: list[object] = []
+
+        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+            request = messages[-1]
+            assert isinstance(request, ModelRequest)
+            read.extend(
+                part.content
+                for part in request.parts
+                if isinstance(part, ToolReturnPart) and part.tool_name == 'read_skill_file'
+            )
+            step = sum(isinstance(message, ModelResponse) for message in messages)
+            if step == 0:
+                yield {0: DeltaToolCall(name='load_capability', json_args='{"id": "deploy"}', tool_call_id='load')}
+            elif step == 1:
+                args = '{"skill": "deploy", "path": "references/guide.md"}'
+                yield {0: DeltaToolCall(name='read_skill_file', json_args=args, tool_call_id='read')}
+            else:
+                yield 'done'
+
+        coder, _ = await load_coder()
+        session = Session(
+            create_stock_agent(FunctionModel(stream_function=stream)),
+            deps=None,
+            workspace=project,
+            plugins=[
+                Skills[None](['team'], read_files=True),
+                *coder.capabilities,
+                *per_run_plugin(sandbox).capabilities,
+            ],
+        )
+        if decided:
+            trust = WorkspaceTrust(scope=trust_scope(project))
+            trust.decide(SettingsStore(tmp_path / 'config.db'), trusted=True)
+            session.trust = trust
+        await session.prompt('go')
+
+        assert read == ['Sandbox guide.']
+
+    @pytest.mark.parametrize(
+        ('inner', 'lowered'),
+        [('other', False), ('project/sub', False), ('project', True)],
+        ids=['another-folder', 'a-subfolder', 'the-sessions-folder'],
+    )
+    async def test_skill_catalog_of_an_agent_a_session_tool_runs(
+        self, tmp_path: Path, project: Path, monkeypatch: pytest.MonkeyPatch, inner: str, lowered: bool
+    ) -> None:
+        folder = tmp_path / inner
+        write_skill(folder / '.agents' / 'skills', 'inner', description='Inner skill.')
+        sandbox = tmp_path / 'sandbox'
+        sandbox.mkdir()
+        # `load_coder`'s host works in the current directory.
+        monkeypatch.chdir(folder)
+        inner_coder, _ = await load_coder()
+        monkeypatch.chdir(project)
+        inner_requests: list[ModelMessage] = []
+
+        def inner_respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            inner_requests.append(messages[-1])
+            return ModelResponse(parts=[TextPart('done')])
+
+        inner_agent = Agent(FunctionModel(inner_respond), deps_type=type(None))
+
+        async def run_inner(ctx: RunContext[None]) -> str:
+            """Run the inner agent."""
+            await inner_agent.run(
+                'inner', capabilities=[*inner_coder.capabilities, *per_run_plugin(sandbox).capabilities]
+            )
+            return 'ran'
+
+        coder, _ = await load_coder()
+        session = Session(
+            create_stock_agent(TestModel(call_tools=['run_inner'], custom_output_text='done')),
+            deps=None,
+            workspace=project,
+            plugins=[*coder.capabilities, Capability[None](tools=[run_inner])],
+        )
+        session.trust = WorkspaceTrust(scope=trust_scope(project))
+        await session.prompt('go')
+
+        instructions = first_instructions(inner_requests)
+        assert ('- inner: Inner skill.' in instructions) is not lowered
+        assert ('call `list_skills`' in instructions) is lowered
 
     @pytest.mark.parametrize('first', ['coder', 'own'])
     async def test_another_skills_on_the_agent_combines_with_coders(self, project: Path, first: str) -> None:

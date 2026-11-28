@@ -99,8 +99,9 @@ plugin may do as many things as it likes: several capabilities, commands, hooks,
 renderers, in any combination. The example below deliberately does two
 unrelated things, adding ExaSearch and registering a /greet command, to show
 both shapes side by side; a real plugin would usually pick one purpose. Create
-~/.config/pydantic-clai2/plugins/search.py, or use
-$XDG_CONFIG_HOME/pydantic-clai2/plugins/search.py when XDG_CONFIG_HOME is set:
+~/.config/pydantic-ai-pax/plugins/search.py, or use
+$XDG_CONFIG_HOME/pydantic-ai-pax/plugins/search.py when XDG_CONFIG_HOME is set. With
+--database, the plugins folder is the one next to that database:
 
 ```python
 from collections.abc import Sequence
@@ -242,7 +243,7 @@ settings with:
 Traces carry Pax's own version as service.version; LOGFIRE_SERVICE_VERSION
 and OTEL_SERVICE_VERSION do not change it.
 
-Other options are service_name (default pydantic-clai2), send_to_logfire
+Other options are service_name (default pydantic-ai-pax), send_to_logfire
 (default "if-token-present", or false), token (the name of a /keys entry
 holding a Logfire write token, as {"name": "CLAI2_LOGFIRE_TOKEN"}, whose project
 then receives the telemetry), variables_key (the name of a /keys entry holding a
@@ -257,7 +258,7 @@ Its Logfire project row sets token and base_url for you, and turns sending on:
 pick Logfire US, EU, or a self-hosted URL, sign in in the browser, and pick a
 project; its new write token is saved in /keys. This explicit option overrides
 LOGFIRE_SEND_TO_LOGFIRE. Use LOGFIRE_TOKEN or the SDK credential file in
-$XDG_CONFIG_HOME/pydantic-clai2/logfire (default ~/.config/pydantic-clai2/logfire).
+$XDG_CONFIG_HOME/pydantic-ai-pax/logfire (default ~/.config/pydantic-ai-pax/logfire).
 Both SDK configuration and credentials are read from that user directory, not
 from the checkout. LOGFIRE_CONFIG_DIR and LOGFIRE_CREDENTIALS_DIR are ignored;
 relative XDG_CONFIG_HOME falls back to ~/.config. Keep tokens out of plugin JSON. Disabling or reloading shuts down only the plugin's own
@@ -394,7 +395,7 @@ cancel(), use its documented cancellation semantics.
 
 ## Settings that need a feature: requirement tags
 
-Every Pax on a machine shares one settings database (~/.config/pydantic-clai2/config.db),
+Every Pax on a machine shares one settings database (~/.config/pydantic-ai-pax/config.db),
 whatever code it runs: other worktrees, branches, and installs. A plugin setting that one
 build supports can break another. Version numbers cannot tell them apart, because worktrees
 are diverging branches that report the same dev version. Feature names can.

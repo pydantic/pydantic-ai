@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import warnings
-from collections.abc import AsyncIterable, AsyncIterator, Callable
+from collections.abc import AsyncGenerator, AsyncIterable, AsyncIterator, Callable
 from dataclasses import dataclass, field
 from datetime import timedelta
 from typing import TYPE_CHECKING, Annotated, Any, Generic, cast
@@ -10,12 +10,15 @@ from weakref import WeakValueDictionary
 import pydantic
 from temporalio import activity, workflow
 from temporalio.client import Client, WorkflowHandle
+from temporalio.common import RawValue
 from temporalio.contrib.workflow_streams import (
+    TopicHandle,
     WorkflowStream,
     WorkflowStreamClient,
     WorkflowStreamItem,
     WorkflowStreamState,
 )
+from temporalio.converter import PayloadConverter
 from temporalio.service import RPCError
 
 from pydantic_ai.agent import EventStreamHandler
@@ -276,40 +279,53 @@ def workflow_stream_event_handler(
             async for _ in stream:
                 pass
             return
-
-        # Pin publishing to the run that scheduled this activity. `from_within_activity()` builds its
-        # handle from the workflow ID alone, which resolves to the *latest* execution: if this run is
-        # cancelled while its activities are still shutting down and the workflow ID is then reused,
-        # trailing events would land in the new execution's stream.
-        info = activity.info()
-        if info.workflow_id is None or info.workflow_run_id is None:
-            raise UserError(
-                'A Workflow Stream event handler can only publish from an activity scheduled by a workflow. '
-                'This activity was started directly on the client, so it has no workflow stream to publish to.'
-            )
-        temporal_client = activity.client()
-        activity_handle = temporal_client.get_workflow_handle(info.workflow_id, run_id=info.workflow_run_id)
-        client = WorkflowStreamClient(activity_handle, client=temporal_client, batch_interval=topic.batch_interval)
-        topic_handle = client.topic(topic.name)
-
-        async def publishing(events: AsyncIterable[AgentStreamEvent]) -> AsyncIterator[AgentStreamEvent]:
-            async for event in events:
-                if topic.events is None or topic.events(event):
-                    topic_handle.publish(event)
-                yield event
-
-        async with client:  # background flusher; flushes what's left on exit
-            published = publishing(stream)
-            try:
-                if handler is not None:
-                    await handler(run_context, published)
-            finally:
-                # Keep publishing whatever a handler that returned early left behind: the topic's
-                # subscribers are not that handler's business.
-                async for _ in published:
-                    pass
+        await _publish_from_activity(topic, run_context, stream, handler)
 
     return publishing_handler
+
+
+async def _publish_from_activity(
+    topic: WorkflowStreamTopic,
+    run_context: RunContext[AgentDepsT],
+    stream: AsyncIterable[AgentStreamEvent],
+    handler: EventStreamHandler[AgentDepsT] | None,
+) -> None:
+    """Publish an activity's events to the workflow run that scheduled it, passing them on to `handler`."""
+    # Pin publishing to the run that scheduled this activity. `from_within_activity()` builds its
+    # handle from the workflow ID alone, which resolves to the *latest* execution: if this run is
+    # cancelled while its activities are still shutting down and the workflow ID is then reused,
+    # trailing events would land in the new execution's stream.
+    info = activity.info()
+    if info.workflow_id is None or info.workflow_run_id is None:
+        raise UserError(
+            'A Workflow Stream event handler can only publish from an activity scheduled by a workflow. '
+            'This activity was started directly on the client, so it has no workflow stream to publish to.'
+        )
+    temporal_client = activity.client()
+    activity_handle = temporal_client.get_workflow_handle(info.workflow_id, run_id=info.workflow_run_id)
+    client = WorkflowStreamClient(activity_handle, client=temporal_client, batch_interval=topic.batch_interval)
+    topic_handle = client.topic(topic.name)
+
+    async with client:  # background flusher; flushes what's left on exit
+        published = _publishing(stream, topic, topic_handle)
+        try:
+            if handler is not None:
+                await handler(run_context, published)
+        finally:
+            # Keep publishing whatever a handler that returned early left behind: the topic's
+            # subscribers are not that handler's business.
+            async for _ in published:
+                pass
+
+
+async def _publishing(
+    events: AsyncIterable[AgentStreamEvent], topic: WorkflowStreamTopic, topic_handle: TopicHandle[Any]
+) -> AsyncIterator[AgentStreamEvent]:
+    """Yield each event, publishing it first when the topic selects it."""
+    async for event in events:
+        if topic.events is None or topic.events(event):
+            topic_handle.publish(event)
+        yield event
 
 
 class DurableAgentRunEvents(Generic[OutputDataT], AsyncIterator['NativeEvent']):
@@ -452,15 +468,69 @@ def stream_agent_events(
     result_type = Annotated[
         AgentStreamEvent | _DurableAgentRunResultEvent[output_type], pydantic.Discriminator('event_kind')
     ]
-    subscription = WorkflowStreamClient(pinned, client=client).subscribe(
+    # Subscribe to raw payloads and decode them here, so an event kind this version doesn't know can
+    # be skipped: the subscription decodes inside its own generator, which a failure would end.
+    raw_subscription = WorkflowStreamClient(pinned, client=client).subscribe(
         [topic.name],
         from_offset=from_offset,
-        result_type=cast('type[Any]', result_type),
+        result_type=RawValue,
         poll_cooldown=poll_cooldown,
+    )
+    subscription = _decode_agent_events(
+        raw_subscription, client.data_converter.payload_converter, cast('type[Any]', result_type), topic.name
     )
     # Polling follows continue-as-new by retargeting to the latest execution. Acknowledgments need
     # to do the same; their execution-scoped token makes signaling a later reused workflow ID safe.
     acknowledgment_handle = client.get_workflow_handle(handle.id)
-    return DurableAgentRunEvents(
-        cast('AsyncIterator[WorkflowStreamItem[NativeEvent]]', subscription), acknowledgment_handle
-    )
+    return DurableAgentRunEvents(subscription, acknowledgment_handle)
+
+
+async def _decode_agent_events(
+    subscription: AsyncIterator[WorkflowStreamItem[RawValue]],
+    converter: PayloadConverter,
+    result_type: type[Any],
+    topic: str,
+) -> AsyncGenerator[WorkflowStreamItem[NativeEvent], None]:
+    """Decode raw topic items into events, skipping event kinds this version of Pydantic AI doesn't know.
+
+    Subscribers can run an older Pydantic AI than the workers publishing to the topic, and a worker
+    on a newer version may publish event kinds that didn't exist yet. Those are skipped with a
+    warning, once per kind, rather than failing the stream. A known kind that fails to validate still
+    raises.
+    """
+    warned_kinds: set[str] = set()
+    try:
+        async for item in subscription:
+            try:
+                event = converter.from_payload(item.data.payload, result_type)
+            except pydantic.ValidationError as exc:
+                kind = _unknown_event_kind(exc)
+                if kind is None:
+                    raise
+                if kind not in warned_kinds:
+                    warned_kinds.add(kind)
+                    warnings.warn(
+                        f'Skipping agent events of unknown kind {kind!r} on Workflow Stream topic {topic!r}: '
+                        'they were likely published by a worker running a newer version of Pydantic AI. '
+                        'Upgrade `pydantic-ai` in this consumer to receive them.',
+                        UserWarning,
+                        # Past `DurableAgentRunEvents.__anext__`, which resumes this generator, to the consumer.
+                        stacklevel=3,
+                    )
+                continue
+            yield WorkflowStreamItem(topic=item.topic, data=event, offset=item.offset)
+    finally:
+        await cast('AsyncGeneratorLike', subscription).aclose()
+
+
+def _unknown_event_kind(error: pydantic.ValidationError) -> str | None:
+    """The `event_kind` that failed validation for not being a known kind, if that's why it failed.
+
+    Pydantic reports an unknown tag on the top-level discriminated union at the root location; an
+    unknown tag nested inside a known event (e.g. a part kind) is reported at its own location, so it
+    still raises, as does any other error on a known kind.
+    """
+    for detail in error.errors():
+        if detail['type'] == 'union_tag_invalid' and detail['loc'] == ():
+            return str(detail.get('ctx', {}).get('tag'))
+    return None

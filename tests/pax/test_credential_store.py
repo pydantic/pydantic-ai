@@ -11,6 +11,7 @@ import keyring
 import keyring.backend
 import keyring.core
 import pytest
+from cryptography.fernet import Fernet
 from keyring.errors import InitError, KeyringLocked, NoKeyringError, PasswordSetError
 from rich.console import Console
 
@@ -28,7 +29,8 @@ from pydantic_ai_pax.config.credential_store import (
 from tests.pax.conftest import stored_accounts
 
 Vault = dict[tuple[str, str], str]
-KEY = ('pydantic-clai2', 'encryption-key')
+KEY = ('pydantic-ai-pax', 'encryption-key')
+OLD_KEY = ('pydantic-clai2', 'encryption-key')
 LEGACY = ('pydantic-clai2', 'openai-codex')
 PLAINTEXT_WARNING = (
     'OS keyring is unavailable or has no saved entry; using 0600 plaintext credential files. '
@@ -167,7 +169,7 @@ def test_swept_staging_file_leaves_the_move_to_the_other_process(
     def swept(source: str, destination: Path) -> None:
         raise FileNotFoundError(source)
 
-    monkeypatch.setattr('pydantic_ai_pax.config.credential_store.os.link', swept)
+    monkeypatch.setattr('pydantic_ai_pax.config.private_files.os.link', swept)
     assert load_codex_credentials(fallback=fallback) == 'older'
     assert vault[LEGACY] == 'older', 'the entry stays until a move succeeds'
 
@@ -221,6 +223,76 @@ def test_missing_chunk(vault: Vault, fallback: Path) -> None:
     del vault[f'pydantic-clai2.openai-codex.{"a" * 32}.1', 'openai-codex']
     with pytest.raises(UserError, match='incomplete'):
         load_codex_credentials(fallback=fallback)
+
+
+def test_a_key_saved_under_the_old_service_is_copied_and_kept(
+    vault: Vault, reads: list[tuple[str, str]], fallback: Path
+) -> None:
+    """An older Pax shares the credential files through the folder link, so it still needs its key."""
+    save_codex_credentials(fallback=fallback, value='secret')
+    vault[OLD_KEY] = vault.pop(KEY)
+    new_session()
+    reads.clear()
+    assert load_codex_credentials(fallback=fallback) == 'secret'
+    assert vault == {KEY: vault[OLD_KEY], OLD_KEY: vault[OLD_KEY]}
+    assert reads == [OLD_KEY]
+    new_session()
+    reads.clear()
+    assert load_codex_credentials(fallback=fallback) == 'secret'
+    assert reads == [KEY], 'the next session reads only the new entry'
+
+
+def test_the_new_key_wins_over_the_old_one(vault: Vault, reads: list[tuple[str, str]], fallback: Path) -> None:
+    save_codex_credentials(fallback=fallback, value='secret')
+    vault[OLD_KEY] = Fernet.generate_key().decode()
+    new_session()
+    reads.clear()
+    assert load_codex_credentials(fallback=fallback) == 'secret'
+    assert reads == [KEY]
+    assert vault[KEY] != vault[OLD_KEY]
+
+
+def test_without_any_key_a_new_one_is_saved_under_the_new_service(vault: Vault, fallback: Path) -> None:
+    assert load_codex_credentials(fallback=fallback) is None
+    save_codex_credentials(fallback=fallback, value='secret')
+    assert list(vault) == [KEY]
+
+
+@pytest.mark.parametrize('error', [KeyringLocked, PasswordSetError, RuntimeError])
+def test_a_failed_copy_still_decrypts_and_is_tried_again(
+    vault: Vault, fallback: Path, monkeypatch: pytest.MonkeyPatch, error: type[Exception]
+) -> None:
+    save_codex_credentials(fallback=fallback, value='secret')
+    vault[OLD_KEY] = vault.pop(KEY)
+    stored = keyring.set_password
+
+    def fail_set(service: str, account: str, value: str) -> None:
+        raise error('Unlock the keyring first')
+
+    monkeypatch.setattr(keyring, 'set_password', fail_set)
+    new_session()
+    assert load_codex_credentials(fallback=fallback) == 'secret'
+    assert list(vault) == [OLD_KEY]
+    monkeypatch.setattr(keyring, 'set_password', stored)
+    new_session()
+    assert load_codex_credentials(fallback=fallback) == 'secret'
+    assert vault[KEY] == vault[OLD_KEY]
+
+
+def test_a_locked_old_entry_is_not_a_fallback(vault: Vault, fallback: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    """Reading the old service behaves like reading the new one: a locked keyring is not "no keyring"."""
+    stored = keyring.get_password
+
+    def get(service: str, account: str) -> str | None:
+        if (service, account) == OLD_KEY:
+            raise KeyringLocked('Unlock the keyring first')
+        return stored(service, account)
+
+    monkeypatch.setattr(keyring, 'get_password', get)
+    with pytest.raises(KeyringLocked):
+        save_codex_credentials(fallback=fallback, value='secret')
+    assert vault == {}
+    assert not fallback.exists()
 
 
 @pytest.fixture
@@ -378,7 +450,7 @@ def test_staging_race_is_refused(fallback: Path, no_keyring: None, monkeypatch: 
             Path(path).write_text('{"access_token":"attacker"}', encoding='utf-8')
         return real_open(path, flags, mode)
 
-    monkeypatch.setattr('pydantic_ai_pax.config.credential_store.os.open', planting_open)
+    monkeypatch.setattr('pydantic_ai_pax.config.private_files.os.open', planting_open)
     with pytest.raises(FileExistsError):
         save_codex_credentials(fallback=fallback, value='{"access_token":"secret"}')
     assert not fallback.exists()
@@ -438,7 +510,7 @@ def test_fallback_paths_are_per_account(tmp_path: Path, no_keyring: None, monkey
     monkeypatch.setenv('XDG_CONFIG_HOME', str(tmp_path))
     codex = credentials_path()
     vllm = credentials_path(account='vllm')
-    assert codex.parent == vllm.parent == tmp_path / 'pydantic-clai2'
+    assert codex.parent == vllm.parent == tmp_path / 'pydantic-ai-pax'
     assert codex.name != vllm.name
     save_codex_credentials(value='codex-tokens', account='openai-codex')
     save_codex_credentials(value='vllm-token', account='vllm')

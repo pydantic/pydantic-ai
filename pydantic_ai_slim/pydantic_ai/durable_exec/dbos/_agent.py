@@ -3,6 +3,7 @@ from __future__ import annotations
 from collections.abc import AsyncGenerator, AsyncIterable, Generator, Sequence
 from contextlib import AbstractAsyncContextManager, asynccontextmanager, contextmanager
 from contextvars import ContextVar
+from functools import partial
 from typing import TYPE_CHECKING, Any, Literal, cast, overload
 
 from dbos import DBOS, DBOSConfiguredInstance
@@ -17,11 +18,13 @@ from pydantic_ai import (
     models,
     usage as _usage,
 )
+from pydantic_ai._compaction_requests import compaction_only_run
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.agent import (
     AbstractAgent,
     AgentRun,
     AgentRunResult,
+    CompactionRunResult,
     EventStreamHandler,
     ParallelExecutionMode,
     WrapperAgent,
@@ -31,6 +34,7 @@ from pydantic_ai.agent.abstract import (
     AgentModelSettings,
     AgentRetries,
     AgentRunEvents,
+    CompactionOptions,
     RunOutputDataT,
     _RealtimeSessionResolution,  # pyright: ignore[reportPrivateUsage]
 )
@@ -50,7 +54,12 @@ from pydantic_ai.tools import (
 )
 from pydantic_ai.workspaces import Workspace, WorkspaceBackend, WorkspaceRef
 
-from .._runtime_toolsets import reject_cancellation_token, reject_run_timeout, reject_unsupported_runtime_toolsets
+from .._runtime_toolsets import (
+    reject_cancellation_token,
+    reject_durable_unsupported_capabilities,
+    reject_run_timeout,
+    reject_unsupported_runtime_toolsets,
+)
 from .._workspace import RejectWorkspaceInContainer
 from ._function_toolset import gate_tool_instance_defaults
 from ._model import DBOSModel
@@ -78,6 +87,48 @@ DBOSParallelExecutionMode = Literal['sequential', 'parallel_ordered_events']
 _reject_workspace_in_workflow: RejectWorkspaceInContainer[Any] = RejectWorkspaceInContainer(
     engine='DBOS', container_noun='workflow', capability='DBOSDurability'
 )
+
+
+def _dbosify_toolset(
+    toolset: AbstractToolset[AgentDepsT], *, step_name_prefix: str, step_config: StepConfig, seen_mcp_ids: set[str]
+) -> AbstractToolset[AgentDepsT]:
+    """Replace `MCPToolset` with its DBOS-wrapped variant, recording its `id` in `seen_mcp_ids` to reject a duplicate."""
+    try:
+        from pydantic_ai.mcp import MCPToolset
+
+        from ._mcp_toolset import dbosify_mcp_toolset
+    except ImportError:
+        pass
+    else:
+        if isinstance(toolset, MCPToolset):
+            # A hostname-derived `id` doesn't name steps; it has to be chosen.
+            toolset_id = toolset._explicit_id  # pyright: ignore[reportPrivateUsage]
+            if toolset_id is None:
+                raise UserError(
+                    'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
+                    "The ID will be used to identify the MCP server's steps within the workflow. "
+                    'Set it on the toolset itself with `MCPToolset(..., id=...)`, or, when the toolset '
+                    "is contributed by a capability, set the capability's `id` "
+                    "(for example, `MCP(url='...', id='...')`)."
+                )
+            # The id keys the per-run tool-defs cache and the step names, so two leaf toolsets
+            # sharing one id would silently collide (the second server would return the first's
+            # cached tools). A capability can contribute an id-derived leaf (e.g. two `MCP(url=...)`
+            # servers whose URLs derive the same id), so this isn't always a hand-set duplicate.
+            if toolset_id in seen_mcp_ids:
+                raise UserError(
+                    f'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
+                    f'but more than one leaf toolset uses the id {toolset_id!r}. '
+                    "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
+                    'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
+                )
+            seen_mcp_ids.add(toolset_id)
+            return dbosify_mcp_toolset(
+                wrapped=toolset,
+                step_name_prefix=step_name_prefix,
+                step_config=step_config,
+            )
+    return toolset
 
 
 # TODO(v3): remove `DBOSAgent` in favor of the `DBOSDurability` capability, along with `DBOSDurability(register_legacy_workflows=...)` which exists solely to migrate off it
@@ -123,6 +174,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 - 'sequential': Run tool calls one at a time in order.
         """
         super().__init__(wrapped)
+        reject_durable_unsupported_capabilities(wrapped, wrapper='DBOSAgent')
 
         self._name = name or wrapped.name
         self._event_stream_handler = event_stream_handler
@@ -152,49 +204,10 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         )
         self._model = dbos_model
 
-        dbosagent_name = self._name
-
         seen_mcp_ids: set[str] = set()
-
-        def dbosify_toolset(toolset: AbstractToolset[AgentDepsT]) -> AbstractToolset[AgentDepsT]:
-            # Replace `MCPToolset` with its DBOS-wrapped variant.
-            try:
-                from pydantic_ai.mcp import MCPToolset
-
-                from ._mcp_toolset import dbosify_mcp_toolset
-            except ImportError:
-                pass
-            else:
-                if isinstance(toolset, MCPToolset):
-                    # A hostname-derived `id` doesn't name steps; it has to be chosen.
-                    toolset_id = toolset._explicit_id  # pyright: ignore[reportPrivateUsage]
-                    if toolset_id is None:
-                        raise UserError(
-                            'MCP toolsets need to have a unique `id` in order to be used with DBOS. '
-                            "The ID will be used to identify the MCP server's steps within the workflow. "
-                            'Set it on the toolset itself with `MCPToolset(..., id=...)`, or, when the toolset '
-                            "is contributed by a capability, set the capability's `id` "
-                            "(for example, `MCP(url='...', id='...')`)."
-                        )
-                    # The id keys the per-run tool-defs cache and the step names, so two leaf toolsets
-                    # sharing one id would silently collide (the second server would return the first's
-                    # cached tools). A capability can contribute an id-derived leaf (e.g. two `MCP(url=...)`
-                    # servers whose URLs derive the same id), so this isn't always a hand-set duplicate.
-                    if toolset_id in seen_mcp_ids:
-                        raise UserError(
-                            f'MCP toolsets need to have a unique `id` in order to be used with DBOS, '
-                            f'but more than one leaf toolset uses the id {toolset_id!r}. '
-                            "The ID identifies the MCP server's steps within the workflow, so duplicates would collide. "
-                            'Set a distinct `id` on each `MCPToolset` (or the `Capability`/`MCP` that contributes it) to disambiguate them.'
-                        )
-                    seen_mcp_ids.add(toolset_id)
-                    return dbosify_mcp_toolset(
-                        wrapped=toolset,
-                        step_name_prefix=dbosagent_name,
-                        step_config=self._mcp_step_config,
-                    )
-            return toolset
-
+        dbosify_toolset = partial(
+            _dbosify_toolset, step_name_prefix=self._name, step_config=self._mcp_step_config, seen_mcp_ids=seen_mcp_ids
+        )
         dbos_toolsets = [
             toolset.visit_and_replace(dbosify_toolset).visit_and_replace(gate_tool_instance_defaults)
             for toolset in wrapped.toolsets
@@ -226,6 +239,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
             capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
             workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+            compact: bool | CompactionOptions = False,
             spec: dict[str, Any] | AgentSpec | None = None,
         ) -> AgentRunResult[Any]:
             with self._dbos_overrides(toolsets, event_stream_handler=event_stream_handler):
@@ -253,6 +267,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     # already-consumed stream) on top of the in-step invocation.
                     capabilities=capabilities,
                     workspace=workspace,
+                    compact=compact,
                     spec=spec,
                 )
 
@@ -282,6 +297,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
             capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
             workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+            compact: bool | CompactionOptions = False,
             spec: dict[str, Any] | AgentSpec | None = None,
         ) -> AgentRunResult[Any]:
             with self._dbos_overrides(toolsets, event_stream_handler=event_stream_handler):
@@ -311,10 +327,58 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                     # `DBOSAgent.run`, whose `.run` child workflow handles them.
                     capabilities=capabilities,
                     workspace=workspace,
+                    compact=compact,
                     spec=spec,
                 )
 
         self.dbos_wrapped_run_sync_workflow = wrapped_run_sync_workflow
+
+        # A workflow of its own, rather than the `.run` one: recovery calls a workflow with its recorded arguments,
+        # so only a workflow whose body makes the run compaction-only keeps it that way when it's recovered.
+        @DBOS.workflow(name=f'{self._name}.compact_history')
+        async def wrapped_compact_history_workflow(
+            message_history: Sequence[_messages.ModelMessage],
+            *,
+            focus: str | None = None,
+            reason: _messages.CompactionReason = 'manual',
+            conversation_id: str | None = None,
+            run_id: str | None = None,
+            model: models.Model | models.KnownModelName | str | None = None,
+            instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+            deps: AgentDepsT,
+            model_settings: AgentModelSettings[AgentDepsT] | None = None,
+            usage_limits: _usage.UsageLimits | None = None,
+            usage: _usage.RunUsage | None = None,
+            metadata: AgentMetadata[AgentDepsT] | None = None,
+            toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+            event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+            capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+            spec: dict[str, Any] | AgentSpec | None = None,
+        ) -> AgentRunResult[Any]:
+            compact: CompactionOptions = {'reason': reason}
+            if focus is not None:
+                compact['focus'] = focus
+            with self._dbos_overrides(toolsets, event_stream_handler=event_stream_handler), compaction_only_run():
+                return await super(WrapperAgent, self).run(
+                    message_history=message_history,
+                    conversation_id=conversation_id,
+                    run_id=run_id,
+                    model=model,
+                    instructions=instructions,
+                    deps=deps,
+                    model_settings=model_settings,
+                    usage_limits=usage_limits,
+                    usage=usage,
+                    metadata=metadata,
+                    infer_name=False,
+                    toolsets=toolsets,
+                    # `event_stream_handler` is not forwarded, as for the `.run` workflow: `_dbos_overrides` stashed it.
+                    capabilities=capabilities,
+                    compact=compact,
+                    spec=spec,
+                )
+
+        self.dbos_wrapped_compact_history_workflow = wrapped_compact_history_workflow
 
     @property
     def name(self) -> str | None:
@@ -423,6 +487,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -452,6 +517,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -480,6 +546,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Run the agent with a user prompt in async mode.
@@ -529,6 +596,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -562,8 +630,68 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler=event_stream_handler,
             capabilities=capabilities,
             workspace=workspace,
+            compact=compact,
             spec=spec,
         )
+
+    async def compact_history(
+        self,
+        message_history: Sequence[_messages.ModelMessage],
+        *,
+        focus: str | None = None,
+        reason: _messages.CompactionReason = 'manual',
+        conversation_id: str | None = None,
+        run_id: str | None = None,
+        model: models.Model | models.KnownModelName | str | None = None,
+        instructions: _instructions.AgentInstructions[AgentDepsT] = None,
+        deps: AgentDepsT = None,
+        model_settings: AgentModelSettings[AgentDepsT] | None = None,
+        usage_limits: _usage.UsageLimits | None = None,
+        cancellation_token: CancellationToken | None = None,
+        timeout: float | None = None,
+        usage: _usage.RunUsage | None = None,
+        metadata: AgentMetadata[AgentDepsT] | None = None,
+        infer_name: bool = True,
+        toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
+        event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
+        capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
+        spec: dict[str, Any] | AgentSpec | None = None,
+    ) -> CompactionRunResult:
+        """Compact a message history without continuing the conversation, in a DBOS workflow of its own.
+
+        See [`AbstractAgent.compact_history`][pydantic_ai.agent.AbstractAgent.compact_history]. The workflow makes
+        the run compaction-only itself, so a recovered workflow compacts again rather than continuing the
+        conversation. As for [`run()`][pydantic_ai.durable_exec.dbos.DBOSAgent.run], passing `cancellation_token`,
+        `timeout` or a model that isn't a DBOS model raises `UserError`.
+        """
+        reject_cancellation_token(cancellation_token, engine='DBOS')
+        reject_run_timeout(timeout, wrapper='DBOSAgent', capability='DBOSDurability')
+        if model is not None and not isinstance(model, DBOSModel):
+            raise UserError(
+                'Non-DBOS model cannot be set at agent run time inside a DBOS workflow, it must be set at agent creation time.'
+            )
+        self._reject_unsupported_runtime_toolsets(toolsets)
+        # The agent's name is fixed when it's wrapped, so there's nothing to infer.
+        del infer_name
+        run_result = await self.dbos_wrapped_compact_history_workflow(
+            message_history,
+            focus=focus,
+            reason=reason,
+            conversation_id=conversation_id,
+            run_id=run_id,
+            model=model,
+            instructions=instructions,
+            deps=deps,
+            model_settings=model_settings,
+            usage_limits=usage_limits,
+            usage=usage,
+            metadata=metadata,
+            toolsets=toolsets,
+            event_stream_handler=event_stream_handler,
+            capabilities=capabilities,
+            spec=spec,
+        )
+        return CompactionRunResult._of(run_result)  # pyright: ignore[reportPrivateUsage]
 
     @overload
     def run_sync(
@@ -591,6 +719,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[OutputDataT]: ...
 
@@ -620,6 +749,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[RunOutputDataT]: ...
 
@@ -648,6 +778,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AgentRunResult[Any]:
         """Synchronously run the agent with a user prompt.
@@ -699,6 +830,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: Optional event stream handler to use for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -735,6 +867,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler=event_stream_handler,
             capabilities=capabilities,
             workspace=workspace,
+            compact=compact,
             spec=spec,
         )
 
@@ -764,6 +897,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, OutputDataT]]: ...
 
@@ -793,6 +927,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[StreamedRunResult[AgentDepsT, RunOutputDataT]]: ...
 
@@ -822,6 +957,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         event_stream_handler: EventStreamHandler[AgentDepsT] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[StreamedRunResult[AgentDepsT, Any]]:
         """Run the agent with a user prompt in async mode, returning a streamed response.
@@ -868,6 +1004,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler: Optional event stream handler to use for this run. It will receive all the events up until the final result is found, which you can then read or stream from inside the context manager.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -902,6 +1039,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             event_stream_handler=event_stream_handler,
             capabilities=capabilities,
             workspace=workspace,
+            compact=compact,
             spec=spec,
         ) as result:
             yield result
@@ -931,6 +1069,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[OutputDataT]]: ...
 
@@ -959,6 +1098,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[RunOutputDataT]]: ...
 
@@ -986,6 +1126,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRunEvents[Any]]:
         """Run the agent with a user prompt in async mode and stream events from the run.
@@ -1052,6 +1193,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1096,6 +1238,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, OutputDataT]]: ...
 
@@ -1124,6 +1267,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AbstractAsyncContextManager[AgentRun[AgentDepsT, RunOutputDataT]]: ...
 
@@ -1152,6 +1296,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
         toolsets: Sequence[AbstractToolset[AgentDepsT]] | None = None,
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
+        compact: bool | CompactionOptions = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> AsyncGenerator[AgentRun[AgentDepsT, Any]]:
         """A contextmanager which can be used to iterate over the agent graph's nodes as they are executed.
@@ -1250,6 +1395,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
             toolsets: Optional additional toolsets for this run.
             capabilities: Optional additional [capabilities](https://pydantic.dev/docs/ai/capabilities/overview/) for this run, merged with the agent's configured capabilities.
             workspace: Optional [workspace](../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
+            compact: Compact the message history before the run's first model request: `True`, or a [`CompactionOptions`][pydantic_ai.agent.CompactionOptions] dict with a `reason` and a `focus`. See [requesting compaction](../capabilities/compaction.md#requesting-compaction).
             spec: Optional agent spec to apply for this run.
 
         Returns:
@@ -1286,6 +1432,7 @@ class DBOSAgent(WrapperAgent[AgentDepsT, OutputDataT], DBOSConfiguredInstance):
                 toolsets=None,
                 capabilities=capabilities,
                 workspace=workspace,
+                compact=compact,
                 spec=spec,
             ) as run:
                 yield run

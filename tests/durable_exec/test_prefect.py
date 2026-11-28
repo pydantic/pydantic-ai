@@ -40,6 +40,7 @@ from pydantic_ai import (
     CapabilityEvent,
     CapabilityInstructionSource,
     CapabilityLoadDeltaPart,
+    CompactionPart,
     CustomEvent,
     ExternalToolset,
     FinalResultEvent,
@@ -52,6 +53,7 @@ from pydantic_ai import (
     ModelMessage,
     ModelRequest,
     ModelResponse,
+    ModelResponseOrigin,
     ModelSettings,
     PartDeltaEvent,
     PartEndEvent,
@@ -73,6 +75,8 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     BatchModelRequests,
     Capability,
+    CompactionRequest,
+    CompactionResult,
     DynamicCapability,
     Hooks,
     Instrumentation,
@@ -106,12 +110,15 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelAPIError,
     ModelHTTPError,
     ModelRequestTimeout,
     ModelRetry,
     RunCancelled,
+    SuspendedResponseExpired,
     ToolFailed,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -563,6 +570,50 @@ async def test_prefect_agent_rejects_model_wrappers() -> None:
         await agent.run('hello')
 
 
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+@pytest.mark.parametrize('flow_retries', [0, 1], ids=['first-attempt', 'retried'])
+async def test_prefect_agent_compact_history_compacts_in_its_flow(blockbuster_enabled: bool, flow_retries: int) -> None:
+    """`PrefectAgent.compact_history()` runs through the wrapper's run flow and ends after compacting, also when retried.
+
+    Prefect retries a flow in the context it ran in, so the run claims the compaction-only flag only until it ends:
+    the retry's run is compaction-only too. Blockbuster is off as for the other tests that start a `PrefectAgent`
+    flow from async code: `@flow` inspects the decorated function's source file.
+    """
+    from prefect.settings import PREFECT_FLOWS_DEFAULT_RETRIES, temporary_settings
+
+    assert blockbuster_enabled is False
+    calls: list[str] = []
+
+    class Summarize(AbstractCapability[None]):
+        async def compact_history(self, ctx: RunContext[None], request: CompactionRequest) -> CompactionResult | None:
+            flow_run = FlowRunContext.get()
+            calls.append(f'compact in {flow_run.flow.name if flow_run is not None and flow_run.flow else None}')
+            if len(calls) <= flow_retries:
+                raise RuntimeError('compaction failed')
+            part = CompactionPart(content='a summary')
+            return CompactionResult(messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='s')
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('model request')  # pragma: no cover
+        return ModelResponse(parts=[TextPart('answered')])  # pragma: no cover
+
+    agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
+        Agent(
+            FunctionModel(answer),
+            name='prefect_compact_history',
+            instructions='Be brief.',
+            deps_type=type(None),
+            capabilities=[Summarize()],
+        )
+    )
+    with temporary_settings({PREFECT_FLOWS_DEFAULT_RETRIES: flow_retries}):
+        result = await agent.compact_history(
+            [ModelRequest(parts=[UserPromptPart('Hello')]), ModelResponse(parts=[TextPart('Hello!')])]
+        )
+    assert calls == ['compact in prefect_compact_history Run'] * (flow_retries + 1)
+    assert result.all_messages() == [ModelRequest(parts=[CompactionPart(content='a summary')])]
+
+
 async def test_simple_agent_run_in_flow(allow_model_requests: None) -> None:
     """Test that a simple agent can run in a Prefect flow."""
 
@@ -599,6 +650,49 @@ async def test_prefect_durability_model_error_reaches_flow_with_its_type() -> No
         return (await agent.run('Hello Prefect')).output
 
     assert await run_durable_agent() == 'ModelHTTPError 503 7.0'
+
+
+async def test_prefect_durability_retried_model_task_streams_a_later_execution() -> None:
+    """A model task that fails after it streamed runs again as a later execution of the same response."""
+    executions = 0
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        nonlocal executions
+        executions += 1
+        if executions == 1:
+            yield 'Hel'
+            raise RuntimeError('connection lost')
+        yield 'Hello'
+
+    origins: list[ModelResponseOrigin | None] = []
+
+    async def handler(ctx: RunContext[None], events: AsyncIterable[AgentStreamEvent]) -> None:
+        async for event in events:
+            if isinstance(event, PartStartEvent):
+                origins.append(event.origin)
+
+    agent = Agent(
+        FunctionModel(stream_function=stream),
+        name='prefect_durability_retried_stream',
+        deps_type=type(None),
+        capabilities=[
+            PrefectDurability(
+                event_stream_handler=handler, model_task_config=TaskConfig(retries=1, retry_delay_seconds=0)
+            )
+        ],
+    )
+
+    @flow(name='test_prefect_durability_retried_model_task_streams_a_later_execution')
+    async def run_durable_agent() -> str:
+        return (await agent.run('Hello Prefect')).output
+
+    assert await run_durable_agent() == 'Hello'
+
+    first, second = origins
+    assert first is not None and second is not None
+    assert (first.execution_attempt, second.execution_attempt) == (1, 2)
+    assert first.response_id == second.response_id
+    assert second.supersedes(first)
 
 
 @pytest.mark.parametrize('where', ['tool-task', 'user-task', 'flow-code'])
@@ -802,13 +896,13 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                             children=[
                                                 BasicSpan(content='ctx.run_step=1'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -819,7 +913,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_country","args":"{}","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 ),
@@ -833,7 +927,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=1'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_country","content":"Mexico","tool_call_id":"call_rI3WKPYvVwlOgCGRjsPP2hEx","tool_kind":null,"ui_visibility":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -846,7 +940,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                             children=[
                                                 BasicSpan(content='ctx.run_step=2'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"{\\"ci","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
@@ -864,16 +958,16 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"ty\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\": \\"Mexico City\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","canonical_system":null,"event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"get_weather","args":"{\\"city\\": \\"Mexico City\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":"tool-call","canonical_system":null,"event_kind":"part_end"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","canonical_system":null,"event_kind":"part_start"}'
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":"tool-call","canonical_system":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"index":1,"delta":{"tool_name_delta":null,"args_delta":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
+                                                    content='{"index":1,"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -884,7 +978,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\": \\"Mexico City\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_weather","args":"{\\"city\\": \\"Mexico City\\"}","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 ),
@@ -893,7 +987,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
+                                            content='{"part":{"tool_name":"get_product_name","args":"{}","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"function_tool_call"}'
                                         ),
                                     ],
                                 ),
@@ -912,7 +1006,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_weather","content":"sunny","tool_call_id":"call_NS4iQj14cDFwc0BnrKqDHavt","tool_kind":null,"ui_visibility":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -932,7 +1026,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=2'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"get_product_name","content":"Pydantic AI","tool_call_id":"call_SkGkkGDvHQEEk0CGbnAh2AQw","tool_kind":null,"ui_visibility":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"content":null,"event_kind":"function_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -945,7 +1039,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                             children=[
                                                 BasicSpan(content='ctx.run_step=3'),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"previous_part_kind":null,"canonical_system":null,"event_kind":"part_start"}'
                                                 ),
                                                 BasicSpan(
                                                     content='{"tool_name":"final_result","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","event_kind":"final_result"}'
@@ -1071,7 +1165,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                                     content='{"index":0,"delta":{"tool_name_delta":null,"args_delta":"]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","provider_name":null,"provider_details":null,"part_delta_kind":"tool_call"},"event_kind":"part_delta"}'
                                                 ),
                                                 BasicSpan(
-                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
+                                                    content='{"index":0,"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"next_part_kind":null,"canonical_system":null,"event_kind":"part_end"}'
                                                 ),
                                             ],
                                         )
@@ -1082,7 +1176,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                     children=[
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
-                                            content='{"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"output_tool_call"}'
+                                            content='{"part":{"tool_name":"final_result","args":"{\\"answers\\":[{\\"label\\":\\"Capital of the country\\",\\"answer\\":\\"Mexico City\\"},{\\"label\\":\\"Weather in the capital\\",\\"answer\\":\\"Sunny\\"},{\\"label\\":\\"Product name\\",\\"answer\\":\\"Pydantic AI\\"}]}","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"ui_visibility":null,"id":null,"provider_name":null,"provider_details":null,"part_kind":"tool-call"},"args_valid":true,"event_kind":"output_tool_call"}'
                                         ),
                                     ],
                                 ),
@@ -1092,7 +1186,7 @@ async def test_complex_agent_run_in_flow(allow_model_requests: None, capfire: Ca
                                         BasicSpan(content='ctx.run_step=3'),
                                         BasicSpan(
                                             content=IsStr(
-                                                regex=r'\{"part":\{"tool_name":"final_result","content":"Final result processed\.","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"event_kind":"output_tool_result"\}'
+                                                regex=r'\{"part":\{"tool_name":"final_result","content":"Final result processed\.","tool_call_id":"call_QcKhHXwXzqOXJUUHJb1TB2V5","tool_kind":null,"ui_visibility":null,"metadata":null,"timestamp":"[^"]+","outcome":"success","retry":null,"part_kind":"tool-return"\},"event_kind":"output_tool_result"\}'
                                             )
                                         ),
                                     ],
@@ -2428,6 +2522,40 @@ def test_cache_policy_keys_for_instruction_ids_are_pinned():
     )
 
 
+def test_cache_policy_keys_for_unset_ui_visibility_are_pinned():
+    """An unset `ui_visibility` stays out of the key, so a flow retried across the upgrade that added it hits.
+
+    The digests were computed before the field existed. A set stamp stays in the key: the model task's cached response
+    carries it.
+    """
+    cache_policy = PrefectAgentInputs()
+    mock_task_ctx = MagicMock()
+    tool_def = ToolDefinition(name='get_weather', parameters_json_schema={'type': 'object'})
+    history: list[ModelMessage] = [
+        ModelResponse(parts=[ToolCallPart(tool_name='get_weather', args='{}', tool_call_id='call_1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_weather', content='sunny', tool_call_id='call_1')]),
+    ]
+
+    def key_for(value: Any) -> str | None:
+        return cache_policy.compute_key(task_ctx=mock_task_ctx, inputs={'value': value}, flow_parameters={})
+
+    assert key_for(tool_def) == snapshot('cc5bcf7fd396f7c465b0f76f152dd958')
+    assert key_for(ModelRequestParameters(function_tools=[tool_def])) == snapshot('feac05e3f14461938e4e34e24d9c1493')
+    assert key_for(history) == snapshot('b738f0514ffcdc82afbe3d15062093a1')
+    assert key_for(replace(tool_def, ui_visibility='private')) != key_for(tool_def)
+    stamped_history: list[ModelMessage] = [
+        ModelResponse(
+            parts=[ToolCallPart(tool_name='get_weather', args='{}', tool_call_id='call_1', ui_visibility='private')]
+        ),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(tool_name='get_weather', content='sunny', tool_call_id='call_1', ui_visibility='private')
+            ]
+        ),
+    ]
+    assert key_for(stamped_history) != key_for(history)
+
+
 def test_cache_policy_normalizes_only_framework_tool_call_ids():
     cache_policy = PrefectAgentInputs()
     mock_task_ctx = MagicMock()
@@ -3015,6 +3143,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'capabilities',  # live capability objects, not hashable run state
         'root_capability',  # live capability tree (static config); run-varying loaded state is projected via loaded_capability_ids/discovered_tool_names
         'pending_messages',  # live run queue, not hashable run state
+        '_compaction_requests',  # live run state; a request made inside a task raises, so it's never a task input
         'trace_include_content',  # tracing config, fixed for the agent rather than varying per run
         'instrumentation_version',  # tracing config, fixed for the agent rather than varying per run
         'partial_output',  # only set for output validators, which run in flow code, never inside a task
@@ -3022,6 +3151,7 @@ def test_cache_key_run_context_projection_is_exhaustive():
         'conversation_id',  # per-conversation id; same rationale as run_id
         'capability_active',  # derived from loaded_capability_ids plus the static capability set, which are projected
         '_mcp_tool_defs_cache',  # live per-run memo of MCP tool defs, reconstructed from messages
+        '_appended_messages',  # live record of the history, which `messages` already projects
         '_event_stream_buffer',  # live per-run event buffer drained in flow code, not a task input
         '_pending_immediate_dispatches',  # live stream-deduplication state, not a task input
         '_event_stream_replacements',  # live legacy-replacement state applied at stream position, not a task input
@@ -4736,6 +4866,30 @@ async def test_prefect_durability_runtime_registered_model() -> None:
     assert await run_by_instance() == 'alt-response'
 
 
+class _IgnoresStopSequences(FunctionModel):
+    unsupported_settings = frozenset({'stop_sequences'})
+
+
+async def test_prefect_durability_fallback_on_unsupported_setting_warning() -> None:
+    """A model that would ignore a setting the request relies on is moved on from inside a Prefect flow too."""
+    agent = Agent(
+        _IgnoresStopSequences(_prefect_alt_model_fn, model_name='primary'),
+        name='durability_unsupported_setting_fallback',
+        model_settings={'stop_sequences': ['STOP']},
+        capabilities=[
+            ModelFallback('alt', fallback_on=(ModelAPIError, UnsupportedSettingWarning)),
+            PrefectDurability(models={'alt': _prefect_alt_model}),
+        ],
+    )
+
+    @flow
+    async def run_agent() -> tuple[str | None, list[str]]:
+        result = await agent.run('hello')
+        return result.response.model_id, [f'{a.model_name} {a.outcome}' for a in result.response.failed_attempts or []]
+
+    assert await run_agent() == ('alt', ['primary error'])
+
+
 class _BehaviorChangingWrapper(WrapperModel):
     async def request(
         self,
@@ -5938,6 +6092,8 @@ async def test_prefect_with_non_retryable_errors_condition() -> None:
     assert await condition(None, None, _State(UserError('bad config'))) is False
     assert await condition(None, None, _State(PydanticUserError('bad schema', code=None))) is False
     assert await condition(None, None, _State(UnexpectedModelBehavior('bad response'))) is False
+    assert await condition(None, None, _State(UsageLimitExceeded('over the limit'))) is False
+    assert await condition(None, None, _State(SuspendedResponseExpired('expired'))) is False
     for error in (
         WorkspaceTimeoutError('slow'),
         WorkspaceOutputLimitError('loud', limit=1),

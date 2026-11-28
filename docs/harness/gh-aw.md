@@ -41,10 +41,10 @@ import-based engine like this one, so it is not part of the configuration below.
 ```mermaid
 flowchart TB
     accTitle: gh-aw: your Pydantic AI agent as a GitHub Agentic Workflow
-    accDescr: An opened issue triggers the agent job, a container behind an egress firewall, where the pydantic-ai engine starts clai2 and runs your Agent named by PAI_AGENT. The agent reaches the model through the api-proxy, which holds the provider key, and calls MCP gateway tools. Its output goes to the threat detection job, then the add-comment job posts the comment with its own token.
+    accDescr: An opened issue triggers the agent job, a container behind an egress firewall, where the pydantic-ai engine starts Pax and runs your Agent named by PAI_AGENT. The agent reaches the model through the api-proxy, which holds the provider key, and calls MCP gateway tools. Its output goes to the threat detection job, then the add-comment job posts the comment with its own token.
     issue["issue opened"]:::external
     subgraph job["Agent job: container behind egress firewall"]
-        engine["pydantic-ai engine<br/>starts clai2"]:::capability
+        engine["pydantic-ai engine<br/>starts Pax"]:::capability
         agent["your Agent<br/>named by PAI_AGENT"]
     end
     proxy["api-proxy<br/>holds the<br/>provider key"]:::external
@@ -344,8 +344,9 @@ import a commit SHA that contains `src/pydantic_ai_harness/gh-aw/pydantic.md`, o
 tag cut after the harness moved into this repository; older tags do not carry the file and
 return a 404 at compile time. That ref pins the definition. The harness package version
 is pinned separately, by `engine: version:` in the definition, and a workflow's own
-`engine: version:` overrides it. An override has to be 0.59.0 or newer: each harness
-release pins its own `pydantic-ai-slim`, and the definition installs
+`engine: version:` overrides it. An override has to be 0.73.0 or newer: the definition
+installs `pydantic-ai-pax` at the same version, and 0.73.0 is its first release. Each
+harness release also pins its own `pydantic-ai-slim`, and the definition installs
 `pydantic-ai-slim>=2.59.0` alongside it.
 
 ## Compile and commit
@@ -615,7 +616,9 @@ event structure, status, or usage.
 ### What a working run looks like
 
 The agent step starts `pax -a <target> -m <provider:model> -p <prompt>` with the
-generated `Coder` agent or the `PAI_AGENT` target resolved by the engine. The recorder
+generated `Coder` agent or the `PAI_AGENT` target resolved by the engine. The engine
+starts Pax with `PYTHON_DOTENV_DISABLED=1`, so a `.env` file in the checkout is not
+loaded; set the run's variables with `engine.env`. The recorder
 captures assistant messages, reasoning, tool calls and results (including native tools),
 and usage. Repository Python imported through
 `PAI_AGENT` and any caller-supplied `PYTHONPATH` are trusted engine configuration.

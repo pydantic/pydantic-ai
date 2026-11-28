@@ -323,6 +323,85 @@ def test_upgrade_legacy_database_preserves_data(tmp_path: Path, version: int, ha
         assert connection.execute('PRAGMA user_version').fetchone() == (1,)
 
 
+def logfire_declaration(service_name: str, *, factory: str = 'pydantic_clai2.builtin_plugins.logfire') -> str:
+    settings = {'service_name': service_name, 'include_content': True}
+    return json.dumps({'id': 'logfire', 'factory': factory, 'enabled': True, 'settings': settings})
+
+
+def stored_declarations(path: Path) -> dict[str, JsonValue]:
+    with closing(sqlite3.connect(path)) as connection:
+        rows = connection.execute('SELECT id, declaration FROM plugins').fetchall()
+    return {plugin_id: json.loads(declaration)['settings'] for plugin_id, declaration in rows}
+
+
+def applied_migrations(path: Path) -> list[str]:
+    with closing(sqlite3.connect(path)) as connection:
+        return [name for (name,) in connection.execute('SELECT name FROM applied_migrations')]
+
+
+@pytest.mark.parametrize(('saved', 'expected'), [('pydantic-clai2', 'pydantic-ai-pax'), ('my-service', 'my-service')])
+def test_the_old_logfire_service_name_default_is_migrated_once(tmp_path: Path, saved: str, expected: str) -> None:
+    """The settings menu saves every option, so `pydantic-clai2` was saved by anyone who changed any of them."""
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE plugins (id TEXT PRIMARY KEY, declaration TEXT NOT NULL)')
+        connection.executemany(
+            'INSERT INTO plugins VALUES (?, ?)',
+            [
+                ('logfire', logfire_declaration(saved)),
+                (
+                    'tracing',
+                    logfire_declaration('pydantic-clai2', factory='my_plugins.tracing').replace(
+                        'logfire', 'tracing', 1
+                    ),
+                ),
+            ],
+        )
+
+    store = SettingsStore(path)
+    [observability, tracing] = store.plugins()
+    assert observability.id == 'observability'
+    assert observability.settings == {'service_name': expected, 'include_content': True}
+    assert tracing.settings['service_name'] == 'pydantic-clai2', 'only the Logfire plugin is migrated'
+    assert applied_migrations(path) == ['logfire-service-name']
+
+    # An older Pax saves the old default again; the migration has run, so it stays.
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('UPDATE plugins SET declaration = ? WHERE id = ?', (logfire_declaration(saved), 'logfire'))
+    SettingsStore(path)
+    assert stored_declarations(path)['logfire'] == {'service_name': saved, 'include_content': True}
+    assert applied_migrations(path) == ['logfire-service-name']
+
+
+def test_a_failed_logfire_service_name_migration_changes_nothing_and_runs_again(tmp_path: Path) -> None:
+    """The rewrite and its `applied_migrations` row commit together, so a failure leaves no half-migrated store."""
+    path = tmp_path / 'config.db'
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('PRAGMA user_version = 1')
+        connection.execute('CREATE TABLE plugins (id TEXT PRIMARY KEY, declaration TEXT NOT NULL)')
+        connection.execute('INSERT INTO plugins VALUES (?, ?)', ('logfire', logfire_declaration('pydantic-clai2')))
+        connection.execute("CREATE TRIGGER refuse_update BEFORE UPDATE ON plugins BEGIN SELECT RAISE(FAIL, 'no'); END")
+
+    with pytest.raises(sqlite3.IntegrityError):
+        SettingsStore(path)
+    assert stored_declarations(path)['logfire'] == {'service_name': 'pydantic-clai2', 'include_content': True}
+    assert applied_migrations(path) == []
+
+    with closing(sqlite3.connect(path)) as connection, connection:
+        connection.execute('DROP TRIGGER refuse_update')
+    SettingsStore(path)
+    assert stored_declarations(path)['logfire'] == {'service_name': 'pydantic-ai-pax', 'include_content': True}
+    assert applied_migrations(path) == ['logfire-service-name']
+
+
+def test_a_store_without_logfire_settings_records_the_migration(tmp_path: Path) -> None:
+    path = tmp_path / 'config.db'
+    SettingsStore(path)
+    assert applied_migrations(path) == ['logfire-service-name']
+    assert stored_declarations(path) == {}
+
+
 def test_full_screen_preference_defaults_off_and_survives_reopen(tmp_path: Path) -> None:
     path = tmp_path / 'config.db'
     with closing(sqlite3.connect(path)) as connection, connection:
@@ -364,6 +443,7 @@ def test_footer_layout_survives_a_build_without_it(
     defaults: list[str] = [
         'model',
         'workspace',
+        'permissions',
         'context',
         'output',
         'cost',
