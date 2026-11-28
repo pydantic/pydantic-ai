@@ -155,6 +155,7 @@ preference, such as workspaces, is under `$XDG_STATE_HOME/pydantic-ai-pax/` (def
 | `plugins/` | Drop-in plugins; `plugins/_git/` holds plugins installed from Git |
 | `spinners.json` | Your own spinners and speeds |
 | `logfire/`, `telemetry.log` | Logfire credentials, and export warnings kept off the screen |
+| `asyncio.log` | Event loop errors kept off the screen, such as connections reset while closing |
 | `.clai/settings.json` in a repository | [Project settings](#project-settings) |
 | `.mcp.json` or `.clai/mcp_servers.json` in a repository | Project MCP servers, loaded after `/mcp trust accept` |
 
