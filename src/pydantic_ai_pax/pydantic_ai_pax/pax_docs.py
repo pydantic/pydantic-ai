@@ -48,6 +48,7 @@ _HARNESS_DOCS = (
     'day_ai',
     'daytona_sandbox',
     'deny_unanswered',
+    'detect_loops',
     'e2b_sandbox',
     'file_system',
     'github',

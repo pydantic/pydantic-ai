@@ -28,6 +28,7 @@ CURATED = {
     'repo_context',
     'compaction',
     'refinement',
+    'detect_loops',
     'persistence',
     'observability',
     'notifications',

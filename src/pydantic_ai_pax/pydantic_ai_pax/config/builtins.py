@@ -17,6 +17,7 @@ DEFAULT_PLUGINS: tuple[PluginSettings, ...] = (
     PluginSettings(id='repo_context', factory='pydantic_ai_pax.builtin_plugins.repo_context'),
     PluginSettings(id='compaction', factory='pydantic_ai_pax.builtin_plugins.compaction', settings={}),
     PluginSettings(id='refinement', factory='pydantic_ai_pax.builtin_plugins.refinement'),
+    PluginSettings(id='detect_loops', factory='pydantic_ai_pax.builtin_plugins.detect_loops'),
     PluginSettings(id='persistence', factory='pydantic_ai_pax.runtime.sessions'),
     PluginSettings(id='observability', factory='pydantic_ai_pax.builtin_plugins.logfire'),
     PluginSettings(id='notifications', factory='pydantic_ai_pax.builtin_plugins.notifications'),
