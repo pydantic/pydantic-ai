@@ -242,7 +242,8 @@ class Sessions(Generic[DepsT, OutputT]):
         session_id = launch_session_id(resume=resume, session_id=session_id, fork=fork)
         if resume:
             if resume_from is not None:
-                resume = await self.import_session(resume_from, resume)
+                # The launch already started in its directory, if it could: a startup restore never moves.
+                resume = await self.import_session(resume_from, resume, follow=False)
             # A fork continues in the copy, so an archived original stays archived.
             notice = await self.session.resume(resume, record=False, unarchive=not fork)
         elif resume is not None:
@@ -263,14 +264,14 @@ class Sessions(Generic[DepsT, OutputT]):
         """Whether launch options picked the current conversation; see `SessionStart.conversation_chosen`."""
         return self.launched == self.session.conversation_id
 
-    async def import_session(self, source: ImportSource, native_id: str) -> str:
+    async def import_session(self, source: ImportSource, native_id: str, *, follow: bool = True) -> str:
         """Copy a Claude Code or Codex session into the store by its own ID, returning its Pax ID.
 
         As with a saved session's ID, one from another directory is refused, before anything is saved,
-        unless `follow_imports` can move there to resume it.
+        unless `follow` and `follow_imports` can move there to resume it.
         """
         imported = await run_sync(find_import, source, native_id)
-        if await self._follower(imported.summary.workspace) is None:
+        if not follow or await self._follower(imported.summary.workspace) is None:
             self.session.check_workspace(imported.summary.workspace)
         return await save_import(self.store, imported, delegations=self.tasks)
 

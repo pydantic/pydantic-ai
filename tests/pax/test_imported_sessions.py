@@ -1,6 +1,5 @@
 """Claude Code and Codex sessions: reading their transcripts, listing them in `/resume`, and importing them."""
 
-import argparse
 import contextlib
 import json
 import os
@@ -55,7 +54,7 @@ from pydantic_ai_pax.cli.command_context import CommandContext
 from pydantic_ai_pax.config import Settings
 from pydantic_ai_pax.config.project_settings import ProjectSettings
 from pydantic_ai_pax.config.settings_store import SettingsStore
-from pydantic_ai_pax.runtime import claude_code_sessions, codex_sessions
+from pydantic_ai_pax.runtime import claude_code_sessions, codex_sessions, worktrees
 from pydantic_ai_pax.runtime.imported_history import (
     Header,
     HistoryBuilder,
@@ -78,6 +77,7 @@ from pydantic_ai_pax.runtime.imported_sessions import (
 from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.sessions import Sessions
+from pydantic_ai_pax.runtime.workspace_trust import WorkspaceTrust
 from pydantic_ai_pax.runtime.worktrees import Worktree
 from pydantic_ai_pax.ui.menus.session_browser import SessionBrowser
 
@@ -1504,11 +1504,19 @@ def pick_first(browser: SessionBrowser) -> str:
 
 @pytest.mark.parametrize('source', ['claude', 'codex'])
 @pytest.mark.parametrize('browse', [False, True])
+@pytest.mark.parametrize('trusted', [False, True])
 async def test_terminal_resume_moves_into_the_imported_project(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: ImportSource, browse: bool
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: ImportSource, browse: bool, trusted: bool
 ) -> None:
-    """Resuming a Claude Code or Codex session in the terminal continues it in its project, with that project's file."""
+    """Resuming a Claude Code or Codex session in the terminal continues it in its project, with that project's file.
+
+    The session moves; the process stays where Pax started, as other live sessions work there.
+    """
     project, other, native_id = imported_project(tmp_path, source)
+    monkeypatch.chdir(other)
+    if trusted:
+        store = SettingsStore(tmp_path / 'config.db')
+        await run_sync(lambda: WorkspaceTrust.saved(store, project).decide(store, trusted=True))
     shell = terminal_shell(tmp_path, other)
     await shell.loader.load_all()
     copy = await save_import(shell.sessions.store, await run_sync(find_import, source, native_id))
@@ -1519,8 +1527,10 @@ async def test_terminal_resume_moves_into_the_imported_project(
     monkeypatch.setattr(SessionBrowser, 'run', pick_first)
     notice = await shell.sessions.command([source] if browse else [source, native_id])
     assert notice.startswith('Resumed ')
-    assert notice.endswith(f' Continuing in {project}, an untrusted folder: /trust shows why.')
+    untrusted = ', an untrusted folder: /trust shows why.'
+    assert notice.endswith(f' Continuing in {project}{"." if trusted else untrusted}')
     assert (shell.session.workspace, shell.status.workspace) == (str(project), str(project))
+    assert await run_sync(Path.cwd) == other
     assert shell.context.project.root == project
     # Pax's own sessions keep asking to be confirmed in the browser.
     native = await shell.sessions.store.save(summary=ConversationSummary(workspace=str(other)), messages=[])
@@ -1593,14 +1603,14 @@ def test_cli_resume_starts_in_the_imported_project(
     assert seen == [(project, project)]
 
 
-@pytest.mark.parametrize('gone', [False, True])
-async def test_update_restarts_where_the_terminal_session_moved(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gone: bool
+@pytest.mark.parametrize('left', [True, False])
+def test_update_restarts_where_the_terminal_session_moved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str], left: bool
 ) -> None:
-    """After `/resume claude ID` and `/new`, `/update` restarts the session in the project, unless that folder is gone.
+    """After `/resume claude ID`, `/new` and a prompt, `/update` restarts Pax and resumes that conversation in the project.
 
-    The old build execs the new one where Pax started, so `--agent` and `.env` resolve there as at launch, and
-    hands over no `--worktree` checkout the session left.
+    The old build execs the new one where Pax started, so `--agent` and `.env` resolve there as at launch, and keeps
+    the `--worktree` checkout the session left rather than handing it over; one the session is still in is handed over.
     """
     project, other, native_id = imported_project(tmp_path, 'claude')
     monkeypatch.chdir(other)
@@ -1608,37 +1618,47 @@ async def test_update_restarts_where_the_terminal_session_moved(
         # Restored to unset once the test ends.
         monkeypatch.setenv(name, '')
         monkeypatch.delenv(name)
-    shell = terminal_shell(tmp_path, other)
-    await shell.loader.load_all()
-    await shell.sessions.command(['claude', native_id])
-    await shell.session.clear()
-    shell.updates.relaunch = 'pax'
-    relaunch = shell.relaunch(web=None)
-    await shell.close('exit')
-    assert relaunch is not None and relaunch.workspace == str(project)
-    if gone:
-        shutil.rmtree(project)
-    execs: list[list[str]] = []
+    checkout = Worktree(
+        path=other if left else tmp_path, branch='task', head='abc', created=True, remove_if_pushed=True
+    )
+    monkeypatch.setattr(worktrees, 'current_worktree', lambda: checkout)
+    resumed: list[tuple[str, str]] = []
+
+    async def chat(*args: object, resume: str | None, **kwargs: object) -> None:
+        shell = terminal_shell(tmp_path, await run_sync(Path.cwd))
+        await shell.loader.load_all()
+        if resume is not None:
+            # The new build, restoring the conversation as `chat` does at startup.
+            resumed.append((shell.session.workspace, await shell.sessions.start(resume=resume)))
+            await shell.close('exit')
+            return
+        await shell.sessions.command(['claude', native_id])
+        await shell.session.clear()
+        await shell.session.prompt('Next task')
+        shell.updates.relaunch = 'pax'
+        relaunch = shell.relaunch(web=None)
+        await shell.close('exit')
+        assert relaunch is not None
+        raise relaunch
+
+    execs: list[tuple[Path, list[str]]] = []
 
     def execv(path: str, argv: list[str]) -> None:
-        assert Path.cwd() == other
-        execs.append(argv)
+        execs.append((Path.cwd(), argv))
 
+    monkeypatch.setattr('pydantic_ai_pax.app.chat', chat)
     monkeypatch.setattr(os, 'execv', execv)
-    launch = argparse.Namespace(web=False, agent=None, model=None, request_limit=None, database=None)
-    checkout = Worktree(path=other, branch='task', head='abc', created=True, remove_if_pushed=True)
-    await run_sync(lambda: cli._relaunch(launch, relaunch, launched=checkout))  # pyright: ignore[reportPrivateUsage]
-    assert 'CLAI_RELAUNCH_WORKTREE' not in os.environ
-    [argv] = execs
-    monkeypatch.setattr('sys.argv', [*argv[:1], '--database', str(tmp_path / 'config.db'), *argv[1:]])
-    seen: list[Path] = []
-
-    async def launched(*args: object, **kwargs: object) -> None:
-        seen.append(await run_sync(Path.cwd))
-
-    monkeypatch.setattr('pydantic_ai_pax.app.chat', launched)
-    await run_sync(cli.run)
-    assert seen == [other if gone else project]
+    monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'config.db')])
+    cli.run()
+    [(cwd, argv)] = execs
+    assert cwd == other
+    assert ('CLAI_RELAUNCH_WORKTREE' in os.environ) is not left
+    assert ('Worktree kept at' in capsys.readouterr().err) is left
+    monkeypatch.setattr(worktrees, 'current_worktree', lambda: None)
+    monkeypatch.setattr('sys.argv', argv)
+    cli.run()
+    [(workspace, notice)] = resumed
+    assert (workspace, notice.startswith('Resumed ')) == (str(project), True)
 
 
 @pytest.mark.parametrize(

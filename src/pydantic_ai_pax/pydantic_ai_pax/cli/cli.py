@@ -6,7 +6,7 @@ import gc
 import os
 import re
 import sys
-from contextlib import contextmanager, suppress
+from contextlib import contextmanager
 from dataclasses import replace
 from pathlib import Path
 from typing import TYPE_CHECKING
@@ -337,12 +337,16 @@ def _hand_over_workspace(workspace: str | None, launched: 'Worktree | None') -> 
     """Have the new build start in `workspace`, where the session moved, and return the checkout to hand over.
 
     The new build changes directory only once it has imported `--agent` and read `.env` where Pax started. A
-    checkout the session left is not handed over, so exit cleanup looks at the directory the session works in.
+    checkout the session left is kept, and not handed over, so exit cleanup looks at the directory the session
+    works in.
     """
     if workspace is None or workspace == str(Path.cwd().resolve()):
         return launched
     os.environ[_RELAUNCH_WORKSPACE] = workspace
-    return launched if launched is not None and Path(workspace).is_relative_to(launched.path) else None
+    if launched is not None and Path(workspace).is_relative_to(launched.path):
+        return launched
+    _report_kept_worktree(launched)
+    return None
 
 
 def _report_kept_worktree(worktree: 'Worktree | None') -> None:
@@ -467,9 +471,7 @@ def _enter_launch_directory(
     if args.worktree is not None:
         return _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web, store=store)
     if moved_to is not None:
-        # A directory removed meanwhile leaves Pax where it started.
-        with suppress(OSError):
-            os.chdir(moved_to)
+        os.chdir(moved_to)
     elif args.resume_from is not None and args.resume:
         _enter_imported_project(args.resume_from, args.resume)
     return None
