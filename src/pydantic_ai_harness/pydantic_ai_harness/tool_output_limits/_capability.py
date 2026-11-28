@@ -1063,6 +1063,18 @@ class _Reader:
         args = f"unit='bytes', offset={offset}, limit={_MAX_READ_CHARS}"
         return f'the cut line continues at {self.call(args)}'
 
+    def past_end(
+        self, offset: int, total: int, limit: int, unit: _ReadUnit, from_end: bool, pattern: str | None = None
+    ) -> str:
+        """The header note for a non-empty read whose `offset` selects nothing, naming the nearest read."""
+        if not total or offset < total:
+            return ''
+        args = ["unit='bytes'"] if unit == 'bytes' else []
+        args += [f'offset={max(0, total - limit)}', f'limit={limit}']
+        args += ['from_end=True'] if from_end else []
+        args += [] if pattern is None else [f'pattern={pattern!r}']
+        return f'; offset={offset} is past the end; the nearest {unit} are at {self.call(", ".join(args))}'
+
 
 def _reader_name(ctx: RunContext[Any]) -> str:
     """`read_tool_result` as it is called in this run step, for the hints that point to it."""
@@ -1103,10 +1115,10 @@ async def _read_slice(
         raise ModelRetry('`limit` must be >= 1.')
     if unit == 'bytes' and pattern is not None:
         raise ModelRetry("`pattern` filters lines, so it cannot be combined with `unit='bytes'`.")
-    if unit == 'bytes':
-        return await _guarded(handle, _byte_slice(store, handle, offset, min(limit, _MAX_READ_CHARS), from_end))
-    limit = min(limit, _MAX_READ_LINES)
     reader = _Reader(handle, reader_name)
+    if unit == 'bytes':
+        return await _guarded(handle, _byte_slice(store, offset, min(limit, _MAX_READ_CHARS), from_end, reader))
+    limit = min(limit, _MAX_READ_LINES)
     return await _guarded(handle, _line_slice(store, handle, offset, limit, from_end, pattern, reader))
 
 
@@ -1120,7 +1132,9 @@ async def _line_slice(
     next_lines = reader.call(f'offset={first + page.shown}{filtered}')
     more = f'the next lines are at {next_lines}' if page.shown < len(window) else ''
     capped = await _capped(store, page, more, reader)
-    return '\n'.join([f'[handle {handle!r}: {total:,} matching line(s); showing {page.shown}{capped}]', *page.lines])
+    past = reader.past_end(offset, total, limit, 'lines', from_end, pattern)
+    header = f'[handle {handle!r}: {total:,} matching line(s); showing {page.shown}{capped}{past}]'
+    return '\n'.join([header, *page.lines])
 
 
 async def _aiter(entries: Iterable[_Entry]) -> AsyncIterator[_GroupedEntry]:
@@ -1128,13 +1142,14 @@ async def _aiter(entries: Iterable[_Entry]) -> AsyncIterator[_GroupedEntry]:
         yield entry
 
 
-async def _byte_slice(store: OverflowStore, handle: str, offset: int, limit: int, from_end: bool) -> str:
+async def _byte_slice(store: OverflowStore, offset: int, limit: int, from_end: bool, reader: _Reader) -> str:
     """Slice raw stored bytes, decoding a multi-byte UTF-8 sequence cut at either edge as U+FFFD.
 
     A forward read keeps only the slice; a read from the end keeps the last `offset + limit` bytes.
     """
     total = 0
     kept = bytearray()
+    handle = reader.handle
     async with aclosing(iter_payload(store, handle)) as chunks:
         async for chunk in chunks:
             if from_end:
@@ -1150,7 +1165,8 @@ async def _byte_slice(store: OverflowStore, handle: str, offset: int, limit: int
     else:
         start = min(offset, total)
         end = start + len(kept)
-    header = f'[handle {handle!r}: bytes {start}-{end} of {total} (end exclusive)]'
+    past = reader.past_end(offset, total, limit, 'bytes', from_end)
+    header = f'[handle {handle!r}: bytes {start}-{end} of {total} (end exclusive){past}]'
     return '\n'.join([header, kept.decode('utf-8', errors='replace')]) if kept else header
 
 

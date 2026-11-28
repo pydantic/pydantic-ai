@@ -269,7 +269,8 @@ cap, and the header gives the `offset` of the next line (a read) or the next mat
 search drops leading context rather than its first match, so every page makes progress, and its
 header lists any context it left out as the `read_tool_result` call that reads it. A single line longer
 than the cap is cut, and the header gives the byte offset its rest starts at, to read with
-`unit='bytes'`.
+`unit='bytes'`. When a read's `offset` is past the end of a non-empty result (lines, lines matching
+`pattern`, or bytes), the header says so and gives the `read_tool_result` call for the nearest window.
 
 Both tools are recognized by kind (`READ_TOOL_RESULT_KIND`, `GREP_TOOL_RESULT_KIND`), not name, and
 their returns are exempt from reduction. They emit no spans of their own: core's tool spans cover
