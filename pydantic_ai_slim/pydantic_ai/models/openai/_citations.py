@@ -13,6 +13,7 @@ from ... import _utils
 from ..._thinking_part import split_content_into_text_and_thinking
 from ...messages import (
     Citation,
+    ContentCitationAnchor,
     DocumentCitationSource,
     MarkerCitationAnchor,
     TextPart,
@@ -74,6 +75,8 @@ def responses_citation_annotations(
 def map_responses_citations(
     annotations: Sequence[responses.response_output_text.Annotation],
     text: str,
+    *,
+    content_offsets: bool = False,
 ) -> list[Citation] | None:
     citations: list[Citation] = []
     for annotation in responses_citation_annotations(annotations):
@@ -82,7 +85,9 @@ def map_responses_citations(
             citations.append(
                 Citation(
                     sources=[WebCitationSource(url=annotation.url, title=annotation.title)],
-                    anchor=marker_citation_anchor(start, end, text),
+                    anchor=(ContentCitationAnchor(start=start, end=end) if 0 <= start < end <= len(text) else None)
+                    if content_offsets
+                    else marker_citation_anchor(start, end, text),
                 )
             )
         elif annotation.file_id or annotation.filename:  # a file citation naming no file has no source to show

@@ -525,6 +525,9 @@ engine:
               if not isinstance(loaded_metadata, dict) or not all(isinstance(key, str) for key in loaded_metadata):
                   raise TypeError('PAI_RESULT_METADATA must refer to a dictionary with string keys')
               metadata = loaded_metadata
+          # Pax runs on the environment this step prepared. Set after the agent module imports, so the
+          # step environment the default agent hands its commands stays as it was.
+          os.environ['PYTHON_DOTENV_DISABLED'] = '1'
           # Read in-process: workflow context can exceed the OS argv limit.
           sys.argv = ['pax', *cli_args, '-p', Path(prompt_file).read_text(encoding='utf-8')]
           runpy.run_module('pydantic_ai_pax', run_name='__main__', alter_sys=True)

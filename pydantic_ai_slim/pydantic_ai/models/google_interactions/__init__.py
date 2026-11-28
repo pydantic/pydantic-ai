@@ -83,6 +83,7 @@ try:
 
     # Interactions uses separate compatibility errors that the public google.genai.errors does not export.
     from google.genai._gaos.lib.compat_errors import APIConnectionError, APIError, APIStatusError, APITimeoutError
+    from google.genai.errors import ContinuationInterruptedError
     from google.genai.types import MediaResolution
 except ImportError as _import_error:
     raise ImportError(
@@ -402,18 +403,24 @@ class GoogleInteractionsModel(Model[Client]):
     def _map_api_errors(self) -> Generator[None]:
         try:
             yield
-        except APITimeoutError as exc:
-            raise _model_errors.connection_error(self.model_name, str(exc), exc, timeout=True) from exc
-        except APIConnectionError as exc:
-            if isinstance(exc.__cause__, httpx.HTTPStatusError | httpx2.HTTPStatusError):
-                response = exc.__cause__.response
-                body, _, text = _model_errors.transport_error_body(response)
-                raise self._status_error(response.status_code, body, dict(response.headers), text) from exc
-            raise _model_errors.connection_error(self.model_name, str(exc), exc, timeout=False) from exc
-        except APIStatusError as exc:
-            raise self._status_error(exc.response.status_code, exc.body, dict(exc.response.headers), str(exc)) from exc
-        except APIError as exc:
-            raise _model_errors.stream_error(self.model_name, str(exc), exc.body) from exc
+        except (APIError, ContinuationInterruptedError) as exc:
+            # A request that fails after google-genai continued a long decode raises `ContinuationInterruptedError`,
+            # with the request's own error as its cause.
+            error = exc.__cause__ if isinstance(exc, ContinuationInterruptedError) else exc
+            if isinstance(error, APITimeoutError):
+                raise _model_errors.connection_error(self.model_name, str(error), error, timeout=True) from exc
+            elif isinstance(error, APIConnectionError):
+                if isinstance(error.__cause__, httpx.HTTPStatusError | httpx2.HTTPStatusError):
+                    response = error.__cause__.response
+                    body, _, text = _model_errors.transport_error_body(response)
+                    raise self._status_error(response.status_code, body, dict(response.headers), text) from exc
+                raise _model_errors.connection_error(self.model_name, str(error), error, timeout=False) from exc
+            elif isinstance(error, APIStatusError):
+                headers = dict(error.response.headers)
+                raise self._status_error(error.response.status_code, error.body, headers, str(error)) from exc
+            elif isinstance(error, APIError):
+                raise _model_errors.stream_error(self.model_name, str(error), error.body) from exc
+            raise
 
     def _status_error(
         self, status_code: int, body: object, headers: dict[str, str], fallback_message: str
@@ -455,8 +462,10 @@ class GoogleInteractionsModel(Model[Client]):
         _google_common.set_server_timeout(headers, self.client._api_client._http_options.timeout)  # pyright: ignore[reportPrivateUsage]
         options: _HttpOptions = {'extra_headers': headers}
         if (timeout := settings.get('timeout')) is not None:
+            # google-genai applies an `httpx.Timeout` to each request it continues a long decode in. A number would bound
+            # the whole call instead, and a stream would check it before each event.
             options['timeout'] = (
-                timeout
+                httpx.Timeout(timeout)
                 if isinstance(timeout, (int, float))
                 else httpx.Timeout(connect=timeout.connect, read=timeout.read, write=timeout.write, pool=timeout.pool)
             )
@@ -912,4 +921,4 @@ class _FunctionResultStep(TypedDict):
 class _HttpOptions(TypedDict, total=False):
     extra_headers: dict[str, str]
     extra_body: Mapping[str, object]
-    timeout: float | httpx.Timeout
+    timeout: httpx.Timeout

@@ -2259,6 +2259,59 @@ class TestLauncherProgram:
         assert [event.type for event in parsed.log_entries] == ['session.result']
         assert parsed.log_entries[0].data['status'] == 'failure'
 
+    @pytest.mark.subprocess(reason='runs the generated gh-aw launcher program as a real script')
+    @pytest.mark.parametrize('step_value', [pytest.param(None, id='unset'), pytest.param('0', id='step-sets-0')])
+    @requires_pax
+    def test_pax_runs_with_python_dotenv_disabled(self, tmp_path: Path, step_value: str | None) -> None:
+        step_env: dict[str, str] = {} if step_value is None else {'PYTHON_DOTENV_DISABLED': step_value}
+        invocation = launch(
+            tmp_path,
+            {**proxy_env('openai', 'openai/gpt-5'), 'PAI_AGENT': 'environment_agent:agent', **step_env},
+            extra_python_path=PAX_SOURCE,
+        )
+        workspace = Path(invocation.cwd)
+        (workspace / '.env').write_text('GH_AW_DOTENV_PROBE=loaded\n', encoding='utf-8')
+        (workspace / 'environment_agent.py').write_text(
+            """import json
+import os
+from pathlib import Path
+
+from pydantic_ai import Agent
+
+seen = {'import': os.environ.get('PYTHON_DOTENV_DISABLED')}
+agent = Agent(name='environment')
+
+
+@agent.instructions
+def record() -> str:
+    seen['run'] = os.environ.get('PYTHON_DOTENV_DISABLED')
+    seen['probe'] = os.environ.get('GH_AW_DOTENV_PROBE')
+    Path(__file__).with_name('seen.json').write_text(json.dumps(seen), encoding='utf-8')
+    return 'Answer briefly.'
+""",
+            encoding='utf-8',
+        )
+        arguments = invocation.argv.copy()
+        arguments[arguments.index('-m') + 1] = 'test'
+
+        completed = subprocess.run(
+            [sys.executable, *arguments, *code_mode_off_args(tmp_path)],
+            cwd=workspace,
+            env=invocation.env,
+            input=invocation.stdin,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stdout
+        # The agent module imports with the step's value: the default agent copies the environment for its commands then.
+        assert json.loads((workspace / 'seen.json').read_text(encoding='utf-8')) == {
+            'import': step_value,
+            'run': '1',
+            'probe': None,
+        }
+
 
 class TestLogParser:
     """The `log-parser` preserves trusted recorder events without inventing history."""
