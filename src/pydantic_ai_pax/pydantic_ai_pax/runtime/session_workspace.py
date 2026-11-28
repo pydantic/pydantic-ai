@@ -1,6 +1,7 @@
-"""`pax --web`'s session directories: each live session works in its own, moved to between turns.
+"""Session directories: under `pax --web`, each live session works in its own, moved to between turns.
 
-The terminal shell stays in the directory it started in. Under `pax --web`, a session that moves
+The terminal shell stays in the directory it started in, except that resuming a Claude Code or Codex
+session moves it into that session's. Under `pax --web`, a session that moves
 records its new directory as its workspace, then loads its plugins again there: the coding tools,
 `repo_context`, skills, and MCP project files read it through `PluginHost.workspace`. The process's
 working directory stays where Pax started, as other live sessions work in other directories.
@@ -9,6 +10,7 @@ working directory stays where Pax started, as other live sessions work in other 
 from collections.abc import Callable
 from dataclasses import dataclass
 from pathlib import Path
+from typing import Generic, TypeVar
 
 from anyio import to_thread
 
@@ -20,6 +22,9 @@ from pydantic_ai_pax.plugins.loader import SessionPlugins
 from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.runtime.sessions import Sessions
 from pydantic_ai_pax.ui.rendering.status import Status
+
+DepsT = TypeVar('DepsT')
+OutputT = TypeVar('OutputT')
 
 
 def workspace_directory(path: str) -> Path:
@@ -34,22 +39,22 @@ def workspace_directory(path: str) -> Path:
 
 
 @dataclass(kw_only=True)
-class SessionWorkspace:
-    """Moves `pax --web`'s live session into another directory, as if Pax had started there.
+class SessionWorkspace(Generic[DepsT, OutputT]):
+    """Moves a live session into another directory, as if Pax had started there.
 
     Never while a turn, a background fork, or a delegated task runs: their tools still use the plugins loaded now.
     """
 
-    session: Session[None, str]
+    session: Session[DepsT, OutputT]
     context: CommandContext
-    loader: SessionPlugins[None]
+    loader: SessionPlugins[DepsT]
     status: Status
     settings: Callable[[ProjectSettings], Settings]
     """The settings Pax starts with beside a project file: saved ones, then the project's, then launch flags."""
     busy: Callable[[], bool] = lambda: False
     """Whether a background fork or a delegated task runs."""
 
-    def attach(self, *, sessions: Sessions[None, str], commands: Commands) -> None:
+    def attach(self, *, sessions: Sessions[DepsT, OutputT], commands: Commands) -> None:
         """Make `/resume ID` move into the session's directory, and add `/workspace`."""
         sessions.relocate = self.move
         commands.register(

@@ -274,10 +274,12 @@ class Relaunch(SystemExit):
         new_session_id: str | None = None,
         web: WebHandoff | None = None,
         launch_plugins: Sequence[str] = (),
+        workspace: str | None = None,
     ) -> None:
         """Resume `session_id` when set, or else start the new conversation under `new_session_id`; serve `web` again.
 
         `launch_plugins` are the `-x` plugins still loaded for the launch, which the new build loads too.
+        `workspace` is the directory to start in, when the session may have left the one Pax started in.
         """
         super().__init__(0)
         self.executable = executable
@@ -285,6 +287,7 @@ class Relaunch(SystemExit):
         self.new_session_id = new_session_id
         self.web = web
         self.launch_plugins = tuple(launch_plugins)
+        self.workspace = workspace
 
 
 async def _tool_dir(uv: str, *options: str) -> Path | None:

@@ -2789,7 +2789,8 @@ Inside Pax, `/resume` opens the same browser and `/resume SESSION-ID` restores a
 session directly. Opening or restoring a session does not call the coding model
 or execute pending tools. Background naming, unless turned off, may make a separate,
 tool-free model request. Your current model, working directory, credentials, and
-approved plugins remain in effect. The saved model name is shown for reference.
+approved plugins remain in effect, except that a Claude Code or Codex session
+moves Pax into its own directory (see below). The saved model name is shown for reference.
 
 Resuming shows the restored conversation in the terminal: the last 10 prompts
 with their answers, reasoning, and tool calls, drawn the way they streamed.
@@ -2826,7 +2827,9 @@ The browser follows Code Puppy's project/session design:
 - Esc goes back; Ctrl+C closes. Narrow screens show one focused pane at a time.
 - Selecting a session from another directory resumes immediately, without
   confirmation. It does not change directories or move the saved conversation out
-  of its original project group. Direct cross-directory resume asks you to use the browser.
+  of its original project group. A Claude Code or Codex session is the exception: it
+  moves Pax into the folder it ran in, or continues here when that folder no longer
+  exists or Pax cannot move now. Direct cross-directory resume asks you to use the browser.
 
 The browser counts loaded summaries, not a separate unbounded catalog. Search
 runs against the full catalog before pagination. It does not index tool output,
@@ -2855,6 +2858,18 @@ The session ID is the one Claude Code or Codex shows, such as the ID in
 `/resume codex` work the same way, with or without an ID. `-p` accepts both flags
 with an ID. Only one of `--resume`, `--resume-claude`, and `--resume-codex` can be
 given.
+
+Pax continues such a session in the directory it was started in, wherever you
+launched Pax: `--resume-claude SESSION-ID`, `--resume-codex SESSION-ID`, and
+`--resume` of Pax's copy start there, and resuming one inside Pax moves the
+session there between turns. The
+session stays there, also after `/new`, and `/update` restarts Pax there. That
+directory's project file, instruction files, skills, plugins, and project MCP
+servers then apply, as if Pax had started there: read afresh from the directory,
+not from the imported transcript, and each waiting for the same approval as on
+any launch there. The folder keeps its own trust decision: one you never decided
+about stays untrusted, and `/trust` decides it. Claude Code's and Codex's own
+user-level MCP settings are not read.
 
 Plain `/resume` lists them too, beside Pax's own sessions, in the project they
 were started in, each card saying which agent it comes from, such as **Claude

@@ -95,6 +95,7 @@ from pydantic_ai_pax.runtime.session import (
     shell_line_workspace,
 )
 from pydantic_ai_pax.runtime.session_settings import SessionSettings
+from pydantic_ai_pax.runtime.session_workspace import SessionWorkspace
 from pydantic_ai_pax.runtime.sessions import Sessions
 from pydantic_ai_pax.runtime.speculation import Speculation
 from pydantic_ai_pax.runtime.strict_schemas import NON_STRICT_SCHEMAS
@@ -697,12 +698,33 @@ def create_shell(
 
     sessions.on_resume = show_resumed
     sessions.show_live = shell.show_live
+    _follow_imports(shell, headless=headless, settings_for=settings_for)
     shell.session.claim = lambda conversation_id: process.live.claim(conversation_id, holder=shell.live_session)
     process.live.add(shell)
     # Headless, a session still edits prompts in a terminal console, but reads no lines from a pipe.
     if not headless or console.is_terminal:
         _show_in_terminal(shell, transcript=transcript, shows_others=not headless)
     return shell
+
+
+def _follow_imports(
+    shell: 'SessionRuntime[DepsT, OutputT]',
+    *,
+    headless: bool,
+    settings_for: Callable[[ProjectSettings], Settings] | None,
+) -> None:
+    """Make resuming a Claude Code or Codex session in the terminal move `shell` into the directory it was saved in."""
+    if headless:
+        return
+    context = shell.context
+    shell.sessions.follow_imports = SessionWorkspace(
+        session=shell.session,
+        context=context,
+        loader=shell.loader,
+        status=shell.status,
+        settings=settings_for or (lambda project: context.settings),
+        busy=shell.background_running,
+    ).move
 
 
 def _show_in_terminal(
@@ -953,6 +975,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             new_session_id=summary.id if not summary.revision and self.sessions.chosen else None,
             web=web,
             launch_plugins=sorted(self.process.plugins.launch),
+            # A terminal session moves into a resumed Claude Code or Codex session's directory, and stays there.
+            workspace=self.session.workspace if self.sessions.follow_imports is not None else None,
         )
 
     @property

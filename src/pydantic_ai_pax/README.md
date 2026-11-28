@@ -275,7 +275,8 @@ keeps the titles taken from each session's first prompt. Press <kbd>/</kbd> to s
 
 From your shell, `pax --resume` opens the same browser, and `pax --continue` (`-c`)
 restores the most recent session in the current directory. `/resume claude` and
-`/resume codex` continue a session you started in Claude Code or Codex.
+`/resume codex` continue a session you started in Claude Code or Codex, in the folder
+it ran in.
 
 With `/web` running, the browser can open other sessions while this one runs. `/resume`
 of one of them shows it here, even mid-turn, instead of copying it; the session you
@@ -523,8 +524,9 @@ In the web UI, **Update…** in Settings › About installs from any session's p
 restart reopens the session the terminal shows, or under `pax --web`, the one Pax started with.
 While other live sessions run turns, as ones the browser opened can, `/update now`
 and `/reload` ask you to try again when they finish; bare `/update` still shows the
-menu. Installs and reloads restart Pax in the folder it started in, so a session
-from another folder shown in the terminal cannot run them. While another `pax` process
+menu. Installs and reloads restart Pax in the folder it started in, or the one a resumed
+Claude Code or Codex session moved it to, so a session from another folder shown in the
+terminal cannot run them. While another `pax` process
 runs from the same install, updating would break it, so Pax asks you to quit it first.
 
 When a newer build is out, the status row tells you, for example

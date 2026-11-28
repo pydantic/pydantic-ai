@@ -1160,7 +1160,8 @@ also stops the automatic removal. By default, removal uses Git
 without `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
 and `/reload` keep the checkout in use, except under `pax --web`, where opening a session saved
-elsewhere, or `/workspace`, moves the session to its own directory. Plugins do not own worktree cleanup.
+elsewhere, or `/workspace`, moves the session to its own directory. Resuming a Claude Code or Codex
+session also moves the session, to the directory that session ran in. Plugins do not own worktree cleanup.
 See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup, including configuration for a user-defined removal command.
 
 ## The built-in plugins
@@ -1760,7 +1761,7 @@ instead, which the page shows as an error. That menu enters `/update now` in the
 restarts from, whichever live session's page asks, and gives that session's refusal; the page that
 asked shows uv's output and the result too.
 Installing from another folder shown in the terminal is refused, as Pax
-restarts in the folder it started in.
+restarts in the folder it started in, or the one a resumed Claude Code or Codex session moved it to.
 
 `pax --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
 PATH` replaces the launch's random token with the one in PATH, which must belong to you, be readable
