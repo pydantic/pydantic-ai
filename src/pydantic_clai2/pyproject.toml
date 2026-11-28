@@ -29,37 +29,39 @@ classifiers = [
     "Topic :: Software Development",
 ]
 
+# The `main` channel's build pins Pax's sdist in the same release: `scripts/build_bleeding.sh` sets `PAX_SDIST_URL`.
+# Builds from before the rename update this package without naming Pax, which PyPI does not have at that version.
 [tool.hatch.metadata.hooks.uv-dynamic-versioning]
-dependencies = ["pydantic-ai-pax==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+dependencies = ["pydantic-ai-pax{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
 
-# The extras `pydantic-ai-pax` offers, so `pydantic-clai2[e2b]` keeps installing them.
+# The extras `pydantic-ai-pax` offers, so `pydantic-clai2[e2b]` keeps installing them, pinned like the base dependency.
 [tool.hatch.metadata.hooks.uv-dynamic-versioning.optional-dependencies]
-openai = ["pydantic-ai-pax[openai]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-cohere = ["pydantic-ai-pax[cohere]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-google = ["pydantic-ai-pax[google]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-anthropic = ["pydantic-ai-pax[anthropic]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-xai = ["pydantic-ai-pax[xai]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-groq = ["pydantic-ai-pax[groq]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-openrouter = ["pydantic-ai-pax[openrouter]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-mistral = ["pydantic-ai-pax[mistral]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-bedrock = ["pydantic-ai-pax[bedrock]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-bedrock-mantle = ["pydantic-ai-pax[bedrock-mantle]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-zai = ["pydantic-ai-pax[zai]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-snowflake = ["pydantic-ai-pax[snowflake]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-crusoe = ["pydantic-ai-pax[crusoe]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-cerebras = ["pydantic-ai-pax[cerebras]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-typesafe = ["pydantic-ai-pax[typesafe]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-huggingface = ["pydantic-ai-pax[huggingface]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-boxd = ["pydantic-ai-pax[boxd]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-daytona = ["pydantic-ai-pax[daytona]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-e2b = ["pydantic-ai-pax[e2b]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-kubernetes = ["pydantic-ai-pax[kubernetes]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-local = ["pydantic-ai-pax[local]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-modal = ["pydantic-ai-pax[modal]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-opensandbox = ["pydantic-ai-pax[opensandbox]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-render = ["pydantic-ai-pax[render]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-sprites = ["pydantic-ai-pax[sprites]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
-all = ["pydantic-ai-pax[all]==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}"]
+openai = ["pydantic-ai-pax[openai]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+cohere = ["pydantic-ai-pax[cohere]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+google = ["pydantic-ai-pax[google]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+anthropic = ["pydantic-ai-pax[anthropic]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+xai = ["pydantic-ai-pax[xai]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+groq = ["pydantic-ai-pax[groq]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+openrouter = ["pydantic-ai-pax[openrouter]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+mistral = ["pydantic-ai-pax[mistral]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+bedrock = ["pydantic-ai-pax[bedrock]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+bedrock-mantle = ["pydantic-ai-pax[bedrock-mantle]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+zai = ["pydantic-ai-pax[zai]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+snowflake = ["pydantic-ai-pax[snowflake]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+crusoe = ["pydantic-ai-pax[crusoe]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+cerebras = ["pydantic-ai-pax[cerebras]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+typesafe = ["pydantic-ai-pax[typesafe]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+huggingface = ["pydantic-ai-pax[huggingface]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+boxd = ["pydantic-ai-pax[boxd]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+daytona = ["pydantic-ai-pax[daytona]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+e2b = ["pydantic-ai-pax[e2b]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+kubernetes = ["pydantic-ai-pax[kubernetes]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+local = ["pydantic-ai-pax[local]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+modal = ["pydantic-ai-pax[modal]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+opensandbox = ["pydantic-ai-pax[opensandbox]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+render = ["pydantic-ai-pax[render]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+sprites = ["pydantic-ai-pax[sprites]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
+all = ["pydantic-ai-pax[all]{% if env.PAX_SDIST_URL %} @ {{ env.PAX_SDIST_URL }}{% else %}==0.{{ minor }}.{{ patch }}{% if distance %}.dev{{ distance }}+{{ commit }}{% endif %}{% endif %}"]
 
 [project.urls]
 Homepage = "https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_pax"
@@ -70,6 +72,10 @@ Changelog = "https://github.com/pydantic/pydantic-ai/releases"
 clai2 = "pydantic_clai2.__main__:main"
 # Matches the distribution name so `uvx pydantic-clai2` works without `--from`.
 pydantic-clai2 = "pydantic_clai2.__main__:main"
+
+[tool.hatch.metadata]
+# Only for the `main` channel's sdist, which is never uploaded to PyPI.
+allow-direct-references = true
 
 # The deprecated `pydantic_clai2` import alias, owned by this distribution alone so upgrading it never removes it.
 [tool.hatch.build.targets.wheel]

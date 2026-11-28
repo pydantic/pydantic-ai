@@ -15,11 +15,15 @@ import pytest
 import pydantic_ai_pax
 import pydantic_ai_pax.commands
 import pydantic_ai_pax.plugins
+from pydantic_ai_pax.cli.self_update import Update
 from tests.conftest import try_import
 
 with try_import() as shim_installed:
     import pydantic_clai2
     from pydantic_clai2 import __main__ as clai2_main  # pragma: lax no cover
+
+with try_import() as jinja_installed:
+    import jinja2
 
 # The `pydantic-ai-pax` test cell installs no `pydantic-clai2`; the cells with every workspace package do.
 # A pull request confined to `pydantic-ai-pax` runs only that cell, so its tests are `lax no cover`.
@@ -43,10 +47,46 @@ def test_pax_is_the_command_and_clai2_its_deprecated_name() -> None:
     assert shim['tool']['uv-dynamic-versioning']['format-jinja'] == version
     pax_hook = pax['tool']['hatch']['metadata']['hooks']['uv-dynamic-versioning']
     shim_hook = shim['tool']['hatch']['metadata']['hooks']['uv-dynamic-versioning']
-    assert shim_hook['dependencies'] == [f'pydantic-ai-pax=={version}']
+    assert shim_hook['dependencies'] == [
+        f'pydantic-ai-pax{{% if env.PAX_SDIST_URL %}} @ {{{{ env.PAX_SDIST_URL }}}}{{% else %}}=={version}{{% endif %}}'
+    ]
     assert shim_hook['optional-dependencies'] == {
-        extra: [f'pydantic-ai-pax[{extra}]=={version}'] for extra in pax_hook['optional-dependencies']
+        extra: [
+            f'pydantic-ai-pax[{extra}]{{% if env.PAX_SDIST_URL %}} @ {{{{ env.PAX_SDIST_URL }}}}{{% else %}}=={version}{{% endif %}}'
+        ]
+        for extra in pax_hook['optional-dependencies']
     }
+
+
+@pytest.mark.skipif(not jinja_installed(), reason='jinja2 not installed')
+def test_main_channel_shim_pins_pax_sdist() -> None:  # pragma: lax no cover
+    """The `main` channel's `pydantic-clai2` sdist names Pax's sdist in the same release, as `/update` does.
+
+    A build from before the rename updates `pydantic-clai2` with `--overrides` that do not name Pax, and PyPI has
+    no Pax at a `main` commit's version, so an exact version pin there leaves uv nothing to install. Each extra
+    names the same sdist, so no Pax requirement in the `main` sdist pins a version.
+    It reads build metadata and renders its templates, so it is not a VCR test.
+    """
+    shim = tomllib.loads((SOURCES / 'pydantic_clai2' / 'pyproject.toml').read_text())
+    hook = shim['tool']['hatch']['metadata']['hooks']['uv-dynamic-versioning']
+    [template] = hook['dependencies']
+    commit = 'c' * 40
+    pax = Update(channel='main', target=commit).requirement('pydantic-ai-pax')
+    url = pax.partition(' @ ')[2]
+
+    def render(template: str, env: dict[str, str]) -> str:
+        return jinja2.Template(template).render(env=env, minor=75, patch=1, distance=3, commit='ccccccccc')
+
+    assert render(template, {'PAX_SDIST_URL': url}) == pax
+    assert render(template, {}) == 'pydantic-ai-pax==0.75.1.dev3+ccccccccc'
+    extras: dict[str, list[str]] = hook['optional-dependencies']
+    assert extras
+    for extra, [extra_template] in extras.items():
+        assert render(extra_template, {'PAX_SDIST_URL': url}) == f'pydantic-ai-pax[{extra}] @ {url}'
+        assert render(extra_template, {}) == f'pydantic-ai-pax[{extra}]==0.75.1.dev3+ccccccccc'
+    script = (SOURCES / 'pydantic_ai_pax' / 'scripts' / 'build_bleeding.sh').read_text()
+    assert 'PAX_SDIST_URL=${release%/}/pydantic_ai_pax-$commit.tar.gz uv build' in script
+    assert shim['tool']['hatch']['metadata']['allow-direct-references'] is True
 
 
 def test_code_names_say_pax_not_clai2() -> None:

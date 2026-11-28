@@ -77,12 +77,17 @@ jobs:
           path: src/pydantic_ai_pax/pydantic_ai_pax/builtin_plugins/web/static
 
       - run: src/pydantic_ai_pax/scripts/build_bleeding.sh dist/bleeding
+        env:
+          # The `pydantic-clai2` sdist pins Pax's sdist in this repository's release.
+          CLAI_BLEEDING_URL: ${{ github.server_url }}/${{ github.repository }}/releases/download/${{ env.TAG }}
 
       - name: Smoke-test the sdists outside the workspace
         run: |
           smoke_dir=$(mktemp -d)
           uv venv "$smoke_dir"
-          uv pip install --python "$smoke_dir/bin/python" dist/bleeding/*.tar.gz
+          # Pax's sdist is not in the release yet, so use the local one the shim's pin names, as `/update` does.
+          printf 'pydantic-ai-pax @ file://%s\n' "$PWD"/dist/bleeding/pydantic_ai_pax-*.tar.gz > "$smoke_dir/overrides.txt"
+          uv pip install --python "$smoke_dir/bin/python" --overrides "$smoke_dir/overrides.txt" dist/bleeding/*.tar.gz
           "$smoke_dir/bin/pax" --help
           "$smoke_dir/bin/clai2" --help
           "$smoke_dir/bin/python" -I src/pydantic_ai_pax/scripts/check_web_assets.py \

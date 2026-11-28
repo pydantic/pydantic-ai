@@ -6,8 +6,12 @@
 # with `CLAI_BLEEDING_URL` pointing at it (see "Updating" in docs/reference.md).
 #
 # The version comes from Git tags and history, so the checkout needs both. Each sdist records it,
-# with exact pins between the packages, so installing needs no Git.
+# with exact pins between the packages, so installing needs no Git. The `pydantic-clai2` sdist pins
+# Pax's sdist by its URL in the release at CLAI_BLEEDING_URL (by default, pydantic/pydantic-ai's),
+# since builds from before the rename install it without naming Pax.
 set -euo pipefail
+
+release=${CLAI_BLEEDING_URL:-https://github.com/pydantic/pydantic-ai/releases/download/clai2-bleeding}
 
 out=${1:?usage: build_bleeding.sh OUT_DIR}
 mkdir -p "$out"
@@ -19,7 +23,7 @@ trap 'rm -rf "$staging"' EXIT
 
 # Keep in sync with `PACKAGES` in `pydantic_ai_pax/cli/self_update.py`; a test compares them.
 for package in pydantic-ai-pax pydantic-clai2 pydantic-ai-harness pydantic-ai-slim pydantic-graph; do
-  uv build --sdist --no-sources --package "$package" --out-dir "$staging"
+  PAX_SDIST_URL=${release%/}/pydantic_ai_pax-$commit.tar.gz uv build --sdist --no-sources --package "$package" --out-dir "$staging"
   mv "$staging"/*.tar.gz "$out/${package//-/_}-$commit.tar.gz"
 done
 printf '{"commit": "%s"}\n' "$commit" > "$out/clai2-bleeding.json"
