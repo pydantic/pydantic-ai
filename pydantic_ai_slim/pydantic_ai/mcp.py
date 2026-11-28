@@ -39,7 +39,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 # extra admits both. We only use their shared interfaces, so these unions type them without
 # importing a family that the other generation's installs don't ship.
 from ._http import AsyncHTTPClient, HTTPAuth, HTTPTimeout
-from ._run_context import set_current_run_context
+from ._run_context import get_current_run_context, set_current_run_context
 from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
@@ -943,6 +943,9 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     # Defaulted at class level so a subclass that doesn't call `MCPToolset.__init__` (like a test double
     # with canned results) is an ordinary toolset rather than missing them.
     _client_source: MCPToolsetClient | None = None
+    # The run a kept-alive stdio session was opened in, while that session is open. Its connection task runs
+    # without it (see `_enter_client`), so the sampling handler reads it from here instead.
+    _session_run_context: RunContext[object] | None = None
     _client_options: _ClientOptions | None = None
     _auth_func: MCPAuthFunc[AgentDepsT] | None = None
     _headers_func: MCPHeadersFunc[AgentDepsT] | None = None
@@ -1274,7 +1277,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         existing session continue using the previously configured handler.
         """
         self.sampling_model = model
-        self.client.set_sampling_callback(_build_sampling_handler(model))  # pyright: ignore[reportUnknownMemberType]
+        self.client.set_sampling_callback(_build_sampling_handler(self, model))  # pyright: ignore[reportUnknownMemberType]
 
     def _build_client(
         self, *, auth: HTTPAuth | Literal['oauth'] | str | None, headers: dict[str, str] | None
@@ -1293,7 +1296,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         sampling_handler = options['sampling_handler']
         if self.sampling_model is not None:
             # `set_sampling_model` replaces the handler passed to `__init__`, if there was one.
-            sampling_handler = _build_sampling_handler(self.sampling_model)
+            sampling_handler = _build_sampling_handler(self, self.sampling_model)
         return FastMCPClient[Any](
             transport=transport,
             sampling_handler=sampling_handler,
@@ -1400,6 +1403,21 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
         server_info = mcp_field(init_result, 'server_info', mcp_types.Implementation)
         return server_info, init_result.capabilities, init_result.instructions
 
+    async def _enter_client(self, exit_stack: AsyncExitStack) -> RunContext[object] | None:
+        """Enter the client on `exit_stack`, and return the run a kept-alive stdio session was opened in."""
+        transport = self.client.transport
+        if isinstance(transport, MCPConfigTransport) and len(transport.config.mcpServers) == 1:
+            transport = transport.transport
+        # A kept-alive stdio transport starts a connection task that outlives this run, and
+        # `asyncio.create_task` snapshots the current context into it: the run's
+        # `RunContext` would pin the agent, toolset and transport until the server stops.
+        # Connect it without the ambient run context; every other transport keeps it.
+        keeps_connection = isinstance(transport, StdioTransport) and transport.keep_alive
+        session_run_context = get_current_run_context() if keeps_connection else None
+        with set_current_run_context(None) if keeps_connection else nullcontext():
+            await exit_stack.enter_async_context(self.client)
+        return session_run_context
+
     async def __aenter__(self) -> Self:
         if self._resolves_per_run:
             # There's nothing to connect with until a run resolves `auth`/`headers`: each run enters
@@ -1413,16 +1431,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 # once initialization fully succeeds, so `_initialized` can't see stale data from a
                 # session that got torn down mid-setup.
                 async with AsyncExitStack() as exit_stack:
-                    transport = self.client.transport
-                    if isinstance(transport, MCPConfigTransport) and len(transport.config.mcpServers) == 1:
-                        transport = transport.transport
-                    # A kept-alive stdio transport starts a connection task that outlives this run, and
-                    # `asyncio.create_task` snapshots the current context into it: the run's
-                    # `RunContext` would pin the agent, toolset and transport until the server stops.
-                    # Connect it without the ambient run context; every other transport keeps it.
-                    keeps_connection = isinstance(transport, StdioTransport) and transport.keep_alive
-                    with set_current_run_context(None) if keeps_connection else nullcontext():
-                        await exit_stack.enter_async_context(self.client)
+                    session_run_context = await self._enter_client(exit_stack)
                     # A modern (sessionless) session has no `initialize` handshake, so server
                     # metadata comes from era-neutral client properties; older clients only populate
                     # `initialize_result`.
@@ -1453,6 +1462,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                     self._server_info = server_info
                     self._server_capabilities = server_capabilities
                     self._instructions = instructions
+                    self._session_run_context = session_run_context
             self._running_count += 1
         return self
 
@@ -1469,6 +1479,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 self._server_info = None
                 self._server_capabilities = None
                 self._instructions = None
+                self._session_run_context = None
                 self._cached_tools = None
                 self._cached_resources = None
                 self._cached_prompts = None
@@ -2135,8 +2146,10 @@ class _BorrowedHTTPClient:
         return attr
 
 
-def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any, Any]:
+def _build_sampling_handler(toolset: MCPToolset[Any], sampling_model: models.Model) -> SamplingHandler[Any, Any]:
     """Build a FastMCP-shaped sampling handler that delegates to a Pydantic AI model."""
+    # Held weakly, like the message handler: a kept-alive stdio connection task keeps this handler alive.
+    toolset_ref = weakref.ref(toolset)
 
     async def handler(
         sampling_messages: list[mcp_types.SamplingMessage],
@@ -2151,8 +2164,17 @@ def _build_sampling_handler(sampling_model: models.Model) -> SamplingHandler[Any
         if stop_sequences is not None:  # pragma: no branch
             model_settings['stop_sequences'] = stop_sequences
 
+        # A kept-alive stdio connection task calls this without a run, so the model request runs in the run
+        # that opened the session, as it does on every other connection: `ConcurrencyLimitedModel` reads it
+        # to refuse the agent's own limiter, whose slot that run holds.
+        run_context = get_current_run_context()
+        if run_context is None and (current_toolset := toolset_ref()) is not None:
+            run_context = current_toolset._session_run_context  # pyright: ignore[reportPrivateUsage]
         # The server chose these `stop_sequences`, not the user, so a sampling model that ignores them doesn't warn.
-        with suppress_unsupported_setting_warnings(['stop_sequences'] if stop_sequences is not None else []):
+        with (
+            set_current_run_context(run_context),
+            suppress_unsupported_setting_warnings(['stop_sequences'] if stop_sequences is not None else []),
+        ):
             model_response = await model_request(sampling_model, pai_messages, model_settings=model_settings)
         return mcp_types.CreateMessageResult(
             role='assistant',

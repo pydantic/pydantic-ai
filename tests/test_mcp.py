@@ -37,7 +37,7 @@ from inline_snapshot import snapshot
 from opentelemetry import propagate
 from pydantic import BaseModel, ValidationError
 
-from pydantic_ai import Agent, ToolsetTool, models
+from pydantic_ai import Agent, ConcurrencyLimiter, ToolsetTool, models
 from pydantic_ai._run_context import RunContext, get_current_run_context, set_current_run_context
 from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.capabilities import MCP, Capability
@@ -59,6 +59,7 @@ from pydantic_ai.messages import (
     ToolsetInstructionSource,
     UserPromptPart,
 )
+from pydantic_ai.models.concurrency import ConcurrencyLimitedModel
 from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.profiles import ModelProfile
@@ -170,7 +171,7 @@ def wrap_server_notification(notification: Any) -> Any:
     return cast(Any, mcp_types.ServerNotification)(root=notification)
 
 
-def make_legacy_client(server: FastMCP[None]) -> Client[Any]:
+def make_legacy_client(server: FastMCP[None] | ClientTransport) -> Client[Any]:
     """Build a client pinned to a legacy (handshake-era) session.
 
     FastMCP 4 negotiates a modern session by default and takes `mode='legacy'` to pin the
@@ -795,10 +796,13 @@ class TestMCPToolsetIntegration:
 
         FastMCP's `StdioTransport` keeps its server running between connections and stops it from its finalizer,
         so the connection task that outlives the run must not keep the toolset, and with it the transport, alive:
-        not through the message handler, and, when a plain run opens the connection, not through that run's context.
+        not through the message or sampling handler, and, when a plain run opens the connection, not through that
+        run's context.
         """
         tasks_before = asyncio.all_tasks()
-        toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+        toolset = MCPToolset(
+            StdioTransport(command='python', args=['-m', 'tests.mcp_server']), sampling_model=TestModel()
+        )
         # A name skips the agent's name inference, which reads this frame's `f_locals`. Before Python 3.13, that
         # read leaves a snapshot of the locals on the frame, which would still hold `toolset` after the `del` below.
         agent = Agent(TestModel(call_tools=[]), name='stdio_agent', toolsets=[toolset])
@@ -881,6 +885,70 @@ class TestMCPToolsetIntegration:
         result = await Agent(TestModel(call_tools=[tool_name]), name='stdio_agent', toolsets=[toolset]).run('Hello')
         await transport.close()
         assert seen == [result.run_id if sees_the_run else None]
+
+    @pytest.mark.subprocess(reason='connects to `tests.mcp_log_server` over stdio')
+    @pytest.mark.parametrize('second_run', [False, True], ids=['first-run', 'second-run'])
+    async def test_kept_alive_stdio_sampling_refuses_the_agents_limiter(self, second_run: bool):
+        """Sampling on a kept-alive stdio connection runs in the run that opened the session.
+
+        A sampling model that shares the agent's limiter is then refused instead of waiting for the slot that run
+        holds, and a later run that reuses the transport is checked against its own limiter, not an earlier run's,
+        which the toolset drops when that run's session closes.
+        """
+        transport = StdioTransport(command='python', args=['-m', 'tests.mcp_log_server'])
+        limiter = ConcurrencyLimiter(1)
+        # Only a legacy session lets the server send a request in the middle of a tool call.
+        toolset = MCPToolset(make_legacy_client(transport), tool_error_behavior='error')
+        toolset.set_sampling_model(ConcurrencyLimitedModel(TestModel(), limiter=limiter))
+        agent = Agent(
+            TestModel(call_tools=['sample_text']), name='stdio_agent', toolsets=[toolset], max_concurrency=limiter
+        )
+        if second_run:
+            other_agent = Agent(TestModel(call_tools=[]), name='other_agent', toolsets=[toolset])
+            await other_agent.run('Hello')
+            # Once its session closes, the toolset no longer holds that run, nor through it the agent.
+            other_agent_ref = weakref.ref(other_agent)
+            del other_agent
+            gc.collect()
+            assert other_agent_ref() is None
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            with pytest.raises(
+                ToolError, match='The agent and a `ConcurrencyLimitedModel` use the same concurrency limiter'
+            ):
+                await agent.run('Hello')
+        await transport.close()
+        assert limiter.running_count == 0
+
+    # The in-process server's sampling request goes through the API that MCP SDK v2 deprecates.
+    @pytest.mark.filterwarnings('ignore:The sampling capability is deprecated')
+    async def test_in_process_sampling_refuses_the_agents_limiter(self):
+        """An in-process connection carries the run that opened it, and sampling runs in that run.
+
+        The kept-alive stdio fallback never replaces it, so a sampling model that shares the agent's limiter is
+        refused here too.
+        """
+        server: FastMCP[None] = FastMCP('sampler')
+
+        @server.tool()
+        async def sample_text(ctx: Context) -> str:
+            message = mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='Say hi'))
+            # A legacy session's server-initiated sampling request, which the 2026-07-28 protocol deprecates. The
+            # guard refuses it, so the tool never returns.
+            return str(
+                await ctx.session.create_message([message], max_tokens=5, related_request_id=ctx.request_id)  # pyright: ignore[reportDeprecated]
+            )
+
+        limiter = ConcurrencyLimiter(1)
+        # Only a legacy session lets the server send a request in the middle of a tool call.
+        toolset = MCPToolset(make_legacy_client(server), tool_error_behavior='error')
+        toolset.set_sampling_model(ConcurrencyLimitedModel(TestModel(), limiter=limiter))
+        agent = Agent(TestModel(call_tools=['sample_text']), toolsets=[toolset], max_concurrency=limiter)
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            with pytest.raises(
+                ToolError, match='The agent and a `ConcurrencyLimitedModel` use the same concurrency limiter'
+            ):
+                await agent.run('Hello')
+        assert limiter.running_count == 0
 
     @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
     async def test_entered_connection_preserves_the_current_run_context(self, run_context: RunContext):
@@ -2648,7 +2716,7 @@ class TestSamplingHandler:
         from pydantic_ai.mcp import _build_sampling_handler  # type: ignore[attr-defined]
 
         model = TestModel()
-        handler = _build_sampling_handler(model)
+        handler = _build_sampling_handler(MCPToolset(StdioTransport(command='python', args=[])), model)
         params = mcp_types.CreateMessageRequestParams.model_validate(
             {
                 'messages': [
