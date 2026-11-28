@@ -78,6 +78,7 @@ from pydantic_ai_pax.runtime.imported_sessions import (
 from pydantic_ai_pax.runtime.session import Session
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.sessions import Sessions
+from pydantic_ai_pax.runtime.worktrees import Worktree
 from pydantic_ai_pax.ui.menus.session_browser import SessionBrowser
 
 AT = '2026-10-01T12:00:00Z'
@@ -1596,9 +1597,17 @@ def test_cli_resume_starts_in_the_imported_project(
 async def test_update_restarts_where_the_terminal_session_moved(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gone: bool
 ) -> None:
-    """After `/resume claude ID` and `/new`, `/update` restarts Pax in the project, unless that folder is gone."""
+    """After `/resume claude ID` and `/new`, `/update` restarts the session in the project, unless that folder is gone.
+
+    The old build execs the new one where Pax started, so `--agent` and `.env` resolve there as at launch, and
+    hands over no `--worktree` checkout the session left.
+    """
     project, other, native_id = imported_project(tmp_path, 'claude')
     monkeypatch.chdir(other)
+    for name in ('CLAI_RELAUNCH_WORKSPACE', 'CLAI_RELAUNCH_WORKTREE'):
+        # Restored to unset once the test ends.
+        monkeypatch.setenv(name, '')
+        monkeypatch.delenv(name)
     shell = terminal_shell(tmp_path, other)
     await shell.loader.load_all()
     await shell.sessions.command(['claude', native_id])
@@ -1609,15 +1618,27 @@ async def test_update_restarts_where_the_terminal_session_moved(
     assert relaunch is not None and relaunch.workspace == str(project)
     if gone:
         shutil.rmtree(project)
-    started: list[Path] = []
+    execs: list[list[str]] = []
 
     def execv(path: str, argv: list[str]) -> None:
-        started.append(Path.cwd())
+        assert Path.cwd() == other
+        execs.append(argv)
 
     monkeypatch.setattr(os, 'execv', execv)
     launch = argparse.Namespace(web=False, agent=None, model=None, request_limit=None, database=None)
-    await run_sync(lambda: cli._relaunch(launch, relaunch, launched=None))  # pyright: ignore[reportPrivateUsage]
-    assert started == [other if gone else project]
+    checkout = Worktree(path=other, branch='task', head='abc', created=True, remove_if_pushed=True)
+    await run_sync(lambda: cli._relaunch(launch, relaunch, launched=checkout))  # pyright: ignore[reportPrivateUsage]
+    assert 'CLAI_RELAUNCH_WORKTREE' not in os.environ
+    [argv] = execs
+    monkeypatch.setattr('sys.argv', [*argv[:1], '--database', str(tmp_path / 'config.db'), *argv[1:]])
+    seen: list[Path] = []
+
+    async def launched(*args: object, **kwargs: object) -> None:
+        seen.append(await run_sync(Path.cwd))
+
+    monkeypatch.setattr('pydantic_ai_pax.app.chat', launched)
+    await run_sync(cli.run)
+    assert seen == [other if gone else project]
 
 
 @pytest.mark.parametrize(
