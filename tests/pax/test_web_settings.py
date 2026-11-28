@@ -312,7 +312,7 @@ def test_usage_and_cost_notices_carry_the_figures_they_report(make_web: MakeWeb)
 def test_the_about_menu_shows_the_version_and_asks_before_updating(
     make_web: MakeWeb, monkeypatch: pytest.MonkeyPatch
 ) -> None:
-    def offline_updates(*, channel: Callable[[], UpdateChannel]) -> Updates:
+    def offline_updates(*, channel: Callable[[], UpdateChannel], current: object) -> Updates:
         return Updates(channel=channel, current=Installed(version='1.0.0'), fetch=lambda channel: '1.0.0', spawn=run)
 
     def run(work: Callable[[], None]) -> None:

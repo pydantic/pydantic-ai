@@ -344,6 +344,9 @@ Installing replaces the files of the `uv tool` environment, which would break an
 `pax` process running from it. So on Linux and macOS, while another `pax` runs from that
 install, `/update now` and `pax update` install nothing and name the processes' IDs: quit
 them, then update again. A `pax` started while uv installs is not covered, so start none then.
+Once another process, or a `uv tool install` you ran, has replaced the install, the `pax`
+still running from it installs nothing either: it tells you to quit and run
+`pax --resume <ID>`, which continues the conversation in the new build.
 
 `pax update` (or `pax --update`) installs the same way without starting a session: it prints uv's output
 and a last line saying what it did, then exits instead of restarting, so the next `pax`

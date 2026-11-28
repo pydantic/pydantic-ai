@@ -35,7 +35,7 @@ from pydantic_ai_harness.step_persistence.conversations import ConversationSumma
 from pydantic_ai_harness.sub_agents import DelegationTask, TaskQuestionAskedEvent
 from pydantic_ai_pax.cli.command_context import CommandContext, CommandProvider
 from pydantic_ai_pax.cli.effort import effort_command, effort_completions
-from pydantic_ai_pax.cli.self_update import Relaunch, Updates, WebHandoff
+from pydantic_ai_pax.cli.self_update import Relaunch, Updates, WebHandoff, running
 from pydantic_ai_pax.cli.shell_passthrough import (
     HELP as SHELL_HELP,
     run_shell_command,
@@ -545,7 +545,7 @@ def create_shell(
         )
     )
     commands.register(Command(name='exit', description='Quit Pax', handler=lambda _: 'Goodbye.'))
-    updates = Updates(channel=lambda: context.settings.update_channel)
+    updates = Updates(channel=lambda: context.settings.update_channel, current=running())
 
     commands.register(
         Command(
@@ -609,6 +609,8 @@ def create_shell(
     # Only a page has no terminal to watch uv in; elsewhere uv keeps drawing its progress there.
     updates.capture = lambda: web_serving(loader) is not None
     updates.serving = lambda: web_serving(loader)
+    # Deliberately no `--session-id` for an unsaved conversation, unlike `relaunch`: it has nothing to resume yet.
+    updates.resume = lambda: _saved_id(shell.session)
     models.plugins = loader.model_providers
     models.logins = loader.logins
     context.plugin_models = loader.model_names
@@ -722,6 +724,11 @@ def _show_in_terminal(
     # Mutate retained state only after the rebuild has succeeded, so reload failures can roll back.
     if transcript is not None:
         TranscriptBuffer.rebind(transcript)
+
+
+def _saved_id(session: Session[DepsT, OutputT]) -> str | None:
+    """The conversation's ID once it is saved: only then can `--resume` open it, as `relaunch` resumes it."""
+    return session.summary.id if session.summary.revision else None
 
 
 def web_serving(loader: SessionPlugins[DepsT]) -> WebHandoff | None:
@@ -948,7 +955,7 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         summary = self.session.summary
         return Relaunch(
             executable=executable,
-            session_id=summary.id if summary.revision else None,
+            session_id=_saved_id(self.session),
             # A conversation named with `--session-id` keeps its ID until its first prompt saves it.
             new_session_id=summary.id if not summary.revision and self.sessions.chosen else None,
             web=web,

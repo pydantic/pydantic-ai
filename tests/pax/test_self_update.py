@@ -3,6 +3,7 @@
 import argparse
 import json
 import os
+import re
 import shlex
 import sys
 import threading
@@ -319,6 +320,7 @@ def _updates(
         hand_off=lambda script: pytest.fail('only Windows hands the install off'),
         locate=locate,
         others=AsyncMock(return_value=[]),
+        on_disk=lambda: current,
     )
     return updates, ran
 
@@ -549,6 +551,66 @@ async def test_command_refuses_while_other_processes_run_from_the_install(tmp_pa
     assert await self_update.sibling_processes(str(uv)) == []
 
 
+async def test_command_refuses_once_another_process_replaced_the_install() -> None:
+    """A Pax another process updated under it runs code the files no longer match: an update would import the new
+    files' modules into the old build, so it says to restart instead of failing on an import halfway.
+    """
+    newer = Installed(version='0.53.0', tool=True)
+    replaced, ran = _updates(['main'], fetch=lambda channel: pytest.fail('a replaced install checks nothing'))
+    replaced.on_disk = lambda: newer
+    refusal = (
+        'Not updating: another process installed Pax 0.53.0 in place of the 4bd401a55 this one runs, '
+        'so this one cannot update or restart itself. Quit, then run {} to use it.'
+    )
+    assert await replaced.command(['now']) == refusal.format('pax')
+    replaced.resume = lambda: 'abc123'
+    assert await replaced.command([]) == refusal.format('pax --resume abc123')
+    assert ran == []
+    assert (replaced.failed, replaced.restart_required) == (True, False)
+    # A source checkout is not a `uv tool` install that another process's update replaces.
+    source, installs = _updates(['main'], current=Installed(version='0.52.0'))
+    source.on_disk = lambda: newer
+    assert await source.command([]) == 'Updated Pax to 9e08a34ee (main). Restarting...'
+    assert len(installs) == 1
+
+
+async def test_a_later_shell_compares_against_the_build_this_process_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """The web UI builds a shell per session: one built after another process replaced the install still gets the
+    build in memory as `current`, so its `/update` refuses instead of importing the new files' modules.
+    """
+    old, new = Installed(version='0.52.0', tool=True), Installed(version='0.53.0', tool=True)
+    on_disk = old
+    monkeypatch.setattr(self_update, 'installed', lambda: on_disk)
+    built: list[Installed] = []
+
+    def build(*, channel: Callable[[], UpdateChannel], current: Installed) -> Updates:
+        built.append(current)
+        return _updates(['stable'])[0]
+
+    monkeypatch.setattr(session_runtime, 'Updates', build)
+
+    async def shell() -> None:
+        inputs(monkeypatch, ['/exit'])
+        await chat(
+            Agent(TestModel()),
+            deps=None,
+            settings=Settings(model='test'),
+            console=Console(file=StringIO()),
+            store=SettingsStore(tmp_path / 'config.db'),
+        )
+
+    self_update.running.cache_clear()
+    try:
+        await shell()
+        on_disk = new
+        await shell()
+    finally:
+        self_update.running.cache_clear()
+    assert built == [old, old]
+
+
 def test_hold_environment_only_in_a_writable_uv_tool_environment(tmp_path: Path) -> None:
     assert self_update.hold_environment(tmp_path) is None, 'not a `uv tool` environment'
     (tmp_path / 'uv-receipt.toml').write_text('')
@@ -709,7 +771,7 @@ async def _relaunch_after(
     if updates is None:
         updates, _ = _updates(['main'])
 
-    def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
+    def build(*, channel: Callable[[], UpdateChannel], current: Installed) -> Updates:
         return updates
 
     monkeypatch.setattr(session_runtime, 'Updates', build)
@@ -782,6 +844,48 @@ async def test_restart_imports_nothing_after_the_install(tmp_path: Path, monkeyp
     relaunched = await _relaunch_after(monkeypatch, tmp_path, [], updates=updates)
     assert new_build.installed
     assert relaunched.web is None
+
+
+@pytest.mark.parametrize('saved', [True, False])
+async def test_update_after_another_process_replaced_the_install_imports_nothing(
+    saved: bool, tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    """Another process updated the install under this Pax: `/update` says to restart, with the resume command
+    once the conversation is saved, rather than import the web UI's module from the new files and fail on it.
+    """
+    new_build = _NewBuild()
+    new_build.installed = True
+    monkeypatch.setattr(sys, 'meta_path', [new_build, *sys.meta_path])
+    monkeypatch.delitem(sys.modules, 'pydantic_ai_pax.cli.web', raising=False)
+    monkeypatch.delattr(cli, 'web', raising=False)
+    updates, ran = _updates(['main'])
+    updates.on_disk = lambda: Installed(version='0.53.0', tool=True)
+
+    def build(*, channel: Callable[[], UpdateChannel], current: Installed) -> Updates:
+        return updates
+
+    monkeypatch.setattr(session_runtime, 'Updates', build)
+    inputs(monkeypatch, [*(['hello'] if saved else []), '/update now', '/exit'])
+    output = StringIO()
+    await chat(
+        Agent(TestModel()),
+        deps=None,
+        settings=Settings(model='test', update_channel='main'),
+        console=Console(file=output, width=400),
+        store=SettingsStore(tmp_path / 'config.db'),
+    )
+    refusal = re.search(
+        r'Not updating: another process installed Pax 0\.53\.0 in place of the 4bd401a55 this one runs, so this one '
+        r'cannot update or restart itself\. Quit, then run pax( --resume (\S+))? to use it\.',
+        output.getvalue(),
+    )
+    assert refusal is not None
+    assert ran == []
+    if not saved:
+        assert refusal[1] is None, 'nothing saved to resume'
+        return
+    conversation = await SqliteConversationStore(database=tmp_path / 'sessions.db').get(conversation_id=refusal[2])
+    assert conversation.messages, 'the command resumes the conversation this Pax saved'
 
 
 def _args(**options: object) -> argparse.Namespace:
@@ -976,7 +1080,7 @@ async def test_shell_exits_after_an_install(tmp_path: Path, monkeypatch: pytest.
     updates, ran = _updates(['stable'], executable=None)
     channels: list[UpdateChannel] = []
 
-    def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
+    def build(*, channel: Callable[[], UpdateChannel], current: Installed) -> Updates:
         channels.append(channel())
         return updates
 
@@ -1142,7 +1246,7 @@ async def test_bare_update_opens_the_menu_and_installs_once_it_closes(
     """In the terminal, bare `/update` shows the menu; its Update action closes it and installs at once."""
     updates, ran = _updates(['stable'], executable=None)
 
-    def build(*, channel: Callable[[], UpdateChannel]) -> Updates:
+    def build(*, channel: Callable[[], UpdateChannel], current: Installed) -> Updates:
         return updates
 
     monkeypatch.setattr(session_runtime, 'Updates', build)
