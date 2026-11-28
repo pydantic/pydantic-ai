@@ -287,12 +287,15 @@ structured_dict = StructuredDict(
 structured_dict_agent = Agent(output_type=structured_dict)
 assert_type(structured_dict_agent, Agent[object, dict[str, Any]])
 
-# `from_spec` and `from_file` infer the output type from `output_type`, the same way `Agent()` does.
+# `from_spec` and `from_file` infer the output type from `output_type`, the same way `Agent()` does,
+# except that `output_type=None` means it wasn't passed, as in `Agent.run()`.
 assert_type(Agent.from_spec({}), Agent[object, str])
+assert_type(Agent.from_spec({}, output_type=None), Agent[object, str])
 assert_type(Agent.from_spec({}, output_type=Foo), Agent[object, Foo])
 assert_type(Agent.from_spec({}, deps_type=MyDeps), Agent[MyDeps, str])
 assert_type(Agent.from_spec({}, deps_type=MyDeps, output_type=Foo), Agent[MyDeps, Foo])
 assert_type(Agent.from_file('agent.yaml'), Agent[object, str])
+assert_type(Agent.from_file('agent.yaml', output_type=None), Agent[object, str])
 assert_type(Agent.from_file('agent.yaml', output_type=Foo), Agent[object, Foo])
 assert_type(Agent.from_file('agent.yaml', deps_type=MyDeps), Agent[MyDeps, str])
 assert_type(Agent.from_file('agent.yaml', deps_type=MyDeps, output_type=Foo), Agent[MyDeps, Foo])
