@@ -4,30 +4,44 @@ import pytest
 
 pytest.importorskip('pydantic_monty')
 
+import gc
 import io
 import json
 import re
+import weakref
 from collections.abc import AsyncIterable, AsyncIterator, Callable, Sequence
-from dataclasses import replace
+from dataclasses import dataclass, field, replace
 from pathlib import Path
+from typing import Literal
 
 import anyio
 from pydantic import JsonValue
 from rich.console import Console
 
-from pydantic_ai import Agent, AgentRunResultEvent, ModelRetry, PartStartEvent, RunContext, Tool
+from pydantic_ai import (
+    Agent,
+    AgentRunResultEvent,
+    ApprovalRequired,
+    CallDeferred,
+    ModelRetry,
+    PartStartEvent,
+    RunContext,
+    Tool,
+)
 from pydantic_ai.agent import AbstractAgent, WrapperAgent
 from pydantic_ai.capabilities import (
     AbstractCapability,
     AgentCapability,
     CombinedCapability,
     DynamicCapability,
+    HandleDeferredToolCalls,
     Hooks,
     LocalWorkspace,
     ValidatedToolArgs,
 )
 from pydantic_ai.messages import (
     AgentStreamEvent,
+    FunctionToolCallEvent,
     FunctionToolResultEvent,
     ModelMessage,
     ModelRequest,
@@ -40,9 +54,10 @@ from pydantic_ai.messages import (
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
 from pydantic_ai.models.test import TestModel
-from pydantic_ai.tools import ToolDefinition, ToolSelector
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults, ToolDefinition, ToolSelector
 from pydantic_ai.usage import RunUsage
 from pydantic_ai.workspaces import LocalWorkspaceBackend, WorkspaceBackend, WorkspaceRef
+from pydantic_ai_harness.ask_user import AskUser, AskUserAnswer, AskUserRequest, AskUserResponse
 from pydantic_ai_harness.code_mode import (
     SpeculativeCallClaimedEvent,
     SpeculativeCallEvictedEvent,
@@ -858,6 +873,22 @@ except Exception:
 """
 
 
+def trickled_run_code(code: str) -> FunctionModel:
+    """Stream one `run_code` call eight characters at a time, so eager execution and speculation see it grow."""
+
+    async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        if len(messages) > 1:
+            yield 'done'
+            return
+        args = json.dumps({'code': code})
+        yield {1: DeltaToolCall(name='run_code')}
+        for offset in range(0, len(args), 8):
+            yield {1: DeltaToolCall(json_args=args[offset : offset + 8])}
+            await anyio.sleep(0)
+
+    return FunctionModel(stream_function=stream)
+
+
 async def run_claim_then_cold(
     root: Path,
     cold_started: anyio.Event,
@@ -911,17 +942,7 @@ class TestSandboxCallDisplay:
     async def test_calls_inside_run_code_render_like_direct_calls(self, tmp_path: Path) -> None:
         counters = SpeculationCounters()
 
-        async def stream(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
-            if len(messages) > 1:
-                yield 'done'
-                return
-            args = json.dumps({'code': SNIPPET})
-            yield {1: DeltaToolCall(name='run_code')}
-            for offset in range(0, len(args), 8):
-                yield {1: DeltaToolCall(json_args=args[offset : offset + 8])}
-                await anyio.sleep(0)
-
-        agent = fold_agent(FunctionModel(stream_function=stream), counters, tmp_path)
+        agent = fold_agent(trickled_run_code(SNIPPET), counters, tmp_path)
 
         @agent.tool_plain
         def flaky() -> str:
@@ -1057,6 +1078,321 @@ class TestSandboxCallDisplay:
         assert await show.wrap_tool_execute(context(), call=call, tool_def=tool_def, args={}, handler=late) == 'late'
         # Nothing was held, so the claim reports nothing; emitting would fail, as this context has no stream.
         await show.on_event(context(), event=claimed(ready=True, elapsed_ms=1, launch_id=call.tool_call_id))
+
+
+PAUSED_SNIPPET = """\
+picked = await ask_user_question(questions=[{"header": "Color", "question": "Which color?", "options": [{"label": "red"}, {"label": "blue"}]}])
+ok = await gated()
+try:
+    await refused()
+except Exception:
+    pass
+"""
+
+SPECULATIVE_PAUSED_SNIPPET = """\
+a = await read_file(path="a.py")
+try:
+    b = await read_file(path="b.py")
+except Exception:
+    pass
+c = await read_file(path="c.py")
+"""
+
+
+async def pick_first(request: AskUserRequest) -> AskUserResponse:
+    return AskUserResponse(
+        answers=tuple(AskUserAnswer(header=q.header, selected=(q.options[0].label,)) for q in request.questions)
+    )
+
+
+def answer_inline(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+    """Approve `gated` and `a.py`, deny the rest, and answer `c.py`'s question; leave other calls unresolved."""
+    return DeferredToolResults(
+        approvals={
+            call.tool_call_id: call.tool_name == 'gated' or call.args == {'path': 'a.py'} for call in requests.approvals
+        },
+        calls={call.tool_call_id: 'answered' for call in requests.calls if call.args == {'path': 'c.py'}},
+    )
+
+
+def pause_reads(ctx: RunContext[None], *, call: ToolCallPart, tool_def: ToolDefinition, args: ValidatedToolArgs):
+    """Ask about `a.py` and `b.py` before reading them, and put `c.py` to the user as a question."""
+    path = args.get('path')
+    if call.tool_name != 'read_file' or ctx.tool_call_approved or path not in ('a.py', 'b.py', 'c.py'):
+        return args
+    if path == 'c.py':
+        raise CallDeferred(kind='question')
+    raise ApprovalRequired()
+
+
+async def run_shown(
+    agent: Agent[None, str], capabilities: Sequence[AgentCapability[None]]
+) -> tuple[list[SandboxCallStartedEvent], list[SandboxCallFinishedEvent], str]:
+    """Run `agent` through the TUI renderer, returning its sandbox call reports and what it printed."""
+    output = io.StringIO()
+    renderer = StreamRenderer(Console(file=output, width=120), stop_loading=lambda: None)
+    started: list[SandboxCallStartedEvent] = []
+    finished: list[SandboxCallFinishedEvent] = []
+    with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+        async with agent.run_stream_events('go', capabilities=capabilities) as events:
+            async for event in events:
+                if isinstance(event, AgentRunResultEvent):
+                    continue
+                if isinstance(event, SandboxCallStartedEvent):
+                    started.append(event)
+                elif isinstance(event, SandboxCallFinishedEvent):
+                    finished.append(event)
+                await renderer.on_stream_event(event)
+    await renderer.finish()
+    return started, finished, output.getvalue()
+
+
+@dataclass
+class SignalSettled(AbstractCapability[None]):
+    """Signal once `run_code` has returned."""
+
+    done: anyio.Event = field(default_factory=anyio.Event)
+
+    async def after_tool_execute(
+        self,
+        ctx: RunContext[None],
+        *,
+        call: ToolCallPart,
+        tool_def: ToolDefinition,
+        args: ValidatedToolArgs,
+        result: object,
+    ) -> object:
+        if call.tool_name == 'run_code':
+            self.done.set()
+        return result
+
+
+class TestPausedSandboxCalls:
+    """A call that defers is paused, not failed: it shows once, with the result it is resolved to."""
+
+    async def test_cold_calls_show_their_answer_approval_or_denial(self, tmp_path: Path) -> None:
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': PAUSED_SNIPPET})])
+
+        agent = fold_agent(streamed(respond), SpeculationCounters(), tmp_path)
+
+        @agent.tool
+        def gated(ctx: RunContext[None]) -> str:
+            """Run once approved."""
+            if not ctx.tool_call_approved:
+                raise ApprovalRequired()
+            return 'ran'
+
+        @agent.tool
+        def refused(ctx: RunContext[None]) -> str:
+            """Run once approved, which it never is."""
+            raise ApprovalRequired()
+
+        started, finished, output = await run_shown(
+            agent, capabilities=[AskUser(answerer=pick_first), HandleDeferredToolCalls(answer_inline)]
+        )
+
+        # The approved call runs again, but is shown once.
+        assert [event.call.tool_name for event in started] == ['ask_user_question', 'gated', 'refused']
+        assert [(event.result.tool_name, event.result.content, event.result.outcome) for event in finished] == [
+            ('ask_user_question', {'Color': ['red']}, 'success'),
+            ('gated', 'ran', 'success'),
+            # No hook sees a denial, so it is shown when `run_code` returns.
+            ('refused', 'The tool call was denied.', 'denied'),
+        ]
+        assert 'retried' not in output
+
+    @pytest.mark.parametrize('caught', [True, False])
+    async def test_unresolved_call_closes_with_its_run_code(self, caught: bool, tmp_path: Path) -> None:
+        code = 'try:\n    await stuck()\nexcept Exception:\n    pass\n' if caught else 'await stuck()\n'
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                return ModelResponse(parts=[TextPart('done')])
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+        agent = fold_agent(streamed(respond), SpeculationCounters(), tmp_path)
+
+        @agent.tool_plain
+        def stuck() -> str:
+            """Wait for an answer nobody gives."""
+            raise CallDeferred()
+
+        started, finished, _ = await run_shown(agent, capabilities=[HandleDeferredToolCalls(answer_inline)])
+
+        assert [event.call.tool_name for event in started] == ['stuck']
+        [result] = [event.result for event in finished]
+        assert (result.tool_name, result.outcome) == ('stuck', 'retried')
+        if caught:
+            assert result.content == 'The call did not return a result.'
+        else:
+            assert 'raised CallDeferred inside code mode' in str(result.content)
+
+    async def test_speculative_launches_show_their_resolution_when_claimed(self, tmp_path: Path) -> None:
+        counters = SpeculationCounters()
+
+        agent = fold_agent(trickled_run_code(SPECULATIVE_PAUSED_SNIPPET), counters, tmp_path)
+        (tmp_path / 'c.py').write_text('contents of c.py\n')
+
+        started, finished, output = await run_shown(
+            agent,
+            capabilities=[
+                Hooks[None](before_tool_execute=pause_reads),
+                HandleDeferredToolCalls(answer_inline),
+            ],
+        )
+
+        assert counters.hits == 3
+        assert [event.call.args for event in started] == [{'path': 'a.py'}, {'path': 'b.py'}, {'path': 'c.py'}]
+        ids = [event.call.tool_call_id for event in started]
+        assert all(re.fullmatch(r'.+__\d+', call_id) for call_id in ids)
+        results = {event.result.tool_call_id: event.result for event in finished}
+        assert [results[call_id].outcome for call_id in ids] == ['success', 'denied', 'success']
+        assert 'contents of a.py' in str(results[ids[0]].content)
+        assert [results[call_id].content for call_id in ids[1:]] == ['The tool call was denied.', 'answered']
+        assert 'retried' not in output
+
+    async def test_launch_claimed_after_its_run_code_settles_still_closes(self, tmp_path: Path) -> None:
+        """A consumer that lags lets `run_code` return before listeners see its claims."""
+        counters = SpeculationCounters()
+        agent = fold_agent(trickled_run_code(SPECULATIVE_PAUSED_SNIPPET), counters, tmp_path)
+        (tmp_path / 'c.py').write_text('contents of c.py\n')
+        settled = SignalSettled()
+        capabilities = [Hooks[None](before_tool_execute=pause_reads), HandleDeferredToolCalls(answer_inline), settled]
+
+        events: list[AgentStreamEvent] = []
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            async with agent.run_stream_events('go', capabilities=capabilities) as stream:
+                async for event in stream:
+                    if isinstance(event, AgentRunResultEvent):
+                        continue
+                    if isinstance(event, FunctionToolCallEvent) and event.part.tool_name == 'run_code':
+                        await settled.done.wait()
+                    events.append(event)
+
+        assert counters.hits == 3
+        started = [event for event in events if isinstance(event, SandboxCallStartedEvent)]
+        assert [event.call.args for event in started] == [{'path': 'a.py'}, {'path': 'b.py'}, {'path': 'c.py'}]
+        results = {
+            event.result.tool_call_id: event.result for event in events if isinstance(event, SandboxCallFinishedEvent)
+        }
+        ids = [event.call.tool_call_id for event in started]
+        assert [results[call_id].outcome for call_id in ids] == ['success', 'denied', 'success']
+        assert [results[call_id].content for call_id in ids[1:]] == ['The tool call was denied.', 'answered']
+        # Each claimed call's reports follow straight after its start.
+        assert sandbox_reports(events) == [('started', 'read_file'), ('finished', 'read_file')] * 3
+
+    async def test_denied_launch_is_reported_before_a_later_cold_call(self, tmp_path: Path) -> None:
+        """The stream can reach a denied launch's claim after the snippet has moved on, and before `run_code` settles."""
+        cold_started = anyio.Event()
+        lag = Hooks[object]()
+
+        @lag.on.event(SpeculativeCallClaimedEvent)
+        async def reach_claim_late(ctx: RunContext[object], event: SpeculativeCallClaimedEvent) -> None:
+            # A consumer still busy with an earlier event holds the stream back like this.
+            await cold_started.wait()
+
+        def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if len(messages) > 1:
+                return ModelResponse(parts=[TextPart('done')])
+            # One compound statement, so eager execution starts it only once the tool call does.
+            code = 'if True:\n    try:\n        await read_file(path="b.py")\n    except Exception:\n        pass\n    await cold()\n'
+            return ModelResponse(parts=[ToolCallPart('run_code', {'code': code})])
+
+        counters = SpeculationCounters()
+        (tmp_path / 'b.py').write_text('contents of b.py\n')
+        file_system = FileSystem()
+        sandbox = speculative_capabilities(counters, (file_system,))
+        agent: Agent[None, str] = Agent(
+            streamed(respond), capabilities=[file_system, lag, *sandbox, LocalWorkspace(tmp_path)]
+        )
+
+        @agent.tool_plain
+        async def cold() -> str:
+            """Run without speculating."""
+            cold_started.set()
+            return 'ran'
+
+        started, finished, _ = await run_shown(
+            agent, capabilities=[Hooks[None](before_tool_execute=pause_reads), HandleDeferredToolCalls(answer_inline)]
+        )
+
+        assert counters.hits == 1
+        assert [event.call.tool_name for event in started] == ['read_file', 'cold']
+        assert [(event.result.tool_name, event.result.outcome) for event in finished] == [
+            ('cold', 'success'),
+            ('read_file', 'denied'),
+        ]
+
+    async def test_paused_launch_waits_for_its_claim(self) -> None:
+        show = ShowSandboxCalls[None]()
+        launch = ToolCallPart(tool_name='read_file', args={'path': 'a.py'}, tool_call_id='parent__spec_1')
+
+        async def pause(args: dict[str, object]) -> str:
+            raise ApprovalRequired()
+
+        with pytest.raises(ApprovalRequired):
+            await show.wrap_tool_execute(
+                context(), call=launch, tool_def=ToolDefinition(name='read_file'), args={}, handler=pause
+            )
+
+        async def settle(args: dict[str, object]) -> str:
+            return 'settled'
+
+        parent = ToolCallPart(tool_name='run_code', tool_call_id='parent')
+        # A launch is shown only once claimed, so its parent settling reports nothing; emitting
+        # would fail, as this context has no stream.
+        assert (
+            await show.wrap_tool_execute(
+                context(),
+                call=parent,
+                tool_def=ToolDefinition(name='run_code', tool_kind='code_mode.run_code'),
+                args={},
+                handler=settle,
+            )
+            == 'settled'
+        )
+
+    async def test_direct_call_other_than_run_code_keeps_no_result(self) -> None:
+        """Only a `run_code` call can have paused launches to close, so another direct call's result is not kept."""
+        show = ShowSandboxCalls[None]()
+
+        class Written:
+            pass
+
+        async def write(args: dict[str, object]) -> Written:
+            return Written()
+
+        call = ToolCallPart(tool_name='write_file', tool_call_id='direct')
+        result = await show.wrap_tool_execute(
+            context(), call=call, tool_def=ToolDefinition(name='write_file'), args={}, handler=write
+        )
+        kept = weakref.ref(result)
+        del result
+        gc.collect()
+        assert kept() is None
+
+    @pytest.mark.parametrize('state', ['pending', 'ready'])
+    async def test_paused_launch_evicted_before_its_claim_is_never_shown(
+        self, state: Literal['pending', 'ready']
+    ) -> None:
+        show = ShowSandboxCalls[None]()
+        launch = ToolCallPart(tool_name='read_file', args={'path': 'a.py'}, tool_call_id='parent__spec_1')
+
+        async def pause(args: dict[str, object]) -> str:
+            raise ApprovalRequired()
+
+        with pytest.raises(ApprovalRequired):
+            await show.wrap_tool_execute(
+                context(), call=launch, tool_def=ToolDefinition(name='read_file'), args={}, handler=pause
+            )
+        evicted = SpeculativeCallEvictedEvent(launch_id=launch.tool_call_id, wrapped_tool_name='read_file', state=state)
+        await show.on_event(context(), event=evicted)
+        # The evicted launch is forgotten, so a claim with its id reports nothing; emitting would
+        # fail, as this context has no stream.
+        await show.on_event(context(), event=claimed(ready=True, elapsed_ms=1, launch_id=launch.tool_call_id))
 
 
 async def test_guidance_mentions_raw_triple_quoted_multiline_shell_commands(tmp_path: Path) -> None:
