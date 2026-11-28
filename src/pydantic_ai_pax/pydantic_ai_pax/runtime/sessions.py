@@ -37,6 +37,7 @@ from pydantic_ai_pax.runtime.imported_sessions import (
     import_source,
     merge,
     save_import,
+    source_of,
 )
 from pydantic_ai_pax.runtime.launch import launch_session_id
 from pydantic_ai_pax.runtime.session import Session, fork_summary, interrupted_history
@@ -89,6 +90,8 @@ class Sessions(Generic[DepsT, OutputT]):
         """Told the restored history after each resume, so the shell can show it."""
         self.relocate: Callable[[str], Awaitable[None]] | None = None
         """Moves the session into a directory, so `/resume ID` continues one where it was saved; `pax --web` only."""
+        self.follow_imports: Callable[[str], Awaitable[None]] | None = None
+        """Moves the session into a directory, so a Claude Code or Codex session continues where it was saved."""
         self.show_live: Callable[[str], Awaitable[str | None]] = _not_shown
         """Shows in the terminal another live session holding a conversation, with the notice; `None` when none does."""
 
@@ -110,7 +113,8 @@ class Sessions(Generic[DepsT, OutputT]):
         """Restore a saved session, then show its history.
 
         With `relocate`, the session first moves into the directory it was saved in, unless the
-        `/resume` browser confirmed continuing it here; one that no longer exists raises `ValueError`.
+        `/resume` browser confirmed continuing it here; with `follow_imports`, it always does for a Claude
+        Code or Codex session. A directory that no longer exists raises `ValueError`.
         `unarchive=False` leaves an archived session archived, for a restore that continues in a fork.
         One another live session of this Pax holds raises `ValueError`: a conversation is live in one session.
         In the terminal, that session is shown instead, and this one stays live as it is.
@@ -124,10 +128,7 @@ class Sessions(Generic[DepsT, OutputT]):
             return shown
         # Held from before moving directory, so no other session resumes it meanwhile.
         with self.session.claim(target):
-            if self.relocate is not None and not allow_other_workspace:
-                workspace = (await self.store.get(conversation_id=target)).summary.workspace
-                if workspace != self.session.workspace:
-                    await self.relocate(workspace)
+            await self._move_to(target, allow_other_workspace=allow_other_workspace)
             notice = await self.session.resume(
                 conversation_id,
                 allow_other_workspace=allow_other_workspace,
@@ -135,6 +136,17 @@ class Sessions(Generic[DepsT, OutputT]):
                 continuation=continuation,
             )
         return notice
+
+    async def _move_to(self, conversation_id: str, *, allow_other_workspace: bool) -> None:
+        """Move into the directory `conversation_id` was saved in, when `resume` says to."""
+        if (self.relocate is None or allow_other_workspace) and self.follow_imports is None:
+            return
+        summary = (await self.store.get(conversation_id=conversation_id)).summary
+        move = self.relocate if not allow_other_workspace else None
+        if move is None and source_of(summary) is not None:
+            move = self.follow_imports
+        if move is not None and summary.workspace != self.session.workspace:
+            await move(summary.workspace)
 
     async def show_resumed(self) -> None:
         """Show the restored history; a startup restore calls this once plugin renderers have loaded."""
@@ -234,10 +246,12 @@ class Sessions(Generic[DepsT, OutputT]):
     async def import_session(self, source: ImportSource, native_id: str) -> str:
         """Copy a Claude Code or Codex session into the store by its own ID, returning its Pax ID.
 
-        As with a saved session's ID, one from another directory is refused, before anything is saved.
+        As with a saved session's ID, one from another directory is refused, before anything is saved,
+        unless `follow_imports` moves there to resume it.
         """
         imported = await run_sync(find_import, source, native_id)
-        self.session.check_workspace(imported.summary.workspace)
+        if self.follow_imports is None:
+            self.session.check_workspace(imported.summary.workspace)
         return await save_import(self.store, imported, delegations=self.tasks)
 
     async def listing(

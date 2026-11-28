@@ -1464,6 +1464,73 @@ async def test_startup_flags_import_through_chat_and_headless(
     assert [p.content for p in request.parts if isinstance(p, UserPromptPart)] == ['follow up']
 
 
+def imported_project(tmp_path: Path, source: str) -> tuple[Path, Path, str]:
+    """A session of `source` saved in a project with a project file, and another directory to start Pax in."""
+    project, other = tmp_path / 'project', tmp_path / 'other'
+    (project / '.clai').mkdir(parents=True)
+    (project / '.clai' / 'settings.json').write_text('{}', encoding='utf-8')
+    other.mkdir()
+    if source == 'claude':
+        claude_session(project)
+        return project.resolve(), other.resolve(), CLAUDE_ID
+    codex_session(project)
+    return project.resolve(), other.resolve(), CODEX_ID
+
+
+@pytest.mark.parametrize('source', ['claude', 'codex'])
+@pytest.mark.parametrize('browse', [False, True])
+async def test_terminal_resume_moves_into_the_imported_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str, browse: bool
+) -> None:
+    """Resuming a Claude Code or Codex session in the terminal continues it in its project, with that project's file."""
+    project, other, native_id = imported_project(tmp_path, source)
+    shell = create_shell(
+        Agent(TestModel()),
+        deps=None,
+        plugins=(),
+        usage_limits=None,
+        console=Console(file=StringIO()),
+        settings=Settings(model=None, session_namer=False),
+        store=SettingsStore(tmp_path / 'config.db'),
+        builtin_plugins=(),
+        project=ProjectSettings(),
+        workspace=other,
+    )
+    await shell.loader.load_all()
+    if browse:
+
+        def pick(browser: SessionBrowser) -> str:
+            return browser.entries[0].id
+
+        monkeypatch.setattr(SessionBrowser, 'run', pick)
+    notice = await shell.sessions.command([source] if browse else [source, native_id])
+    assert notice.startswith('Resumed ')
+    assert (shell.session.workspace, shell.status.workspace) == (str(project), str(project))
+    assert shell.context.project.root == project
+    # Pax's own sessions keep asking to be confirmed in the browser.
+    native = await shell.sessions.store.save(summary=ConversationSummary(workspace=str(other)), messages=[])
+    with pytest.raises(ValueError, match='Session belongs to'):
+        await shell.sessions.command([native.id])
+    await shell.close('exit')
+
+
+@pytest.mark.parametrize('source', ['claude', 'codex'])
+def test_cli_resume_flag_starts_in_the_imported_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str
+) -> None:
+    project, other, native_id = imported_project(tmp_path, source)
+    monkeypatch.chdir(other)
+    monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'config.db'), f'--resume-{source}', native_id])
+    seen: list[tuple[Path, Path | None]] = []
+
+    async def fake_chat(*args: object, project: ProjectSettings, **kwargs: object) -> None:
+        seen.append((await run_sync(Path.cwd), project.root))
+
+    monkeypatch.setattr('pydantic_ai_pax.app.chat', fake_chat)
+    cli.run()
+    assert seen == [(project, project)]
+
+
 @pytest.mark.parametrize(
     ('flags', 'resume', 'source'),
     [
@@ -1475,6 +1542,8 @@ async def test_startup_flags_import_through_chat_and_headless(
 def test_cli_resume_flags(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, flags: list[str], resume: str, source: str | None
 ) -> None:
+    monkeypatch.chdir(tmp_path)
+    claude_session(tmp_path)
     monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'config.db'), *flags])
     seen: list[tuple[str | None, str | None]] = []
 
@@ -1487,6 +1556,8 @@ def test_cli_resume_flags(
 
 
 def test_cli_prompt_with_imported_session(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.chdir(tmp_path)
+    codex_session(tmp_path)
     database = str(tmp_path / 'config.db')
     monkeypatch.setattr('sys.argv', ['pax', '--database', database, '-p', 'hi', '--resume-codex', CODEX_ID])
     seen: list[tuple[str | None, str | None]] = []

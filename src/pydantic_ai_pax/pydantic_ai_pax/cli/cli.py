@@ -22,6 +22,7 @@ if TYPE_CHECKING:
     from pydantic_ai_pax.config import Settings, UpdateChannel
     from pydantic_ai_pax.config.project_settings import ProjectSettings
     from pydantic_ai_pax.config.settings_store import SettingsStore
+    from pydantic_ai_pax.runtime.imported_sessions import ImportSource
     from pydantic_ai_pax.runtime.worktrees import Worktree
 
 _RELAUNCH_WORKTREE = 'CLAI_RELAUNCH_WORKTREE'
@@ -185,8 +186,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
             )
             raise SystemExit(asyncio.run(_update(settings.update_channel)))
         agent = import_agent(args.agent) if args.agent is not None else None
-        if args.worktree is not None:
-            worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web, store=store)
+        worktree = _enter_launch_directory(args, store=store)
         project = load_project_settings(Path.cwd(), store=store)
         _continue_session(args, store)
         model = args.model or os.getenv('CLAI_MODEL')
@@ -439,6 +439,23 @@ def _enter_worktree(*, name: str, headless: bool, store: 'SettingsStore') -> 'Wo
         )
     os.chdir(worktree.path)
     return worktree
+
+
+def _enter_launch_directory(args: argparse.Namespace, *, store: 'SettingsStore') -> 'Worktree | None':
+    """Change into the `--worktree` checkout, returning it, or the directory a `--resume-claude` or `--resume-codex` ID ran in."""
+    if args.worktree is not None:
+        return _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web, store=store)
+    if args.resume_from is not None and args.resume:
+        _enter_imported_project(args.resume_from, args.resume)
+    return None
+
+
+def _enter_imported_project(source: 'ImportSource', native_id: str) -> None:
+    """Change into the directory the Claude Code or Codex session `native_id` was saved in, to start there."""
+    from pydantic_ai_pax.runtime.imported_sessions import find_import
+    from pydantic_ai_pax.runtime.session_workspace import workspace_directory
+
+    os.chdir(workspace_directory(find_import(source, native_id).summary.workspace))
 
 
 def _launched_worktree(*, relaunched: str | None) -> 'Worktree | None':
