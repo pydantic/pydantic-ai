@@ -47,6 +47,7 @@ Pass a name in the form `<provider>:<model>` to [`Agent`][pydantic_ai.Agent] to 
 | [Oracle Cloud Infrastructure (OCI) Generative AI](compatible-apis.md#oci-generative-ai) | Cloud platform | explicit [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider] |
 | [Otari](compatible-apis.md#otari) | Gateway | `otari:` |
 | [OVHcloud AI Endpoints](compatible-apis.md#ovhcloud-ai-endpoints) | Cloud platform | `ovhcloud:` |
+| [Rapid-MLX](compatible-apis.md#rapid-mlx) | Local inference on Apple Silicon | explicit [`OpenAICompatibleProvider`][pydantic_ai.providers.openai_compatible.OpenAICompatibleProvider] |
 | [SambaNova](compatible-apis.md#sambanova) | Inference platform | `sambanova:` |
 | [Snowflake Cortex](snowflake.md) | Cloud platform | `snowflake:` |
 | [Stav](compatible-apis.md#stav) | Gateway | `stav:` |
