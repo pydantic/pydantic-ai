@@ -150,7 +150,13 @@ class Sessions(Generic[DepsT, OutputT]):
             return ''
         if source_of(summary) is None or (follow := await self._follower(summary.workspace)) is None:
             return ''
-        await follow(summary.workspace)
+        try:
+            await follow(summary.workspace)
+        except (ValueError, RuntimeError) as exc:
+            if not allow_other_workspace:
+                raise
+            # The browser confirmed continuing it here; `move` changed nothing.
+            return f' Continuing here: {exc}'
         untrusted = self.session.trust is not None and not self.session.trust.trusted
         return f' Continuing in {self.session.workspace}' + (
             ', an untrusted folder: /trust shows why.' if untrusted else '.'

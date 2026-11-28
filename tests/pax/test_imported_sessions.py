@@ -1549,6 +1549,25 @@ async def test_terminal_resume_of_an_import_whose_directory_is_gone(
     await shell.close('exit')
 
 
+@pytest.mark.parametrize('browse', [False, True])
+async def test_terminal_resume_of_an_import_pax_cannot_move_to(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, browse: bool
+) -> None:
+    """A project file that does not load leaves the session here: the browser continues it, `/resume claude ID` says why."""
+    project, other, native_id = imported_project(tmp_path, 'claude')
+    (project / '.clai' / 'settings.json').write_text('{', encoding='utf-8')
+    shell = terminal_shell(tmp_path, other)
+    await shell.loader.load_all()
+    if browse:
+        monkeypatch.setattr(SessionBrowser, 'run', pick_first)
+        assert ' Continuing here: ' in await shell.sessions.command(['claude'])
+    else:
+        with pytest.raises(ValueError, match=r'settings\.json'):
+            await shell.sessions.command(['claude', native_id])
+    assert shell.session.workspace == str(other)
+    await shell.close('exit')
+
+
 @pytest.mark.parametrize('source', ['claude', 'codex'])
 @pytest.mark.parametrize('mode', ['chat', 'prompt', 'web', 'relaunch'])
 def test_cli_resume_starts_in_the_imported_project(

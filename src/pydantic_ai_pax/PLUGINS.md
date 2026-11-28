@@ -1160,8 +1160,8 @@ also stops the automatic removal. By default, removal uses Git
 without `--force` and keeps the branch; dirty or locked checkouts stay on disk.
 Headless runs, piped input, and startup errors do not prompt. `/new`, `/resume`,
 and `/reload` keep the checkout in use, except under `pax --web`, where opening a session saved
-elsewhere, or `/workspace`, moves the session to its own directory, and on resuming a Claude Code or
-Codex session, which moves the session to the directory it was saved in. Plugins do not own worktree cleanup.
+elsewhere, or `/workspace`, moves the session to its own directory. Resuming a Claude Code or Codex
+session also moves the session, to the directory that session ran in. Plugins do not own worktree cleanup.
 See [Git worktrees](docs/reference.md#git-worktrees) for naming and cleanup, including configuration for a user-defined removal command.
 
 ## The built-in plugins
