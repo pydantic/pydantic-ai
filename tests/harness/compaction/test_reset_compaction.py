@@ -672,7 +672,7 @@ class TestResetCompaction:
 
         assert sizes == [5, 5, 5]
         # Rome and Oslo arrive merged in one request, and are still counted as two prompts.
-        assert [facts.kept_user_turns for facts in received] == [3]
+        assert [facts.kept_user_prompts for facts in received] == [3]
         assert _shape(await compact_now(reset, history, model=Script().model())) == snapshot(
             [
                 "request: user 'Plan the trip.'",
@@ -719,7 +719,7 @@ class TestResetCompaction:
                 'request: return lookup c2',
             ]
         )
-        assert received[0].kept_user_turns == 2
+        assert received[0].kept_user_prompts == 2
         assert _shape(kept_none) == snapshot(
             [
                 "request: user 'Plan the trip.'",
@@ -843,7 +843,7 @@ class TestResetCompaction:
             replies_logged=True,
             cleared_messages=4,
             kept_first_request=True,
-            kept_user_turns=0,
+            kept_user_prompts=0,
             kept_messages=2,
             kept_tool_calls=1,
         )
@@ -886,7 +886,7 @@ class TestResetCompaction:
                     replies_logged=True,
                     cleared_messages=2,
                     kept_first_request=True,
-                    kept_user_turns=0,
+                    kept_user_prompts=0,
                     kept_messages=1,
                     kept_tool_calls=0,
                 )

@@ -240,15 +240,11 @@ class WorkLog(AbstractCapability[AgentDepsT]):
 
     @durable_operation('search')
     async def _search(
-        self, ctx: RunContext[AgentDepsT], query: str | None, tool_name: str | None, run_id: str | None, limit: int
+        self, ctx: RunContext[AgentDepsT], query: str | None, tool_name: str | None, limit: int
     ) -> WorkLogSearchResult:
         store, log_id = self._target(ctx)
         entries = await store.read(log_id)
-        candidates = [
-            entry
-            for entry in entries
-            if (tool_name is None or entry['tool_name'] == tool_name) and (run_id is None or entry['run_id'] == run_id)
-        ]
+        candidates = [entry for entry in entries if tool_name is None or entry['tool_name'] == tool_name]
         # Listing the newest entries ranks nothing, so only a search with a query is cut to the newest.
         unsearched = max(0, len(candidates) - self.max_scanned_entries) if query and query.strip() else 0
         # Entries hold full results, which can run to megabytes, so ranking and excerpting run in a worker thread.

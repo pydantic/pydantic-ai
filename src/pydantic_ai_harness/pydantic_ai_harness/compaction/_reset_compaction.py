@@ -107,10 +107,8 @@ class ResetNotice:
     kept_first_request: bool
     """Whether the conversation's first user request is still in it."""
 
-    kept_user_turns: int
-    """User prompts after the first request still in the conversation, besides one in the kept messages.
-
-    Counted by prompt, since a reset keeps the user's later turns in one request."""
+    kept_user_prompts: int
+    """User prompts after the first request still in the conversation, besides one in the kept messages."""
 
     kept_messages: int
     """Messages kept after the notice, at the end of the conversation."""
@@ -134,7 +132,7 @@ def default_reset_notice(notice: ResetNotice) -> str:
         if notice.replies_logged
         else 'Your earlier tool calls with full results, including calls made inside code, are'
     )
-    requests = "The user's requests" if notice.kept_user_turns else "The user's original request"
+    requests = "The user's requests" if notice.kept_user_prompts else "The user's original request"
     calls = (
         'latest tool call and its result'
         if notice.kept_tool_calls == 1
@@ -143,7 +141,7 @@ def default_reset_notice(notice: ResetNotice) -> str:
     if notice.kept_first_request and notice.kept_tool_calls:
         kept = f' {requests} and your {calls} are still in this conversation.'
     elif notice.kept_first_request:
-        kept = f' {requests} {"are" if notice.kept_user_turns else "is"} still in this conversation.'
+        kept = f' {requests} {"are" if notice.kept_user_prompts else "is"} still in this conversation.'
     elif notice.kept_tool_calls:
         kept = f' Your {calls} are still in this conversation.'
     else:
@@ -317,7 +315,7 @@ class ResetCompaction(AbstractCapability[AgentDepsT]):
             replies_logged=self.work_log.record_text,
             cleared_messages=cutoff - len(head) - len(kept_turns),
             kept_first_request=first is not None,
-            kept_user_turns=len(kept_prompts),
+            kept_user_prompts=len(kept_prompts),
             kept_messages=len(tail),
             kept_tool_calls=len(iter_tool_pairs(tail)),
         )

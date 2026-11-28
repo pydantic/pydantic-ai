@@ -269,7 +269,7 @@ Gotchas:
 Records every tool call that ran, with its full result before `ToolOutputLimits` reduces it, plus
 the model's text replies, in one log per `conversation_id`. Calls a Code Mode script makes inside
 `run_code` get their own entries, with `run_code`'s call id as `parent_tool_call_id`. Adds two
-tools, usable from Code Mode code too: `search_work_log(query=None, tool_name=None, run_id=None,
+tools, usable from Code Mode code too: `search_work_log(query=None, tool_name=None,
 limit=10)` (BM25 over tool name, arguments and result; newest first without a query) and
 `read_work_log(seq, offset=0, limit=200, from_end=False, pattern=None, unit='lines')` (one entry in
 full, paged by line with `read_tool_result`'s caps: 1,000 lines, 50,000 characters, literal

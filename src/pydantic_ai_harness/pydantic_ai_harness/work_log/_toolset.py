@@ -96,9 +96,7 @@ class WorkLogToolset(FunctionToolset[AgentDepsT]):
     def __init__(
         self,
         *,
-        search: Callable[
-            [RunContext[AgentDepsT], str | None, str | None, str | None, int], Awaitable[WorkLogSearchResult]
-        ],
+        search: Callable[[RunContext[AgentDepsT], str | None, str | None, int], Awaitable[WorkLogSearchResult]],
         read: Callable[
             [RunContext[AgentDepsT], int, int, int, bool, str | None, ReadUnit], Awaitable[WorkLogRead | RetryRequest]
         ],
@@ -119,7 +117,6 @@ class WorkLogToolset(FunctionToolset[AgentDepsT]):
         ctx: RunContext[AgentDepsT],
         query: str | None = None,
         tool_name: str | None = None,
-        run_id: str | None = None,
         limit: int = 10,
     ) -> WorkLogSearchResult:
         """Search the work log of this conversation. The model sees `_SEARCH_DESCRIPTION`, which says what the log holds.
@@ -129,14 +126,13 @@ class WorkLogToolset(FunctionToolset[AgentDepsT]):
             query: Words to search for. Omit it to list the most recent entries.
                 At most 1,000 characters and 32 unique terms.
             tool_name: Only entries for calls to this tool.
-            run_id: Only entries from this agent run.
             limit: Maximum number of matches (>= 1).
         """
         if limit < 1:
             raise ModelRetry('`limit` must be >= 1.')
         if query is not None:
             check_query(query)
-        return await self._search(ctx, query, tool_name, run_id, limit)
+        return await self._search(ctx, query, tool_name, limit)
 
     async def read_work_log(
         self,

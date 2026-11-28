@@ -777,16 +777,16 @@ class TestWorkLogTools:
 
     async def test_search_filters_and_lists_the_newest_first_without_a_query(self) -> None:
         store = InMemoryWorkLogStore()
-        await store.append(_CONVERSATION, _record('k1', tool_name='lookup', run_id='run-1'))
-        await store.append(_CONVERSATION, _record('k2', tool_name='fetch', run_id='run-1'))
-        await store.append(_CONVERSATION, _record('k3', tool_name='lookup', run_id='run-2'))
-        await store.append(_CONVERSATION, _record('k4', tool_name='lookup', run_id='run-2'))
+        await store.append(_CONVERSATION, _record('k1', tool_name='lookup'))
+        await store.append(_CONVERSATION, _record('k2', tool_name='fetch'))
+        await store.append(_CONVERSATION, _record('k3', tool_name='lookup'))
+        await store.append(_CONVERSATION, _record('k4', tool_name='lookup'))
 
         found = await _call_tools(
             store,
             ('search_work_log', {'limit': 2}),
             ('search_work_log', {'query': '  '}),
-            ('search_work_log', {'tool_name': 'lookup', 'run_id': 'run-1'}),
+            ('search_work_log', {'tool_name': 'lookup'}),
             ('search_work_log', {'tool_name': 'fetch', 'query': 'result'}),
             ('search_work_log', {'limit': 0}),
         )
@@ -794,7 +794,7 @@ class TestWorkLogTools:
         assert [[match['seq'] for match in _SEARCH.validate_python(result)['matches']] for result in found[:4]] == [
             [4, 3],
             [4, 3, 2, 1],
-            [1],
+            [4, 3, 1],
             [2],
         ]
         assert found[4] == '`limit` must be >= 1.'
@@ -1049,15 +1049,15 @@ class TestWorkLogSearchBounds:
 
     async def test_a_capped_search_without_matches_says_what_it_skipped(self) -> None:
         store = InMemoryWorkLogStore()
-        await store.append(_CONVERSATION, _record('k1', 'needle oldest', run_id='run-1'))
-        await store.append(_CONVERSATION, _record('k2', 'filler one', run_id='run-2'))
-        await store.append(_CONVERSATION, _record('k3', 'filler two', run_id='run-2'))
+        await store.append(_CONVERSATION, _record('k1', 'needle oldest', tool_name='fetch'))
+        await store.append(_CONVERSATION, _record('k2', 'filler one'))
+        await store.append(_CONVERSATION, _record('k3', 'filler two'))
 
         missed, reached = await _call_tools(
             store,
             ('search_work_log', {'query': 'needle'}),
             # A filter narrows the entries before the newest are kept, so the skipped entry stays reachable.
-            ('search_work_log', {'query': 'needle', 'run_id': 'run-1'}),
+            ('search_work_log', {'query': 'needle', 'tool_name': 'fetch'}),
             max_scanned_entries=2,
         )
 

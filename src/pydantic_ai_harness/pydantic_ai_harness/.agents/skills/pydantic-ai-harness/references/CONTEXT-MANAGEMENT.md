@@ -295,7 +295,7 @@ back from the work log. Pass the `WorkLog` instance that is on the agent: `Agent
 one, or when it's registered without a trigger; as a strategy (a tier, a fallback entry,
 `CompactOnRequest`'s strategy, `compact_now`) it needs none. `notice=` takes a
 `ResetNotice -> str` callable (`number`, `work_log`, `search_tool`, `read_tool`, `replies_logged`,
-`cleared_messages`, `kept_first_request`, `kept_user_turns`, `kept_messages`, `kept_tool_calls`); `default_reset_notice`
+`cleared_messages`, `kept_first_request`, `kept_user_prompts`, `kept_messages`, `kept_tool_calls`); `default_reset_notice`
 is the default.
 `restate=` takes an async `RunContext -> str | CurrentStatePart | None` whose result goes in a
 `<current_state>` frame after the notice; a string is recorded as the callable's output

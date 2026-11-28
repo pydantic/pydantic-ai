@@ -97,19 +97,19 @@ the tool it names under its own id, so the two entries share a `tool_call_id`, a
 
 ## Searching and reading
 
-`search_work_log(query=None, tool_name=None, run_id=None, limit=10)` finds entries:
+`search_work_log(query=None, tool_name=None, limit=10)` finds entries:
 
 - With a `query`, only entries containing a query word are returned, ranked with BM25 over the tool name, arguments and content, the same
   ranking as [Conversation Search](../conversation_search/): rare terms and exact words score
   higher.
 - Without one, it returns the most recent entries, newest first.
-- `tool_name` and `run_id` keep only entries that match exactly.
+- `tool_name` keeps only entries for calls to that tool.
 
 Entries hold full results, so ranking and excerpting run in a worker thread, off the event loop. A
 query over 1,000 characters or 32 unique terms goes back to the model to retry, and a search with a
 `query` scores only the newest `max_scanned_entries` entries that pass the filters (2,000 by
-default). The result's `unsearched_entries` says how many older ones it skipped. A `tool_name` or
-`run_id` filter narrows the entries first, so it still reaches an older one. Raise
+default). The result's `unsearched_entries` says how many older ones it skipped. A `tool_name`
+filter narrows the entries first, so it still reaches an older one. Raise
 `max_scanned_entries` to search further back; each search then takes longer.
 
 Each match has the entry's `seq`, `context`, `kind` and `tool_name`, its arguments clipped to about
