@@ -1760,7 +1760,7 @@ class GoogleModel(Model[Client]):
 @dataclass
 class _GoogleStreamTextRun:
     part_id: UUID
-    content: str = ''
+    chunks: list[str] = field(default_factory=list[str])
 
 
 @dataclass
@@ -1992,7 +1992,7 @@ class GeminiStreamedResponse(StreamedResponse):
             )
         else:
             text_run = self._text_runs[-1]
-            text_run.content += text
+            text_run.chunks.append(text)
             yield from self._parts_manager.handle_text_delta(
                 vendor_part_id=text_run.part_id,
                 content=text,
@@ -2037,7 +2037,7 @@ class GeminiStreamedResponse(StreamedResponse):
     def _map_trailing_grounding(self) -> Iterator[ModelResponseStreamEvent]:
         """Gemini sends the grounding metadata once, on the final chunk, after the text it grounds."""
         grounding_citations = _map_citations(
-            [Part(text=text_run.content) for text_run in self._text_runs], self._grounding_metadata
+            [Part(text=''.join(text_run.chunks)) for text_run in self._text_runs], self._grounding_metadata
         )
         for index, (citations, citations_details) in grounding_citations.items():
             yield from self._parts_manager.handle_text_delta(

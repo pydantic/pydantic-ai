@@ -7,6 +7,7 @@ import os
 import random
 import re
 import tempfile
+import time
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from datetime import date
@@ -8216,3 +8217,72 @@ async def test_google_tool_output_cut_off_by_max_tokens(allow_model_requests: No
                 ),
             ]
         )
+
+
+async def test_google_stream_text_run_linear_scaling():
+    """Streaming many text chunks in a single run scales linearly, not quadratically."""
+
+    async def empty_stream() -> AsyncIterator[GenerateContentResponse]:
+        if False:  # pragma: no cover
+            yield
+
+    def time_chunks(n: int) -> float:
+        resp = GeminiStreamedResponse(
+            model_request_parameters=ModelRequestParameters(),
+            _model_name='gemini-2.5-flash',
+            _response=PeekableAsyncStream(empty_stream()),
+            _provider_name='google',
+            _model_id_namespace='google',
+            _provider_url='https://generativelanguage.googleapis.com/',
+        )
+        resp._track_text_run(Part(text='x' * 64))  # pyright: ignore[reportPrivateUsage]
+        t0 = time.process_time()
+        for _ in range(n):
+            list(resp._map_text('x' * 64, False, None))  # pyright: ignore[reportPrivateUsage]
+        return time.process_time() - t0
+
+    small_time = time_chunks(4_000)
+    large_time = time_chunks(32_000)
+    assert large_time < max(small_time, 1e-3) * 20, f'Quadratic growth: 4k={small_time:.3f}s, 32k={large_time:.3f}s'
+
+
+async def test_google_stream_chunked_text_with_trailing_grounding_citations(
+    allow_model_requests: None, google_provider: GoogleProvider, mocker: MockerFixture
+):
+    """Chunked text runs still produce exact citation anchors in trailing grounding."""
+    chunks = [
+        GenerateContentResponse(candidates=[Candidate(content=Content(role='model', parts=[Part(text='Hello ')]))]),
+        GenerateContentResponse(candidates=[Candidate(content=Content(role='model', parts=[Part(text='world!')]))]),
+        GenerateContentResponse(
+            candidates=[
+                Candidate(
+                    content=Content(role='model', parts=[Part(text='')]),
+                    finish_reason=GoogleFinishReason.STOP,
+                    grounding_metadata=GroundingMetadata(
+                        grounding_chunks=[GroundingChunk(web=GroundingChunkWeb(uri='https://example.com', title='Ex'))],
+                        grounding_supports=[
+                            GroundingSupport(
+                                segment=Segment(start_index=6, end_index=12, text='world!'),
+                                grounding_chunk_indices=[0],
+                            )
+                        ],
+                    ),
+                )
+            ]
+        ),
+    ]
+    model = GoogleModel('gemini-2.5-flash', provider=google_provider)
+    mocker.patch.object(model.client.aio.models, 'generate_content_stream', return_value=_aiter_chunks(chunks))
+
+    agent = Agent(model=model)
+    async with agent.run_stream('Say hello') as result:
+        output = await result.get_output()
+    assert output == 'Hello world!'
+    parts = result.all_messages()[-1].parts
+    text_part = next(p for p in parts if isinstance(p, TextPart))
+    assert text_part.content == 'Hello world!'
+    assert text_part.citations is not None
+    assert len(text_part.citations) == 1
+    assert text_part.citations[0].anchor is not None
+    assert text_part.content[text_part.citations[0].anchor.start : text_part.citations[0].anchor.end] == 'world!'
+
