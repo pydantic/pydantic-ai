@@ -601,7 +601,9 @@ def _take_new_turn(
 
     Tool results in the new turn are kept only for calls the stored history's last response is still
     waiting on. Copies of the results kept from the cut request are dropped without a warning, as an
-    honest client resubmits them too, and other results with one. Compaction parts are never kept, as
+    honest client resubmits them too, and so are results the history already holds for calls of that
+    response, which a client echoing the stored history back, as a plain continuation does, resends.
+    Other results drop with one. Compaction parts are never kept, as
     the client doesn't own the history they would cut off. See `_drop_compaction_parts`. Nor are
     `CapabilityLoadDeltaPart`s: the stored history has the loads the server recorded, and a client-supplied one would
     load a capability no part of the run loaded, as a client-made `load_capability` exchange would if it weren't
@@ -630,11 +632,19 @@ def _take_new_turn(
 
     pending = {call.tool_call_id for call in pending_tool_calls(history)}
     answerable = _waiting_for_results(pending, waiting_on)
+    # A plain continuation echoes the stored history back, so it resends results the history already
+    # holds for calls of its last response; they drop quietly, like the cut request's results do.
+    last_stored_response = next((m for m in reversed(history) if isinstance(m, ModelResponse)), None)
+    answered_calls = (
+        {part.tool_call_id for part in last_stored_response.parts if isinstance(part, ToolCallPart)}
+        if last_stored_response
+        else set[str]()
+    ) - pending
     kept: list[ModelMessage] = []
     dropped = 0
     for message in new_turn:
         assert isinstance(message, ModelRequest)
-        parts, message_dropped = _answering_parts(message, answerable, pending, resubmitted_results)
+        parts, message_dropped = _answering_parts(message, answerable, pending, resubmitted_results | answered_calls)
         dropped += message_dropped
         if len(parts) == len(message.parts):
             kept.append(message)
@@ -679,6 +689,8 @@ def _answering_parts(
     """The parts of a new-turn `message` that `_take_new_turn` keeps, and how many tool results it drops with a warning.
 
     Each kept tool result answers its call, so the call is discarded from `answerable` and `pending`.
+    A result whose call is in `resubmitted_results` drops without a warning: `_take_new_turn` widens
+    the set with calls of the stored history's last response that the history already answers.
     """
     parts: list[ModelRequestPart] = []
     dropped = 0

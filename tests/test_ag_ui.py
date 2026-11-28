@@ -12282,6 +12282,53 @@ async def _server_history_turn(
     return result.all_messages()
 
 
+async def test_ag_ui_server_history_continuation_does_not_warn_for_already_answered_tool_results():
+    """A plain AG-UI continuation echoes the stored history back, server tool results included.
+
+    The client's `ToolMessage` arrives without its call, so it takes the orphaned-result path, but the
+    stored history already holds a result for the call; the copy is dropped without a warning, and the
+    model still sees the stored copy.
+    """
+    seen: list[list[ModelMessage]] = []
+
+    async def stream_function(messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str]:
+        seen.append(list(messages))
+        yield 'ok'
+
+    agent = Agent(FunctionModel(stream_function=stream_function), deps_type=type(None), output_type=str)
+    stored = [
+        ModelRequest(parts=[UserPromptPart(content='what time is it?')]),
+        ModelResponse(parts=[ToolCallPart(tool_name='get_time', args={}, tool_call_id='srv-1')]),
+        ModelRequest(parts=[ToolReturnPart(tool_name='get_time', content='noon', tool_call_id='srv-1')]),
+    ]
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        result = await _server_history_turn(
+            agent,
+            create_input(
+                UserMessage(id='u1', content='what time is it?'),
+                AssistantMessage(id='a1', content=''),
+                ToolMessage(id='t1', tool_call_id='srv-1', content='noon'),
+                UserMessage(id='u2', content='thanks!'),
+            ),
+            stored,
+        )
+
+    assert conversation_view(seen[-1]) == snapshot(
+        ['user-prompt: what time is it?', 'call srv-1', 'return srv-1: noon', 'user-prompt: thanks!']
+    )
+    assert conversation_view(result) == snapshot(
+        [
+            'user-prompt: what time is it?',
+            'call srv-1',
+            'return srv-1: noon',
+            'user-prompt: thanks!',
+            'text: ok',
+        ]
+    )
+
+
 async def test_server_message_history_drops_client_supplied_capability_loads():
     """With the history on the server, the client's new turn can't load a capability.
 

@@ -2628,6 +2628,49 @@ async def test_server_message_history_resubmission_keeps_the_stored_tool_results
     )
 
 
+async def test_server_message_history_plain_continuation_does_not_warn_for_already_answered_tool_results():
+    """A client that echoes the stored history back resends results the history already holds.
+
+    The server tool's result arrives in the stored history itself, so the history's last response is no
+    longer waiting on the call, but an honest client still sends its copy back with the next turn; it's
+    dropped quietly, and the stored copy stays what the model sees.
+    """
+    agent, requests = _recording_agent()
+    server_call = ModelResponse(parts=[ToolCallPart('get_time', {}, tool_call_id='server-call')])
+    server_result = _with_ui_id(
+        ModelRequest(parts=[ToolReturnPart('get_time', 'noon', tool_call_id='server-call')]), 't1'
+    )
+    stored = [
+        _with_ui_id(ModelRequest.user_text_prompt('what time is it?'), 'u1'),
+        server_call,
+        server_result,
+    ]
+    client = [
+        _with_ui_id(ModelRequest.user_text_prompt('what time is it?'), 'u1'),
+        server_call,
+        server_result,
+        _with_ui_id(ModelRequest.user_text_prompt('thanks!'), 'u2'),
+    ]
+    adapter = DummyUIAdapter(agent=agent, run_input=DummyUIRunInput(messages=client), manage_message_history='server')
+
+    with warnings.catch_warnings():
+        warnings.simplefilter('error')
+        result = await _run(adapter, stored)
+
+    assert conversation_view(requests[0]) == snapshot(
+        ['user-prompt: what time is it?', 'call server-call', 'return server-call: noon', 'user-prompt: thanks!']
+    )
+    assert conversation_view(result.all_messages()) == snapshot(
+        [
+            'user-prompt: what time is it?',
+            'call server-call',
+            'return server-call: noon',
+            'user-prompt: thanks!',
+            'text: ok',
+        ]
+    )
+
+
 def test_server_message_history_cut_is_part_of_the_result():
     """The split says where a resubmission cut the stored history, for a caller that stores it, such as a store.
 
