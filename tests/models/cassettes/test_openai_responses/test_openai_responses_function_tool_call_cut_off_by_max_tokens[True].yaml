@@ -1,0 +1,185 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "688"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-mini
+        stream: true
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Save the 20 largest cities in the world with the `save_cities` tool.
+        max_output_tokens: 40
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: save_cities
+          parameters:
+            additionalProperties: false
+            properties:
+              cities:
+                items:
+                  $ref: "#/$defs/City"
+                type: array
+            required:
+            - cities
+            type: object
+            $defs:
+              City:
+                properties:
+                  name:
+                    type: string
+                  country:
+                    type: string
+                required:
+                - name
+                - country
+                type: object
+                additionalProperties: false
+          type: function
+          description: Save a list of cities.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      cache-control:
+      - no-cache
+      connection:
+      - keep-alive
+      content-type:
+      - text/event-stream
+      openai-processing-ms:
+      - "435"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","sequence_number":0,"response":{"input_transformations":[],"id":"resp_066651cd36b92013006b08aa4a4a8c87d19a91670743078c8c","object":"response","created_at":1795729994,"completed_at":null,"status":"in_progress","background":false,"frequency_penalty":0.0,"presence_penalty":0.0,"moderation":null,"model":"gpt-5.4-mini-2026-03-17","access_programs":null,"previous_response_id":null,"instructions":null,"output":[],"error":null,"incomplete_details":null,"tools":[{"type":"function","name":"save_cities","description":"Save a list of cities.","parameters":{"additionalProperties":false,"properties":{"cities":{"items":{"$ref":"#/$defs/City"},"type":"array"}},"required":["cities"],"type":"object","$defs":{"City":{"properties":{"name":{"type":"string"},"country":{"type":"string"}},"required":["name","country"],"type":"object","additionalProperties":false}}},"output_schema":null,"strict":true}],"tool_choice":"auto","parallel_tool_calls":true,"prompt_cache_key":null,"prompt_cache_retention":"24h","text":{"format":{"type":"text"},"verbosity":"medium"},"top_p":0.98,"top_logprobs":0,"temperature":1.0,"reasoning":{"context":"all_turns","effort":"none","summary":null,"mode":"standard"},"user":null,"usage":null,"tool_usage":{"image_gen":{"input_tokens":0,"output_tokens":0,"total_tokens":0,"input_tokens_details":{"text_tokens":0,"image_tokens":0},"output_tokens_details":{"image_tokens":0,"text_tokens":0}},"web_search":{"num_requests":0}},"safety_identifier":null,"store":true,"metadata":{},"max_output_tokens":40,"max_tool_calls":null,"service_tier":"auto","truncation":"disabled","image":{"context_compression":"disabled"}}}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","sequence_number":1,"response":{"input_transformations":[],"id":"resp_066651cd36b92013006b08aa4a4a8c87d19a91670743078c8c","object":"response","created_at":1795729994,"completed_at":null,"status":"in_progress","background":false,"frequency_penalty":0.0,"presence_penalty":0.0,"moderation":null,"model":"gpt-5.4-mini-2026-03-17","access_programs":null,"previous_response_id":null,"instructions":null,"output":[],"error":null,"incomplete_details":null,"tools":[{"type":"function","name":"save_cities","description":"Save a list of cities.","parameters":{"additionalProperties":false,"properties":{"cities":{"items":{"$ref":"#/$defs/City"},"type":"array"}},"required":["cities"],"type":"object","$defs":{"City":{"properties":{"name":{"type":"string"},"country":{"type":"string"}},"required":["name","country"],"type":"object","additionalProperties":false}}},"output_schema":null,"strict":true}],"tool_choice":"auto","parallel_tool_calls":true,"prompt_cache_key":null,"prompt_cache_retention":"24h","text":{"format":{"type":"text"},"verbosity":"medium"},"top_p":0.98,"top_logprobs":0,"temperature":1.0,"reasoning":{"context":"all_turns","effort":"none","summary":null,"mode":"standard"},"user":null,"usage":null,"tool_usage":{"image_gen":{"input_tokens":0,"output_tokens":0,"total_tokens":0,"input_tokens_details":{"text_tokens":0,"image_tokens":0},"output_tokens_details":{"image_tokens":0,"text_tokens":0}},"web_search":{"num_requests":0}},"safety_identifier":null,"store":true,"metadata":{},"max_output_tokens":40,"max_tool_calls":null,"service_tier":"auto","truncation":"disabled","image":{"context_compression":"disabled"}}}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","sequence_number":2,"output_index":0,"item":{"type":"function_call","id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","call_id":"call_55784f76538f4771b07e79d17979cfc4","name":"save_cities","arguments":"","status":"in_progress"}}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":3,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"{\"","obfuscation":"ETLtvtVeCKvSCy"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":4,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"cities","obfuscation":"YDhjGGGt7j"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":5,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"\":[","obfuscation":"frM0Hd7reF3R4"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":6,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"{\"","obfuscation":"poKlhQ2ifzGPUB"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":7,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"name","obfuscation":"BG6guKZXDHpw"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":8,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"\":\"","obfuscation":"1iR14vuP5PS4L"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":9,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"Tokyo","obfuscation":"4ch1xFxMMs7"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":10,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"\",\"","obfuscation":"KrxwsrXNk0FQx"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":11,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"country","obfuscation":"CJZCiXu3n"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":12,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"\":\"","obfuscation":"vbYcRx1HI4LIk"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":13,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"Japan","obfuscation":"BzKbxnK0V3D"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":14,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"\"},{\"","obfuscation":"65VPCaZjzRA"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":15,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"name","obfuscation":"jcttoiBZoLJ4"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":16,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"\":\"","obfuscation":"wnGTTK5m5SI7L"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":17,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"Delhi","obfuscation":"7PnIR700AZB"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":18,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"\",\"","obfuscation":"pyPQLR3OWngkg"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":19,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"country","obfuscation":"7ODf0wu9R"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":20,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"\":\"","obfuscation":"LNLmaeoJDnDQs"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":21,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"India","obfuscation":"LIMY0b1X62q"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":22,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"\"},{\"","obfuscation":"ueEZLqIvHsL"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":23,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"name","obfuscation":"wZsTzLqj9vqT"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":24,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"\":\"","obfuscation":"4LouAwNr0Pj7G"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":25,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"Shanghai","obfuscation":"1ts7kJ56"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":26,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"\",\"","obfuscation":"rdkSLUJgXF5yV"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":27,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"country","obfuscation":"EkbH85zFK"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":28,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"\":\"","obfuscation":"xQxTix0fX8Lc5"}
+
+        event: response.function_call_arguments.delta
+        data: {"type":"response.function_call_arguments.delta","sequence_number":29,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"delta":"China","obfuscation":"7VlezBV21LX"}
+
+        event: response.function_call_arguments.done
+        data: {"type":"response.function_call_arguments.done","sequence_number":30,"item_id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","output_index":0,"arguments":"{\"cities\":[{\"name\":\"Tokyo\",\"country\":\"Japan\"},{\"name\":\"Delhi\",\"country\":\"India\"},{\"name\":\"Shanghai\",\"country\":\"China"}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","sequence_number":31,"output_index":0,"item":{"type":"function_call","id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","call_id":"call_55784f76538f4771b07e79d17979cfc4","name":"save_cities","arguments":"{\"cities\":[{\"name\":\"Tokyo\",\"country\":\"Japan\"},{\"name\":\"Delhi\",\"country\":\"India\"},{\"name\":\"Shanghai\",\"country\":\"China","status":"incomplete"}}
+
+        event: response.incomplete
+        data: {"type":"response.incomplete","sequence_number":32,"response":{"input_transformations":[],"id":"resp_066651cd36b92013006b08aa4a4a8c87d19a91670743078c8c","object":"response","created_at":1795729994,"completed_at":null,"status":"incomplete","background":false,"frequency_penalty":0.0,"presence_penalty":0.0,"moderation":null,"model":"gpt-5.4-mini-2026-03-17","access_programs":null,"previous_response_id":null,"instructions":null,"output":[{"type":"function_call","id":"fc_066651cd36b92013006b08aa4af3f487d1be7fc857ac3435b7","call_id":"call_55784f76538f4771b07e79d17979cfc4","name":"save_cities","arguments":"{\"cities\":[{\"name\":\"Tokyo\",\"country\":\"Japan\"},{\"name\":\"Delhi\",\"country\":\"India\"},{\"name\":\"Shanghai\",\"country\":\"China","status":"incomplete"}],"error":null,"incomplete_details":{"reason":"max_output_tokens"},"tools":[{"type":"function","name":"save_cities","description":"Save a list of cities.","parameters":{"additionalProperties":false,"properties":{"cities":{"items":{"$ref":"#/$defs/City"},"type":"array"}},"required":["cities"],"type":"object","$defs":{"City":{"properties":{"name":{"type":"string"},"country":{"type":"string"}},"required":["name","country"],"type":"object","additionalProperties":false}}},"output_schema":null,"strict":true}],"tool_choice":"auto","parallel_tool_calls":true,"prompt_cache_key":null,"prompt_cache_retention":"24h","text":{"format":{"type":"text"},"verbosity":"medium"},"top_p":0.98,"top_logprobs":0,"temperature":1.0,"reasoning":{"context":"all_turns","effort":"none","summary":null,"mode":"standard"},"user":null,"usage":{"input_tokens":70,"input_tokens_details":{"cached_tokens":0,"cache_write_tokens":0,"cache_write_tokens_details":{"ttl_30m_tokens":0,"ttl_12h_tokens":0}},"output_tokens":40,"output_tokens_details":{"reasoning_tokens":0},"total_tokens":110},"tool_usage":{"image_gen":{"input_tokens":0,"output_tokens":0,"total_tokens":0,"input_tokens_details":{"text_tokens":0,"image_tokens":0},"output_tokens_details":{"image_tokens":0,"text_tokens":0}},"web_search":{"num_requests":0}},"safety_identifier":null,"store":true,"metadata":{},"max_output_tokens":40,"max_tool_calls":null,"service_tier":"default","truncation":"disabled","image":{"context_compression":"disabled"}}}
+
+  recorded_at: 2026-11-26T21:53:15.223950+00:00

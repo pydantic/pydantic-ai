@@ -475,6 +475,44 @@ async def test_openai_responses_tool_output_cut_off_by_max_tokens(
             await agent.run(prompt)
 
 
+@pytest.mark.parametrize('stream', [False, True])
+async def test_openai_responses_function_tool_call_cut_off_by_max_tokens(
+    allow_model_requests: None, openai_api_key: str, stream: bool
+):
+    """Function tool arguments the token limit cut off raise right away instead of re-prompting the model with the same limit."""
+    model = OpenAIResponsesModel('gpt-5.4-mini', provider=OpenAIProvider(api_key=openai_api_key))
+
+    class City(BaseModel):
+        name: str
+        country: str
+
+    agent = Agent(model, model_settings=OpenAIResponsesModelSettings(max_tokens=40), retries=3)
+
+    @agent.tool_plain
+    def save_cities(cities: list[City]) -> str:
+        """Save a list of cities."""
+        raise NotImplementedError
+
+    prompt = 'Save the 20 largest cities in the world with the `save_cities` tool.'
+
+    with (
+        capture_run_messages() as messages,
+        pytest.raises(
+            IncompleteToolCall,
+            match=r'Model token limit \(40\) exceeded while generating a tool call, resulting in incomplete arguments\.',
+        ),
+    ):
+        if stream:
+            # The cut-off call is the response's last part, so `run_stream()` raises as it's entered.
+            async with agent.run_stream(prompt):
+                pass
+        else:
+            await agent.run(prompt)
+
+    # The model was asked once: none of the three retries was spent re-prompting it.
+    assert len([message for message in messages if isinstance(message, ModelResponse)]) == 1
+
+
 async def test_tool_availability_delta_uses_additional_tools(allow_model_requests: None):
     """The wire item declares the revealed tool, and `tools` is left exactly as the previous turn sent it.
 

@@ -1,0 +1,189 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.openai.com/v1/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "689"
+      content-type:
+      - application/json
+      host:
+      - api.openai.com
+    body:
+      type: json
+      content:
+        model: gpt-5.4-mini
+        stream: false
+        include:
+        - reasoning.encrypted_content
+        input:
+        - role: user
+          content: Save the 20 largest cities in the world with the `save_cities` tool.
+        max_output_tokens: 40
+        reasoning:
+          context: all_turns
+        tool_choice: auto
+        tools:
+        - name: save_cities
+          parameters:
+            additionalProperties: false
+            properties:
+              cities:
+                items:
+                  $ref: "#/$defs/City"
+                type: array
+            required:
+            - cities
+            type: object
+            $defs:
+              City:
+                properties:
+                  name:
+                    type: string
+                  country:
+                    type: string
+                required:
+                - name
+                - country
+                type: object
+                additionalProperties: false
+          type: function
+          description: Save a list of cities.
+          strict: true
+  response:
+    status: 200
+    headers:
+      access-control-expose-headers:
+      - X-Request-ID, Server-Timing-Total, X-OpenAI-Inference-Capacity-Reason
+      - CF-Ray
+      - CF-Ray
+      alt-svc:
+      - h3=":443"; ma=86400
+      connection:
+      - keep-alive
+      content-type:
+      - application/json
+      openai-processing-ms:
+      - "1511"
+      openai-version:
+      - 2020-10-01
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+    body:
+      type: json
+      content:
+        access_programs: null
+        background: false
+        billing:
+          payer: developer
+        completed_at: null
+        created_at: 1795729993
+        error: null
+        frequency_penalty: 0.0
+        id: resp_0e2ccdcecaa3359c006b08aa48993087d1990b79501064848a
+        image:
+          context_compression: disabled
+        incomplete_details:
+          reason: max_output_tokens
+        input_transformations: []
+        instructions: null
+        max_output_tokens: 40
+        max_tool_calls: null
+        model: gpt-5.4-mini-2026-03-17
+        moderation: null
+        object: response
+        output:
+        - arguments: "{\"cities\":[{\"name\":\"Tokyo\",\"country\":\"Japan\"},{\"name\":\"Delhi\",\"country\":\"India\"},{\"name\":\"Shanghai\",\"country\":\"China"
+          call_id: call_76de90dd88cb41c8b1f0e9ceb92b0048
+          id: fc_0e2ccdcecaa3359c006b08aa499a8887d18f92dcdc075ceefb
+          name: save_cities
+          status: incomplete
+          type: function_call
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: 24h
+        reasoning:
+          context: all_turns
+          effort: none
+          mode: standard
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        status: incomplete
+        store: true
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: medium
+        tool_choice: auto
+        tool_usage:
+          image_gen:
+            input_tokens: 0
+            input_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            output_tokens: 0
+            output_tokens_details:
+              image_tokens: 0
+              text_tokens: 0
+            total_tokens: 0
+          web_search:
+            num_requests: 0
+        tools:
+        - description: Save a list of cities.
+          name: save_cities
+          output_schema: null
+          parameters:
+            $defs:
+              City:
+                additionalProperties: false
+                properties:
+                  country:
+                    type: string
+                  name:
+                    type: string
+                required:
+                - name
+                - country
+                type: object
+            additionalProperties: false
+            properties:
+              cities:
+                items:
+                  $ref: "#/$defs/City"
+                type: array
+            required:
+            - cities
+            type: object
+          strict: true
+          type: function
+        top_logprobs: 0
+        top_p: 0.98
+        truncation: disabled
+        usage:
+          input_tokens: 70
+          input_tokens_details:
+            cache_write_tokens: 0
+            cache_write_tokens_details:
+              ttl_12h_tokens: 0
+              ttl_30m_tokens: 0
+            cached_tokens: 0
+          output_tokens: 40
+          output_tokens_details:
+            reasoning_tokens: 0
+          total_tokens: 110
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-26T21:53:14.118837+00:00

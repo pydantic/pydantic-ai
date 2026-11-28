@@ -5630,8 +5630,8 @@ def test_deferred_tool_cutoff_raises_incomplete_tool_call(external: bool):
         'resulting in incomplete arguments. Increase the `max_tokens` model setting, or simplify the prompt '
         'to result in a shorter response that will fit within the limit.'
     )
-    # An external tool gets no retries; an approval-required tool gets the default one retry first.
-    assert requests == (1 if external else 2)
+    # Neither is retried: re-prompting the model with the same token limit would only cut the arguments off again.
+    assert requests == 1
 
 
 def test_tool_exceeds_token_limit_error():
@@ -5680,8 +5680,8 @@ def test_tool_exceeds_token_limit_with_empty_args():
         match=r'Model token limit \(provider default\) exceeded while generating a tool call, resulting in incomplete arguments\.',
     ):
         agent.run_sync('Hello')
-    # A function tool call keeps its retry, as for arguments that don't parse.
-    assert requests == 2
+    # Re-prompting with the same token limit would only cut the call off again, as for arguments that don't parse.
+    assert requests == 1
 
 
 def test_tool_exceeds_token_limit_but_complete_args():
@@ -5717,6 +5717,242 @@ def test_tool_exceeds_token_limit_but_complete_non_object_args():
     with pytest.raises(UnexpectedModelBehavior, match=r"Tool 'dummy_tool' exceeded max retries count of 1") as exc_info:
         agent.run_sync('Hello')
     assert not isinstance(exc_info.value, IncompleteToolCall)
+
+
+def test_function_tool_args_that_parse_but_are_rejected_with_finish_reason_length_are_retried():
+    """Only arguments cut off before they're complete are blamed on the token limit: arguments that parse are retried.
+
+    Not a VCR test: no provider can be reliably recorded returning complete but schema-invalid JSON with a `'length'`
+    finish reason; `test_openai_responses_function_tool_call_cut_off_by_max_tokens` records the cut-off case.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(parts=[ToolCallPart('get_weather', '{"town": "Paris"}')], finish_reason='length')
+        if len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('get_weather', '{"city": "Paris"}')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return 'sunny'
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'done'
+    assert [part.outcome for part in result.all_messages()[2].parts if isinstance(part, ToolReturnPart)] == snapshot(
+        ['retried']
+    )
+
+
+def test_cut_off_function_tool_call_that_is_not_the_last_part_is_retried():
+    """Only the response's last part can have been cut off by the token limit, so an earlier invalid call is retried.
+
+    Not a VCR test: no provider reliably truncates the first of two tool calls while the last part is complete;
+    `test_openai_responses_function_tool_call_cut_off_by_max_tokens` records the last-part case.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart('get_weather', '{"city": "Par', tool_call_id='invalid'),
+                    ToolCallPart('get_weather', '{"city": "Lyon"}', tool_call_id='valid'),
+                ],
+                finish_reason='length',
+            )
+        if len(messages) == 3:
+            return ModelResponse(parts=[ToolCallPart('get_weather', '{"city": "Paris"}', tool_call_id='retried')])
+        return ModelResponse(parts=[TextPart('done')])
+
+    agent = Agent(FunctionModel(respond))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return f'sunny in {city}'
+
+    result = agent.run_sync('Hello')
+    assert result.output == 'done'
+    assert [
+        (part.tool_call_id, part.outcome) for part in result.all_messages()[2].parts if isinstance(part, ToolReturnPart)
+    ] == snapshot([('invalid', 'retried'), ('valid', 'success')])
+
+
+async def test_streamed_output_is_kept_when_a_later_function_tool_call_is_cut_off():
+    """Once `run_stream()` has the output, a function tool call after it that the token limit cut off is only retried.
+
+    The caller already has the output, so there's no re-prompt to save by raising `IncompleteToolCall`.
+
+    Not a VCR test: no provider reliably ends a response at `max_tokens` inside a function tool call that follows a
+    complete output tool call, so the stream is scripted; `test_openai_responses_function_tool_call_cut_off_by_max_tokens`
+    records a cut-off function tool call on its own.
+    """
+
+    async def stream(_: list[ModelMessage], info: AgentInfo) -> AsyncIterator[DeltaToolCalls | str]:
+        yield {0: DeltaToolCall(name=info.output_tools[0].name, json_args='{"name": "Paris", "population": 3}')}
+        yield {1: DeltaToolCall(name='get_weather', json_args='{"city": "Par')}
+
+    agent = Agent(_LengthFunctionModel(stream_function=stream), output_type=ToolOutput(_City))
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return 'sunny'  # pragma: no cover
+
+    async with agent.run_stream('Hello') as result:
+        assert await result.get_output() == _City(name='Paris', population=3)
+    assert [
+        (part.tool_name, part.outcome) for part in result.all_messages()[-1].parts if isinstance(part, ToolReturnPart)
+    ] == snapshot([('final_result', 'success'), ('get_weather', 'retried')])
+
+
+@pytest.mark.parametrize('end_strategy', ['graceful', 'exhaustive'])
+def test_cut_off_function_tool_call_after_a_valid_output_tool_call_is_retried_in_run(
+    end_strategy: Literal['graceful', 'exhaustive'],
+):
+    """In `run()`, a cut-off function tool call after a valid output tool call is retried instead of raising.
+
+    The response has a valid output, so the run doesn't fail on it: the function tool call's retry sets the output aside
+    and the model is re-prompted, as for any other invalid arguments. `'exhaustive'` validates function tool calls before
+    it runs any output tool, so it only checks the output tool call's arguments then: the output function still runs
+    once per response.
+
+    Not a VCR test: no provider reliably ends a response at `max_tokens` inside a function tool call that follows a
+    complete output tool call; `test_openai_responses_function_tool_call_cut_off_by_max_tokens` records a cut-off function
+    tool call on its own.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(info.output_tools[0].name, '{"name": "Paris", "population": 3}'),
+                    ToolCallPart('get_weather', '{"city": "Par'),
+                ],
+                finish_reason='length',
+            )
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, '{"name": "Lyon", "population": 2}')])
+
+    output_calls: list[str] = []
+
+    def city(name: str, population: int) -> _City:
+        output_calls.append(name)
+        return _City(name=name, population=population)
+
+    agent = Agent(FunctionModel(respond), output_type=ToolOutput(city), end_strategy=end_strategy)
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return 'sunny'  # pragma: no cover
+
+    result = agent.run_sync('Hello')
+    assert result.output == _City(name='Lyon', population=2)
+    assert output_calls == ['Paris', 'Lyon']
+    assert [
+        (part.tool_name, part.content, part.outcome)
+        for part in result.all_messages()[2].parts
+        if isinstance(part, ToolReturnPart)
+    ] == snapshot(
+        [
+            (
+                'final_result',
+                'Output not used as the final result - addressing tool retries from this round first.',
+                'success',
+            ),
+            (
+                'get_weather',
+                [
+                    {
+                        'type': 'json_invalid',
+                        'loc': [],
+                        'msg': 'Invalid JSON: EOF while parsing a string at line 1 column 13',
+                        'input': '{"city": "Par',
+                    }
+                ],
+                'retried',
+            ),
+        ]
+    )
+
+
+@pytest.mark.parametrize('end_strategy', ['graceful', 'exhaustive'])
+def test_cut_off_function_tool_call_after_an_invalid_output_tool_call_raises(
+    end_strategy: Literal['graceful', 'exhaustive'],
+):
+    """A cut-off function tool call after an output tool call whose arguments don't validate raises right away.
+
+    With no valid output in the response, re-prompting with the same token limit would only cut the call off again.
+
+    Not a VCR test: no provider reliably ends a response at `max_tokens` inside a function tool call that follows an
+    output tool call with invalid arguments; `test_openai_responses_function_tool_call_cut_off_by_max_tokens` records a
+    cut-off function tool call on its own.
+    """
+    requests = 0
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        nonlocal requests
+        requests += 1
+        return ModelResponse(
+            parts=[
+                ToolCallPart(info.output_tools[0].name, {'name': 'Paris'}),
+                ToolCallPart('get_weather', '{"city": "Par'),
+            ],
+            finish_reason='length',
+        )
+
+    agent = Agent(FunctionModel(respond), output_type=ToolOutput(_City), end_strategy=end_strategy)
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return 'sunny'  # pragma: no cover
+
+    with pytest.raises(IncompleteToolCall):
+        agent.run_sync('Hello')
+    assert requests == 1
+
+
+@pytest.mark.parametrize('end_strategy', ['graceful', 'exhaustive'])
+def test_invalid_function_tool_args_not_cut_off_validate_the_output_as_often_as_before(
+    end_strategy: Literal['graceful', 'exhaustive'],
+):
+    """A function tool call with invalid arguments that the token limit didn't cut off validates the output only as before.
+
+    The cut-off check looks for a valid output tool call only once the call is known to be cut off, so the common
+    "wrong schema" retry doesn't run the output type's validators an extra time.
+
+    Not a VCR test: counting validator runs needs a validator with a side effect, which a recorded response can't add.
+    """
+
+    def respond(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if len(messages) == 1:
+            return ModelResponse(
+                parts=[
+                    ToolCallPart(info.output_tools[0].name, {'name': 'Paris'}),
+                    ToolCallPart('get_weather', {'town': 'Paris'}),
+                ]
+            )
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'name': 'Lyon'})])
+
+    validated: list[str] = []
+
+    class City(BaseModel):
+        name: str
+
+        @field_validator('name')
+        @classmethod
+        def record(cls, name: str) -> str:
+            validated.append(name)
+            return name
+
+    agent = Agent(FunctionModel(respond), output_type=ToolOutput(City), end_strategy=end_strategy)
+
+    @agent.tool_plain
+    def get_weather(city: str) -> str:
+        return 'sunny'  # pragma: no cover
+
+    output = agent.run_sync('Hello').output
+    assert validated == ['Paris', 'Lyon']
+    assert output.name == 'Lyon'
 
 
 def test_empty_response_with_finish_reason_length():

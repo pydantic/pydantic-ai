@@ -779,6 +779,29 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
             # Tracked like an output tool's status part, so retry-wins can replace it.
             self.winning_output_part = part
 
+    def _raise_if_cut_off(self, validated: ValidatedToolCall[DepsT]) -> None:
+        """Raise `IncompleteToolCall` for a function tool call whose arguments the token limit cut off.
+
+        Re-prompting the model with the same token limit would only cut the arguments off again, so the call isn't
+        retried, as an output tool call isn't. When the response also has a final result, or an output tool call whose
+        arguments are valid, the call is retried as before instead, so a response with a valid output doesn't fail the
+        run. (`'exhaustive'` validates function tool calls before it runs any output tool, so the final result isn't
+        known yet then.) The output tool calls are only validated once the call is known to be cut off, so a response
+        that isn't doesn't run the output type's validators an extra time. Their validity is an approximation: the
+        capabilities' output validate hooks don't run, so an output tool call a hook would have repaired counts as
+        invalid here, and the run raises instead of retrying the cut-off call.
+        """
+        if (
+            not validated.args_valid
+            and self.final_result is None
+            and self.ctx.state.is_incomplete_tool_call(validated.call)
+            and not any(
+                self.tool_manager._output_tool_call_args_valid(self.tool_calls[i])  # pyright: ignore[reportPrivateUsage]
+                for i in self.output_indices
+            )
+        ):
+            self.ctx.state.check_incomplete_tool_call(validated.call)
+
     def _skip_function_call(self, call: _messages.ToolCallPart) -> Iterator[_messages.HandleResponseEvent]:
         """Record a 'not executed' stub for a call skipped because a final result was already processed.
 
@@ -828,6 +851,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                 self.ctx.state.check_incomplete_tool_call()
                 yield _messages.FunctionToolCallEvent(call, args_valid=False)
                 raise
+            self._raise_if_cut_off(validated)
             validated_calls[call.tool_call_id] = validated
             yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 
@@ -1248,6 +1272,7 @@ class _ToolCallProcessor(Generic[DepsT, NodeRunEndT], ABC):
                     self.ctx.state.check_incomplete_tool_call()
                     yield _messages.FunctionToolCallEvent(call, args_valid=False)
                     raise
+                self._raise_if_cut_off(validated)
 
                 yield _messages.FunctionToolCallEvent(call, args_valid=validated.args_valid)
 
