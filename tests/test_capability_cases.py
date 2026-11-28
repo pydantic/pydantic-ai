@@ -2,8 +2,16 @@
 
 from __future__ import annotations
 
+import pytest
+
 from .append_only import discover_capabilities
-from .capability_cases import CASES, CORE_CAPABILITY_PACKAGES, Unbuildable, shipped_capability_types
+from .capability_cases import (
+    CASES,
+    CORE_CAPABILITY_PACKAGES,
+    Unbuildable,
+    import_package_modules,
+    shipped_capability_types,
+)
 from .manifests import assert_classified
 
 
@@ -28,3 +36,10 @@ def test_only_the_listed_cases_are_unbuildable() -> None:
     """An `Unbuildable` case runs in none of the suites that build capabilities, so each one is a reviewed choice."""
     unbuildable = sorted(name for name, case in CASES.items() if isinstance(case.build, Unbuildable))
     assert unbuildable == ['BatchModelRequests', 'NativeOrLocalTool', 'RequestInput', 'WindowsWorkspace']
+
+
+def test_only_an_optional_package_may_be_missing() -> None:
+    """The walk leaves out an optional package that isn't installed, but a required one has to be there."""
+    assert list(import_package_modules((), optional=('pydantic_ai_not_installed',))) == []
+    with pytest.raises(ModuleNotFoundError, match='pydantic_ai_not_installed'):
+        list(import_package_modules(('pydantic_ai_not_installed',)))
