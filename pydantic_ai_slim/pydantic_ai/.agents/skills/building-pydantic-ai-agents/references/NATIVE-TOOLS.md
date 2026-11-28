@@ -22,9 +22,11 @@ For OpenAI web search, use the Responses API model prefix (`openai-responses:`),
 Set `external_web_access=False` on `WebSearch` or `WebSearchTool` to restrict OpenAI Responses web search to cached
 or indexed content.
 
+For DeepSeek native web search and fetch, use `DeepSeekResponsesModel` with `deepseek-flash`, and pass the complete history back to it to reuse signed page context.
+
 Restricting settings (`allowed_domains`, `blocked_domains`, `max_uses`, and `external_web_access=False` on web search;
 the first three on web fetch) are not dropped silently. On a model whose native tool can't apply one that is set
-(Gemini applies none), the tool counts as unsupported: a local fallback runs in its place if one is configured, an
+(Gemini and DeepSeek's `deepseek-flash` web tools apply none), the tool counts as unsupported: a local fallback runs in its place if one is configured, an
 `optional=True` tool is left out, and `UserError` is raised otherwise.
 
 ## Native Tool Defaults
