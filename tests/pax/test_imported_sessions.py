@@ -5,6 +5,7 @@ import asyncio
 import contextlib
 import json
 import os
+import shutil
 from collections.abc import Sequence
 from dataclasses import replace
 from io import StringIO
@@ -76,7 +77,7 @@ from pydantic_ai_pax.runtime.imported_sessions import (
     save_import,
 )
 from pydantic_ai_pax.runtime.session import Session
-from pydantic_ai_pax.runtime.session_runtime import create_shell
+from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
 from pydantic_ai_pax.runtime.sessions import Sessions
 from pydantic_ai_pax.ui.menus.session_browser import SessionBrowser
 
@@ -1481,14 +1482,9 @@ def imported_project(tmp_path: Path, source: str) -> tuple[Path, Path, str]:
     return project.resolve(), other.resolve(), CODEX_ID
 
 
-@pytest.mark.parametrize('source', ['claude', 'codex'])
-@pytest.mark.parametrize('browse', [False, True])
-async def test_terminal_resume_moves_into_the_imported_project(
-    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: str, browse: bool
-) -> None:
-    """Resuming a Claude Code or Codex session in the terminal continues it in its project, with that project's file."""
-    project, other, native_id = imported_project(tmp_path, source)
-    shell = create_shell(
+def terminal_shell(tmp_path: Path, workspace: Path) -> SessionRuntime[None, str]:
+    """A session as the terminal builds it, in `workspace`."""
+    return create_shell(
         Agent(TestModel()),
         deps=None,
         plugins=(),
@@ -1498,23 +1494,58 @@ async def test_terminal_resume_moves_into_the_imported_project(
         store=SettingsStore(tmp_path / 'config.db'),
         builtin_plugins=(),
         project=ProjectSettings(),
-        workspace=other,
+        workspace=workspace,
     )
+
+
+def pick_first(browser: SessionBrowser) -> str:
+    return browser.entries[0].id
+
+
+@pytest.mark.parametrize('source', ['claude', 'codex'])
+@pytest.mark.parametrize('browse', [False, True])
+async def test_terminal_resume_moves_into_the_imported_project(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: ImportSource, browse: bool
+) -> None:
+    """Resuming a Claude Code or Codex session in the terminal continues it in its project, with that project's file."""
+    project, other, native_id = imported_project(tmp_path, source)
+    shell = terminal_shell(tmp_path, other)
     await shell.loader.load_all()
-    if browse:
-
-        def pick(browser: SessionBrowser) -> str:
-            return browser.entries[0].id
-
-        monkeypatch.setattr(SessionBrowser, 'run', pick)
+    copy = await save_import(shell.sessions.store, await run_sync(find_import, source, native_id))
+    # A plugin's `host.conversation.resume` continues it here instead, as it documents.
+    await shell.session.resume(copy, allow_other_workspace=True)
+    assert shell.session.workspace == str(other)
+    await shell.session.clear()
+    monkeypatch.setattr(SessionBrowser, 'run', pick_first)
     notice = await shell.sessions.command([source] if browse else [source, native_id])
     assert notice.startswith('Resumed ')
+    assert notice.endswith(f' Continuing in {project}, an untrusted folder: /trust shows why.')
     assert (shell.session.workspace, shell.status.workspace) == (str(project), str(project))
     assert shell.context.project.root == project
     # Pax's own sessions keep asking to be confirmed in the browser.
     native = await shell.sessions.store.save(summary=ConversationSummary(workspace=str(other)), messages=[])
     with pytest.raises(ValueError, match='Session belongs to'):
         await shell.sessions.command([native.id])
+    await shell.close('exit')
+
+
+@pytest.mark.parametrize('browse', [False, True])
+async def test_terminal_resume_of_an_import_whose_directory_is_gone(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, browse: bool
+) -> None:
+    """The browser continues it here, as it does Pax's own sessions; `/resume claude ID` refuses it before saving it."""
+    project, other, native_id = imported_project(tmp_path, 'claude')
+    shutil.rmtree(project)
+    shell = terminal_shell(tmp_path, other)
+    await shell.loader.load_all()
+    if browse:
+        monkeypatch.setattr(SessionBrowser, 'run', pick_first)
+        assert 'Continuing' not in await shell.sessions.command(['claude'])
+        assert shell.session.workspace == str(other)
+    else:
+        with pytest.raises(ValueError, match='Session belongs to'):
+            await shell.sessions.command(['claude', native_id])
+        assert await shell.sessions.store.listing() == []
     await shell.close('exit')
 
 

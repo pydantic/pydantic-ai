@@ -8,6 +8,7 @@ import asyncio
 from collections.abc import Awaitable, Callable, Coroutine, Sequence
 from contextlib import AbstractAsyncContextManager, nullcontext
 from functools import partial
+from pathlib import Path
 from typing import Generic, TypeVar
 
 from anyio.to_thread import run_sync
@@ -113,8 +114,8 @@ class Sessions(Generic[DepsT, OutputT]):
         """Restore a saved session, then show its history.
 
         With `relocate`, the session first moves into the directory it was saved in, unless the
-        `/resume` browser confirmed continuing it here; with `follow_imports`, it always does for a Claude
-        Code or Codex session. A directory that no longer exists raises `ValueError`.
+        `/resume` browser confirmed continuing it here; one that no longer exists raises `ValueError`.
+        With `follow_imports`, a Claude Code or Codex session moves there whenever that directory exists.
         `unarchive=False` leaves an archived session archived, for a restore that continues in a fork.
         One another live session of this Pax holds raises `ValueError`: a conversation is live in one session.
         In the terminal, that session is shown instead, and this one stays live as it is.
@@ -128,25 +129,38 @@ class Sessions(Generic[DepsT, OutputT]):
             return shown
         # Held from before moving directory, so no other session resumes it meanwhile.
         with self.session.claim(target):
-            await self._move_to(target, allow_other_workspace=allow_other_workspace)
+            moved = await self._move_to(target, allow_other_workspace=allow_other_workspace)
             notice = await self.session.resume(
                 conversation_id,
                 allow_other_workspace=allow_other_workspace,
                 unarchive=unarchive,
                 continuation=continuation,
             )
-        return notice
+        return notice + moved
 
-    async def _move_to(self, conversation_id: str, *, allow_other_workspace: bool) -> None:
-        """Move into the directory `conversation_id` was saved in, when `resume` says to."""
+    async def _move_to(self, conversation_id: str, *, allow_other_workspace: bool) -> str:
+        """Move into the directory `conversation_id` was saved in, when `resume` says to; what to add to its notice."""
         if (self.relocate is None or allow_other_workspace) and self.follow_imports is None:
-            return
+            return ''
         summary = (await self.store.get(conversation_id=conversation_id)).summary
-        move = self.relocate if not allow_other_workspace else None
-        if move is None and source_of(summary) is not None:
-            move = self.follow_imports
-        if move is not None and summary.workspace != self.session.workspace:
-            await move(summary.workspace)
+        if summary.workspace == self.session.workspace:
+            return ''
+        if self.relocate is not None and not allow_other_workspace:
+            await self.relocate(summary.workspace)
+            return ''
+        if source_of(summary) is None or (follow := await self._follower(summary.workspace)) is None:
+            return ''
+        await follow(summary.workspace)
+        untrusted = self.session.trust is not None and not self.session.trust.trusted
+        return f' Continuing in {self.session.workspace}' + (
+            ', an untrusted folder: /trust shows why.' if untrusted else '.'
+        )
+
+    async def _follower(self, workspace: str) -> Callable[[str], Awaitable[None]] | None:
+        """`follow_imports`, while `workspace`, where a Claude Code or Codex session ran, exists to move to."""
+        if self.follow_imports is None or not await run_sync(Path(workspace).is_dir):
+            return None
+        return self.follow_imports
 
     async def show_resumed(self) -> None:
         """Show the restored history; a startup restore calls this once plugin renderers have loaded."""
@@ -247,10 +261,10 @@ class Sessions(Generic[DepsT, OutputT]):
         """Copy a Claude Code or Codex session into the store by its own ID, returning its Pax ID.
 
         As with a saved session's ID, one from another directory is refused, before anything is saved,
-        unless `follow_imports` moves there to resume it.
+        unless `follow_imports` can move there to resume it.
         """
         imported = await run_sync(find_import, source, native_id)
-        if self.follow_imports is None:
+        if await self._follower(imported.summary.workspace) is None:
             self.session.check_workspace(imported.summary.workspace)
         return await save_import(self.store, imported, delegations=self.tasks)
 

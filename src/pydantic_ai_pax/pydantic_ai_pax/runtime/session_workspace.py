@@ -1,4 +1,4 @@
-"""`pax --web`'s session directories: each live session works in its own, moved to between turns.
+"""Session directories: under `pax --web`, each live session works in its own, moved to between turns.
 
 The terminal shell stays in the directory it started in, except that resuming a Claude Code or Codex
 session moves it into that session's. Under `pax --web`, a session that moves

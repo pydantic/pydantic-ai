@@ -1761,7 +1761,7 @@ instead, which the page shows as an error. That menu enters `/update now` in the
 restarts from, whichever live session's page asks, and gives that session's refusal; the page that
 asked shows uv's output and the result too.
 Installing from another folder shown in the terminal is refused, as Pax
-restarts in the folder it started in.
+restarts in the folder it started in, or the one a resumed Claude Code or Codex session moved it to.
 
 `pax --web --port PORT` replaces the saved port for one launch; `0` picks a free one. `--token-file
 PATH` replaces the launch's random token with the one in PATH, which must belong to you, be readable
