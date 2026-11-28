@@ -87,6 +87,7 @@ with try_import() as openai_available:
     from pydantic_ai.models.bedrock_mantle import BedrockMantleChatModel, BedrockMantleResponsesModel
     from pydantic_ai.models.cerebras import CerebrasModel
     from pydantic_ai.models.crusoe import CrusoeModel
+    from pydantic_ai.models.deepseek import DeepSeekResponsesModel
     from pydantic_ai.models.github_copilot import GitHubCopilotModel
     from pydantic_ai.models.ollama import OllamaModel
     from pydantic_ai.models.openai import OpenAIChatModel, OpenAIResponsesModel
@@ -98,6 +99,7 @@ with try_import() as openai_available:
     from pydantic_ai.providers.bedrock_mantle import BedrockMantleProvider
     from pydantic_ai.providers.cerebras import CerebrasProvider
     from pydantic_ai.providers.crusoe import CrusoeProvider
+    from pydantic_ai.providers.deepseek import DeepSeekProvider
     from pydantic_ai.providers.github_copilot import GitHubCopilotProvider
     from pydantic_ai.providers.ollama import OllamaProvider
     from pydantic_ai.providers.openai import OpenAIProvider
@@ -656,6 +658,11 @@ def _crusoe(client: httpx2.AsyncClient) -> Model:
     return CrusoeModel('openai/gpt-oss-120b', provider=CrusoeProvider(api_key=PROBE_KEY, http_client=client))
 
 
+def _deepseek_responses(client: httpx2.AsyncClient) -> Model:
+    # `deepseek-chat` doesn't think by default, so the sampling settings aren't dropped for reasoning.
+    return DeepSeekResponsesModel('deepseek-chat', provider=DeepSeekProvider(api_key=PROBE_KEY, http_client=client))
+
+
 def _github_copilot(client: httpx2.AsyncClient) -> Model:
     # A GPT id: the Anthropic ids that reject sampling settings drop `temperature`/`top_p` before the wire.
     return GitHubCopilotModel('gpt-5.4', provider=GitHubCopilotProvider(api_key=PROBE_KEY, http_client=client))
@@ -769,6 +776,7 @@ CASES = [
     ),
     Case('CerebrasModel', ('Cerebras',), http_probe(_cerebras), _needs(openai_available, 'openai')),
     Case('CrusoeModel', ('Crusoe',), http_probe(_crusoe), _needs(openai_available, 'openai')),
+    Case('DeepSeekResponsesModel', ('DeepSeek',), http_probe(_deepseek_responses), _needs(openai_available, 'openai')),
     Case('GitHubCopilotModel', ('GitHub Copilot',), http_probe(_github_copilot), _needs(openai_available, 'openai')),
     Case('OllamaModel', ('Ollama',), http_probe(_ollama), _needs(openai_available, 'openai')),
     Case('OpenRouterModel', ('OpenRouter',), http_probe(_openrouter), _needs(openai_available, 'openai')),
@@ -1090,6 +1098,7 @@ RETRY_CASES = [
     ),
     RetryCase('CerebrasModel', ('Cerebras',), _cerebras, (3, 1, 2), marks=_OPENAI),
     RetryCase('CrusoeModel', ('Crusoe',), _crusoe, (3, 1, 2), marks=_OPENAI),
+    RetryCase('DeepSeekResponsesModel', ('DeepSeek',), _deepseek_responses, (3, 1, 2), marks=_OPENAI),
     RetryCase('GitHubCopilotModel', ('GitHub Copilot',), _github_copilot, (3, 1, 2), marks=_OPENAI),
     RetryCase('OllamaModel', ('Ollama',), _ollama, (3, 1, 2), marks=_OPENAI),
     RetryCase('OpenRouterModel', ('OpenRouter',), _openrouter, (3, 1, 2), marks=_OPENAI),

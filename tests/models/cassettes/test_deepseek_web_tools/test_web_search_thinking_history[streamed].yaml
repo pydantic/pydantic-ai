@@ -1,0 +1,838 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.deepseek.com/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "269"
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    body:
+      type: json
+      content:
+        model: deepseek-flash
+        stream: true
+        input:
+        - role: user
+          content: >-
+            Search the web for the publication years of RFC 9110 and RFC 9112. Answer in
+            one short sentence.
+        reasoning:
+          effort: medium
+        tool_choice: auto
+        tools:
+        - type: deepseek_web_search
+  response:
+    status: 200
+    headers:
+      access-control-allow-credentials:
+      - "true"
+      cache-control:
+      - no-cache
+      content-type:
+      - text/event-stream
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - >-
+        accept-encoding,origin, access-control-request-method,
+        access-control-request-headers
+    body:
+      type: text
+      content: |+
+        event: response.created
+        data: {"type":"response.created","response":{"id":"e0218c0b-3ad9-40e9-872c-52a265807bc7","object":"response","created_at":1795803949,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-flash","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":0}
+
+        event: response.in_progress
+        data: {"type":"response.in_progress","response":{"id":"e0218c0b-3ad9-40e9-872c-52a265807bc7","object":"response","created_at":1795803949,"status":"in_progress","background":false,"completed_at":null,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-flash","moderation":null,"output":[],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":null,"user":null,"metadata":{}},"sequence_number":1}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"type":"reasoning","id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","status":"in_progress","content":[],"summary":[]},"output_index":0,"sequence_number":2}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"part":{"type":"reasoning_text","text":""},"sequence_number":3}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"We","item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"sequence_number":4}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" need","item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"sequence_number":5}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" answer","item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"sequence_number":6}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"sequence_number":7}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" Need","item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"sequence_number":8}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" search","item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"sequence_number":9}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" web","item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"sequence_number":10}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"sequence_number":11}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" Let","item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"sequence_number":12}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"'s","item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"sequence_number":13}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" search","item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"sequence_number":14}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" queries","item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"sequence_number":15}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"sequence_number":16}
+
+        event: response.reasoning_text.done
+        data: {"type":"response.reasoning_text.done","content_index":0,"item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"sequence_number":17,"text":"We need answer. Need search web. Let's search queries."}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","output_index":0,"part":{"type":"reasoning_text","text":"We need answer. Need search web. Let's search queries."},"sequence_number":18}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","status":"completed","content":[{"type":"reasoning_text","text":"We need answer. Need search web. Let's search queries."}],"summary":[]},"output_index":0,"sequence_number":19}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"type":"web_search_call","id":"srvtoolu_ds_00_caea8c36baca4e24ae6a21b8bcd6888c","status":"in_progress","kind":"deep_search","action":{"type":"search","queries":["RFC 9110 publication year","RFC 9112 publication year"]}},"output_index":1,"sequence_number":20}
+
+        event: response.web_search_call.in_progress
+        data: {"type":"response.web_search_call.in_progress","item_id":"srvtoolu_ds_00_caea8c36baca4e24ae6a21b8bcd6888c","output_index":1,"sequence_number":21}
+
+        event: response.web_search_call.searching
+        data: {"type":"response.web_search_call.searching","item_id":"srvtoolu_ds_00_caea8c36baca4e24ae6a21b8bcd6888c","output_index":1,"sequence_number":22}
+
+        event: response.web_search_call.completed
+        data: {"type":"response.web_search_call.completed","item_id":"srvtoolu_ds_00_caea8c36baca4e24ae6a21b8bcd6888c","output_index":1,"sequence_number":23}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"type":"web_search_call","id":"srvtoolu_ds_00_caea8c36baca4e24ae6a21b8bcd6888c","status":"completed","kind":"deep_search","action":{"type":"search","queries":["RFC 9110 publication year","RFC 9112 publication year"],"sources":[{"type":"url","url":"https://httpwg.org/specs/rfc9110.html?source=post_page-----8af1c027de1d---------------------------------------","title":"RFC9110","snippet":"Information about the current status of this document, any errata, and how to provide feedback on it may be obtained at https://www.rfc-editor.org/info/rfc9110. ... HTTP/1.1 ... and revised again in 2014 ([RFC7230] through [RFC7235]).","site_name":"IETF HTTP Working Group","site_icon":"https://cdn.deepseek.com/site-icons/httpwg.org","published_at":"2002-06-05T16:00:00+00:00"},{"type":"url","url":"https://dt-main.dev.ietf.org/doc/rfc9110/","title":"RFC 9110: HTTP Semantics","snippet":"Document | Type | RFC - Internet Standard (June 2022) Errata IPR ... Standards Track June 2022","site_name":"ietf.org","site_icon":"https://cdn.deepseek.com/site-icons/ietf.org","published_at":"2026-05-19T16:00:00+00:00"},{"type":"url","url":"https://www.rfc-editor.org/rfc/rfc9110.html","title":"RFC 9110: HTTP Semantics","snippet":"RFC 9110 | HTTP Semantics | June 2022 ... HTTP/1.1 ... and published on the Standards Track in 1997 [RFC2068], revised in 1999 [RFC2616], and revised again in 2014 ([RFC7230] through [RFC7235]).¶","site_name":"» RFC Editor","site_icon":"https://cdn.deepseek.com/site-icons/rfc-editor.org","published_at":"2002-06-05T16:00:00+00:00"},{"type":"url","url":"https://lists.w3.org/Archives/Public/ietf-http-wg/2022AprJun/0132.html#1","title":"STD 97, RFC 9110 on HTTP Semantics - STD 97, RFC 9110 on HTTP Semantics","snippet":"STD 97, RFC 9110 on HTTP Semantics ... Mon, 6 Jun 2022 13:03:32 -0700 (PDT) ... June 2022","site_name":"W3C","site_icon":"https://cdn.deepseek.com/site-icons/w3.org","published_at":"2022-06-05T16:00:00+00:00"},{"type":"url","url":"https://ftp.ripe.net/mirrors/rfc/inline-errata/rfc9110.html","title":"rfc9110","snippet":"9110 Adobe ... Standards Track June 2022 ... Information about the current status of this document, any errata ... //www.rfc-editor.org/info/rfc9110.","site_name":"RIPE Network Coordination Centre","site_icon":"https://cdn.deepseek.com/site-icons/ripe.net"},{"type":"url","url":"https://www.itu.int/itu-t/workprog/wp_a5_out.aspx?isn=8353#1","title":"ITU-T work programme - Committed to connecting the world","snippet":"ITU-T A.5 justification information for referenced document IETF RFC 9110 (2022) in draft J.484 ... | IETF RFC 9110 (2022) ... RFC 9110 was published in June 2022 and is a standards track RFC.","site_name":"ITU","site_icon":"https://cdn.deepseek.com/site-icons/itu.int"},{"type":"url","url":"https://www.itu.int/itu-t/workprog/wp_a5_out.aspx?isn=8665#1","title":"ITU-T work programme - ITU-T work programme","snippet":"information for referenced document IETF RFC 9110 (2022) in draft F.748.49 ... | IETF RFC 9110 (2022) ... RFC 9110 was published in June 2022 and is a standards track RFC. It is largely used for World","site_name":"ITU","site_icon":"https://cdn.deepseek.com/site-icons/itu.int"},{"type":"url","url":"https://1f8a81b9b0707b63-19211.webchannel-proxy.scarabresearch.com/ITU-T/workprog/wp_a5_out.aspx?isn=8198","title":"ITU-T work programme","snippet":"ITU-T A.5 justification information for referenced document IETF RFC 9110 (2022) in draft F.780.4 ... | IETF RFC 9110 (2022) ... RFC 9110 was published in June 2022 and is a standards track RFC.","site_name":"scarabresearch.com","site_icon":"https://cdn.deepseek.com/site-icons/scarabresearch.com"},{"type":"url","url":"https://datatracker.ietf.org/doc/rfc9112/#1","title":"RFC 9112: HTTP/1.1 - HTTP/1.1","snippet":"RFC 9112 also known as STD 99 Document | Type | RFC - Internet Standard (June 2022) Errata ... M. ... June 2022 HTTP/1.1 ... Copyright (c) 2022 IETF Trust and the persons identified as the","site_name":"IETF Datatracker","site_icon":"https://cdn.deepseek.com/site-icons/ietf.org","published_at":"2026-05-19T16:00:00+00:00"},{"type":"url","url":"https://datatracker.ietf.org/doc/html/rfc9112.html#1","title":"RFC 9112: HTTP/1.1 - RFC 9112 | HTTP/1.1 | June 2022","snippet":"RFC 9112: Fielding, et al.; HTTP/1.1: Standards Track; June 2022: [Page] ... RFC: - 9112 - STD... ... Obsoletes: - 7230 ... Published... ... RFC 9112","site_name":"IETF Datatracker","site_icon":"https://cdn.deepseek.com/site-icons/ietf.org"},{"type":"url","url":"https://www.rfc-editor.org/rfc/inline-errata/rfc9112.html","title":"rfc9112","snippet":"9112 Adobe ... June 2022 ... Copyright (c) 2022 IETF Trust and the persons identified as the document authors. All rights reserved.","site_name":"» RFC Editor","site_icon":"https://cdn.deepseek.com/site-icons/rfc-editor.org"},{"type":"url","url":"https://datatracker.ietf.org/doc/pdf/rfc9112.pdf#1#6#1","title":"Internet Engineering Task Force (IETF)","snippet":"9112 ... June 2022 HTTP/1.1 ... Information about the current status of this document, any errata ... be obtained at https://www.rfc-editor.org/info/rfc9112. ... Copyright (c) 2022 IETF Trust and the persons identified as the document authors.","site_name":"IETF Datatracker","site_icon":"https://cdn.deepseek.com/site-icons/ietf.org"},{"type":"url","url":"https://www.rfc-editor.org/info/std99/","title":"STD 99 subseries contains 1 RFC | RFC Editor","snippet":"STDs are stable identifiers for \"Internet Standards.\" ... RFC 9112: STD 99: HTTP/1.1 Internet Standard - R. Fielding, Ed. ... - J. Reschke, Ed. - June 2022 - IETF publication - Web and Internet Transport","site_name":"» RFC Editor","site_icon":"https://cdn.deepseek.com/site-icons/rfc-editor.org","published_at":"2022-06-05T16:00:00+00:00"},{"type":"url","url":"https://lists.w3.org/Archives/Public/ietf-http-wg/2022AprJun/0134.html#1","title":"STD 99, RFC 9112 on HTTP/1.1 - STD 99, RFC 9112 on HTTP/1.1","snippet":"STD 99, RFC 9112 on HTTP/1.1 ... Mon, 6 Jun 2022 13:06:22 -0700 (PDT) ... June 2022","site_name":"W3C","site_icon":"https://cdn.deepseek.com/site-icons/w3.org","published_at":"2022-06-05T16:00:00+00:00"},{"type":"url","url":"https://www.itu.int/itu-t/workprog/wp_a5_out.aspx?isn=8704#1","title":"ITU-T work programme - Committed to connecting the world","snippet":"## Committed to connecting the world  # ITU-T work programme  ITU-T A.5 justification information for referenced document IETF RFC 9112 (2022) in draft H.626.8   | 1.  | Clear description of the refer","site_name":"ITU","site_icon":"https://cdn.deepseek.com/site-icons/itu.int"}]}},"output_index":1,"sequence_number":24}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"type":"reasoning","id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","status":"in_progress","content":[],"summary":[]},"output_index":2,"sequence_number":25}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"part":{"type":"reasoning_text","text":""},"sequence_number":26}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"Need","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":27}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" answer","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":28}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" one","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":29}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" short","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":30}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" sentence","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":31}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":32}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" Both","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":33}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" June","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":34}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" ","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":35}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"202","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":36}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"2","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":37}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":38}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" Could","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":39}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" cite","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":40}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":41}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" Need","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":42}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" maybe","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":43}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" exact","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":44}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" publication","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":45}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" years","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":46}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":47}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" Search","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":48}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" results","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":49}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" clearly","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":50}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":51}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" Final","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":52}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":":","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":53}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" RFC","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":54}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" ","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":55}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"911","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":56}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"0","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":57}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" and","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":58}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" RFC","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":59}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" ","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":60}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"911","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":61}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"2","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":62}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" were","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":63}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" both","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":64}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" published","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":65}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" in","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":66}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" ","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":67}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"202","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":68}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"2","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":69}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" (","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":70}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"June","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":71}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" ","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":72}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"202","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":73}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"2","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":74}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":").","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":75}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" One","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":76}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" short","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":77}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" sentence","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":78}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":79}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" Cite","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":80}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" perhaps","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":81}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" ","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":82}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":83}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" But","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":84}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" citations","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":85}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" not","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":86}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" necessarily","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":87}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" required","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":88}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"?","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":89}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" User","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":90}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" asked","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":91}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" search","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":92}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":93}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" We","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":94}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" should","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":95}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" include","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":96}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" short","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":97}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" sentence","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":98}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" with","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":99}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" citations","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":100}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":101}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" Ensure","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":102}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" \"","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":103}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"public","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":104}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"ation","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":105}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" years","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":106}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"\"","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":107}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" plural","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":108}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" but","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":109}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" same","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":110}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":111}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" Could","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":112}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" say","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":113}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" \"","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":114}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"Both","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":115}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" RFC","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":116}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" ","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":117}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"911","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":118}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"0","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":119}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" and","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":120}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" RFC","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":121}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" ","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":122}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"911","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":123}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"2","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":124}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" were","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":125}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" published","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":126}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" in","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":127}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" ","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":128}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"202","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":129}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":"2","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":130}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".\"","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":131}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" with","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":132}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":" citations","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":133}
+
+        event: response.reasoning_text.delta
+        data: {"type":"response.reasoning_text.delta","content_index":0,"delta":".","item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":134}
+
+        event: response.reasoning_text.done
+        data: {"type":"response.reasoning_text.done","content_index":0,"item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"sequence_number":135,"text":"Need answer one short sentence. Both June 2022. Could cite. Need maybe exact publication years. Search results clearly. Final: RFC 9110 and RFC 9112 were both published in 2022 (June 2022). One short sentence. Cite perhaps . But citations not necessarily required? User asked search. We should include short sentence with citations. Ensure \"publication years\" plural but same. Could say \"Both RFC 9110 and RFC 9112 were published in 2022.\" with citations."}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","output_index":2,"part":{"type":"reasoning_text","text":"Need answer one short sentence. Both June 2022. Could cite. Need maybe exact publication years. Search results clearly. Final: RFC 9110 and RFC 9112 were both published in 2022 (June 2022). One short sentence. Cite perhaps . But citations not necessarily required? User asked search. We should include short sentence with citations. Ensure \"publication years\" plural but same. Could say \"Both RFC 9110 and RFC 9112 were published in 2022.\" with citations."},"sequence_number":136}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"type":"reasoning","id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","status":"completed","content":[{"type":"reasoning_text","text":"Need answer one short sentence. Both June 2022. Could cite. Need maybe exact publication years. Search results clearly. Final: RFC 9110 and RFC 9112 were both published in 2022 (June 2022). One short sentence. Cite perhaps . But citations not necessarily required? User asked search. We should include short sentence with citations. Ensure \"publication years\" plural but same. Could say \"Both RFC 9110 and RFC 9112 were published in 2022.\" with citations."}],"summary":[]},"output_index":2,"sequence_number":137}
+
+        event: response.output_item.added
+        data: {"type":"response.output_item.added","item":{"type":"message","id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","status":"in_progress","content":[],"phase":"final_answer","role":"assistant"},"output_index":3,"sequence_number":138}
+
+        event: response.content_part.added
+        data: {"type":"response.content_part.added","content_index":0,"item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","output_index":3,"part":{"type":"output_text","annotations":[],"logprobs":[],"text":""},"sequence_number":139}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"Both","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":140}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" RFC","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":141}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":142}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"911","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":143}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"0","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":144}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" and","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":145}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" RFC","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":146}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":147}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"911","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":148}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"2","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":149}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" were","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":150}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" published","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":151}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" in","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":152}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":153}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"202","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":154}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"2","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":155}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" (","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":156}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"June","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":157}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":" ","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":158}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"202","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":159}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":"2","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":160}
+
+        event: response.output_text.delta
+        data: {"type":"response.output_text.delta","content_index":0,"delta":").","item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":161}
+
+        event: response.output_text.annotation.added
+        data: {"type":"response.output_text.annotation.added","annotation":{"type":"url_citation","url":"https://www.rfc-editor.org/rfc/rfc9110.html","title":"RFC 9110: HTTP Semantics","start_index":0,"end_index":62},"annotation_index":0,"content_index":0,"item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","output_index":3,"sequence_number":162}
+
+        event: response.output_text.annotation.added
+        data: {"type":"response.output_text.annotation.added","annotation":{"type":"url_citation","url":"https://datatracker.ietf.org/doc/rfc9112/#1","title":"RFC 9112: HTTP/1.1 - HTTP/1.1","start_index":0,"end_index":62},"annotation_index":1,"content_index":0,"item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","output_index":3,"sequence_number":163}
+
+        event: response.output_text.done
+        data: {"type":"response.output_text.done","content_index":0,"item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","logprobs":[],"output_index":3,"sequence_number":164,"text":"Both RFC 9110 and RFC 9112 were published in 2022 (June 2022)."}
+
+        event: response.content_part.done
+        data: {"type":"response.content_part.done","content_index":0,"item_id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","output_index":3,"part":{"type":"output_text","annotations":[{"type":"url_citation","url":"https://www.rfc-editor.org/rfc/rfc9110.html","title":"RFC 9110: HTTP Semantics","start_index":0,"end_index":62},{"type":"url_citation","url":"https://datatracker.ietf.org/doc/rfc9112/#1","title":"RFC 9112: HTTP/1.1 - HTTP/1.1","start_index":0,"end_index":62}],"logprobs":[],"text":"Both RFC 9110 and RFC 9112 were published in 2022 (June 2022)."},"sequence_number":165}
+
+        event: response.output_item.done
+        data: {"type":"response.output_item.done","item":{"type":"message","id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","status":"completed","content":[{"type":"output_text","annotations":[{"type":"url_citation","url":"https://www.rfc-editor.org/rfc/rfc9110.html","title":"RFC 9110: HTTP Semantics","start_index":0,"end_index":62},{"type":"url_citation","url":"https://datatracker.ietf.org/doc/rfc9112/#1","title":"RFC 9112: HTTP/1.1 - HTTP/1.1","start_index":0,"end_index":62}],"logprobs":[],"text":"Both RFC 9110 and RFC 9112 were published in 2022 (June 2022)."}],"phase":"final_answer","role":"assistant"},"output_index":3,"sequence_number":166}
+
+        event: response.completed
+        data: {"type":"response.completed","response":{"id":"e0218c0b-3ad9-40e9-872c-52a265807bc7","object":"response","created_at":1795803949,"status":"completed","background":false,"completed_at":1795803951,"content_filters":null,"error":null,"frequency_penalty":0.0,"incomplete_details":null,"instructions":null,"max_output_tokens":null,"max_tool_calls":null,"model":"deepseek-flash","moderation":null,"output":[{"type":"reasoning","id":"df113232-8e9b-46d1-94dc-f45f2ca1ae31","status":"completed","content":[{"type":"reasoning_text","text":"We need answer. Need search web. Let's search queries."}],"summary":[]},{"type":"web_search_call","id":"srvtoolu_ds_00_caea8c36baca4e24ae6a21b8bcd6888c","status":"completed","kind":"deep_search","action":{"type":"search","queries":["RFC 9110 publication year","RFC 9112 publication year"],"sources":[{"type":"url","url":"https://httpwg.org/specs/rfc9110.html?source=post_page-----8af1c027de1d---------------------------------------","title":"RFC9110","snippet":"Information about the current status of this document, any errata, and how to provide feedback on it may be obtained at https://www.rfc-editor.org/info/rfc9110. ... HTTP/1.1 ... and revised again in 2014 ([RFC7230] through [RFC7235]).","site_name":"IETF HTTP Working Group","site_icon":"https://cdn.deepseek.com/site-icons/httpwg.org","published_at":"2002-06-05T16:00:00+00:00"},{"type":"url","url":"https://dt-main.dev.ietf.org/doc/rfc9110/","title":"RFC 9110: HTTP Semantics","snippet":"Document | Type | RFC - Internet Standard (June 2022) Errata IPR ... Standards Track June 2022","site_name":"ietf.org","site_icon":"https://cdn.deepseek.com/site-icons/ietf.org","published_at":"2026-05-19T16:00:00+00:00"},{"type":"url","url":"https://www.rfc-editor.org/rfc/rfc9110.html","title":"RFC 9110: HTTP Semantics","snippet":"RFC 9110 | HTTP Semantics | June 2022 ... HTTP/1.1 ... and published on the Standards Track in 1997 [RFC2068], revised in 1999 [RFC2616], and revised again in 2014 ([RFC7230] through [RFC7235]).¶","site_name":"» RFC Editor","site_icon":"https://cdn.deepseek.com/site-icons/rfc-editor.org","published_at":"2002-06-05T16:00:00+00:00"},{"type":"url","url":"https://lists.w3.org/Archives/Public/ietf-http-wg/2022AprJun/0132.html#1","title":"STD 97, RFC 9110 on HTTP Semantics - STD 97, RFC 9110 on HTTP Semantics","snippet":"STD 97, RFC 9110 on HTTP Semantics ... Mon, 6 Jun 2022 13:03:32 -0700 (PDT) ... June 2022","site_name":"W3C","site_icon":"https://cdn.deepseek.com/site-icons/w3.org","published_at":"2022-06-05T16:00:00+00:00"},{"type":"url","url":"https://ftp.ripe.net/mirrors/rfc/inline-errata/rfc9110.html","title":"rfc9110","snippet":"9110 Adobe ... Standards Track June 2022 ... Information about the current status of this document, any errata ... //www.rfc-editor.org/info/rfc9110.","site_name":"RIPE Network Coordination Centre","site_icon":"https://cdn.deepseek.com/site-icons/ripe.net"},{"type":"url","url":"https://www.itu.int/itu-t/workprog/wp_a5_out.aspx?isn=8353#1","title":"ITU-T work programme - Committed to connecting the world","snippet":"ITU-T A.5 justification information for referenced document IETF RFC 9110 (2022) in draft J.484 ... | IETF RFC 9110 (2022) ... RFC 9110 was published in June 2022 and is a standards track RFC.","site_name":"ITU","site_icon":"https://cdn.deepseek.com/site-icons/itu.int"},{"type":"url","url":"https://www.itu.int/itu-t/workprog/wp_a5_out.aspx?isn=8665#1","title":"ITU-T work programme - ITU-T work programme","snippet":"information for referenced document IETF RFC 9110 (2022) in draft F.748.49 ... | IETF RFC 9110 (2022) ... RFC 9110 was published in June 2022 and is a standards track RFC. It is largely used for World","site_name":"ITU","site_icon":"https://cdn.deepseek.com/site-icons/itu.int"},{"type":"url","url":"https://1f8a81b9b0707b63-19211.webchannel-proxy.scarabresearch.com/ITU-T/workprog/wp_a5_out.aspx?isn=8198","title":"ITU-T work programme","snippet":"ITU-T A.5 justification information for referenced document IETF RFC 9110 (2022) in draft F.780.4 ... | IETF RFC 9110 (2022) ... RFC 9110 was published in June 2022 and is a standards track RFC.","site_name":"scarabresearch.com","site_icon":"https://cdn.deepseek.com/site-icons/scarabresearch.com"},{"type":"url","url":"https://datatracker.ietf.org/doc/rfc9112/#1","title":"RFC 9112: HTTP/1.1 - HTTP/1.1","snippet":"RFC 9112 also known as STD 99 Document | Type | RFC - Internet Standard (June 2022) Errata ... M. ... June 2022 HTTP/1.1 ... Copyright (c) 2022 IETF Trust and the persons identified as the","site_name":"IETF Datatracker","site_icon":"https://cdn.deepseek.com/site-icons/ietf.org","published_at":"2026-05-19T16:00:00+00:00"},{"type":"url","url":"https://datatracker.ietf.org/doc/html/rfc9112.html#1","title":"RFC 9112: HTTP/1.1 - RFC 9112 | HTTP/1.1 | June 2022","snippet":"RFC 9112: Fielding, et al.; HTTP/1.1: Standards Track; June 2022: [Page] ... RFC: - 9112 - STD... ... Obsoletes: - 7230 ... Published... ... RFC 9112","site_name":"IETF Datatracker","site_icon":"https://cdn.deepseek.com/site-icons/ietf.org"},{"type":"url","url":"https://www.rfc-editor.org/rfc/inline-errata/rfc9112.html","title":"rfc9112","snippet":"9112 Adobe ... June 2022 ... Copyright (c) 2022 IETF Trust and the persons identified as the document authors. All rights reserved.","site_name":"» RFC Editor","site_icon":"https://cdn.deepseek.com/site-icons/rfc-editor.org"},{"type":"url","url":"https://datatracker.ietf.org/doc/pdf/rfc9112.pdf#1#6#1","title":"Internet Engineering Task Force (IETF)","snippet":"9112 ... June 2022 HTTP/1.1 ... Information about the current status of this document, any errata ... be obtained at https://www.rfc-editor.org/info/rfc9112. ... Copyright (c) 2022 IETF Trust and the persons identified as the document authors.","site_name":"IETF Datatracker","site_icon":"https://cdn.deepseek.com/site-icons/ietf.org"},{"type":"url","url":"https://www.rfc-editor.org/info/std99/","title":"STD 99 subseries contains 1 RFC | RFC Editor","snippet":"STDs are stable identifiers for \"Internet Standards.\" ... RFC 9112: STD 99: HTTP/1.1 Internet Standard - R. Fielding, Ed. ... - J. Reschke, Ed. - June 2022 - IETF publication - Web and Internet Transport","site_name":"» RFC Editor","site_icon":"https://cdn.deepseek.com/site-icons/rfc-editor.org","published_at":"2022-06-05T16:00:00+00:00"},{"type":"url","url":"https://lists.w3.org/Archives/Public/ietf-http-wg/2022AprJun/0134.html#1","title":"STD 99, RFC 9112 on HTTP/1.1 - STD 99, RFC 9112 on HTTP/1.1","snippet":"STD 99, RFC 9112 on HTTP/1.1 ... Mon, 6 Jun 2022 13:06:22 -0700 (PDT) ... June 2022","site_name":"W3C","site_icon":"https://cdn.deepseek.com/site-icons/w3.org","published_at":"2022-06-05T16:00:00+00:00"},{"type":"url","url":"https://www.itu.int/itu-t/workprog/wp_a5_out.aspx?isn=8704#1","title":"ITU-T work programme - Committed to connecting the world","snippet":"## Committed to connecting the world  # ITU-T work programme  ITU-T A.5 justification information for referenced document IETF RFC 9112 (2022) in draft H.626.8   | 1.  | Clear description of the refer","site_name":"ITU","site_icon":"https://cdn.deepseek.com/site-icons/itu.int"}]}},{"type":"reasoning","id":"a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec","status":"completed","content":[{"type":"reasoning_text","text":"Need answer one short sentence. Both June 2022. Could cite. Need maybe exact publication years. Search results clearly. Final: RFC 9110 and RFC 9112 were both published in 2022 (June 2022). One short sentence. Cite perhaps . But citations not necessarily required? User asked search. We should include short sentence with citations. Ensure \"publication years\" plural but same. Could say \"Both RFC 9110 and RFC 9112 were published in 2022.\" with citations."}],"summary":[]},{"type":"message","id":"5e13fbb3-e206-4c03-9355-91ffbcd9c750","status":"completed","content":[{"type":"output_text","annotations":[{"type":"url_citation","url":"https://www.rfc-editor.org/rfc/rfc9110.html","title":"RFC 9110: HTTP Semantics","start_index":0,"end_index":62},{"type":"url_citation","url":"https://datatracker.ietf.org/doc/rfc9112/#1","title":"RFC 9112: HTTP/1.1 - HTTP/1.1","start_index":0,"end_index":62}],"logprobs":[],"text":"Both RFC 9110 and RFC 9112 were published in 2022 (June 2022)."}],"phase":"final_answer","role":"assistant"}],"parallel_tool_calls":true,"presence_penalty":0.0,"previous_response_id":null,"prompt_cache_key":null,"prompt_cache_retention":null,"reasoning":{"effort":"medium","summary":null},"safety_identifier":null,"service_tier":"default","store":false,"temperature":1.0,"text":{"format":{"type":"text"},"verbosity":null},"tool_choice":"auto","tools":[],"top_logprobs":0,"top_p":1.0,"truncation":"disabled","usage":{"input_tokens":3951,"input_tokens_details":{"cached_tokens":1024},"output_tokens":223,"output_tokens_details":{"reasoning_tokens":135},"total_tokens":4174,"server_tool_use":{"tool_search":2,"tool_fetch":0,"tool_image_search":0}},"user":null,"metadata":{}},"sequence_number":167}
+
+  recorded_at: 2026-11-27T18:25:51.404143+00:00
+- request:
+    method: POST
+    uri: https://api.deepseek.com/responses
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "7763"
+      content-type:
+      - application/json
+      host:
+      - api.deepseek.com
+    body:
+      type: json
+      content:
+        model: deepseek-flash
+        stream: false
+        input:
+        - role: user
+          content: >-
+            Search the web for the publication years of RFC 9110 and RFC 9112. Answer in
+            one short sentence.
+        - id: df113232-8e9b-46d1-94dc-f45f2ca1ae31
+          summary: []
+          encrypted_content: null
+          type: reasoning
+          content:
+          - text: We need answer. Need search web. Let's search queries.
+            type: reasoning_text
+        - type: web_search_call
+          id: srvtoolu_ds_00_caea8c36baca4e24ae6a21b8bcd6888c
+          kind: deep_search
+          status: completed
+          action:
+            type: search
+            queries:
+            - RFC 9110 publication year
+            - RFC 9112 publication year
+            sources:
+            - type: url
+              url: >-
+                https://httpwg.org/specs/rfc9110.html?source=post_page-----8af1c027de1d---------------------------------------
+              title: RFC9110
+              snippet: >-
+                Information about the current status of this document, any errata, and how to
+                provide feedback on it may be obtained at https://www.rfc-editor.org/info/rfc9110.
+                ... HTTP/1.1 ... and revised again in 2014 ([RFC7230] through [RFC7235]).
+              site_name: IETF HTTP Working Group
+              site_icon: https://cdn.deepseek.com/site-icons/httpwg.org
+              published_at: 2002-06-05T16:00:00+00:00
+            - type: url
+              url: https://dt-main.dev.ietf.org/doc/rfc9110/
+              title: "RFC 9110: HTTP Semantics"
+              snippet: >-
+                Document | Type | RFC - Internet Standard (June 2022) Errata IPR ... Standards
+                Track June 2022
+              site_name: ietf.org
+              site_icon: https://cdn.deepseek.com/site-icons/ietf.org
+              published_at: 2026-05-19T16:00:00+00:00
+            - type: url
+              url: https://www.rfc-editor.org/rfc/rfc9110.html
+              title: "RFC 9110: HTTP Semantics"
+              snippet: >-
+                RFC 9110 | HTTP Semantics | June 2022 ... HTTP/1.1 ... and published on the
+                Standards Track in 1997 [RFC2068], revised in 1999 [RFC2616], and revised again in
+                2014 ([RFC7230] through [RFC7235]).¶
+              site_name: » RFC Editor
+              site_icon: https://cdn.deepseek.com/site-icons/rfc-editor.org
+              published_at: 2002-06-05T16:00:00+00:00
+            - type: url
+              url: "https://lists.w3.org/Archives/Public/ietf-http-wg/2022AprJun/0132.html#1"
+              title: STD 97, RFC 9110 on HTTP Semantics - STD 97, RFC 9110 on HTTP Semantics
+              snippet: >-
+                STD 97, RFC 9110 on HTTP Semantics ... Mon, 6 Jun 2022 13:03:32 -0700 (PDT) ...
+                June 2022
+              site_name: W3C
+              site_icon: https://cdn.deepseek.com/site-icons/w3.org
+              published_at: 2022-06-05T16:00:00+00:00
+            - type: url
+              url: https://ftp.ripe.net/mirrors/rfc/inline-errata/rfc9110.html
+              title: rfc9110
+              snippet: >-
+                9110 Adobe ... Standards Track June 2022 ... Information about the current
+                status of this document, any errata ... //www.rfc-editor.org/info/rfc9110.
+              site_name: RIPE Network Coordination Centre
+              site_icon: https://cdn.deepseek.com/site-icons/ripe.net
+            - type: url
+              url: "https://www.itu.int/itu-t/workprog/wp_a5_out.aspx?isn=8353#1"
+              title: ITU-T work programme - Committed to connecting the world
+              snippet: >-
+                ITU-T A.5 justification information for referenced document IETF RFC 9110
+                (2022) in draft J.484 ... | IETF RFC 9110 (2022) ... RFC 9110 was published in June
+                2022 and is a standards track RFC.
+              site_name: ITU
+              site_icon: https://cdn.deepseek.com/site-icons/itu.int
+            - type: url
+              url: "https://www.itu.int/itu-t/workprog/wp_a5_out.aspx?isn=8665#1"
+              title: ITU-T work programme - ITU-T work programme
+              snippet: >-
+                information for referenced document IETF RFC 9110 (2022) in draft F.748.49 ...
+                | IETF RFC 9110 (2022) ... RFC 9110 was published in June 2022 and is a standards
+                track RFC. It is largely used for World
+              site_name: ITU
+              site_icon: https://cdn.deepseek.com/site-icons/itu.int
+            - type: url
+              url: >-
+                https://1f8a81b9b0707b63-19211.webchannel-proxy.scarabresearch.com/ITU-T/workprog/wp_a5_out.aspx?isn=8198
+              title: ITU-T work programme
+              snippet: >-
+                ITU-T A.5 justification information for referenced document IETF RFC 9110
+                (2022) in draft F.780.4 ... | IETF RFC 9110 (2022) ... RFC 9110 was published in June
+                2022 and is a standards track RFC.
+              site_name: scarabresearch.com
+              site_icon: https://cdn.deepseek.com/site-icons/scarabresearch.com
+            - type: url
+              url: "https://datatracker.ietf.org/doc/rfc9112/#1"
+              title: "RFC 9112: HTTP/1.1 - HTTP/1.1"
+              snippet: >-
+                RFC 9112 also known as STD 99 Document | Type | RFC - Internet Standard (June
+                2022) Errata ... M. ... June 2022 HTTP/1.1 ... Copyright (c) 2022 IETF Trust and
+                the persons identified as the
+              site_name: IETF Datatracker
+              site_icon: https://cdn.deepseek.com/site-icons/ietf.org
+              published_at: 2026-05-19T16:00:00+00:00
+            - type: url
+              url: "https://datatracker.ietf.org/doc/html/rfc9112.html#1"
+              title: "RFC 9112: HTTP/1.1 - RFC 9112 | HTTP/1.1 | June 2022"
+              snippet: "RFC 9112: Fielding, et al.; HTTP/1.1: Standards Track; June 2022: [Page] ... RFC: - 9112 - STD... ... Obsoletes: - 7230 ... Published... ... RFC 9112"
+              site_name: IETF Datatracker
+              site_icon: https://cdn.deepseek.com/site-icons/ietf.org
+            - type: url
+              url: https://www.rfc-editor.org/rfc/inline-errata/rfc9112.html
+              title: rfc9112
+              snippet: >-
+                9112 Adobe ... June 2022 ... Copyright (c) 2022 IETF Trust and the persons
+                identified as the document authors. All rights reserved.
+              site_name: » RFC Editor
+              site_icon: https://cdn.deepseek.com/site-icons/rfc-editor.org
+            - type: url
+              url: "https://datatracker.ietf.org/doc/pdf/rfc9112.pdf#1#6#1"
+              title: Internet Engineering Task Force (IETF)
+              snippet: >-
+                9112 ... June 2022 HTTP/1.1 ... Information about the current status of this
+                document, any errata ... be obtained at https://www.rfc-editor.org/info/rfc9112.
+                ... Copyright (c) 2022 IETF Trust and the persons identified as the document
+                authors.
+              site_name: IETF Datatracker
+              site_icon: https://cdn.deepseek.com/site-icons/ietf.org
+            - type: url
+              url: https://www.rfc-editor.org/info/std99/
+              title: STD 99 subseries contains 1 RFC | RFC Editor
+              snippet: "STDs are stable identifiers for \"Internet Standards.\" ... RFC 9112: STD 99: HTTP/1.1 Internet Standard - R. Fielding, Ed. ... - J. Reschke, Ed. - June 2022 - IETF publication - Web and Internet Transport"
+              site_name: » RFC Editor
+              site_icon: https://cdn.deepseek.com/site-icons/rfc-editor.org
+              published_at: 2022-06-05T16:00:00+00:00
+            - type: url
+              url: "https://lists.w3.org/Archives/Public/ietf-http-wg/2022AprJun/0134.html#1"
+              title: STD 99, RFC 9112 on HTTP/1.1 - STD 99, RFC 9112 on HTTP/1.1
+              snippet: >-
+                STD 99, RFC 9112 on HTTP/1.1 ... Mon, 6 Jun 2022 13:06:22 -0700 (PDT) ... June
+                2022
+              site_name: W3C
+              site_icon: https://cdn.deepseek.com/site-icons/w3.org
+              published_at: 2022-06-05T16:00:00+00:00
+            - type: url
+              url: "https://www.itu.int/itu-t/workprog/wp_a5_out.aspx?isn=8704#1"
+              title: ITU-T work programme - Committed to connecting the world
+              snippet: "## Committed to connecting the world  # ITU-T work programme  ITU-T A.5 justification information for referenced document IETF RFC 9112 (2022) in draft H.626.8   | 1.  | Clear description of the refer"
+              site_name: ITU
+              site_icon: https://cdn.deepseek.com/site-icons/itu.int
+        - id: a0acb6ae-fe22-4214-bfa3-cf6dd51cb9ec
+          summary: []
+          encrypted_content: null
+          type: reasoning
+          content:
+          - text: "Need answer one short sentence. Both June 2022. Could cite. Need maybe exact publication years. Search results clearly. Final: RFC 9110 and RFC 9112 were both published in 2022 (June 2022). One short sentence. Cite perhaps . But citations not necessarily required? User asked search. We should include short sentence with citations. Ensure \"publication years\" plural but same. Could say \"Both RFC 9110 and RFC 9112 were published in 2022.\" with citations."
+            type: reasoning_text
+        - role: assistant
+          content: Both RFC 9110 and RFC 9112 were published in 2022 (June 2022).
+        - role: user
+          content: Which of the two was published first?
+        reasoning:
+          effort: medium
+  response:
+    status: 200
+    headers:
+      access-control-allow-credentials:
+      - "true"
+      content-type:
+      - application/json
+      strict-transport-security:
+      - max-age=31536000; includeSubDomains; preload
+      transfer-encoding:
+      - chunked
+      vary:
+      - >-
+        accept-encoding,origin, access-control-request-method,
+        access-control-request-headers
+    body:
+      type: json
+      content:
+        id: b53baa33-e946-4b15-b88b-c7b68e7fd77f
+        object: response
+        created_at: 1795803951
+        status: completed
+        background: false
+        completed_at: 1795803956
+        content_filters: null
+        error: null
+        frequency_penalty: 0.0
+        incomplete_details: null
+        instructions: null
+        max_output_tokens: null
+        max_tool_calls: null
+        model: deepseek-flash
+        moderation: null
+        output:
+        - type: reasoning
+          id: 00fdad9e-0d68-4cc3-ac74-c93b998de073
+          status: completed
+          content:
+          - type: reasoning_text
+            text: |
+              We need answer. Need know RFC 9110 and 9112 publication dates. RFC 9110 HTTP Semantics published June 2022. RFC 9112 HTTP/1.1 published June 2022. Which first? Need exact dates. RFC 9110: June 2022. RFC 9112: June 2022. Need determine day. I recall RFC 9110 published June 2022, RFC 9112 June 2022. Exact dates maybe RFC 9110 June 6, 2022? RFC 9112 June 6, 2022? Let's recall. RFC 9110 "HTTP Semantics" published June 2022. RFC 9111 caching June 2022. RFC 9112 HTTP/1.1 June 2022. RFC 9113 HTTP/2 June 2022. RFC 9114 HTTP/3 June 2022. Dates? I have seen: RFC 9110 June 2022, DOI 10.17487/RFC9110. RFC 9112 June 2022. The RFC editor pages may list "June 2022". Exact publication dates maybe 2022-06-06? Let's verify from memory. RFC 9110 was published 2022-06-06? RFC 9112 also 2022-06-06? If same date, neither first? But question asks which published first. Need maybe RFC 9110 has June 2022 and RFC 9112 June 2022; 9110 number lower but numbers assigned not publication order. Need exact.
+
+              Let's think. RFC 9110: "HTTP Semantics" by Fielding, Nottingham, Reschke. June 2022. RFC 9112: "HTTP/1.1" by Fielding, Nottingham, Reschke. June 2022. I can recall IETF datatracker: RFC 9110 published 2022-06-06? RFC 9112 published 2022-06-06? Actually RFCs often published same day as a batch. The HTTP core RFCs 9110-9114 were published June 6, 2022? Let's see memory: RFC 9114 "HTTP/3" published June 2022. I remember "RFC 9114 was published in June 2022". The RFC Editor index maybe: 9110 June 2022; 9111 June 2022; 9112 June 2022; 9113 June 2022; 9114 June 2022. They may all have same publication date 2022-06-06. If same, neither first. But user asks "Which of the two was published first?" If both same date, answer neither; same date. Need be accurate. Need maybe one has date June 2022 and other June 2022. Let's search memory internally. I have seen RFC 9110 at https://www.rfc-editor.org/rfc/rfc9110.html. Header: "RFC 9110" "June 2022". It says "Published: June 2022". RFC 9112: "June 2022". The RFC Editor "Info page" may show "Publication Date: 2022-06-06" for both? Hmm.
+
+              Let's recall exact: RFC 9110 DOI: 10.17487/RFC9110. "June 2022". RFC 9112 DOI: 10.17487/RFC9112. "June 2022". The RFC Editor publishes RFCs with month/year only in RFC text; metadata has exact date. The datatracker RFC page has "Publication date: 2022-06-06" maybe. RFC 9110? I can infer from IETF stream: RFC 9110 was approved 2022-05-??, published 2022-06-06. RFC 9112 also. They were part of HTTPbis set, likely all published same day. So answer: Neither--they share the same publication date (June 2022). But if exact dates differ? Need check.
+
+              Let's see if RFC 9110 and 9112 could have different exact dates? RFC numbers assigned sequentially at publication. If RFC 9110 and 9112 both published same batch, 9111 in between also same date. It is common for a cluster to be published same day. So likely same exact date. The question "Which of the two was published first?" might be trap: RFC 9110 has lower number, but both June 2022. If same month, cannot tell from month. Exact date likely same. Answer short: Neither--RFC 9110 and RFC 9112 were published on the same date in June 2022. Need one sentence. Ensure not claim if unsure. Could say "They were published on the same date (June 2022), so neither was first." Good.
+
+              Need final only.
+          summary: []
+          encrypted_content: b53baa33-e946-4b15-b88b-c7b68e7fd77f-0
+        - type: message
+          id: c2b6a3d3-133c-4219-865a-268199e51208
+          status: completed
+          content:
+          - type: output_text
+            annotations: []
+            logprobs: []
+            text: Neither--RFC 9110 and RFC 9112 were published on the same date in June 2022.
+          phase: final_answer
+          role: assistant
+        parallel_tool_calls: true
+        presence_penalty: 0.0
+        previous_response_id: null
+        prompt_cache_key: null
+        prompt_cache_retention: null
+        reasoning:
+          effort: medium
+          summary: null
+        safety_identifier: null
+        service_tier: default
+        store: false
+        temperature: 1.0
+        text:
+          format:
+            type: text
+          verbosity: null
+        tool_choice: auto
+        tools: []
+        top_logprobs: 0
+        top_p: 1.0
+        truncation: disabled
+        usage:
+          input_tokens: 88
+          input_tokens_details:
+            cached_tokens: 0
+          output_tokens: 1063
+          output_tokens_details:
+            reasoning_tokens: 1039
+          total_tokens: 1151
+        user: null
+        metadata: {}
+  recorded_at: 2026-11-27T18:25:56.527915+00:00

@@ -123,6 +123,7 @@ making it ideal for queries that require up-to-date data.
 |----------|-----------|-------|
 | OpenAI Responses | ✅ | Full feature support. To include search results on the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart] that's available via [`ModelResponse.native_tool_calls`][pydantic_ai.messages.ModelResponse.native_tool_calls], enable the [`OpenAIResponsesModelSettings.openai_include_web_search_sources`][pydantic_ai.models.openai.OpenAIResponsesModelSettings.openai_include_web_search_sources] [model setting](agent.md#model-run-settings). |
 | Anthropic | ✅ | Full feature support |
+| DeepSeek | ✅ | With [`DeepSeekResponsesModel`][pydantic_ai.models.deepseek.DeepSeekResponsesModel] and `deepseek-flash`. No parameter support, so a [restricting parameter](#restricting-parameters) makes the tool unsupported. See [DeepSeek native web tools](models/deepseek.md#native-web-tools). |
 | Google GenerateContent | ✅ | No parameter support, so a [restricting parameter](#restricting-parameters) makes the tool unsupported. The search sources are the [`NativeToolReturnPart`][pydantic_ai.messages.NativeToolReturnPart]'s content, except on Gemini 3 with the Gemini API, where they're under the `sources` key of the last web search return's content, as Gemini doesn't say which search found which source. Gemini 2.5 and Google Cloud report their searches after the text they ground, so the call and return come after the text. See [Google tool combinations](#google-tool-combinations). |
 | Google Interactions | ✅ | No parameter support, so a [restricting parameter](#restricting-parameters) makes the tool unsupported. Each search is its own call and return, in the order the model ran it: the call's `args` hold its `queries`, the return's content holds Google's `search_suggestions`, and the sources are [citations](citations.md) on the text. |
 | xAI | ✅ | Supports `blocked_domains`, `allowed_domains`, and `user_location` parameters. |
@@ -150,6 +151,8 @@ print(result.output)
 _(This example is complete, it can be run "as is")_
 
 With Anthropic, the number of searches is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details] and included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost].
+
+With DeepSeek, `RequestUsage.details` holds the non-zero `tool_search`, `tool_fetch` and `tool_image_search` counts. DeepSeek doesn't bill these calls, so `web_searches` stays unset.
 
 With Google GenerateContent, the number of Google Search grounding queries is reported as `web_search_requests` in [`RequestUsage.details`][pydantic_ai.usage.RequestUsage.details], and the billed count as `web_searches` on [`RequestUsage`][pydantic_ai.usage.RequestUsage]: one per unique query on Gemini 3, and one per grounded request that returned a web source on Gemini 2.5 and older. The billed count is included in [`RunUsage.cost`][pydantic_ai.usage.RunUsage.cost], without deducting Google's free grounding allowance.
 
@@ -674,6 +677,7 @@ allowing it to pull up-to-date information from the web.
 | Provider | Supported | Notes |
 |----------|-----------|-------|
 | Anthropic | ✅ | Full feature support. Uses Anthropic's [Web Fetch Tool](https://docs.claude.com/en/docs/agents-and-tools/tool-use/web-fetch-tool) internally to retrieve URL contents. |
+| DeepSeek | ✅ | With [`DeepSeekResponsesModel`][pydantic_ai.models.deepseek.DeepSeekResponsesModel] and `deepseek-flash`. No parameter support. Reads only the links in the last user message. See [DeepSeek native web tools](models/deepseek.md#native-web-tools). |
 | Google GenerateContent | ✅ | No parameter support. The limits are fixed at 20 URLs per request with a maximum of 34MB per URL. See [Google tool combinations](#google-tool-combinations). |
 | Google Interactions | ✅ | No parameter support. The call's `args` hold the `urls`, and the return's content lists each URL with its fetch `status`. |
 | xAI | ❌ | Web browsing is implemented as part of [`WebSearchTool`](#web-search-tool) with xAI. |
