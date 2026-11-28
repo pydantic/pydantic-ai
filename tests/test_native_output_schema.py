@@ -137,3 +137,36 @@ async def test_native_output_template_false():
     assert params
     assert params.prompted_output_template is False
     assert params.prompted_output_instructions is None
+
+
+async def test_prompted_output_template_with_literal_braces():
+    """Test that literal braces in a custom template (e.g. a JSON example) are passed
+    through verbatim instead of being interpreted as `str.format` placeholders."""
+    template = 'Return JSON {"name": "x"} matching {schema}'
+    model = TestModel(custom_output_text='{"name": "Paris", "population": 9000000}')
+    agent = Agent(model, output_type=PromptedOutput(City, template=template))
+
+    await agent.run('Paris')
+
+    params = model.last_model_request_parameters
+    assert params
+    assert params.prompted_output_instructions is not None
+    assert 'Return JSON {"name": "x"} matching' in params.prompted_output_instructions
+    assert 'City' in params.prompted_output_instructions
+
+
+async def test_prompted_output_template_without_schema_placeholder():
+    """Test that a template without `{schema}` still has the schema appended."""
+    model = TestModel(custom_output_text='{"name": "London", "population": 9000000}')
+    agent = Agent(
+        model,
+        output_type=PromptedOutput(City, template='Return a city as JSON.'),
+    )
+
+    await agent.run('London')
+
+    params = model.last_model_request_parameters
+    assert params
+    assert params.prompted_output_instructions is not None
+    assert params.prompted_output_instructions.startswith('Return a city as JSON.\n\n')
+    assert 'City' in params.prompted_output_instructions
