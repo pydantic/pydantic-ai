@@ -2087,8 +2087,8 @@ def _collect_dominating_forks(
         A mapping from join IDs to their parent fork information
 
     Raises:
-        ValueError: If any join node lacks a dominating fork, or a map's downstream join has a parent fork that
-            does not dominate the map
+        GraphBuildingError: If any join node lacks a dominating fork, or a map's downstream join has a parent fork
+            that does not dominate the map
     """
     nodes = set(graph_nodes)
     start_ids: set[NodeID] = {StartNode.id}

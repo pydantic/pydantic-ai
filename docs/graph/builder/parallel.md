@@ -247,7 +247,7 @@ async def main():
 
 _(To run this example, ensure `asyncio` is imported and add `asyncio.run(main())`; no other changes are needed.)_
 
-The map creates the join's state under the run of the join's parent fork, so that parent fork must be the map itself or a fork every path to the map passes through. Otherwise, such as when the join prefers a closer parent fork nested below the map, `build()` raises a [`GraphBuildingError`][pydantic_graph.exceptions.GraphBuildingError].
+The map creates the join's state under the run of the join's parent fork, so that parent fork must be the map itself or a fork every path to the map passes through. If it is not, for example when the join prefers a closer parent fork nested below the map, `build()` raises a [`GraphBuildingError`][pydantic_graph.exceptions.GraphBuildingError].
 
 ## Nested Parallel Operations
 
