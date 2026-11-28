@@ -1404,9 +1404,16 @@ class SessionRuntime(Generic[DepsT, OutputT]):
         self.status.status_segments = tuple(self.loader.status_segments())
 
     def _live_segment(self) -> str:
-        """How many sessions are live in this Pax, shown in the terminal once the browser opened others."""
-        live = len(self.process.live.listing())
-        return f'{live} live' if self.terminal is not None and live > 1 else ''
+        """How many sessions are live in this Pax, shown in the terminal once the browser opened others.
+
+        Sessions waiting on the user (a tool approval or an ask_user question)
+        are counted after the live total, e.g. '2 live · 1 waiting'.
+        """
+        live = self.process.live.listing()
+        if self.terminal is None or len(live) <= 1:
+            return ''
+        waiting = sum(1 for session in live if session.waiting_for is not None)
+        return f'{len(live)} live · {waiting} waiting' if waiting else f'{len(live)} live'
 
     async def _rewind(self) -> None:
         assert self.editor is not None
