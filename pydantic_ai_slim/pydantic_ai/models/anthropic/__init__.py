@@ -307,6 +307,7 @@ try:
         PreparedMessagesCreate,
         build_extra_body,
         default_max_tokens,
+        extra_body_thinking,
         resolve_anthropic_service_tier,
         resolve_effective_thinking,
         with_max_retries_keeping_aws_profile,
@@ -1528,8 +1529,34 @@ class AnthropicModel(Model[AsyncAnthropicClient]):
             filtered: ModelSettings = {**model_settings}
             self._drop_unsupported_sampling_settings(filtered, api_version=api_version)
             return filtered or None
-        thinking = request_thinking_type(profile, model_settings, model_request_parameters) is not None
-        return drop_conflicting_sampling_settings(model_settings, profile, thinking=thinking) or None
+        return self._drop_sampling_settings_rejected_on_wire(model_settings, model_request_parameters)
+
+    def _drop_sampling_settings_rejected_on_wire(
+        self, model_settings: ModelSettings, model_request_parameters: ModelRequestParameters
+    ) -> ModelSettings | None:
+        """Drop the sampling settings the model rejects with the rest of the request, as the request goes out.
+
+        An `extra_body` entry wins over the setting of the same name on the wire, so a `thinking` or sampling
+        setting there is the one judged, and a dropped one is removed from `extra_body` too.
+        """
+        if (caller_thinking := extra_body_thinking(cast(AnthropicModelSettings, model_settings))) is not None:
+            thinking = caller_thinking.get('type') in ('enabled', 'adaptive')
+        else:
+            thinking = request_thinking_type(self.profile, model_settings, model_request_parameters) is not None
+        extra_body = model_settings.get('extra_body')
+        body: dict[str, Any] = dict(extra_body) if is_str_mapping(extra_body) else {}
+        wire_settings: ModelSettings = {**model_settings}
+        for setting in ANTHROPIC_SAMPLING_PARAMS:
+            if setting in body:
+                wire_settings[setting] = body[setting]
+        kept = drop_conflicting_sampling_settings(wire_settings, self.profile, thinking=thinking)
+        dropped = {setting for setting in ANTHROPIC_SAMPLING_PARAMS if setting in wire_settings and setting not in kept}
+        filtered: ModelSettings = {**model_settings}
+        for setting in dropped:
+            filtered.pop(setting, None)
+        if dropped & body.keys():
+            filtered['extra_body'] = {key: value for key, value in body.items() if key not in dropped}
+        return filtered or None
 
     def _sampling_rejecting_api_version(self, model_settings: ModelSettings) -> str | None:
         """The request's API version, if it rejects `temperature`, `top_p` and `top_k` on every model.

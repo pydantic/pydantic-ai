@@ -10,6 +10,7 @@ from decimal import Decimal
 from enum import Enum
 from functools import cached_property
 from pathlib import Path
+from types import MappingProxyType
 from typing import TYPE_CHECKING, Annotated, Any, Literal, TypeVar, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -2469,6 +2470,99 @@ async def test_anthropic_keeps_top_p_set_together_with_temperature_where_accepte
     await agent.run('What is 2+2?', model_settings=ModelSettings(temperature=0.5, top_p=0.9))
 
     assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_body'] == {'temperature': 0.5, 'top_p': 0.9}
+
+
+@pytest.mark.parametrize(
+    'thinking',
+    [
+        pytest.param({'type': 'enabled', 'budget_tokens': 2048}, id='enabled'),
+        pytest.param({'type': 'adaptive'}, id='adaptive'),
+    ],
+)
+async def test_anthropic_extra_body_thinking_drops_the_sampling_settings_it_rejects(
+    allow_model_requests: None, thinking: dict[str, object]
+):
+    """Thinking turned on through `extra_body` drops the sampling settings Claude rejects with it, as `thinking=True` does.
+
+    The SDK merges `extra_body` into the request body, so its `thinking` turns thinking on all the same.
+    A mock, since this only checks which settings the drop keeps, which the SDK call shows.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client)))
+
+    await agent.run(
+        'What is 2+2?',
+        model_settings=ModelSettings(temperature=0.5, top_p=0.9, top_k=40, extra_body={'thinking': thinking}),
+    )
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert not {'temperature', 'top_p', 'top_k'} & kwargs.keys()
+    assert kwargs['extra_body'] == {'thinking': thinking}
+
+
+async def test_anthropic_extra_body_thinking_disabled_keeps_the_sampling_settings(allow_model_requests: None):
+    """Thinking disabled through `extra_body` wins over `thinking=True` on the wire, so nothing is dropped for it.
+
+    A mock, since the claim is which of two disagreeing thinking settings the drop follows, and the API accepts
+    the request with or without `temperature` here, so a recording can't tell the two apart.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client)))
+
+    await agent.run(
+        'What is 2+2?',
+        model_settings=ModelSettings(thinking=True, temperature=0.5, extra_body={'thinking': {'type': 'disabled'}}),
+    )
+
+    assert get_mock_chat_completion_kwargs(mock_client)[0]['extra_body'] == {
+        'temperature': 0.5,
+        'thinking': {'type': 'disabled'},
+    }
+
+
+async def test_anthropic_thinking_drops_the_extra_body_sampling_settings_it_rejects(allow_model_requests: None):
+    """With thinking, a `temperature` set in `extra_body` is dropped from it, as a top-level one is.
+
+    A mock, since this only checks which settings the drop keeps, which the SDK call shows.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    agent = Agent(AnthropicModel('claude-sonnet-4-6', provider=AnthropicProvider(anthropic_client=mock_client)))
+
+    await agent.run('What is 2+2?', model_settings=ModelSettings(thinking=True, extra_body={'temperature': 0.5}))
+
+    assert 'temperature' not in get_mock_chat_completion_kwargs(mock_client)[0]['extra_body']
+
+
+@pytest.mark.parametrize(
+    'extra_body',
+    [
+        pytest.param({'top_p': 0.9}, id='dict'),
+        pytest.param(MappingProxyType({'top_p': 0.9}), id='mapping'),
+    ],
+)
+async def test_anthropic_drops_extra_body_top_p_set_together_with_temperature(
+    allow_model_requests: None, extra_body: Mapping[str, object]
+):
+    """Claude Haiku 4.5 takes `temperature` or `top_p`, not both, so `top_p` is dropped from `extra_body` too.
+
+    A mock, since this only checks which settings the drop keeps, which the SDK call shows.
+    """
+    mock_client = MockAnthropic.create_mock(
+        completion_message([BetaTextBlock(text='4', type='text')], BetaUsage(input_tokens=5, output_tokens=1))
+    )
+    agent = Agent(AnthropicModel('claude-haiku-4-5', provider=AnthropicProvider(anthropic_client=mock_client)))
+
+    await agent.run('What is 2+2?', model_settings=ModelSettings(temperature=0.5, extra_body=extra_body))
+
+    kwargs = get_mock_chat_completion_kwargs(mock_client)[0]
+    assert 'top_p' not in kwargs
+    assert kwargs['extra_body'] == {'temperature': 0.5}
 
 
 async def test_anthropic_betas_setting(allow_model_requests: None):
