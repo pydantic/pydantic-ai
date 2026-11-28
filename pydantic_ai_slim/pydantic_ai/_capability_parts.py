@@ -395,8 +395,10 @@ def _lookalike_naming(source: CapabilityPartSource, tag: str) -> LookalikeNaming
     elif isinstance(source, ModelSource):
         if _note_author(source.author):
             naming['model_name'] = source.author
-    elif isinstance(source, CapabilitySource) and _NOTE_IDENTIFIER.fullmatch(source.capability_id):
-        naming['model_name'] = f'`{source.capability_id}` capability'
+    elif isinstance(source, CapabilitySource):
+        # A capability wrote the content, not a model: without a quotable id the note still says so.
+        quotable = _NOTE_IDENTIFIER.fullmatch(source.capability_id) is not None
+        naming['model_name'] = f'`{source.capability_id}` capability' if quotable else 'capability'
     return naming
 
 
