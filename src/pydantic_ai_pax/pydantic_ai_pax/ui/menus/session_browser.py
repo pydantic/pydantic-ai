@@ -564,7 +564,7 @@ class SessionBrowser:
             try:
                 key = self.key_source()
                 dirty = bool(key)
-                result = self.handle_key(key)
+                result = self.handle_key(key) if key else None
                 if result is not None:
                     return result
                 # Only while no key arrives: a held arrow key must never wait on storage.

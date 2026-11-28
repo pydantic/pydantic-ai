@@ -233,6 +233,14 @@ def test_empty_search_and_scripted_loop() -> None:
     assert widget.handle_key(Key.ESCAPE) == ''
 
 
+def test_delete_confirmation_waits_through_idle_polls(monkeypatch: pytest.MonkeyPatch) -> None:
+    """The key poll returns `''` on timeout; that is no key, so it must not cancel the confirmation."""
+    widget, entries = browser(keys=[Key.ENTER, Key.DOWN, 'd', '', '', 'y', 'ctrl-c'])
+    monkeypatch.setattr(module, 'time', SimpleNamespace(monotonic=lambda: 0.0))
+    assert widget.loop() == ''
+    assert [e.id for e in entries] == ['one', 'two']
+
+
 @pytest.mark.parametrize('workspace', ['/a/project', '/b/project', '/missing/clai2/worktree'])
 def test_resume_without_directory_confirmation(workspace: str) -> None:
     widget, entries = browser(keys=[Key.ENTER, '', Key.ENTER, '', 'ctrl-c'])
