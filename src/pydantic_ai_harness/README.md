@@ -413,7 +413,7 @@ This installs [`pydantic-ai-slim`](https://ai.pydantic.dev/install/) with it, so
 
 ## Build your own
 
-[Capabilities](https://ai.pydantic.dev/capabilities/#building-custom-capabilities) are the primary extension point for Pydantic AI, and every capability in this repo doubles as a worked example. Publishing a standalone package? Use the `pydantic-ai-<name>` naming convention; see [Publishing capability packages](https://ai.pydantic.dev/extensibility/#publishing-capability-packages).
+[Capabilities](https://pydantic.dev/docs/ai/capabilities/custom/) are the primary extension point for Pydantic AI, and every capability in this repo doubles as a worked example. Publishing a standalone package? Use the `pydantic-ai-<name>` naming convention; see [Publishing capability packages](https://ai.pydantic.dev/extensibility/#publishing-capability-packages).
 
 ## Contributing
 
