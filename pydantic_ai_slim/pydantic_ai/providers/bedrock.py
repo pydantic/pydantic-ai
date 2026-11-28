@@ -226,8 +226,8 @@ class BedrockModelProfile(ModelProfile, total=False):
 
     pydantic-ai merges consecutive user turns into one Bedrock message, which can place a `toolResult`
     alongside a following turn's text/attachment. Some models reject that: Anthropic rejects documents
-    and video next to a `toolResult`, while Llama and Mistral reject *any* content sharing the turn (the
-    `toolResult` must be alone). When a merge would co-locate a `toolResult` with a kind not listed here,
+    and video next to a `toolResult`, while Llama and Mistral's Pixtral Large reject *any* content sharing the turn
+    (the `toolResult` must be alone). When a merge would co-locate a `toolResult` with a kind not listed here,
     the adapter splits the turns and separates them with a synthetic assistant message (Bedrock re-merges
     consecutive same-role turns, so a bare split doesn't suffice). See https://github.com/pydantic/pydantic-ai/issues/6081.
 
@@ -237,12 +237,12 @@ class BedrockModelProfile(ModelProfile, total=False):
     """Whether this model accepts a conversation that starts with an assistant message.
 
     Bedrock's Converse API requires that a conversation start with a user message for most model
-    families (Amazon Nova, Meta Llama, Mistral, Cohere, AI21, Writer, ...), which reject a leading
-    assistant turn with `"A conversation must start with a user message..."`. Anthropic and Qwen
-    models accept a leading assistant turn, so for them we don't need to synthesize a placeholder
-    user message when `message_history` starts with a `ModelResponse`.
+    families (Amazon Nova, Meta Llama, Mistral's Pixtral Large, Cohere, AI21, Writer, ...), which reject a
+    leading assistant turn with `"A conversation must start with a user message..."`. Anthropic, Qwen, Mistral
+    Large 3 and Ministral 3 models accept a leading assistant turn, so for them we don't need to synthesize a
+    placeholder user message when `message_history` starts with a `ModelResponse`.
 
-    Verified against Bedrock `us-east-1` on 2026-07-03.
+    Verified against Bedrock `us-east-1` on 2026-07-03 (Mistral Large 3 and Ministral 3 on 2026-11-26).
 
     Default: `False` (strict — synthesize a leading user message when history starts with an
     assistant turn).
@@ -502,6 +502,11 @@ def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
     models_that_support_structured_output = ('magistral-small', 'ministral-3', 'mistral-large-3', 'voxtral')
     supports_structured_output = model_name.startswith(models_that_support_structured_output)
     models_that_reject_stop_sequences = ('devstral', 'magistral', 'ministral-3', 'mistral-large-3', 'voxtral')
+    # Mistral Large 3 and Ministral 3 accept a leading assistant turn, and text or an image in the same user message
+    # as a `toolResult`; Pixtral Large rejects both. Verified live against `mistral.mistral-large-3-675b-instruct` and
+    # `mistral.ministral-3-{3b,8b,14b}-instruct` in Bedrock `us-east-1` on 2026-11-26. Other members keep the strict
+    # defaults until they're verified.
+    is_mistral_3 = model_name.startswith(('mistral-large-3', 'ministral-3'))
     return merge_profile(
         _strip_builtin_tools(mistral_model_profile(model_name)),
         BedrockModelProfile(
@@ -510,9 +515,10 @@ def bedrock_mistral_model_profile(model_name: str) -> ModelProfile | None:
             json_schema_transformer=BedrockJsonSchemaTransformer,
             supports_json_schema_output=supports_structured_output,
             bedrock_supports_strict_tool_definition=supports_structured_output,
-            # Mistral on Bedrock requires a `toolResult` to be alone in its user message; it rejects
-            # any co-located text or attachment block. See https://github.com/pydantic/pydantic-ai/issues/6081.
-            bedrock_tool_result_colocatable_content=frozenset(),
+            # Other Mistral models on Bedrock (e.g. Pixtral Large) require a `toolResult` to be alone in its user
+            # message and reject any co-located text or attachment block. See https://github.com/pydantic/pydantic-ai/issues/6081.
+            bedrock_tool_result_colocatable_content=frozenset({'text', 'image'}) if is_mistral_3 else frozenset(),
+            bedrock_supports_leading_assistant_message=is_mistral_3,
             # Mistral (pixtral) on Bedrock accepts documents inside a `toolResult`'s content but rejects
             # images there — even though it accepts images in a plain user message — and has no video
             # support. Verified live against `us.mistral.pixtral-large-2502-v1:0`. Applies family-wide, but

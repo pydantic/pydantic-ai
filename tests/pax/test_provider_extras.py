@@ -36,6 +36,7 @@ EXCLUDED: dict[str, str] = {
     'dbos': 'Durable execution, which Pax does not use.',
     'prefect': 'Durable execution, which Pax does not use.',
     'spec': 'YAML agent specs, which Pax does not load.',
+    'jsonschema': '`StructuredDict(validate=True)`, which Pax does not use.',
 }
 """The `pydantic-ai-slim` extras Pax does not mirror, each with the reason."""
 

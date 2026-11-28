@@ -122,9 +122,27 @@ A [mid-conversation system prompt](../message-history.md#mid-conversation-system
 
 Other routes get a `<system>`-tagged user message instead. This keeps prompt caching effective: on Gemini and older Claude models, a native mid-conversation `system` message doesn't stay where it was sent, which would invalidate the cached prefix after it.
 
+## File input
+
+OpenRouter rejects a request that sends a model a kind of file it doesn't take, such as an image to a text-only model. Pydantic AI ships a snapshot of [OpenRouter's model list](https://openrouter.ai/api/v1/models), refreshed weekly, and sets an `OpenRouterModel`'s [file-input flags](overview.md#inspecting-a-models-profile) from the model's `input_modalities` in it: [`supports_image_input`][pydantic_ai.profiles.ModelProfile.supports_image_input] from `image`, [`supports_audio_file_input`][pydantic_ai.profiles.ModelProfile.supports_audio_file_input] from `audio` and [`supports_video_input`][pydantic_ai.profiles.ModelProfile.supports_video_input] from `video`. A file a tool returns that the model can't take is then [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance) instead of failing the request. [`supports_document_input`][pydantic_ai.profiles.ModelProfile.supports_document_input] is left as it is: OpenRouter [accepts PDFs on any model](https://openrouter.ai/docs/guides/overview/multimodal/pdfs), and turns them into text for a model that doesn't read files.
+
+The list isn't fetched at run time, so a model OpenRouter added after your installed release keeps the default flags. A variant such as `:free` takes its base model's flags. The snapshot's flags take precedence over the upstream provider's profile, which describes the lab's own API: on OpenRouter, `google/gemma-3-27b-it` takes no video although `google_model_profile` turns video on. To set a flag yourself, pass it in `profile=`, which takes precedence over both:
+
+```python
+from pydantic_ai.models.openrouter import OpenRouterModel
+from pydantic_ai.profiles import ModelProfile
+from pydantic_ai.providers.openrouter import OpenRouterProvider
+
+model = OpenRouterModel(
+    'acme/new-model',
+    provider=OpenRouterProvider(api_key='your-openrouter-api-key'),
+    profile=ModelProfile(supports_image_input=True),
+)
+```
+
 ## Video input
 
-OpenRouter answers 404 ("No endpoints found that support input video") when video is sent to a model that doesn't read it, such as Claude, GPT or DeepSeek. Only Gemini and Amazon Nova routes are marked as reading video, except Gemini image models and Nova Micro. For other models, video a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance) instead of failing the request. With [`FileUnderstanding`](../capabilities/file-understanding.md) on the agent, such video, including video in the prompt, is described by its understanding model instead. To send it to another model that reads video, pass `profile=ModelProfile(supports_video_input=True)` to [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] (see [`ModelProfile`][pydantic_ai.profiles.ModelProfile]).
+OpenRouter answers 404 ("No endpoints found that support input video") when video is sent to a model that doesn't read it, such as Claude, GPT or DeepSeek. Video is off unless the model reads it according to the upstream provider's profile (Gemini and Amazon Nova routes, except Gemini image models and Nova Micro) or to the [model list snapshot](#file-input). For other models, video a tool returns is [sent as a note naming it](../tools-advanced.md#tool-return-file-provenance) instead of failing the request. With [`FileUnderstanding`](../capabilities/file-understanding.md) on the agent, such video, including video in the prompt, is described by its understanding model instead. To send it to another model that reads video, pass `profile=ModelProfile(supports_video_input=True)` to [`OpenRouterModel`][pydantic_ai.models.openrouter.OpenRouterModel] (see [`ModelProfile`][pydantic_ai.profiles.ModelProfile]).
 
 ## Prompt Caching
 

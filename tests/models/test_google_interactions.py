@@ -460,6 +460,7 @@ STATELESS_TOOL_HISTORY: dict[bool, ReplayExpectation] = {
                             {'id': 'call_391632', 'name': 'city_temperature', 'type': 'function_call'},
                         ],
                         'usage': {
+                            'initial_input_tokens': 38,
                             'input_tokens_by_modality': [{'modality': 'text', 'tokens': 59}],
                             'total_cached_tokens': 0,
                             'total_input_tokens': 59,
@@ -525,6 +526,7 @@ STATELESS_TOOL_HISTORY: dict[bool, ReplayExpectation] = {
                             {'content': [{'type': 'text'}], 'type': 'model_output'},
                         ],
                         'usage': {
+                            'initial_input_tokens': 97,
                             'input_tokens_by_modality': [{'modality': 'text', 'tokens': 121}],
                             'total_cached_tokens': 0,
                             'total_input_tokens': 121,
@@ -882,6 +884,7 @@ STRUCTURED_OUTPUT_MESSAGES: dict[tuple[str, bool], list[ModelMessage]] = {
                         {'content': [{'type': 'text'}], 'type': 'model_output'},
                     ],
                     'usage': {
+                        'initial_input_tokens': 75,
                         'input_tokens_by_modality': [{'modality': 'text', 'tokens': 11}],
                         'total_cached_tokens': 0,
                         'total_input_tokens': 11,
@@ -1020,6 +1023,7 @@ STRUCTURED_OUTPUT_MESSAGES: dict[tuple[str, bool], list[ModelMessage]] = {
                         {'id': 'call_352375', 'name': 'final_result', 'type': 'function_call'},
                     ],
                     'usage': {
+                        'initial_input_tokens': 38,
                         'input_tokens_by_modality': [{'modality': 'text', 'tokens': 67}],
                         'total_cached_tokens': 0,
                         'total_input_tokens': 67,
@@ -1162,6 +1166,7 @@ STRUCTURED_OUTPUT_MESSAGES: dict[tuple[str, bool], list[ModelMessage]] = {
                         {'content': [{'type': 'text'}], 'type': 'model_output'},
                     ],
                     'usage': {
+                        'initial_input_tokens': 83,
                         'input_tokens_by_modality': [{'modality': 'text', 'tokens': 86}],
                         'total_cached_tokens': 0,
                         'total_input_tokens': 86,
@@ -1527,6 +1532,7 @@ Sum: 48494
                         {'content': [{'type': 'text'}], 'type': 'model_output'},
                     ],
                     'usage': {
+                        'initial_input_tokens': 23,
                         'input_tokens_by_modality': [{'modality': 'text', 'tokens': 56}],
                         'tool_use_tokens_by_modality': [{'modality': 'text', 'tokens': 179}],
                         'total_cached_tokens': 0,
@@ -2110,6 +2116,7 @@ The current stable version of Python is **Python 3.15.2**, released on October 2
                     ],
                     'usage': {
                         'grounding_tool_count': [{'count': 2, 'type': 'google_search'}],
+                        'initial_input_tokens': 48,
                         'input_tokens_by_modality': [{'modality': 'text', 'tokens': 66}],
                         'total_cached_tokens': 0,
                         'total_input_tokens': 66,
@@ -2521,6 +2528,7 @@ The current stable version of Python is **Python 3.15.2**, released on October 2
                         },
                     ],
                     'usage': {
+                        'initial_input_tokens': 63,
                         'input_tokens_by_modality': [{'modality': 'text', 'tokens': 32}],
                         'tool_use_tokens_by_modality': [{'modality': 'text', 'tokens': 63}],
                         'total_cached_tokens': 0,
@@ -3283,6 +3291,7 @@ Available pages for pydantic/pydantic:
                         {'content': [{'type': 'text'}], 'type': 'model_output'},
                     ],
                     'usage': {
+                        'initial_input_tokens': 84,
                         'input_tokens_by_modality': [{'modality': 'text', 'tokens': 76}],
                         'tool_use_tokens_by_modality': [{'modality': 'text', 'tokens': 1931}],
                         'total_cached_tokens': 0,
@@ -4548,16 +4557,17 @@ async def test_minimal_thinking_resolves_to_supported_level(
     }
 
 
-async def test_long_decode_stops_at_the_request_cap(
-    gemini_api_key: str, request_capture: RequestCapture, allow_model_requests: None
+@pytest.mark.parametrize('stream', [pytest.param(False, id='unary'), pytest.param(True, id='stream')])
+async def test_continued_long_decode(
+    stream: bool, gemini_api_key: str, request_capture: RequestCapture, allow_model_requests: None
 ):
-    """A streamed long decode reaches Google's per-request output cap and ends as a `length` finish.
+    """A live long decode reaches Google's per-request output cap, and google-genai continues it in further requests.
 
-    Recorded with google-genai 2.32, which returns the `requires_continuation` interaction as is; from 2.34 the SDK
-    continues it in further requests. Without `X-Server-Timeout` the server cut this stream off at its own deadline
-    before the cap. The prompt and size are those `tests/models/google/test_long_decode.py` streams on
-    `generateContent`.
+    Without `X-Server-Timeout` the server cut a stream off at its own deadline before the cap. The prompt and size are
+    those `tests/models/google/test_long_decode.py` streams on `generateContent`. Unlike there, a unary request isn't
+    capped lower: the 7,500 lines that reach the unary cap there came back from Interactions in one request.
     """
+    lines = 14_000
     model = GoogleInteractionsModel(
         'gemini-4-argon',
         provider=GoogleProvider(api_key=gemini_api_key, http_client=request_capture.http_client(timeout=20 * 60)),
@@ -4571,22 +4581,25 @@ async def test_long_decode_stops_at_the_request_cap(
         ),
         model_settings=settings,
     )
-    lines = 14_000
+    prompt = (
+        f'Print the integers from 1 to {lines} in ascending order, one per line. '
+        'Output only the numbers: no code, no commentary, no ellipses, no markdown, no skipped numbers.'
+    )
     with capture_run_messages() as messages:
-        async with agent.run_stream(
-            f'Print the integers from 1 to {lines} in ascending order, one per line. '
-            'Output only the numbers: no code, no commentary, no ellipses, no markdown, no skipped numbers.'
-        ) as result:
-            output = await result.get_output()
+        if stream:
+            async with agent.run_stream(prompt) as result:
+                output = await result.get_output()
+        else:
+            output = (await agent.run(prompt)).output
 
     response = messages[-1]
     assert isinstance(response, ModelResponse)
-    assert (response.finish_reason, (response.provider_details or {}).get('status')) == (
-        'length',
-        'requires_continuation',
-    )
-    assert request_capture.headers[0].get_list('x-server-timeout') == ['1200']
-    # The cap can cut the last number short.
-    numbers = output.split()
-    assert 1 < len(numbers) < lines
-    assert numbers[:-1] == [str(number) for number in range(1, len(numbers))]
+    assert output.split() == [str(number) for number in range(1, lines + 1)]
+    assert response.finish_reason == 'stop'
+    # The second request is the first plus the token, and its input re-counts the first request's 65,536 output tokens.
+    first, second = request_capture.bodies()
+    assert second.pop('continuation_token')
+    assert second == first
+    assert all(headers.get_list('x-server-timeout') == ['1200'] for headers in request_capture.headers)
+    assert (response.usage.input_tokens, response.usage.output_tokens) == (110 + 65_646, 65_536 + 7_361)
+    assert response.metadata == {'__pydantic_ai__': {'context_input_tokens': 110}}

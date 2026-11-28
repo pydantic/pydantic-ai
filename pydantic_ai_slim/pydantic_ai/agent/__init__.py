@@ -82,7 +82,7 @@ from .._cancel import (
     provide_run_deadline,
     take_run_binding,
 )
-from .._compaction_requests import RequestedCompaction
+from .._compaction_requests import RequestedCompaction, claim_compaction_only_run
 from .._deferred_capabilities import registered_loaded_capability_ids
 from .._instructions import AgentInstructions, lowered_block_id
 from .._output import OutputToolset
@@ -121,7 +121,7 @@ from ..models.instrumented import InstrumentationSettings, InstrumentedModel
 from ..native_tools import AbstractNativeTool
 from ..native_tools._tool_search import ToolSearchTool
 from ..output import OutputDataT, OutputSpec, StructuredDict
-from ..run import AgentRun, AgentRunResult
+from ..run import AgentRun, AgentRunResult, CompactionRunResult
 from ..settings import ModelSettings, merge_model_settings
 from ..template import TemplateStr
 from ..tool_manager import ParallelExecutionMode, ToolManager
@@ -209,6 +209,7 @@ __all__ = (
     'AgentRun',
     'AgentRunEvents',
     'AgentRunResult',
+    'CompactionRunResult',
     'NativeToolFunc',
     'CallToolsNode',
     'EndStrategy',
@@ -1652,35 +1653,39 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         if infer_name and self.name is None:
             self._infer_name(inspect.currentframe())
 
-        prepared = await self._prepare_run(
-            user_prompt,
-            output_type=output_type,
-            message_history=message_history,
-            deferred_tool_results=deferred_tool_results,
-            conversation_id=conversation_id,
-            conversation_revision=conversation_revision,
-            conversation_unsaved=conversation_unsaved,
-            conversation_unchecked=conversation_unchecked,
-            conversation_deferred_tool_requests=conversation.deferred_tool_requests if conversation else None,
-            run_id=run_id,
-            model=model,
-            instructions=instructions,
-            deps=deps,
-            model_settings=model_settings,
-            usage_limits=usage_limits,
-            cancellation_token=cancellation_token,
-            timeout=timeout,
-            usage=usage,
-            metadata=metadata,
-            retries=retries,
-            toolsets=toolsets,
-            capabilities=capabilities,
-            workspace=workspace,
-            compact=compact,
-            spec=spec,
-        )
-        async with prepared.open() as agent_run:
-            yield agent_run
+        # Claimed before any user-supplied code runs in this context, for the run's whole lifetime: a run a hook or
+        # tool starts inside it isn't compaction-only. See `AbstractAgent.compact_history`.
+        with claim_compaction_only_run() as compaction_only:
+            prepared = await self._prepare_run(
+                user_prompt,
+                output_type=output_type,
+                message_history=message_history,
+                deferred_tool_results=deferred_tool_results,
+                conversation_id=conversation_id,
+                conversation_revision=conversation_revision,
+                conversation_unsaved=conversation_unsaved,
+                conversation_unchecked=conversation_unchecked,
+                conversation_deferred_tool_requests=conversation.deferred_tool_requests if conversation else None,
+                run_id=run_id,
+                model=model,
+                instructions=instructions,
+                deps=deps,
+                model_settings=model_settings,
+                usage_limits=usage_limits,
+                cancellation_token=cancellation_token,
+                timeout=timeout,
+                usage=usage,
+                metadata=metadata,
+                retries=retries,
+                toolsets=toolsets,
+                capabilities=capabilities,
+                workspace=workspace,
+                compact=compact,
+                compaction_only=compaction_only,
+                spec=spec,
+            )
+            async with prepared.open() as agent_run:
+                yield agent_run
 
     async def _prepare_run(  # noqa: C901
         self,
@@ -1709,6 +1714,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
         capabilities: Sequence[AgentCapability[AgentDepsT]] | None = None,
         workspace: WorkspaceBackend | WorkspaceRef | Literal['new'] | None = None,
         compact: bool | CompactionOptions = False,
+        compaction_only: bool = False,
         spec: dict[str, Any] | AgentSpec | None = None,
     ) -> _PreparedAgentRun[AgentDepsT, Any]:
         # Consume the pending `AgentRunEvents` binding before ANY user-supplied code (capability /
@@ -2355,6 +2361,7 @@ class Agent(AbstractAgent[AgentDepsT, OutputDataT]):
             instrumentation_settings=instrumentation_settings,
             cancellation=cancellation,
             deadline=deadline,
+            compaction_only=compaction_only,
         )
 
         user_prompt_node = _agent_graph.UserPromptNode[AgentDepsT](

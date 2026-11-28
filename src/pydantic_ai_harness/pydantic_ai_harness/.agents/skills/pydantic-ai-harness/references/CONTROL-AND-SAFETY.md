@@ -629,7 +629,7 @@ print(agent.run_sync('Set up storage').output)
   at a time, through core `wait_for_external_event` like a token-taking `HandleDeferredToolCalls` handler: in process by default, journaled
   and suspended on AWS Lambda durable functions and on Temporal (`TemporalDurability`: the answerer runs in
   a local activity whose result the history records, the workflow waits on a condition, and the token is
-  resolved with `await pydantic_ai.durable_exec.temporal.resolve_external_event(client, token, payload)`,
+  resolved with `await pydantic_ai_harness.temporal.resolve_external_event(client, token, payload)`,
   which signals the workflow; the tool runs in an activity, which can't emit events yet (#7971), so
   `AskUserRequestedEvent` isn't emitted there; import the agent's module under
   `workflow.unsafe.imports_passed_through()`, or the answerer is the sandbox's copy); on DBOS/Prefect the engine refuses it with `UserError`
