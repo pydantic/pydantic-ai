@@ -1296,6 +1296,13 @@ tagged `coder-delegate-models` and `coder-review-agent`, so older builds ignore 
 deleting them. The [reference](docs/reference.md#delegate-models-and-review-directory) covers directory
 selection and saved model chains.
 
+`require_verification=true` adds harness `RequireVerification` beside `Coder`, so a turn that
+edited code and answers without a passing check since its last edit is sent back, at most twice,
+to run its tests, lint, type checks, or build. It is off by default, and with it off the requests
+are unchanged. The setting is tagged `coder-require-verification`, so older builds ignore it
+without deleting it. The [reference](docs/reference.md#verifying-edits) covers what counts as an
+edit and a check, and the instruction the model gets.
+
 `agent_folders` is stored as a JSON list of folder names or paths for disk-defined
 agents (Claude `*.md` or Codex `*.toml`). A name searches `.agents/<name>`,
 `.claude/<name>`, and `.codex/<name>` in the project, then your home directory;
