@@ -1,9 +1,9 @@
 ---
-title: Current Time
+title: Announce Current Time
 description: "Tell a Pydantic AI agent today's date, or the current hour, in a time zone you pick, without breaking the prompt cache."
 ---
 
-# Current Time
+# Announce Current Time
 
 Tell the model today's date, or the current hour, in a time zone you pick. Use it when an agent answers questions that depend on when they are asked, such as "what's due this week", which a model can't work out from its training data.
 
@@ -17,9 +17,9 @@ pip/uv-add pydantic-ai-harness
 
 ```python
 from pydantic_ai import Agent
-from pydantic_ai_harness import CurrentTime
+from pydantic_ai_harness import AnnounceCurrentTime
 
-agent = Agent('{{ anthropic:large }}', capabilities=[CurrentTime(timezone='Europe/Amsterdam')])
+agent = Agent('{{ anthropic:large }}', capabilities=[AnnounceCurrentTime(timezone='Europe/Amsterdam')])
 ```
 
 The model's instructions then include a line such as `Today's date is Friday, 2026-01-02 (Europe/Amsterdam).`
@@ -30,7 +30,7 @@ The model's instructions then include a line such as `Today's date is Friday, 20
 | `precision` | `'date'` | `'date'` states the weekday and date; `'hour'` states the hour as well: `The current time is within the hour starting 2026-01-02T14:00+01:00 (Friday, Europe/Amsterdam).` |
 | `id` | `'current_time'` | Keys the instruction block, so a change can be appended to the message history. `None` or `''` means the default |
 
-In an [agent spec](../agent-spec.md), `timezone` takes a zone name: `- CurrentTime: {timezone: Europe/Amsterdam}`, loaded with `custom_capability_types=[CurrentTime]`.
+In an [agent spec](../agent-spec.md), `timezone` takes a zone name: `- AnnounceCurrentTime: {timezone: Europe/Amsterdam}`, loaded with `custom_capability_types=[AnnounceCurrentTime]`.
 
 ## Prompt caching
 
@@ -42,14 +42,20 @@ The capability reads no clock of its own, only the request's timestamp, so it is
 
 ## Telemetry
 
-`CurrentTime` emits no spans of its own. The text it adds is part of the request's instructions, which an [instrumented](../logfire.md) agent records on the model request span.
+`AnnounceCurrentTime` emits no spans of its own. The text it adds is part of the request's instructions, which an [instrumented](../logfire.md) agent records on the model request span.
 
 ## Composition
 
-Two `CurrentTime` on one agent share the default `id` and merge into one, with the later one's settings. To state the time in two zones, give the second its own `id`.
+Two `AnnounceCurrentTime` on one agent share the default `id` and merge into one, with the later one's settings. To state the time in two zones, give the second its own `id`.
 
-See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/current_time/).
+## Renamed from `CurrentTime`
+
+This capability was `CurrentTime`, in `pydantic_ai_harness.current_time`. It was renamed to follow the harness naming convention, which names a capability that acts on the run with a verb phrase. The old name still imports, from `pydantic_ai_harness` and `pydantic_ai_harness.current_time`, with a `HarnessDeprecationWarning`, until a future release removes it. Its default `id` is still `current_time`, so conversations recorded before the rename keep their instruction key.
+
+Specs saved before the rename use the `CurrentTime` block name. To keep loading them, pass the deprecated `CurrentTime` class in `custom_capability_types`, alongside or instead of `AnnounceCurrentTime`: its class name is the block name. To migrate a spec, rename its `CurrentTime` block to `AnnounceCurrentTime`; the options are unchanged.
+
+See the [source](https://github.com/pydantic/pydantic-ai/tree/main/src/pydantic_ai_harness/pydantic_ai_harness/announce_current_time/).
 
 ## API reference
 
-::: pydantic_ai_harness.CurrentTime
+::: pydantic_ai_harness.AnnounceCurrentTime

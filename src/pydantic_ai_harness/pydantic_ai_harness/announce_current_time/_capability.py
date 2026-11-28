@@ -1,4 +1,4 @@
-"""`CurrentTime`: tell the model the current date, or the current hour, in a time zone you pick."""
+"""`AnnounceCurrentTime`: tell the model the current date, or the current hour, in a time zone you pick."""
 
 from __future__ import annotations
 
@@ -18,7 +18,7 @@ _WEEKDAYS = ('Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday',
 
 
 @dataclass(kw_only=True)
-class CurrentTime(AbstractCapability[AgentDepsT]):
+class AnnounceCurrentTime(AbstractCapability[AgentDepsT]):
     """Tell the model the current date, or the current hour, in a time zone you pick.
 
     The time is the timestamp of the request being sent, so the capability reads no clock of its own. When it

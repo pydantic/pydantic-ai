@@ -7,6 +7,7 @@ from ._warn import HarnessDeprecationWarning, MCPReadOnlyNoToolsWarning
 if TYPE_CHECKING:
     from .absurd import AbsurdDurability
     from .advisor import Advisor
+    from .announce_current_time import AnnounceCurrentTime
     from .announce_working_directory import AnnounceWorkingDirectory
     from .approval_reviewer import ApprovalReviewer
     from .artifact_scanning import ArtifactScanner
@@ -37,15 +38,15 @@ if TYPE_CHECKING:
     )
     from .computer_use import ComputerUse
     from .conversation_search import ConversationSearch
-    from .current_time import CurrentTime
+
+    # Deprecated names: the redundant aliases type them for users; at runtime they resolve lazily, with a warning.
+    from .current_time import CurrentTime as CurrentTime  # pyright: ignore[reportDeprecated]
     from .day_ai import DayAI
     from .daytona_sandbox import DaytonaSandbox, DaytonaSandboxBackend
     from .dbos import DBOSDurability
     from .deny_unanswered import DenyUnanswered
     from .detect_loops import DetectLoops
     from .docker_container import DockerContainer, DockerContainerBackend
-
-    # Deprecated names: the redundant aliases type them for users; at runtime they resolve lazily, with a warning.
     from .docker_sandbox import DockerSandbox as DockerSandbox, DockerSandboxBackend as DockerSandboxBackend  # pyright: ignore[reportDeprecated]
     from .dynamic_workflow import DynamicWorkflow
     from .e2b_sandbox import E2BSandbox, E2BSandboxBackend
@@ -121,6 +122,7 @@ if TYPE_CHECKING:
 __all__ = [
     'AbsurdDurability',
     'Advisor',
+    'AnnounceCurrentTime',
     'AnnounceWorkingDirectory',
     'ApprovalReviewer',
     'ArtifactScanner',
@@ -144,7 +146,6 @@ __all__ = [
     'CompactOnRequest',
     'ComputerUse',
     'ConversationSearch',
-    'CurrentTime',
     'DEFAULT_CROSS_MODEL_NOTICE',
     'DEFAULT_REFINE_OUTPUT_INSTRUCTIONS',
     'DEFAULT_REQUIRE_VERIFICATION_INSTRUCTIONS',
@@ -258,6 +259,7 @@ __all__ = [
 _LAZY_EXPORTS = {
     'AbsurdDurability': 'absurd',
     'Advisor': 'advisor',
+    'AnnounceCurrentTime': 'announce_current_time',
     'AnnounceWorkingDirectory': 'announce_working_directory',
     'ApprovalReviewer': 'approval_reviewer',
     'ArtifactScanner': 'artifact_scanning',
@@ -281,7 +283,6 @@ _LAZY_EXPORTS = {
     'CompactOnRequest': 'compaction',
     'ComputerUse': 'computer_use',
     'ConversationSearch': 'conversation_search',
-    'CurrentTime': 'current_time',
     'DayAI': 'day_ai',
     'DaytonaSandbox': 'daytona_sandbox',
     'DaytonaSandboxBackend': 'daytona_sandbox',
@@ -398,6 +399,8 @@ _LAZY_EXPORTS = {
     'OutputGuardFunc': 'guardrails',
     # Pre-rename names; importing the `pydantic_ai_harness.docker_sandbox` shim emits
     # the deprecation warning.
+    # Pre-rename name; importing the `pydantic_ai_harness.current_time` shim emits the deprecation warning.
+    'CurrentTime': 'current_time',
     'DockerSandbox': 'docker_sandbox',
     'DockerSandboxBackend': 'docker_sandbox',
 }

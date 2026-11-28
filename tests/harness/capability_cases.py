@@ -27,6 +27,7 @@ from __future__ import annotations
 import ast
 import importlib.util
 import tempfile
+import warnings
 from collections.abc import Callable
 from functools import cache
 from pathlib import Path
@@ -40,6 +41,7 @@ from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import ToolDefinition
 from pydantic_ai_harness import (
     Advisor,
+    AnnounceCurrentTime,
     AnnounceWorkingDirectory,
     ApprovalReviewer,
     AskUser,
@@ -52,7 +54,6 @@ from pydantic_ai_harness import (
     Coder,
     CompactOnRequest,
     ComputerUse,
-    CurrentTime,
     DayAI,
     DeduplicateFileReads,
     FallbackCompaction,
@@ -369,8 +370,20 @@ def _check_working_directory(merged: AnnounceWorkingDirectory[None]) -> None:
     assert merged.id == 'announce_working_directory'
 
 
-def _check_current_time(merged: CurrentTime[None]) -> None:
+def _check_current_time(merged: AnnounceCurrentTime[None]) -> None:
     assert (merged.timezone, merged.precision) == ('Asia/Tokyo', 'hour')
+
+
+def _old_current_times() -> tuple[AbstractCapability[None], AbstractCapability[None]]:
+    """The deprecated `CurrentTime`, built quietly: its own tests assert the warning."""
+    with warnings.catch_warnings():
+        warnings.simplefilter('ignore')
+        from pydantic_ai_harness.current_time import CurrentTime  # pyright: ignore[reportDeprecated]
+
+        return (
+            CurrentTime[None](timezone='Europe/Amsterdam'),  # pyright: ignore[reportDeprecated]
+            CurrentTime[None](timezone='Asia/Tokyo', precision='hour'),  # pyright: ignore[reportDeprecated]
+        )
 
 
 def _check_label_cross_model_history(merged: LabelCrossModelHistory[None]) -> None:
@@ -636,12 +649,12 @@ CASES: dict[str, CapabilityCase] = {
             _check_working_directory,
         )
     ),
-    'CurrentTime': CapabilityCase(
+    'AnnounceCurrentTime': CapabilityCase(
         Combines(
             'one statement of the time per id; the later configuration wins',
             lambda: (
-                CurrentTime[None](timezone='Europe/Amsterdam'),
-                CurrentTime[None](timezone='Asia/Tokyo', precision='hour'),
+                AnnounceCurrentTime[None](timezone='Europe/Amsterdam'),
+                AnnounceCurrentTime[None](timezone='Asia/Tokyo', precision='hour'),
             ),
             _check_current_time,
         )
@@ -685,6 +698,13 @@ CASES: dict[str, CapabilityCase] = {
     ),
     'OpenSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='opensandbox'),
     'DockerContainer': CapabilityCase(Anonymous(_SANDBOX)),
+    'CurrentTime': CapabilityCase(
+        Combines(
+            'deprecated alias of `AnnounceCurrentTime`, and combines the same way',
+            _old_current_times,
+            _check_current_time,
+        )
+    ),
     'DockerSandbox': CapabilityCase(Anonymous('deprecated alias of `DockerContainer`, and combines the same way')),
     'E2BSandbox': CapabilityCase(Anonymous(_SANDBOX), requires='e2b'),
     'KubernetesSandbox': CapabilityCase(

@@ -1,4 +1,4 @@
-"""Test that `CurrentTime` tells the model the date or hour of each request, and appends changes."""
+"""Test that `AnnounceCurrentTime` tells the model the date or hour of each request, and appends changes."""
 
 from __future__ import annotations
 
@@ -17,10 +17,10 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.tools import RunContext
 from pydantic_ai.usage import RunUsage
-from pydantic_ai_harness import CurrentTime
+from pydantic_ai_harness import AnnounceCurrentTime
 
 
-def _agent(capability: CurrentTime[None], sent: list[ModelRequest]) -> Agent[None, str]:
+def _agent(capability: AnnounceCurrentTime[None], sent: list[ModelRequest]) -> Agent[None, str]:
     def reply(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
         request = messages[-1]
         assert isinstance(request, ModelRequest)
@@ -63,26 +63,26 @@ def _clock(monkeypatch: pytest.MonkeyPatch, now: datetime) -> None:
     monkeypatch.setattr('pydantic_ai._agent_graph.now_utc', lambda: now)
 
 
-class TestCurrentTime:
+class TestAnnounceCurrentTime:
     @pytest.mark.parametrize(
         ('capability', 'expected'),
         [
-            (CurrentTime[None](), "Today's date is Friday, 2026-01-02 (UTC)."),
-            (CurrentTime[None](timezone='Asia/Tokyo'), "Today's date is Saturday, 2026-01-03 (Asia/Tokyo)."),
+            (AnnounceCurrentTime[None](), "Today's date is Friday, 2026-01-02 (UTC)."),
+            (AnnounceCurrentTime[None](timezone='Asia/Tokyo'), "Today's date is Saturday, 2026-01-03 (Asia/Tokyo)."),
             (
-                CurrentTime[None](timezone=timezone(timedelta(hours=-5)), precision='hour'),
+                AnnounceCurrentTime[None](timezone=timezone(timedelta(hours=-5)), precision='hour'),
                 'The current time is within the hour starting 2026-01-02T18:00-05:00 (Friday, UTC-05:00).',
             ),
             (
-                CurrentTime[None](timezone=ZoneInfo('Europe/Amsterdam'), precision='hour'),
+                AnnounceCurrentTime[None](timezone=ZoneInfo('Europe/Amsterdam'), precision='hour'),
                 'The current time is within the hour starting 2026-01-03T00:00+01:00 (Saturday, Europe/Amsterdam).',
             ),
-            (CurrentTime[None](timezone=_HostZone('XST')), "Today's date is Saturday, 2026-01-03 (XST)."),
-            (CurrentTime[None](timezone=_HostZone(None)), "Today's date is Saturday, 2026-01-03 (UTC+03:00)."),
+            (AnnounceCurrentTime[None](timezone=_HostZone('XST')), "Today's date is Saturday, 2026-01-03 (XST)."),
+            (AnnounceCurrentTime[None](timezone=_HostZone(None)), "Today's date is Saturday, 2026-01-03 (UTC+03:00)."),
         ],
     )
     async def test_states_the_request_time(
-        self, capability: CurrentTime[None], expected: str, monkeypatch: pytest.MonkeyPatch
+        self, capability: AnnounceCurrentTime[None], expected: str, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         _clock(monkeypatch, datetime(2026, 1, 2, 23, 30, tzinfo=UTC))
         sent: list[ModelRequest] = []
@@ -94,7 +94,7 @@ class TestCurrentTime:
         self, monkeypatch: pytest.MonkeyPatch
     ) -> None:
         sent: list[ModelRequest] = []
-        agent = _agent(CurrentTime[None](), sent)
+        agent = _agent(AnnounceCurrentTime[None](), sent)
 
         _clock(monkeypatch, datetime(2026, 1, 2, 23, 30, tzinfo=UTC))
         first = await agent.run('What day is it?')
@@ -122,13 +122,13 @@ Today's date is Saturday, 2026-01-03 (UTC).
         )
 
     def test_states_nothing_before_the_first_request(self) -> None:
-        instructions = CurrentTime[None]().get_instructions()
+        instructions = AnnounceCurrentTime[None]().get_instructions()
         ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), messages=[])
         assert instructions(ctx) is None
 
     @pytest.mark.parametrize('id', [None, ''])
     def test_an_empty_id_falls_back_to_the_default(self, id: str | None) -> None:
-        assert CurrentTime[None](id=id).id == 'current_time'
+        assert AnnounceCurrentTime[None](id=id).id == 'current_time'
 
     @pytest.mark.parametrize('precision', ['date', 'hour'])
     def test_the_weekday_ignores_the_process_locale(
@@ -138,7 +138,7 @@ Today's date is Saturday, 2026-01-03 (UTC).
         # a German locale, which CI doesn't install, and check the stand-in is live.
         monkeypatch.setattr('time.strftime', _german_strftime)
         assert f'{datetime(2026, 1, 2):%A}' == datetime(2026, 1, 2).strftime('%A') == 'Freitag'
-        instructions = CurrentTime[None](precision=precision).get_instructions()
+        instructions = AnnounceCurrentTime[None](precision=precision).get_instructions()
         request = ModelRequest(parts=[], timestamp=datetime(2026, 1, 2, 12, tzinfo=UTC))
         ctx = RunContext[None](deps=None, model=TestModel(), usage=RunUsage(), messages=[request])
         part = instructions(ctx)
@@ -147,24 +147,27 @@ Today's date is Saturday, 2026-01-03 (UTC).
 
     async def test_the_time_zone_is_resolved_once_when_built(self, monkeypatch: pytest.MonkeyPatch) -> None:
         # Resolving a zone the cache has evicted reads tzdata from disk, which a request must not do in the event loop.
-        monkeypatch.setattr('pydantic_ai_harness.current_time._capability.ZoneInfo', _CountedZoneInfo)
+        monkeypatch.setattr('pydantic_ai_harness.announce_current_time._capability.ZoneInfo', _CountedZoneInfo)
         monkeypatch.setattr(_CountedZoneInfo, 'built', 0)
-        capability = await anyio.to_thread.run_sync(lambda: CurrentTime[None](timezone='Europe/Amsterdam'))
+        capability = await anyio.to_thread.run_sync(lambda: AnnounceCurrentTime[None](timezone='Europe/Amsterdam'))
         agent = _agent(capability, [])
         await agent.run('What day is it?')
         await agent.run('And now?')
         assert _CountedZoneInfo.built == 1
 
     def test_agent_spec_schema_publishes_its_fields(self) -> None:
-        definitions = AgentSpec.model_json_schema_with_capabilities([CurrentTime])['$defs']
-        properties = definitions['spec_params_CurrentTime']['properties']
+        definitions = AgentSpec.model_json_schema_with_capabilities([AnnounceCurrentTime])['$defs']
+        properties = definitions['spec_params_AnnounceCurrentTime']['properties']
         assert set(properties) == {'id', 'description', 'defer_loading', 'timezone', 'precision'}
         assert properties['timezone']['type'] == 'string'
 
     async def test_from_spec_takes_a_zone_name(self, monkeypatch: pytest.MonkeyPatch) -> None:
         agent = Agent.from_spec(
-            {'model': 'test', 'capabilities': [{'CurrentTime': {'timezone': 'Asia/Tokyo', 'precision': 'hour'}}]},
-            custom_capability_types=[CurrentTime],
+            {
+                'model': 'test',
+                'capabilities': [{'AnnounceCurrentTime': {'timezone': 'Asia/Tokyo', 'precision': 'hour'}}],
+            },
+            custom_capability_types=[AnnounceCurrentTime],
         )
         _clock(monkeypatch, datetime(2026, 1, 2, 23, 30, tzinfo=UTC))
         request = (await agent.run('What time is it?')).all_messages()[0]
@@ -174,4 +177,4 @@ Today's date is Saturday, 2026-01-03 (UTC).
 
     def test_an_unknown_time_zone_fails_when_built(self) -> None:
         with pytest.raises(ZoneInfoNotFoundError):
-            CurrentTime[None](timezone='Mars/Olympus_Mons')
+            AnnounceCurrentTime[None](timezone='Mars/Olympus_Mons')
