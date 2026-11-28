@@ -274,6 +274,8 @@ Dependencies and anything else on the run context are not sent, unless a prompt,
 
 Prefer an output type with fields to a bare output with its question in `instructions`: each field carries its own question, so several questions can be asked in one request. Reach for `instructions` for framing that applies to every question — the voice to judge in, the domain, what the material is — and for the question itself only when there is one question and no field to describe.
 
+The same split is what [`StructuredJudge`](../evals/evaluators/llm-judge.md#several-measures-in-one-request) gives a Pydantic Evals suite: the case's output is the prompt, the measures are the fields, and a decision model answers all of them in one request.
+
 Unless the schema describes an option, the model sees it by its name alone, so name `Literal` and `Enum` options for what they mean. A `Literal` has nowhere to write a meaning per option; where the difference between two options needs explaining, use an `Enum` that mixes in [`UseEnumMemberDocstrings`][pydantic_ai.UseEnumMemberDocstrings] and put a docstring under each member, which is what puts a description on each option in the schema.
 
 !!! note "Docstrings in a notebook"
@@ -971,6 +973,8 @@ result = judge.run_sync(message_history=conversation.all_messages())
 print(result.output)
 #> True
 ```
+
+To ask a question like this about the output of every case in a dataset, use the [`StructuredJudge`](../evals/evaluators/built-in.md#structuredjudge) evaluator from Pydantic Evals: `StructuredJudge('Was the reply polite?')` with a decision model as its `model` asks it in one request per case, and reports the model's confidence as each answer's reason.
 
 A new prompt on top of a history is judged as `text` beside it; the latest prompt with no history before it is the whole state, as plain text. Once a tool has returned or a retry was sent since the latest prompt, the state is split at that prompt: the conversation before it is `history`, the prompt is `text`, and everything since — the calls, their results, retry feedback — is `done`, so the text being judged stays the request, whether the agent made those calls itself or they came in a `message_history`, such as another agent's finished run. Either way the conversation in the history goes to the backend — system prompts, tool arguments and tool results included, though a `CachePoint` is left out and a file is refused — so trim it to what the question is about: `message_history=conversation.all_messages()[-4:]`, a [history processor](../message-history.md#processing-message-history), or a compaction capability, which works on a decision model agent as on any other. A summary it writes goes along as a `summary` entry when it is a [`CompactionPart`][pydantic_ai.messages.CompactionPart], or as a `system` entry when it was written as a system prompt, which the [harness's compaction](../harness/compaction.md) does.
 

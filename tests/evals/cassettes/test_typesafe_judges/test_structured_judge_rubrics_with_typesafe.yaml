@@ -1,0 +1,77 @@
+version: 1
+interactions:
+- request:
+    method: POST
+    uri: https://api.typesafe.ai/v1/systemone
+    headers:
+      accept:
+      - application/json
+      accept-encoding:
+      - gzip, deflate, br, zstd
+      connection:
+      - keep-alive
+      content-length:
+      - "937"
+      content-type:
+      - application/json
+      host:
+      - api.typesafe.ai
+    body:
+      type: json
+      content:
+        state: |-
+          <Output>
+          I cannot reset your password, but you can do it yourself from the account page.
+          </Output>
+        model: jev-latest
+        questions:
+          follows_policy:
+            type: noul
+            instructions:
+              field: follows_policy
+              question: Is this statement true? The reply follows the support policy.
+              goal: Judge an output against each rubric.
+              background: Answer each question about <Output>.
+          gives_next_step:
+            type: noul
+            instructions:
+              field: gives_next_step
+              question: Is this statement true? The reply gives the customer a concrete next step.
+              goal: Judge an output against each rubric.
+              background: Answer each question about <Output>.
+          never_asks_for_secrets:
+            type: noul
+            instructions:
+              field: never_asks_for_secrets
+              question: Is this statement true? The reply never asks for a password or a login code.
+              goal: Judge an output against each rubric.
+              background: Answer each question about <Output>.
+  response:
+    status: 200
+    headers:
+      alt-svc:
+      - h3=":443"; ma=86400
+      content-type:
+      - application/json
+      transfer-encoding:
+      - chunked
+      x-typesafe-request-id:
+      - req_01a21e25212f734d97739afc1b873204
+    body:
+      type: json
+      content:
+        model: jev-1.14.0
+        answers:
+          follows_policy:
+            type: noul
+            noul: 0.81
+          gives_next_step:
+            type: noul
+            noul: 0.95
+          never_asks_for_secrets:
+            type: noul
+            noul: 0.98
+        usage:
+          input_tokens: 488
+          output_tokens: 63
+  recorded_at: 2026-11-27T17:54:39.605538+00:00

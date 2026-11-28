@@ -1,17 +1,20 @@
 from __future__ import annotations
 
-from collections.abc import Sequence
-from dataclasses import dataclass
+from collections.abc import Mapping, Sequence
+from dataclasses import dataclass, fields as dataclass_fields, is_dataclass
 from textwrap import dedent
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field, RootModel
+from pydantic.dataclasses import is_pydantic_dataclass
+from pydantic.fields import FieldInfo
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import to_json
 
 from pydantic_ai import Agent, StructuredDict, UserContent, models
+from pydantic_ai._utils import is_model_like, is_str_dict
 from pydantic_ai.exceptions import UserError
-from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES
+from pydantic_ai.messages import MULTI_MODAL_CONTENT_TYPES, ModelResponse
 from pydantic_ai.models.fallback import FallbackModel
 from pydantic_ai.models.wrapper import WrapperModel
 from pydantic_ai.settings import ModelSettings
@@ -19,11 +22,13 @@ from pydantic_ai.settings import ModelSettings
 __all__ = (
     'GEvalOutput',
     'GradingOutput',
+    'JudgeAnswer',
     'judge_g_eval',
     'judge_input_output',
     'judge_input_output_expected',
     'judge_output',
     'judge_output_expected',
+    'judge_questions',
     'set_default_judge_model',
 )
 
@@ -408,7 +413,7 @@ def _make_section(content: Any, tag: str) -> list[str | UserContent]:
 
 def _build_prompt(
     output: Any,
-    rubric: str,
+    rubric: str | None = None,
     inputs: Any | None = None,
     expected_output: Any | None = None,
 ) -> tuple[str | Sequence[str | UserContent], Sequence[str]]:
@@ -419,6 +424,9 @@ def _build_prompt(
     `judge_input_output_expected` naming — so the runtime prompt matches the format the
     model was primed with and the rubric (the instruction) comes last, after all the
     context it applies to.
+
+    A judge whose questions live on its output type rather than in the prompt passes no `rubric`,
+    so the prompt carries only the material to judge.
 
     Returns the prompt along with the optional context sections it carries, so that a judge
     which has to put its question in a field description can name what it was actually given.
@@ -435,10 +443,175 @@ def _build_prompt(
         sections.extend(_make_section(expected_output, 'ExpectedOutput'))
         context.append('<ExpectedOutput>')
 
-    sections.extend(_make_section(rubric, 'Rubric'))
+    if rubric is not None:
+        sections.extend(_make_section(rubric, 'Rubric'))
     if all(isinstance(section, str) for section in sections):
         return '\n'.join(sections), context  # type: ignore[arg-type]
     return sections, context
+
+
+_judge_questions_agent = Agent(name='judge_questions')
+
+
+@dataclass(frozen=True)
+class JudgeAnswer:
+    """The judge's answer to one question from [`judge_questions`][pydantic_evals.evaluators.llm_as_a_judge.judge_questions]."""
+
+    value: object
+    """The answer, as the question's field validated it, so an `Enum` field's answer is an `Enum` member."""
+
+    confidence: float | None = None
+    """How sure the judge is of the answer, from 0 to 1, or `None` when the judge reports no confidence.
+
+    A [decision model](https://pydantic.dev/docs/ai/models/decision/), such as TypeSafe's Jev, reports one per
+    question in `provider_details['confidence']`.
+    """
+
+
+def _question_fields(questions: type[object] | Mapping[str, str]) -> dict[str, str]:
+    """Each question, mapped to the name it is asked under, refusing questions that name no measure.
+
+    `StructuredJudge` calls this at construction and `judge_questions` before its request, so both refuse the same
+    questions with the same error. A rubric is asked under its key, and a field as `_model_fields` says.
+    """
+    if isinstance(questions, Mapping):
+        fields = {name: name for name in questions}
+    elif not is_model_like(questions):
+        raise ValueError(
+            'A class passed as `questions` must be a Pydantic model, dataclass or `TypedDict` whose fields are the '
+            'questions'
+        )
+    elif issubclass(questions, RootModel):
+        # A root model has one unnamed value, so there is no question to name a measure after.
+        raise ValueError('`questions` must be a model with named fields, not a `RootModel`')
+    else:
+        fields = _model_fields(questions)
+    if not fields:
+        raise ValueError('`questions` must contain at least one question')
+    return fields
+
+
+def _model_fields(questions: type[object]) -> dict[str, str]:
+    """Each field of a model-like type, mapped to the name it is asked under.
+
+    A model, a dataclass and a `TypedDict` all answer with an object of named fields, but only Pydantic's own
+    classes record an alias, so the rest are asked under the names they were written with. A Pydantic field is
+    asked under the name its JSON schema gives it: its validation alias, else its alias, and for an
+    `AliasChoices` the first choice that is a single name. A field with no such name, such as one validated from
+    an `AliasPath`, is asked under its own name.
+    """
+    if issubclass(questions, BaseModel) or is_pydantic_dataclass(questions):
+        return {name: _schema_name(name, field) for name, field in questions.__pydantic_fields__.items()}
+    if is_dataclass(questions):
+        return {field.name: field.name for field in dataclass_fields(questions)}
+    return {name: name for name in questions.__annotations__}
+
+
+def _schema_name(name: str, field: FieldInfo) -> str:
+    """The property a Pydantic field's JSON schema names it by, the name its answer and confidence come back under."""
+    alias = field.validation_alias or field.alias
+    if isinstance(alias, AliasChoices):
+        alias = next(
+            (path[0] for path in alias.convert_to_aliases() if len(path) == 1 and isinstance(path[0], str)),
+            None,
+        )
+    return alias if isinstance(alias, str) else name
+
+
+def _answer_confidence(response: ModelResponse) -> Mapping[str, float]:
+    """The confidence a decision model reports for each question, keyed by the name it was asked under."""
+    return (response.provider_details or {}).get('confidence') or {}
+
+
+def _refuse_invalid_verdicts(rubrics: Mapping[str, str], values: Mapping[str, object]) -> None:
+    """Refuse a rubric answered with anything but a `bool`.
+
+    A rubric is a yes-or-no question, and not every model is held to the schema it was given. A `'false'` that got
+    through would be recorded as a label rather than as the assertion the rubric asked for.
+    """
+    for name in rubrics:
+        if not isinstance(values[name], bool):
+            raise ValueError(f'Judge returned an invalid verdict for {name!r}: {values[name]!r}')
+
+
+async def judge_questions(
+    output: Any,
+    questions: type[object] | Mapping[str, str],
+    inputs: Any | None = None,
+    expected_output: Any | None = None,
+    model: models.Model | models.KnownModelName | str | None = None,
+    model_settings: ModelSettings | None = None,
+) -> dict[str, JudgeAnswer]:
+    """Answer several questions about one output in a single model request.
+
+    The questions go on the output type rather than into the prompt, which carries only the material to
+    judge, so that a judge which takes its questions from the type can tell them apart. See
+    [`StructuredJudge`][pydantic_evals.evaluators.StructuredJudge] for the evaluator built on this.
+
+    Args:
+        output: The output being judged.
+        questions: A Pydantic model, dataclass or `TypedDict` whose fields are the questions, or a mapping of
+            question name to a rubric answered with a yes or a no.
+        inputs: Optional inputs to show alongside the output.
+        expected_output: Optional expected output to show alongside the output.
+        model: The model to use. If not specified, the default judge model is used.
+        model_settings: Optional model settings.
+
+    Returns:
+        The answers keyed by question name, in the order the questions were declared, each with the
+        confidence the judge reported for it.
+
+    Raises:
+        ValueError: Before any request, if `questions` is empty, a `RootModel`, or a class that is not a model,
+            dataclass or `TypedDict`; after it, if a rubric is answered with anything but a yes or a no.
+    """
+    fields = _question_fields(questions)
+    user_prompt, context = _build_prompt(output=output, inputs=inputs, expected_output=expected_output)
+    considering = f', taking {" and ".join(context)} into account' if context else ''
+    # The framing that applies to every question goes in the instructions rather than the prompt,
+    # which carries only what is being judged.
+    instructions = f'Answer each question about <Output>{considering}.'
+    output_type: type[object]
+    if isinstance(questions, Mapping):
+        # One yes/no question per rubric. The rubrics live in the field descriptions rather than in a `<Rubric>`
+        # section of the prompt, because that is the only place a judge can tell them apart: a judge that takes its
+        # questions from the output type, like TypeSafe's Jev, reads everything in the prompt as material to judge.
+        output_type = StructuredDict(
+            {
+                'type': 'object',
+                'properties': {
+                    name: {'type': 'boolean', 'description': f'Is this statement true? {rubric}'}
+                    for name, rubric in questions.items()
+                },
+                'required': list(questions),
+                'additionalProperties': False,
+            },
+            name='Grading',
+            description='Judge an output against each rubric.',
+        )
+    else:
+        output_type = questions
+    result = await _judge_questions_agent.run(
+        user_prompt,
+        model=_resolve_judge_model(model),
+        model_settings=model_settings,
+        instructions=instructions,
+        output_type=output_type,
+    )
+    confidence = _answer_confidence(result.response)
+    # Read the validated answer field by field rather than dumping it: the dump is the model's
+    # serialization, which a computed field, an alias or a custom `@model_serializer` can add to,
+    # rename or replace, and none of that is what the judge was asked.
+    values: dict[str, object]
+    if is_str_dict(result.output):
+        # Rubrics answer with a `dict`, and so does a `TypedDict`, which leaves out a key that is not required and
+        # was not answered.
+        values = {name: result.output.get(name) for name in fields}
+    else:
+        values = {name: getattr(result.output, name) for name in fields}
+    if isinstance(questions, Mapping):
+        _refuse_invalid_verdicts(questions, values)
+    return {name: JudgeAnswer(values[name], confidence.get(asked_as)) for name, asked_as in fields.items()}
 
 
 class GEvalOutput(BaseModel):

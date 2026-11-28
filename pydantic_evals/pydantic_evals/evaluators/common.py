@@ -1,11 +1,15 @@
 from __future__ import annotations as _annotations
 
+from collections.abc import Mapping
 from dataclasses import dataclass, field
 from datetime import timedelta
-from typing import Any, Literal, cast
+from enum import Enum
+from typing import TYPE_CHECKING, Annotated, Any, Literal, cast
 
-from pydantic import TypeAdapter
-from typing_extensions import TypedDict
+from pydantic import Field, GetPydanticSchema, TypeAdapter
+from pydantic.json_schema import SkipJsonSchema
+from pydantic_core import core_schema
+from typing_extensions import TypedDict, TypeForm
 
 from pydantic_ai import models
 from pydantic_ai._utils import is_model_like
@@ -16,6 +20,10 @@ from ..otel.span_tree import SpanQuery
 from .agentic import ArgumentCorrectness, MaxModelRequests, MaxToolCalls, ToolCorrectness, TrajectoryMatch
 from .context import EvaluatorContext
 from .evaluator import EvaluationReason, EvaluationScalar, Evaluator, EvaluatorOutput
+from .spec import EvaluatorSpec
+
+if TYPE_CHECKING:
+    from .llm_as_a_judge import JudgeAnswer
 
 __all__ = (
     'Equals',
@@ -24,6 +32,7 @@ __all__ = (
     'IsInstance',
     'MaxDuration',
     'LLMJudge',
+    'StructuredJudge',
     'GEval',
     'HasMatchingSpan',
     'OutputConfig',
@@ -301,6 +310,220 @@ class LLMJudge(Evaluator[object, object, object]):
 
 
 @dataclass(repr=False)
+class StructuredJudge(Evaluator[object, object, object]):
+    """Ask a judge typed questions about one output in a single model request, and report each answer.
+
+    Where [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] grades an output against a rubric and explains its
+    verdict, `StructuredJudge` asks questions and reports the answers themselves, with no prose: one question, or
+    several in one request where one `LLMJudge` per measure would send the same output to the judge once per
+    question. Several questions are reported exactly like the measures of any evaluator that returns a mapping,
+    each named after its question, so three questions read as three results with one evaluator as their source.
+
+    The questions come in one of three shapes. A single question is answered with its `output_type`: a `bool`,
+    the default, is a yes or a no; a `Literal` or `Enum` of strings picks one option; and a `float` is a score,
+    bounded by the type you pass, such as `Annotated[float, Field(ge=0, le=1)]`:
+
+    ```python {title="structured_judge_question.py"}
+    from typing import Literal
+
+    from pydantic_evals.evaluators import StructuredJudge
+
+    StructuredJudge('Is the reply polite?')
+    StructuredJudge(
+        'How does the reply treat the customer?',
+        output_type=Literal['warm', 'neutral', 'curt'],
+        evaluation_name='tone',
+    )
+    ```
+
+    A mapping of measure name to a rubric is answered with one pass/fail assertion per rubric:
+
+    ```python {title="structured_judge_rubrics.py"}
+    from pydantic_evals.evaluators import StructuredJudge
+
+    StructuredJudge(
+        {
+            'follows_policy': 'The reply follows the support policy.',
+            'gives_next_step': 'The reply gives the customer a concrete next step.',
+            'never_asks_for_secrets': 'The reply never asks for a password or a login code.',
+        }
+    )
+    ```
+
+    A Pydantic model, dataclass or `TypedDict` asks one question per field, which is what to reach for when
+    several measures are scores or labels rather than a yes or a no:
+
+    ```python {title="structured_judge_output_type.py"}
+    from typing import Literal
+
+    from pydantic import BaseModel, Field
+
+    from pydantic_evals.evaluators import StructuredJudge
+
+
+    class ReplyReview(BaseModel):
+        policy: Literal['compliant', 'minor_issue', 'violation'] = Field(
+            description='Does the reply comply with the support policy?'
+        )
+        completeness: float = Field(
+            ge=0, le=1, description='How completely does the reply address the request?'
+        )
+        asks_for_secret: bool = Field(
+            description='Does the reply ask for a password or a login code?'
+        )
+
+
+    StructuredJudge(ReplyReview)
+    ```
+
+    A `bool` answer is reported as an assertion, an `int` or `float` as a score, and a `str` as a label. A report
+    groups labels by value, so ask for a `Literal` or an `Enum` when the answer is a category: free text gives each
+    case a label of its own, and never becomes the reason for another answer. An `Enum` is reported as whatever its
+    value is, so an `Enum` of strings is a label and an `IntEnum` a score. An answer of `None` is reported as no
+    measure at all, the way [`EqualsExpected`][pydantic_evals.evaluators.EqualsExpected] reports nothing without an
+    expected output. Any other answer is an error, since there is no measure to report it as. When the judge reports
+    how confident it is in an answer, as a [decision model](https://pydantic.dev/docs/ai/models/decision/) such as
+    TypeSafe's Jev does, the confidence becomes the answer's reason.
+
+    Give every field a description, and the model a docstring saying what is being judged: the field
+    descriptions are the questions, and a judge that takes its questions from the output type has
+    nothing to ask without them.
+
+    One request answering every question also fails as one: a request that errors leaves an
+    [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure] in place of all of the measures,
+    where one judge per measure fails only its own. Asking the questions together can also move the
+    answers, since each question is answered in the presence of the others, so measure both shapes on
+    your own cases before switching a suite over.
+
+    If you do not specify a model, it uses the default model for judging. This starts as 'openai:gpt-5.2', but can be
+    overridden by calling [`set_default_judge_model`][pydantic_evals.evaluators.llm_as_a_judge.set_default_judge_model].
+
+    A type cannot be written in a YAML or JSON dataset file, so only a question answered yes or no and the
+    mapping of rubrics round-trip through [`Dataset.to_file`][pydantic_evals.dataset.Dataset.to_file]. A dataset
+    with any other `output_type` or with a model of questions can't be saved, so build a dataset that uses either in
+    Python.
+    """
+
+    # A Python class has no JSON schema, so only a question and the mapping form are offered to a dataset file. The
+    # schema asks for at least one rubric, as `__post_init__` refuses an empty mapping.
+    questions: str | Annotated[Mapping[str, str], Field(min_length=1)] | SkipJsonSchema[type[object]]
+    # A type form has no core schema for a dataset file to validate against, and no JSON schema either.
+    output_type: SkipJsonSchema[
+        Annotated[TypeForm[object], GetPydanticSchema(lambda _source, _handler: core_schema.any_schema())]
+    ] = bool
+    model: models.Model | models.KnownModelName | str | None = None
+    include_input: bool = False
+    include_expected_output: bool = False
+    model_settings: ModelSettings | None = None
+    evaluation_name: str | None = field(default=None)
+
+    def __post_init__(self):
+        if isinstance(self.questions, str):
+            if isinstance(self.output_type, type) and is_model_like(self.output_type):
+                raise ValueError(
+                    '`output_type` is the type of the answer to a single question. To ask a question per field, '
+                    f'pass the model as `questions`: `StructuredJudge({self.output_type.__name__})`'
+                )
+            return
+        if self.output_type is not bool:
+            raise ValueError(
+                '`output_type` only applies to a single question: a rubric is answered yes or no, '
+                'and a field is answered with its own type'
+            )
+        from .llm_as_a_judge import _question_fields  # pyright: ignore[reportPrivateUsage]
+
+        _question_fields(self.questions)
+
+    async def evaluate(self, ctx: EvaluatorContext[object, object, object]) -> EvaluatorOutput:
+        inputs = ctx.inputs if self.include_input else None
+        expected_output = ctx.expected_output if self.include_expected_output else None
+        if isinstance(self.questions, str):
+            from .llm_as_a_judge import (
+                JudgeAnswer,
+                _answer_confidence,  # pyright: ignore[reportPrivateUsage]
+                _build_prompt,  # pyright: ignore[reportPrivateUsage]
+                _judge_questions_agent,  # pyright: ignore[reportPrivateUsage]
+                _resolve_judge_model,  # pyright: ignore[reportPrivateUsage]
+            )
+
+            # One question, so the question is the instructions and its answer the output.
+            user_prompt, _ = _build_prompt(output=ctx.output, inputs=inputs, expected_output=expected_output)
+            result = await _judge_questions_agent.run(
+                user_prompt,
+                model=_resolve_judge_model(self.model),
+                model_settings=self.model_settings,
+                instructions=self.questions,
+                output_type=self.output_type,
+            )
+            confidence = _answer_confidence(result.response)
+            # A bare answer is one question, so it has one confidence, whatever the field wrapping it is called.
+            answer = JudgeAnswer(result.output, next(iter(confidence.values())) if len(confidence) == 1 else None)
+            measure = _measure(self.get_default_evaluation_name(), answer)
+            return {} if measure is None else measure
+
+        from .llm_as_a_judge import judge_questions
+
+        answers = await judge_questions(
+            ctx.output,
+            self.questions,
+            inputs=inputs,
+            expected_output=expected_output,
+            model=self.model,
+            model_settings=self.model_settings,
+        )
+        return {name: measure for name, answer in answers.items() if (measure := _measure(name, answer)) is not None}
+
+    def get_default_evaluation_name(self) -> str:
+        return self.evaluation_name if isinstance(self.evaluation_name, str) else self.get_serialization_name()
+
+    def _serialization_spec(self) -> EvaluatorSpec:
+        # Written by name, a type would load back as a string: a model of questions as a single question that is the
+        # model's name, and an `output_type` as a name no judge can answer with.
+        if isinstance(self.questions, type):
+            raise TypeError(
+                f'`StructuredJudge({self.questions.__name__})` cannot be serialized, as its questions are a Python '
+                'type. To save a dataset to a file, use a mapping of rubrics, or build the dataset in Python.'
+            )
+        if self.output_type is not bool:
+            raise TypeError(
+                '`StructuredJudge` with an `output_type` other than `bool` cannot be serialized, as its `output_type` '
+                'is a Python type. To save a dataset to a file, ask a question answered yes or no, or build the dataset '
+                'in Python.'
+            )
+        return super()._serialization_spec()
+
+    def build_serialization_arguments(self):
+        arguments = _serialize_model_as_string(super().build_serialization_arguments())
+        # A type does not survive a YAML round trip; its name keeps the spec serializable, as the JSON of a
+        # result's `source` must be.
+        if isinstance(questions := arguments.get('questions'), type):
+            arguments['questions'] = questions.__name__
+        if (output_type := arguments.get('output_type')) is not None:
+            arguments['output_type'] = output_type.__name__ if isinstance(output_type, type) else str(output_type)
+        return arguments
+
+
+def _measure(name: str, answer: JudgeAnswer) -> EvaluationScalar | EvaluationReason | None:
+    """The measure a judge's answer reports, with the judge's confidence as its reason, or `None` for no measure."""
+    value = answer.value
+    if value is None:
+        return None
+    # The answer is the value its field validated to, so an `Enum` arrives as the member and a value that is not a
+    # scalar at all — a nested model, a list, a date — arrives as itself and is refused here, rather than as the
+    # string a JSON dump would quietly turn it into.
+    if isinstance(value, Enum):
+        value = value.value
+    if not isinstance(value, (bool, int, float, str)):
+        raise ValueError(
+            f'The judge answered {name!r} with {value!r}, which cannot be reported as a measure. '
+            'Every question has to be answered with a `bool`, `int`, `float`, `str`, or an `Enum` of those.'
+        )
+    if answer.confidence is None:
+        return value
+    return EvaluationReason(value=value, reason=f'confidence {answer.confidence:.2f}')
+
+
+@dataclass(repr=False)
 class GEval(Evaluator[object, object, object]):
     """G-Eval-style chain-of-thought evaluator (Liu et al., 2023).
 
@@ -382,6 +605,7 @@ DEFAULT_EVALUATORS: tuple[type[Evaluator[object, object, object]], ...] = (
     IsInstance,
     MaxDuration,
     LLMJudge,
+    StructuredJudge,
     HasMatchingSpan,
     ToolCorrectness,
     TrajectoryMatch,

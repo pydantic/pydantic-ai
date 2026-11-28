@@ -115,6 +115,9 @@ dataset = Dataset(
 
 ### Model Selection
 
+The examples on this page call `dataset.evaluate_sync()` without naming a model, so they use the
+default judge model and require `OPENAI_API_KEY` in the environment.
+
 Choose the judge model based on cost/quality tradeoffs:
 
 ```python
@@ -387,7 +390,8 @@ print(report)
 
 ### Multi-Aspect Evaluation
 
-Use multiple judges for different quality dimensions:
+Use multiple judges for different quality dimensions. Each is its own request; to ask them all in one,
+see [Several Measures in One Request](#several-measures-in-one-request):
 
 ```python
 from pydantic_evals import Case, Dataset
@@ -455,6 +459,193 @@ dataset = Dataset(
     ],
 )
 ```
+
+## Several Measures in One Request
+
+Every judge above asks one question, so three measures over the same output are three requests, each
+carrying the same output again. [`StructuredJudge`][pydantic_evals.evaluators.StructuredJudge] asks
+them together: one request, one measure per question.
+
+Give it a mapping of measure name to rubric, and each rubric is answered with its own pass/fail
+assertion:
+
+```python {title="structured_judge.py"}
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import StructuredJudge
+
+
+def support_agent(question: str) -> str:
+    return 'I cannot reset your password, but you can do it yourself from the account page.'
+
+
+dataset = Dataset(
+    name='support_replies',
+    cases=[Case(name='locked_out', inputs='I am locked out of my account.')],
+    evaluators=[
+        StructuredJudge(
+            {
+                'follows_policy': 'The reply follows the support policy.',
+                'gives_next_step': 'The reply gives the customer a concrete next step.',
+                'never_asks_for_secrets': 'The reply never asks for a password or a login code.',
+            }
+        )
+    ],
+)
+report = dataset.evaluate_sync(support_agent)
+for name, result in report.cases[0].assertions.items():
+    print(f'{name}: {result.value}')
+    #> follows_policy: True
+    #> gives_next_step: True
+    #> never_asks_for_secrets: True
+```
+
+When a measure is a score or a label rather than a yes or a no, give it a Pydantic model instead. Each
+field is one question, and its description is what gets asked:
+
+```python {title="structured_judge_output_type.py"}
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import StructuredJudge
+
+
+class ReplyReview(BaseModel):
+    """Judge a support reply against the support policy."""
+
+    policy: Literal['compliant', 'minor_issue', 'violation'] = Field(
+        description='Does the reply comply with the support policy?'
+    )
+    completeness: float = Field(
+        ge=0, le=1, description='How completely does the reply address the request?'
+    )
+    avoids_secrets: bool = Field(
+        description='Does the reply avoid asking for a password or a login code?'
+    )
+
+
+def support_agent(question: str) -> str:
+    return 'I cannot reset your password, but you can do it yourself from the account page.'
+
+
+dataset = Dataset(
+    name='support_replies',
+    cases=[Case(name='locked_out', inputs='I am locked out of my account.')],
+    evaluators=[StructuredJudge(ReplyReview)],
+)
+report = dataset.evaluate_sync(support_agent)
+case = report.cases[0]
+# Each field lands in the bucket its type calls for
+print({name: result.value for name, result in case.labels.items()})
+#> {'policy': 'compliant'}
+print({name: result.value for name, result in case.scores.items()})
+#> {'completeness': 0.5}
+print({name: result.value for name, result in case.assertions.items()})
+#> {'avoids_secrets': True}
+```
+
+A `bool` field is reported as an assertion, an `int` or `float` as a score, and a `str` as a label; an
+`Enum` is reported as whatever its value is, so an `Enum` of strings is a label and an `IntEnum` a score
+— the same rules any evaluator returning a mapping is reported by. The evaluator is
+the source of all of them, so a report shows three measures, not three evaluators.
+
+A single question is a string, with the type of its answer as `output_type`. It is answered yes or no by
+default, and its measure is named `evaluation_name`, or after the evaluator:
+
+```python {title="structured_judge_question.py"}
+from typing import Literal
+
+from pydantic_evals import Case, Dataset
+from pydantic_evals.evaluators import StructuredJudge
+
+
+def support_agent(question: str) -> str:
+    return 'I cannot reset your password, but you can do it yourself from the account page.'
+
+
+dataset = Dataset(
+    name='support_replies',
+    cases=[Case(name='locked_out', inputs='I am locked out of my account.')],
+    evaluators=[
+        StructuredJudge('Is the reply polite?', evaluation_name='polite'),
+        StructuredJudge(
+            'How does the reply treat the customer?',
+            output_type=Literal['warm', 'neutral', 'curt'],
+            evaluation_name='tone',
+        ),
+    ],
+)
+report = dataset.evaluate_sync(support_agent)
+case = report.cases[0]
+print({name: result.value for name, result in case.assertions.items()})
+#> {'polite': True}
+print({name: result.value for name, result in case.labels.items()})
+#> {'tone': 'warm'}
+```
+
+Write the questions on the output type, not into the rubric text of a prompt. That is what lets a judge
+whose whole design is typed questions — [TypeSafe's Jev](../../models/typesafe.md) — answer all of them
+in one API call; on Jev the one-evaluator-per-measure shape gives the advantage away entirely.
+
+### What Sharing a Request Costs
+
+- **The answers can move.** Three questions answered together are answered in each other's presence, and
+  on some models that shifts a verdict. Measure both shapes on your own cases before switching a suite
+  over; `StructuredJudge` is opt-in precisely because the answer is model- and rubric-dependent.
+- **A failure takes all of them.** One request answering three questions fails all three at once, leaving
+  a single [`EvaluatorFailure`][pydantic_evals.evaluators.EvaluatorFailure] where three judges would have
+  failed independently. Independence is what the extra requests buy.
+- **There is no written reason.** [`LLMJudge`][pydantic_evals.evaluators.LLMJudge] records why it
+  reached its verdict; `StructuredJudge` reports the answers alone. When the judge reports how confident
+  it is in an answer, as a [decision model](../../models/decision.md) does, that confidence is the
+  answer's reason. A `str` field the judge writes freely is reported as a label of its own, not as the
+  reason for the other answers, so use `LLMJudge` when the reason is the point.
+
+### Calling the Judge Directly
+
+`StructuredJudge` is an evaluator, but the request it makes is also available on its own, to judge an
+output outside an evaluation run. [`judge_questions`][pydantic_evals.evaluators.llm_as_a_judge.judge_questions]
+takes the same questions — a mapping of rubrics or a model-like output type — plus the output, optional
+`inputs` and `expected_output`, a `model`, and `model_settings`, and answers them in one request:
+
+```python
+import asyncio
+from typing import Literal
+
+from pydantic import BaseModel, Field
+
+from pydantic_evals.evaluators.llm_as_a_judge import JudgeAnswer, judge_questions
+
+
+class ReplyReview(BaseModel):
+    """Judge a support reply against the support policy."""
+
+    policy: Literal['compliant', 'minor_issue', 'violation'] = Field(
+        description='Does the reply comply with the support policy?'
+    )
+    avoids_secrets: bool = Field(description='Does the reply avoid asking for a password or a login code?')
+
+
+async def main():
+    answers: dict[str, JudgeAnswer] = await judge_questions(
+        'I cannot reset your password, but you can do it yourself from the account page.',
+        ReplyReview,
+    )
+    print(answers['policy'].value)
+    #> compliant
+    print(answers['avoids_secrets'].value)
+    #> True
+
+
+if __name__ == '__main__':
+    asyncio.run(main())
+```
+
+Each [`JudgeAnswer`][pydantic_evals.evaluators.llm_as_a_judge.JudgeAnswer] carries the answer, validated
+as its question's field, and the `confidence` the judge reported for it — `None` when the judge reports
+none. The answers are keyed by question name, in the order the questions were declared. As with the
+evaluator, the examples here use the default judge model, which requires `OPENAI_API_KEY`.
 
 ## Validating a Judge Against Human Labels
 
@@ -585,6 +776,10 @@ evaluators = [
     LLMJudge(rubric='Response is safe and appropriate'),
 ]
 ```
+
+Those are three requests carrying the same output three times. Keep the rubrics apart but pay for one
+request with [`StructuredJudge`][pydantic_evals.evaluators.StructuredJudge] — see
+[Several Measures in One Request](#several-measures-in-one-request) for what sharing a request costs.
 
 ### 3. Combine with Deterministic Checks
 
