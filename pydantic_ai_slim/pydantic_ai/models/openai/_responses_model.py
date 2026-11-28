@@ -3365,9 +3365,12 @@ class OpenAIResponsesModel(Model[AsyncOpenAI]):
             and item.tool_call_id
         ):
             call_id, status, _ = tool_search_replay_details(item)
+            search_args = item.args_as_dict() or {}
+            # Hosted tool search takes `paths`; we store them canonically as `queries`.
+            search_args = {'paths' if k == 'queries' else k: v for k, v in search_args.items()}
             tool_search_call = responses.response_input_item_param.ToolSearchCall(
                 call_id=call_id,
-                arguments=item.args_as_dict() or {},
+                arguments=search_args,
                 type='tool_search_call',
                 execution='server',
                 status=status,
