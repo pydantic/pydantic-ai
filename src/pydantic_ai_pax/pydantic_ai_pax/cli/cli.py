@@ -474,7 +474,8 @@ def _enter_launch_directory(
         os.chdir(moved_to)
     elif args.resume_from is not None and args.resume:
         _enter_imported_project(args.resume_from, args.resume)
-    elif args.resume:
+    elif args.resume and not args.web:
+        # `run_web` moves the session it resumes into that session's directory itself.
         _enter_copy_project(args.resume, store=store)
     return None
 

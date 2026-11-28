@@ -1580,16 +1580,19 @@ async def test_terminal_resume_of_an_import_pax_cannot_move_to(
 
 
 @pytest.mark.parametrize('source', ['claude', 'codex'])
-@pytest.mark.parametrize('mode', ['chat', 'prompt', 'web', 'copy'])
+@pytest.mark.parametrize('mode', ['chat', 'prompt', 'web', 'copy', 'web copy'])
 def test_cli_resume_starts_in_the_imported_project(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: ImportSource, mode: str
 ) -> None:
-    """`--resume-claude ID`, `--resume-codex ID`, and `--resume` of Pax's copy start in the session's directory."""
+    """`--resume-claude ID`, `--resume-codex ID`, and `--resume` of Pax's copy start in the session's directory.
+
+    `pax --web --resume` stays where Pax started: `run_web` moves the session it resumes there itself.
+    """
     project, other, native_id = imported_project(tmp_path, source)
     monkeypatch.chdir(other)
-    extra = {'prompt': ['-p', 'hi'], 'web': ['--web']}.get(mode, [])
+    extra = ['-p', 'hi'] if mode == 'prompt' else ['--web'] if mode.startswith('web') else []
     flags = [f'--resume-{source}', native_id]
-    if mode == 'copy':
+    if mode.endswith('copy'):
         store = SqliteSessionStore(database=tmp_path / 'sessions.db')
         flags = ['--resume', asyncio.run(save_import(store, find_import(source, native_id)))]
     argv = ['pax', '--database', str(tmp_path / 'config.db'), *extra, *flags]
@@ -1605,7 +1608,7 @@ def test_cli_resume_starts_in_the_imported_project(
     monkeypatch.setattr('pydantic_ai_pax.cli.web.run_web', launched)
     with contextlib.suppress(SystemExit):
         cli.run()
-    assert seen == [(project, project)]
+    assert seen == [(other, None) if mode == 'web copy' else (project, project)]
 
 
 @pytest.mark.parametrize('saved', [True, False])
