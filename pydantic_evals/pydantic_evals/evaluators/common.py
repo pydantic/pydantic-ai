@@ -451,12 +451,12 @@ class StructuredJudge(Evaluator[object, object, object]):
         inputs = ctx.inputs if self.include_input else None
         expected_output = ctx.expected_output if self.include_expected_output else None
         if isinstance(self.questions, str):
-            from .llm_as_a_judge import (  # pyright: ignore[reportPrivateUsage]
+            from .llm_as_a_judge import (
                 JudgeAnswer,
-                _answer_confidence,
-                _build_prompt,
-                _judge_questions_agent,
-                _resolve_judge_model,
+                _answer_confidence,  # pyright: ignore[reportPrivateUsage]
+                _build_prompt,  # pyright: ignore[reportPrivateUsage]
+                _judge_questions_agent,  # pyright: ignore[reportPrivateUsage]
+                _resolve_judge_model,  # pyright: ignore[reportPrivateUsage]
             )
 
             # One question, so the question is the instructions and its answer the output.

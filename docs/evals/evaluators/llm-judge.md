@@ -115,10 +115,10 @@ dataset = Dataset(
 
 ### Model Selection
 
-Choose the judge model based on cost/quality tradeoffs:
-
 The examples on this page call `dataset.evaluate_sync()` without naming a model, so they use the
 default judge model and require `OPENAI_API_KEY` in the environment.
+
+Choose the judge model based on cost/quality tradeoffs:
 
 ```python
 from pydantic_evals.evaluators import LLMJudge
@@ -609,7 +609,7 @@ output outside an evaluation run. [`judge_questions`][pydantic_evals.evaluators.
 takes the same questions — a mapping of rubrics or a model-like output type — plus the output, optional
 `inputs` and `expected_output`, a `model`, and `model_settings`, and answers them in one request:
 
-```python {test="skip"}
+```python
 import asyncio
 from typing import Literal
 

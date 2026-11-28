@@ -5,8 +5,9 @@ from dataclasses import dataclass, fields as dataclass_fields, is_dataclass
 from textwrap import dedent
 from typing import Any
 
-from pydantic import BaseModel, Field
+from pydantic import AliasChoices, BaseModel, Field
 from pydantic.dataclasses import is_pydantic_dataclass
+from pydantic.fields import FieldInfo
 from pydantic.json_schema import JsonSchemaValue
 from pydantic_core import to_json
 
@@ -472,18 +473,26 @@ def _question_fields(questions: type[object]) -> dict[str, str]:
 
     A model, a dataclass and a `TypedDict` all answer with an object of named fields, but only Pydantic's own
     classes record an alias, so the rest are asked under the names they were written with. A Pydantic field is
-    asked under the name it is validated from, its validation alias, else its alias. A field validated from an
-    `AliasChoices` or an `AliasPath` is asked under a name taken from them, which is not looked up here, so the
-    judge's confidence in its answer is not reported.
+    asked under the name its JSON schema gives it: its validation alias, else its alias, and for an
+    `AliasChoices` the first choice that is a single name. A field with no such name, such as one validated from
+    an `AliasPath`, is asked under its own name.
     """
     if issubclass(questions, BaseModel) or is_pydantic_dataclass(questions):
-        return {
-            name: field.validation_alias if isinstance(field.validation_alias, str) else field.alias or name
-            for name, field in questions.__pydantic_fields__.items()
-        }
+        return {name: _schema_name(name, field) for name, field in questions.__pydantic_fields__.items()}
     if is_dataclass(questions):
         return {field.name: field.name for field in dataclass_fields(questions)}
     return {name: name for name in questions.__annotations__}
+
+
+def _schema_name(name: str, field: FieldInfo) -> str:
+    """The property a Pydantic field's JSON schema names it by, the name its answer and confidence come back under."""
+    alias = field.validation_alias or field.alias
+    if isinstance(alias, AliasChoices):
+        alias = next(
+            (path[0] for path in alias.convert_to_aliases() if len(path) == 1 and isinstance(path[0], str)),
+            None,
+        )
+    return alias if isinstance(alias, str) else name
 
 
 def _answer_confidence(response: ModelResponse) -> Mapping[str, float]:

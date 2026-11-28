@@ -9,7 +9,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Annotated, Any, Literal
 
 import pytest
-from pydantic import BaseModel, Field, RootModel, computed_field, model_serializer
+from pydantic import AliasChoices, AliasPath, BaseModel, Field, RootModel, computed_field, model_serializer
 from pydantic.dataclasses import dataclass as pydantic_dataclass
 from pydantic_core import PydanticSerializationError, to_jsonable_python
 from pytest_mock import MockerFixture
@@ -1044,33 +1044,53 @@ async def test_structured_judge_reads_every_object_question_type():
 
 
 async def test_structured_judge_confidence_for_an_aliased_field():
-    """A field is asked under the name it is validated from, so its confidence comes back under that name.
+    """A field is asked under the name its JSON schema gives it, so its confidence comes back under that name.
 
-    That is its alias, or its validation alias when it has one, on a model and on a Pydantic dataclass alike.
+    That is its alias, or its validation alias when it has one, and for alias choices the first single name among
+    them, on a model and on a Pydantic dataclass alike.
     """
 
     class AliasedReply(BaseModel):
         is_polite: bool = Field(alias='is-polite', description='Is the reply polite?')
         is_brief: bool = Field(alias='brief', validation_alias='is-brief', description='Is the reply brief?')
+        is_kind: bool = Field(validation_alias=AliasChoices(AliasPath('tone', 0), 'kind'), description='Kind?')
 
     @pydantic_dataclass
     class AliasedDataclassReply:
         is_polite: bool = Field(alias='is-polite', description='Is the reply polite?')
         is_brief: bool = Field(alias='brief', validation_alias='is-brief', description='Is the reply brief?')
+        is_kind: bool = Field(validation_alias=AliasChoices(AliasPath('tone', 0), 'kind'), description='Kind?')
 
     for questions in (AliasedReply, AliasedDataclassReply):
         calls: list[JudgeCall] = []
         model = structured_judge_model(
-            {'is-polite': True, 'is-brief': False}, calls, confidence={'is-polite': 0.91, 'is-brief': 0.7}
+            {'is-polite': True, 'is-brief': False, 'kind': True},
+            calls,
+            confidence={'is-polite': 0.91, 'is-brief': 0.7, 'kind': 0.8},
         )
 
         assert await StructuredJudge(questions, model=model).evaluate(MockContext(output='30 days.')) == snapshot(
             {
                 'is_polite': EvaluationReason(value=True, reason='confidence 0.91'),
                 'is_brief': EvaluationReason(value=False, reason='confidence 0.70'),
+                'is_kind': EvaluationReason(value=True, reason='confidence 0.80'),
             }
         )
-        assert calls[0].schema['properties'].keys() == {'is-polite', 'is-brief'}
+        assert calls[0].schema['properties'].keys() == {'is-polite', 'is-brief', 'kind'}
+
+
+async def test_structured_judge_field_without_a_single_name_is_asked_by_its_own_name():
+    """An `AliasPath` names no property, so the JSON schema, and the confidence lookup, use the field's own name."""
+
+    class NestedReply(BaseModel, populate_by_name=True):
+        is_polite: bool = Field(validation_alias=AliasPath('reply', 'polite'), description='Is the reply polite?')
+
+    calls: list[JudgeCall] = []
+    model = structured_judge_model({'is_polite': True}, calls, confidence={'is_polite': 0.9})
+    assert await StructuredJudge(NestedReply, model=model).evaluate(MockContext(output='30 days.')) == snapshot(
+        {'is_polite': EvaluationReason(value=True, reason='confidence 0.90')}
+    )
+    assert calls[0].schema['properties'].keys() == {'is_polite'}
 
 
 async def test_structured_judge_default_model_and_settings(mocker: MockerFixture):
