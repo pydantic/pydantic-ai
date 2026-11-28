@@ -3,7 +3,9 @@
 from __future__ import annotations as _annotations
 
 import base64
+import errno
 import ntpath
+import os
 import posixpath
 import shlex
 import uuid
@@ -71,7 +73,7 @@ that for quoting and the command template keeps fallback writes below the lower 
 """
 
 _SHELL_MAX_SYMLINKS = 40
-"""Symlinks `realpath` follows before giving up, as Linux does (`MAXSYMLINKS`), so a link loop ends."""
+"""Symlinks `realpath` follows before failing with `ELOOP`, as Linux does (`MAXSYMLINKS`), so a link loop ends."""
 
 _SHELL_CLEANUP_TIMEOUT = 10
 """Maximum time spent removing an interrupted fallback write's temporary files."""
@@ -85,6 +87,8 @@ _SHELL_EXIT_NOT_DIRECTORY = 120
 _SHELL_EXIT_IS_DIRECTORY = 121
 _SHELL_EXIT_NOT_REGULAR = 122
 _SHELL_EXIT_PERMISSION = 113
+# Linux ELOOP is 40, so 100 + 40 = 140 would collide with 128 + SIGUSR2; 125 stays below 126.
+_SHELL_EXIT_TOO_MANY_LINKS = 125
 
 # Inspect each existing ancestor before `mkdir -p`; shell utilities' diagnostic wording is not portable.
 _SHELL_CHECK_PARENTS = (
@@ -358,16 +362,17 @@ class _ShellFilesystem(SupportsFilesystem):
         # left to right, follow each symlink one level with `readlink` and walk its target in place of
         # the link, and let `..` climb the path resolved so far. A missing component is kept as
         # written and can still be climbed out of, after which symlinks resolve again. Past the link
-        # limit, as in a loop, the rest is kept as written, like Python's loop handling. A link
-        # `readlink` cannot read fails the call instead: kept as written, it would pass a root check
-        # for a path that leads outside. The result is base64-encoded because command substitution
-        # would drop a trailing newline from a name.
+        # limit (a loop or deep chain), fail with ELOOP instead of keeping remaining symlinks as
+        # written: a partly resolved path can pass a containment check while still escaping when opened.
+        # A link `readlink` cannot read fails the call for the same reason. The result is base64-encoded
+        # because command substitution would drop a trailing newline from a name.
         result = await self._backend.run(
             f'rest={shlex.quote(path.lstrip("/"))}; resolved=; links=0; '
             'while [ -n "$rest" ]; do '
             'case "$rest" in */*) part="${rest%%/*}"; rest="${rest#*/}";; *) part="$rest"; rest=;; esac; '
             'case "$part" in ""|.) ;; ..) resolved="${resolved%/*}";; *) '
-            f'if [ "$links" -lt {_SHELL_MAX_SYMLINKS} ] && [ -L "$resolved/$part" ]; then '
+            'if [ -L "$resolved/$part" ]; then '
+            f'if [ "$links" -ge {_SHELL_MAX_SYMLINKS} ]; then exit {_SHELL_EXIT_TOO_MANY_LINKS}; fi; '
             'links=$((links + 1)); '
             'target=$(readlink -n -- "$resolved/$part" && printf x) || exit 1; target="${target%x}"; '
             'case "$target" in /*) resolved=;; esac; rest="$target/$rest"; '
@@ -394,6 +399,8 @@ class _ShellFilesystem(SupportsFilesystem):
             raise OSError(f'not a regular file: {path!r}')
         if result.exit_code == _SHELL_EXIT_PERMISSION:
             raise PermissionError(path)
+        if result.exit_code == _SHELL_EXIT_TOO_MANY_LINKS:
+            raise OSError(errno.ELOOP, os.strerror(errno.ELOOP), path)
         if missing and not await self.exists(path):
             raise FileNotFoundError(path)
         message = result.stderr.strip() or f'shell filesystem operation failed for {path!r}'
