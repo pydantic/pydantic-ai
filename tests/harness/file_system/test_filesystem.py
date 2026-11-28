@@ -1235,6 +1235,71 @@ class TestWriteFile:
         with pytest.raises(ModelRetry, match="Parent directory 'deep/nested' does not exist"):
             await toolset.write_file('deep/nested/file.txt', 'deep\n', workspace=ws)
 
+    async def test_write_creates_missing_parents_when_create_parents_enabled(
+        self, fs_root: Path, ws: LocalWorkspaceBackend
+    ) -> None:
+        toolset = FileSystemToolset(
+            root_dir=fs_root,
+            allowed_patterns=[],
+            denied_patterns=[],
+            max_read_lines=2000,
+            max_list_results=1000,
+            max_search_results=1000,
+            max_find_results=1000,
+            create_parents=True,
+        )
+        result = await toolset.write_file('deep/nested/file.txt', 'deep\n', workspace=ws)
+        assert 'Wrote' in result
+        assert (fs_root / 'deep' / 'nested' / 'file.txt').read_text() == 'deep\n'
+
+    async def test_write_create_parents_rejects_file_ancestor(self, fs_root: Path, ws: LocalWorkspaceBackend) -> None:
+        (fs_root / 'blocker').write_text('a file, not a directory\n')
+        toolset = FileSystemToolset(
+            root_dir=fs_root,
+            allowed_patterns=[],
+            denied_patterns=[],
+            max_read_lines=2000,
+            max_list_results=1000,
+            max_search_results=1000,
+            max_find_results=1000,
+            create_parents=True,
+        )
+        with pytest.raises(ModelRetry, match='has a parent that is not a directory'):
+            await toolset.write_file('blocker/child/file.txt', 'content\n', workspace=ws)
+        assert (fs_root / 'blocker').read_text() == 'a file, not a directory\n'
+        assert not (fs_root / 'blocker' / 'child').exists()
+
+    async def test_write_create_parents_denied_and_read_only_parents_still_refused(
+        self, fs_root: Path, ws: LocalWorkspaceBackend
+    ) -> None:
+        denied = FileSystemToolset(
+            root_dir=fs_root,
+            allowed_patterns=[],
+            denied_patterns=['denied/*'],
+            max_read_lines=2000,
+            max_list_results=1000,
+            max_search_results=1000,
+            max_find_results=1000,
+            create_parents=True,
+        )
+        with pytest.raises(ModelRetry):
+            await denied.write_file('denied/nested/file.txt', 'content\n', workspace=ws)
+        assert not (fs_root / 'denied').exists()
+        read_only = FileSystemToolset(
+            root_dir=fs_root,
+            allowed_patterns=[],
+            denied_patterns=[],
+            read_only_patterns=['locked/*'],
+            max_read_lines=2000,
+            max_list_results=1000,
+            max_search_results=1000,
+            max_find_results=1000,
+            create_parents=True,
+        )
+        with pytest.raises(ModelRetry):
+            await read_only.write_file('locked/nested/file.txt', 'content\n', workspace=ws)
+        assert not (fs_root / 'locked').exists()
+
     async def test_write_overwrite(
         self, toolset: FileSystemToolset[None], fs_root: Path, ws: LocalWorkspaceBackend
     ) -> None:

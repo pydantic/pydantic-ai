@@ -597,6 +597,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         cwd: Path | None = None,
         max_retries: int | None = None,
         max_image_side: int | None = None,
+        create_parents: bool = False,
     ) -> None:
         super().__init__(id=id, max_retries=max_retries)
         if cwd is not None:
@@ -628,6 +629,7 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if max_image_side is not None:
             require_pillow()
         self._max_image_side = max_image_side
+        self._create_parents = create_parents
         self._tools = tuple(tools)
         if unknown := sorted(set(self._tools) - set(FILE_SYSTEM_TOOL_NAMES)):
             raise ValueError(
@@ -1166,10 +1168,17 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
             try:
                 parent_entry = await scope.workspace.stat(parent)
             except FileNotFoundError as exc:
-                parent_rel = scope.relative(parent, scope.bounds.root)
-                raise FileNotFoundError(
-                    f"Parent directory '{parent_rel}' does not exist. Create the parent directory first."
-                ) from exc
+                if not self._create_parents:
+                    parent_rel = scope.relative(parent, scope.bounds.root)
+                    raise FileNotFoundError(
+                        f"Parent directory '{parent_rel}' does not exist. Create the parent directory first."
+                    ) from exc
+                if refusal := await self._create_missing_parents(scope, ctx, parent, path):
+                    return refusal
+                try:
+                    parent_entry = await scope.workspace.stat(parent)
+                except (FileNotFoundError, NotADirectoryError) as retry_exc:
+                    raise ModelRetry(f'Path {path!r} has a parent that is not a directory.') from retry_exc
             except NotADirectoryError as exc:
                 raise ModelRetry(f'Path {path!r} has a parent that is not a directory.') from exc
             # Checked before the announcement, like `create_directory` does, so a
@@ -1201,6 +1210,40 @@ class FileSystemToolset(FunctionToolset[AgentDepsT]):
         if ctx is not None:
             await ctx.emit(FileWrittenEvent(**self._event_location(scope, resolved), content_hash=new_hash))
         return f'Wrote {len(content)} chars ({lines} lines) to {path}.{self._hash_suffix(new_hash)}'
+
+    async def _create_missing_parents(
+        self, scope: _Scope, ctx: RunContext[AgentDepsT] | None, parent: str, path: str
+    ) -> str | None:
+        """Create the missing ancestors of `parent` when `create_parents` is enabled.
+
+        Each missing ancestor is announced as a `create_directory` change and awaited, so a
+        listener approves or cancels the directories before the write is announced. The path
+        policy and the not-a-directory check apply to every parent before any is created.
+        Returns a listener refusal, or `None` when all parents exist afterwards.
+        """
+        missing: list[str] = []
+        current = parent
+        while await self._stat(scope, current) is None:
+            missing.append(current)
+            next_parent = scope.paths.dirname(current)
+            if current == scope.bounds.root or next_parent == current:
+                break
+            current = next_parent
+        for directory in reversed(missing):
+            entry = await self._stat(scope, directory)
+            if entry is not None and not entry.is_dir:
+                raise ModelRetry(f'Path {path!r} has a parent that is not a directory.')
+            await self._safe_resolve_real(scope, scope.relative(directory, scope.bounds.root), write=True)
+        for directory in reversed(missing):
+            spelling = scope.relative(directory, scope.bounds.root)
+            if ctx is not None:
+                change = Change.propose(**self._event_location(scope, directory), operation='create_directory')
+                if (refusal := await self._request(scope, ctx, change, path=spelling, resolved=directory)) is not None:
+                    return refusal
+            await scope.workspace.make_dir(directory)
+            if ctx is not None:
+                await ctx.emit(DirectoryCreatedEvent(**self._event_location(scope, directory)))
+        return None
 
     async def _request(
         self, scope: _Scope, ctx: RunContext[AgentDepsT] | None, change: Change, *, path: str, resolved: str

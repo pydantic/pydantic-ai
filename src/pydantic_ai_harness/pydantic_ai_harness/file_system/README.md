@@ -244,6 +244,9 @@ lands, without parsing tool arguments:
   file emits no request, so a listener cannot approve what the policy or the
   filesystem refuses. A `create_directory` on a directory that already exists
   changes nothing and emits nothing.
+  With `create_parents`, `write_file` instead announces each missing parent as a
+  `create_directory` change before its own request, so a listener approves or
+  cancels the directories too.
 - **Re-check after the listener**: a listener may take a while (a human
   approving the diff, say), so once the request returns the path is resolved
   and checked again, and a write or edit re-reads the file just before writing

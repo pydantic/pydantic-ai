@@ -145,12 +145,15 @@ class FileSystem(AbstractCapability[AgentDepsT]):
     installs it for a local workspace) and respect `.gitignore`.
     `read_only` further narrows the selection to `READ_ONLY_TOOL_NAMES`.
     """
+    create_parents: bool = False
+    """Whether `write_file` creates missing parent directories before the write."""
 
     max_retries: int | None = field(default=None, kw_only=True)
     """How many consecutive retries each file tool allows before the run fails.
 
     A denied path, a missing parent, or an edit whose `old_text` no longer matches asks the model
     to retry; a success resets the count. `None` (the default) uses the agent's tool retry budget.
+    With `create_parents` enabled, a missing parent is instead created before the write.
     """
 
     protected_patterns: Sequence[str] | None = field(default=None, kw_only=True)
@@ -226,5 +229,6 @@ class FileSystem(AbstractCapability[AgentDepsT]):
                 tools=self.tools,
                 max_retries=self.max_retries,
                 max_image_side=self.max_image_side,
+                create_parents=self.create_parents,
             )
         return self._toolset
