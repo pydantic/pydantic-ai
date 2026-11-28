@@ -27,6 +27,7 @@ from pydantic_ai_harness._durable import in_durable_context
 from pydantic_ai_harness._shell_command import shell_command, shell_command_arg
 from pydantic_ai_harness.file_system._tool_kinds import CREATE_DIRECTORY_KIND, EDIT_FILE_KIND, WRITE_FILE_KIND
 from pydantic_ai_harness.permissions._rules import PermissionRule, PermissionRuleSpec, decide
+from pydantic_ai_harness.untrusted_content_gate import untrusted_content_reason
 
 PermissionMode = Literal['full', 'auto', 'read-only']
 """How much the agent may do without asking.
@@ -117,7 +118,11 @@ class PermissionRequest:
     """The command, or the path written."""
 
     reason: str
-    """Why the current mode or a rule asks about this call, for the person deciding."""
+    """Why the current mode or a rule asks about this call, for the person deciding.
+
+    When [`UntrustedContentGate`][pydantic_ai_harness.untrusted_content_gate.UntrustedContentGate] also holds the
+    call, its reason follows on a new line.
+    """
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -374,11 +379,16 @@ def permission_requests(requests: DeferredToolRequests) -> list[PermissionReques
     """The approvals in `requests` that `Permissions` holds, in order; approvals others asked for are left out."""
     found: list[PermissionRequest] = []
     for call in requests.approvals:
+        metadata = requests.metadata.get(call.tool_call_id)
         try:
-            asked = _AskedMetadata.model_validate(requests.metadata.get(call.tool_call_id)).permissions
+            asked = _AskedMetadata.model_validate(metadata).permissions
         except ValidationError:
             continue
-        found.append(PermissionRequest(call=call, action=asked.action, subject=asked.subject, reason=asked.reason))
+        reason = asked.reason
+        # The gate adds its reason to this request rather than asking separately, so the person sees both.
+        if (gate_reason := untrusted_content_reason(metadata)) is not None:
+            reason = f'{reason}\n{gate_reason}'
+        found.append(PermissionRequest(call=call, action=asked.action, subject=asked.subject, reason=reason))
     return found
 
 

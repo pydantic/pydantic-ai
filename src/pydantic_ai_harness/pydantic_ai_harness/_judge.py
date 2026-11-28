@@ -42,13 +42,15 @@ JudgeAnswer: TypeAlias = Literal['yes', 'no', 'unsure']
 SerializableToolSelector: TypeAlias = Literal['all'] | Sequence[str] | dict[str, Any]
 """The `ToolSelector` forms an agent spec can express. A predicate is code-only."""
 
-# The `<` of every opening or closing `tool_call` or `conversation` tag, the two blocks this prompt is
-# built from. Pydantic AI's own framing tags (`<system>` and the rest) are neutralized by
+# The `<` of every opening or closing `tool_call`, `conversation` or `approval_reason` tag, the blocks this prompt
+# is built from. Pydantic AI's own framing tags (`<system>` and the rest) are neutralized by
 # `pydantic_ai._framing.neutralize_tags`, which doesn't know these two. Backslashes before the slash count,
 # since the arguments are JSON, where `\/` is a standard escape for `/`. For the same reason a tag name
 # followed by `"` or `\` counts as cut off: in JSON that is the end of the string or the start of an
 # escape such as `\n`, either of which a reader may take as the tag's end.
-_BLOCK_TAG_OPENER = re.compile(r'<(?=\s*(?:\\*/\s*)?(?:tool_call|conversation)(?=[\s/>"\\]|$))', re.IGNORECASE)
+_BLOCK_TAG_OPENER = re.compile(
+    r'<(?=\s*(?:\\*/\s*)?(?:tool_call|conversation|approval_reason)(?=[\s/>"\\]|$))', re.IGNORECASE
+)
 
 _CONFIDENCE_ADAPTER = TypeAdapter(dict[str, float])
 
@@ -73,8 +75,11 @@ def tool_call_prompt(
     *,
     include_conversation: bool,
     conversation_window: int,
+    reason: str | None = None,
 ) -> str:
     """Build the prompt: the call, and the conversation clamped to its most recent tokens when asked for.
+
+    `reason`, when given, is why the call is waiting for approval, as the capability that held it wrote it.
 
     The arguments go in as JSON and the transcript as rendered, with nothing HTML-escaped, so `>`
     and `&` in a command reach the second model as they would reach a person. Only the `<` of an
@@ -84,6 +89,8 @@ def tool_call_prompt(
     """
     payload = json.dumps({'tool_name': tool_name, 'arguments': args}, default=str, ensure_ascii=False)
     tool_call = f'<tool_call>\n{_neutralize_tags(payload)}\n</tool_call>'
+    if reason is not None:
+        tool_call = f'<approval_reason>\n{_neutralize_tags(reason)}\n</approval_reason>\n\n{tool_call}'
     if not include_conversation:
         return tool_call
     # Neutralize before clamping, so escaping can't push the transcript past its window. A cut that

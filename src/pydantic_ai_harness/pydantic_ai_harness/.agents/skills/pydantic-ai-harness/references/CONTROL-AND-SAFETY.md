@@ -398,8 +398,9 @@ agent = Agent(
 ```
 
 Parameters: the reviewer `model` is positional; `question` is required; `tools='all'` accepts the
-standard `ToolSelector` forms; `include_conversation=False`; `conversation_window=4_000`; `on_review`
-receives an `ApprovalReview`. The review type is in `pydantic_ai_harness.approval_reviewer`.
+standard `ToolSelector` forms; `include_conversation=False`; `conversation_window=4_000`;
+`review_untrusted_content=False` (calls an `UntrustedContentGate` holds go to the person unless set; when set,
+the reviewer is shown the gate's reason); `on_review` receives an `ApprovalReview`. The review type is in `pydantic_ai_harness.approval_reviewer`.
 
 Gotchas:
 
@@ -416,6 +417,65 @@ Gotchas:
   and are durable operations under Temporal, DBOS, and Prefect (give the reviewer an explicit `id`).
 - Reviewed arguments leave the process for the reviewer provider, including calls it leaves for the
   person. This is a model-based filter, not an authorization boundary.
+
+## UntrustedContentGate
+
+Holds calls to tools that act outside the run once the run's history holds content written outside it: a
+tool result (unless the tool is in `trusted_tools`), a provider-native tool result, or a capability part
+whose source has `'none'` authority. `on_tainted='ask'` (default) turns the call into an approval request
+with the gate's reason in its metadata; `'block'` returns a `ToolDenied` to the model.
+
+```python {test="skip"}
+from pydantic_ai import Agent, DeferredToolRequests
+
+from pydantic_ai_harness import UntrustedContentGate
+
+agent = Agent(
+    'anthropic:claude-sonnet-5-5',
+    output_type=[str, DeferredToolRequests],
+    capabilities=[UntrustedContentGate(trusted_tools=['read_notes'])],
+)
+```
+
+Parameters: `on_tainted='ask'`; `gated_tools=None` (every tool not marked
+`{'annotations': {'readOnlyHint': True}}`) or a `ToolSelector`; `trusted_tools=()`. Read the reason
+back with `untrusted_content_reason(requests.metadata.get(call.tool_call_id))` from
+`pydantic_ai_harness.untrusted_content_gate`.
+
+Gotchas:
+
+- It does not detect injection. It holds what an injection would need, whatever the content says.
+- A call is judged on the history before the model response that made it, so calls in the same
+  response as a function tool's read run; a provider-native result in that response taints them.
+  Taint lives in message history: an approval never clears it. A compaction summary (harness or provider)
+  taints the calls after it; a result dropped without one still counts for the rest of its run.
+- `ToolBridge`: bridged calls are held under their own names, `tool_call` is not, and approvals need
+  a `HandleDeferredToolCalls` handler. `tool_search` and `tool_describe` are held in a tainted run.
+  A `tool_call` result is judged under the bridged tool, but only for calls made in this run.
+- External tools (the application runs them): in a tainted run a gated call reaches
+  `DeferredToolRequests.calls` with the gate's reason in its metadata, so check it before running the
+  call. `on_tainted='block'` raises `UserError` before the first request for a gated external tool,
+  frontend tools included: use `'ask'` or leave them out of `gated_tools`.
+- It is ordered innermost. When `Permissions`, a `requires_approval=True` tool, or another capability
+  asks about the same call, the gate adds its reason to that request, so one approval covers both.
+  UIs that show only their own capability's metadata do not show it; `Permissions`' approver gets it
+  at the end of `PermissionRequest.reason`. Exception: for a tool with an `args_validator` the gate asks
+  during validation, so that request also covers a later `Permissions` ask, whose reason is not shown.
+- `'block'` with a `requires_approval=True` or `args_validator` tool: the gate denies the request itself
+  (`handle_deferred_tool_calls`), so no one is asked; a `HandleDeferredToolCalls` handler still sees
+  it first, and the call is denied whatever it answers.
+- Not held: output functions (`ToolOutput`) and tools the provider runs itself (`MCPServerTool`);
+  a provider-run tool's results still taint. To gate an MCP server's tools, use `MCPToolset`.
+- `trusted_tools` trusts everything a tool returns, including text it relays (an editable wiki, a
+  fetched page). List only tools whose results come from the person or the application.
+- `CodeMode`'s `run_code` is not gated unless `gated_tools` selects it; each nested call is, judged on
+  history plus the untrusted tools that ran earlier in the run, failed or retried ones included
+  (in-process record). Writes through
+  `mount` or `os_access` are not tool calls, so the gate doesn't see them: keep mounts read-only.
+- Tool-raised retries (`ModelRetry`, such as an MCP error) taint; argument validation retries don't.
+  Instructions of a capability lowered to `'none'` taint from the first request.
+- MCP servers set their own `readOnlyHint`: select their URL or free-text tools in `gated_tools`.
+- `ApprovalReviewer` leaves its asks to the person unless `review_untrusted_content=True`.
 
 ## Permissions
 

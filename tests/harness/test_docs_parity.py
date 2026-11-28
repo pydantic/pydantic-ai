@@ -199,6 +199,7 @@ _CAPABILITY_PAGE_META = {
     'tool-bridge.md': ('tool_bridge', 'Tool Bridge'),
     'tool-call-judge.md': ('tool_call_judge', 'Tool Call Judge'),
     'approval-reviewer.md': ('approval_reviewer', 'Approval Reviewer'),
+    'untrusted-content-gate.md': ('untrusted_content_gate', 'Untrusted Content Gate'),
     'permissions.md': ('permissions', 'Permissions'),
     'warn-on-cache-busts.md': ('warn_on_cache_busts', 'Warn On Cache Busts'),
     'label-cross-model-history.md': ('label_cross_model_history', 'Label Cross Model History'),

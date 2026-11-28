@@ -98,6 +98,7 @@ from pydantic_ai_harness import (
     ToolGuardrail,
     ToolOutputLimits,
     TrajectoryJudge,
+    UntrustedContentGate,
     WarnNearLimits,
 )
 from pydantic_ai_harness.ask_user import AskUserRequest, AskUserResponse
@@ -779,6 +780,10 @@ CASES: dict[str, CapabilityCase] = {
     ),
     'Permissions': CapabilityCase(
         Anonymous('each mode holds the calls it asks about, so stacked ones ask when any of them would')
+    ),
+    'UntrustedContentGate': CapabilityCase(
+        Anonymous('each holds the calls it gates, so stacked gates hold a call when any of them would'),
+        calls=Calls(ECHO, with_echo(UntrustedContentGate)),
     ),
     'ManagedPrompt': CapabilityCase(
         Anonymous(

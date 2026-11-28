@@ -19,10 +19,11 @@ from typing import Any
 import anyio
 import pytest
 
-from pydantic_ai import Agent, RunContext, Tool
+from pydantic_ai import Agent, DeferredToolRequests, DeferredToolResults, RunContext, Tool
 from pydantic_ai.capabilities import (
     AbstractCapability,
     Capability,
+    HandleDeferredToolCalls,
     LocalWorkspace,
     ToolSearch,
     Toolset,
@@ -40,6 +41,7 @@ from pydantic_ai_harness import (
     ReportStaleFiles,
     SummarizingCompaction,
     SystemReminders,
+    UntrustedContentGate,
 )
 from pydantic_ai_harness.peers import InMemoryPeerNetwork, LocalPeerInbox, read_peer_message
 from pydantic_ai_harness.repair_tool_arguments import RepairToolArguments
@@ -53,6 +55,7 @@ from pydantic_ai_harness.sub_agents import (
     TaskOutputPart,
 )
 from pydantic_ai_harness.system_reminders import LLMReminder, Reminder
+from pydantic_ai_harness.untrusted_content_gate import untrusted_content_reason
 
 from ..append_only import (
     PROVIDERS,
@@ -627,10 +630,28 @@ def _stale_files(
     return [ReportStaleFiles(), FileSystem(), LocalWorkspace(tmp_path)], scenario, notified
 
 
+def _gated_and_approved(
+    _: Path,
+) -> tuple[list[AbstractCapability[None]], Scenario, Callable[[ConversationResult], None]]:
+    """Once a `look_up` result taints the run, the gate holds the next `look_up`, and a handler approves it in the run."""
+    asked: list[str | None] = []
+
+    def approve(ctx: RunContext[None], requests: DeferredToolRequests) -> DeferredToolResults:
+        asked.extend(untrusted_content_reason(requests.metadata.get(call.tool_call_id)) for call in requests.approvals)
+        return DeferredToolResults(approvals={call.tool_call_id: True for call in requests.approvals})
+
+    def held_and_approved(result: ConversationResult) -> None:
+        assert asked, 'expected the gate to hold a call after the first `look_up` result'
+        assert all(asked), f"expected every held call to carry the gate's reason, found {asked}"
+
+    return [UntrustedContentGate(), HandleDeferredToolCalls(approve)], Scenario(), held_and_approved
+
+
 CONVERSATIONS = {
     'Peers': _peer_message,
     'ReportStaleFiles': _stale_files,
     'DelegationReports': _delegation_reports,
+    'UntrustedContentGate': _gated_and_approved,
     'SummarizingCompaction+Capability(defer_loading=True)': _summarized_load(
         ('load_capability', {'id': 'forecasting'})
     ),
