@@ -219,7 +219,7 @@ async def test_sub_agent_in_a_tool_task_takes_its_run_id_from_that_task_run() ->
         with runtime.activate(RetriedTaskContext()):
             await agent.run('go')
 
-    # The tool task runs under its own task run ID, which a retry keeps.
+    # The sub-agent takes its default from the tool task's own task run ID, which a retry of that task run keeps.
     assert sub_run_ids == snapshot(
         [
             'trn-support__function_toolset__<agent>.call_tool:sub:0',
