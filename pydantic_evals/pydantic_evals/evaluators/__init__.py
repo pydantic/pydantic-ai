@@ -37,6 +37,7 @@ from .report_common import (
     ROCAUCEvaluator,
 )
 from .report_evaluator import ReportEvaluator, ReportEvaluatorContext
+from .tool_policy import ToolPolicyCompliance
 
 __all__ = (
     # common
@@ -58,6 +59,7 @@ __all__ = (
     'ArgumentOccurrence',
     'MaxToolCalls',
     'MaxModelRequests',
+    'ToolPolicyCompliance',
     # context
     'EvaluatorContext',
     # evaluator

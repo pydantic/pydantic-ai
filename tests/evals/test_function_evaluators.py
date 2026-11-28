@@ -485,7 +485,7 @@ def test_load_errors():
         [
             "Failed to instantiate evaluator 'exact_match' for dataset: an evaluator function only takes the `evaluation_name` and `version` arguments by name",
             "Failed to instantiate evaluator 'exact_match' for dataset: exact_match() got an unexpected keyword argument 'name'",
-            "Evaluator 'output_length' is not in the provided `custom_evaluator_types`. Valid choices: ['exact_match', 'Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'ToolCorrectness', 'TrajectoryMatch', 'ArgumentCorrectness', 'MaxToolCalls', 'MaxModelRequests', 'GEval']. If you are trying to use a custom evaluator, you must include it in the `custom_evaluator_types` argument.",
+            "Evaluator 'output_length' is not in the provided `custom_evaluator_types`. Valid choices: ['exact_match', 'Equals', 'EqualsExpected', 'Contains', 'IsInstance', 'MaxDuration', 'LLMJudge', 'HasMatchingSpan', 'ToolCorrectness', 'TrajectoryMatch', 'ArgumentCorrectness', 'MaxToolCalls', 'MaxModelRequests', 'ToolPolicyCompliance', 'GEval']. If you are trying to use a custom evaluator, you must include it in the `custom_evaluator_types` argument.",
         ]
     )
 
