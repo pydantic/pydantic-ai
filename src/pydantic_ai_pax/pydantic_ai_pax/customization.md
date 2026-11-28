@@ -346,10 +346,15 @@ Import these event classes from pydantic_ai_pax.plugins. Event payloads are type
 keyword-only dataclasses. A raising on_turn_start cancels the turn. Do not
 return a replacement string or a boolean to decide a host action.
 
+The plugin below counts words in a project file. Its tool reads through
+`ctx.workspace` so relative paths resolve in the workspace selected for the run.
+
 ```python
 from collections.abc import Sequence
 
 from pydantic import BaseModel
+
+from pydantic_ai import RunContext, ToolFailed
 from pydantic_ai.capabilities import AgentCapability, Capability
 from pydantic_ai_pax.plugins import Plugin, TurnStart
 
@@ -363,10 +368,14 @@ class Concise(Plugin[Options]):
         event.text = self.settings.prefix + event.text
 
     def get_capabilities(self) -> Sequence[AgentCapability[None]]:
-        tools = Capability[None](instructions='Use word_count for exact counts.')
+        tools = Capability[None](instructions='Use word_count for exact word counts in project files.')
 
-        @tools.tool_plain
-        def word_count(*, text: str) -> int:
+        @tools.tool
+        async def word_count(ctx: RunContext[None], *, path: str) -> int:
+            try:
+                text = await ctx.workspace.read_text(path)
+            except OSError as exc:
+                raise ToolFailed(f'Could not read {path!r}: {exc}') from exc
             return len(text.split())
 
         return (tools,)
