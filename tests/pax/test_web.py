@@ -2175,7 +2175,7 @@ def test_stopping_the_web_ui_backs_out_of_open_dialogs(make_web: 'MakeWeb', tmp_
 
 def follow_workspaces(
     web_: Web, settings: Callable[[ProjectSettings], Settings] = lambda project: resolve_settings(project.overrides)
-) -> SessionWorkspace:
+) -> SessionWorkspace[None, str]:
     """Wire the shell as `pax --web` does, so each session runs in its own directory."""
     shell = web_.shell
     workspace = SessionWorkspace(

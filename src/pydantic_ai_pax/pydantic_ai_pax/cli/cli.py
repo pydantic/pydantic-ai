@@ -22,10 +22,13 @@ if TYPE_CHECKING:
     from pydantic_ai_pax.config import Settings, UpdateChannel
     from pydantic_ai_pax.config.project_settings import ProjectSettings
     from pydantic_ai_pax.config.settings_store import SettingsStore
+    from pydantic_ai_pax.runtime.imported_sessions import ImportSource
     from pydantic_ai_pax.runtime.worktrees import Worktree
 
 _RELAUNCH_WORKTREE = 'CLAI_RELAUNCH_WORKTREE'
 """Carries a removable checkout's launch `HEAD` across `/update`; an environment variable, so older builds ignore it."""
+_RELAUNCH_WORKSPACE = 'CLAI_RELAUNCH_WORKSPACE'
+"""Carries across `/update` the directory a terminal session moved to, so the new build's session starts there."""
 _RELAUNCH_WEB = 'CLAI_RELAUNCH_WEB'
 """Carries the web UI's port and token across `/update`, so its open pages reconnect.
 
@@ -172,6 +175,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
     _held = hold_environment()  # Open until exit, so `/update` elsewhere does not replace the code this one runs.
     relaunched = os.environ.pop(_RELAUNCH_WORKTREE, None)  # Popped so tools and later launches never see it.
     served = _web_handoff(os.environ.pop(_RELAUNCH_WEB, None))  # Likewise, and the model never reads the token.
+    moved_to = os.environ.pop(_RELAUNCH_WORKSPACE, None)
     worktree = launched = None
     try:
         store = SettingsStore(args.database)
@@ -185,8 +189,7 @@ def _launch(args: argparse.Namespace, parser: argparse.ArgumentParser, splash: S
             )
             raise SystemExit(asyncio.run(_update(settings.update_channel)))
         agent = import_agent(args.agent) if args.agent is not None else None
-        if args.worktree is not None:
-            worktree = _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web, store=store)
+        worktree = _enter_launch_directory(args, store=store, moved_to=moved_to)
         project = load_project_settings(Path.cwd(), store=store)
         _continue_session(args, store)
         model = args.model or os.getenv('CLAI_MODEL')
@@ -323,11 +326,27 @@ def _relaunch(args: argparse.Namespace, relaunch: 'Relaunch', *, launched: 'Work
         new_session_id=relaunch.new_session_id,
         launch_plugins=relaunch.launch_plugins,
     )
-    _remember_worktree(launched)
+    _remember_worktree(_hand_over_workspace(relaunch.workspace, launched))
     if relaunch.web is not None:
         os.environ[_RELAUNCH_WEB] = f'{relaunch.web.port} {relaunch.web.token}'
     sys.stdout.flush()
     os.execv(relaunch.executable, argv)
+
+
+def _hand_over_workspace(workspace: str | None, launched: 'Worktree | None') -> 'Worktree | None':
+    """Have the new build start in `workspace`, where the session moved, and return the checkout to hand over.
+
+    The new build changes directory only once it has imported `--agent` and read `.env` where Pax started. A
+    checkout the session left is kept, and not handed over, so exit cleanup looks at the directory the session
+    works in.
+    """
+    if workspace is None or workspace == str(Path.cwd().resolve()):
+        return launched
+    os.environ[_RELAUNCH_WORKSPACE] = workspace
+    if launched is not None and Path(workspace).is_relative_to(launched.path):
+        return launched
+    _report_kept_worktree(launched)
+    return None
 
 
 def _report_kept_worktree(worktree: 'Worktree | None') -> None:
@@ -439,6 +458,51 @@ def _enter_worktree(*, name: str, headless: bool, store: 'SettingsStore') -> 'Wo
         )
     os.chdir(worktree.path)
     return worktree
+
+
+def _enter_launch_directory(
+    args: argparse.Namespace, *, store: 'SettingsStore', moved_to: str | None
+) -> 'Worktree | None':
+    """Change into the `--worktree` checkout, returning it, or the directory the session works in.
+
+    That is `moved_to`, where the session worked before `/update` restarted Pax, or the directory the
+    Claude Code or Codex session `--resume-claude`, `--resume-codex`, or `--resume` names ran in.
+    """
+    if args.worktree is not None:
+        return _enter_worktree(name=args.worktree, headless=args.prompt is not None or args.web, store=store)
+    if moved_to is not None:
+        os.chdir(moved_to)
+    elif args.resume_from is not None and args.resume:
+        _enter_imported_project(args.resume_from, args.resume)
+    elif args.resume and not args.web:
+        # `run_web` moves the session it resumes into that session's directory itself.
+        _enter_copy_project(args.resume, store=store)
+    return None
+
+
+def _enter_imported_project(source: 'ImportSource', native_id: str) -> None:
+    """Change into the directory the Claude Code or Codex session `native_id` was saved in, to start there."""
+    from pydantic_ai_pax.runtime.imported_sessions import find_import
+    from pydantic_ai_pax.runtime.session_workspace import workspace_directory
+
+    os.chdir(workspace_directory(find_import(source, native_id).summary.workspace))
+
+
+def _enter_copy_project(conversation_id: str, *, store: 'SettingsStore') -> None:
+    """Change into the directory of Pax's copy of a Claude Code or Codex session, while it exists, as `/resume` does.
+
+    Pax's own sessions, and an ID no session has, which resuming it reports, start where Pax was launched.
+    """
+    from pydantic_ai_harness.step_persistence.conversations import SqliteSessionStore
+    from pydantic_ai_pax.runtime.imported_sessions import source_of
+
+    conversations = SqliteSessionStore(database=store.path.with_name('sessions.db'))
+    try:
+        summary = asyncio.run(conversations.get(conversation_id=conversation_id)).summary
+    except LookupError:
+        return
+    if source_of(summary) is not None and Path(summary.workspace).is_dir():
+        os.chdir(summary.workspace)
 
 
 def _launched_worktree(*, relaunched: str | None) -> 'Worktree | None':
