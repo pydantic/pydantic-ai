@@ -1014,22 +1014,21 @@ class _GraphIterator(Generic[StateT, DepsT, OutputT]):
         return completed_fork_runs
 
     def _handle_path(self, path: Path, inputs: Any, fork_stack: ForkStack) -> Sequence[GraphTask]:
-        if not path.items:
-            return []  # pragma: no cover
-
-        item = path.items[0]
-        assert not isinstance(item, MapMarker | BroadcastMarker), (
-            'These markers should be removed from paths during graph building'
-        )
-        if isinstance(item, DestinationMarker):
-            return [GraphTask(item.destination_id, inputs, fork_stack, self.get_next_task_id())]
-        elif isinstance(item, TransformMarker):
-            inputs = item.transform(StepContext(state=self.state, deps=self.deps, inputs=inputs))
-            return self._handle_path(path.next_path, inputs, fork_stack)
-        elif isinstance(item, LabelMarker):
-            return self._handle_path(path.next_path, inputs, fork_stack)
-        else:
-            assert_never(item)
+        # Iterate over the path items instead of recursing once per item, so that very long paths
+        # (e.g. a chain of ~1,100 `.transform()` steps) don't hit the recursion limit at run time.
+        for item in path.items:
+            assert not isinstance(item, MapMarker | BroadcastMarker), (
+                'These markers should be removed from paths during graph building'
+            )
+            if isinstance(item, DestinationMarker):
+                return [GraphTask(item.destination_id, inputs, fork_stack, self.get_next_task_id())]
+            elif isinstance(item, TransformMarker):
+                inputs = item.transform(StepContext(state=self.state, deps=self.deps, inputs=inputs))
+            elif isinstance(item, LabelMarker):
+                pass
+            else:
+                assert_never(item)
+        return []  # pragma: no cover
 
     def _handle_edges(
         self, node: AnyNode, inputs: Any, fork_stack: ForkStack

@@ -481,3 +481,38 @@ stateDiagram-v2
   inner_process --> reduce_sum
   reduce_sum --> [*]\
 """)
+
+
+async def test_long_transform_chain_runs_without_recursion_error():
+    """A path with 1,100 `.transform()` steps runs without hitting the recursion limit.
+
+    Regression test for https://github.com/pydantic/pydantic-ai/issues/13537.
+    """
+    g = GraphBuilder(state_type=MyState, output_type=int)
+
+    @g.step
+    async def start_step(ctx: StepContext[MyState, None, None]) -> int:
+        return 0
+
+    @g.step
+    async def end_step(ctx: StepContext[MyState, None, int]) -> int:
+        return ctx.inputs
+
+    def increment(ctx: StepContext[MyState, None, int]) -> int:
+        return ctx.inputs + 1
+
+    edge = g.edge_from(start_step)
+    for i in range(1_100):
+        if i % 2:
+            edge = edge.transform(increment)
+        else:
+            edge = edge.label(f'step {i}')
+
+    g.add(
+        g.edge_from(g.start_node).to(start_step),
+        edge.to(end_step),
+        g.edge_from(end_step).to(g.end_node),
+    )
+
+    graph = g.build()
+    assert await graph.run(state=MyState()) == 550
