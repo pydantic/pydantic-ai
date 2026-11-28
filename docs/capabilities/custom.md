@@ -936,15 +936,21 @@ print(logger.nodes)
 
 You can also use `wrap_node_run` to modify graph progression — for example, limiting the number of model requests per run:
 
-```python {title="node_modification_example.py" test="skip" lint="skip"}
+```python {title="node_modification_example.py"}
+from __future__ import annotations
+
 from dataclasses import dataclass
 from typing import Any
 
-from pydantic_graph import End
-
 from pydantic_ai import ModelRequestNode, RunContext
-from pydantic_ai.capabilities import AbstractCapability, AgentNode, NodeResult, WrapNodeRunHandler
+from pydantic_ai.capabilities import (
+    AbstractCapability,
+    AgentNode,
+    NodeResult,
+    WrapNodeRunHandler,
+)
 from pydantic_ai.result import FinalResult
+from pydantic_graph import End
 
 
 @dataclass
@@ -954,7 +960,7 @@ class MaxModelRequests(AbstractCapability[Any]):
     max_requests: int = 5
     count: int = 0
 
-    async def for_run(self, ctx: RunContext[Any]) -> 'MaxModelRequests':
+    async def for_run(self, ctx: RunContext[Any]) -> MaxModelRequests:
         return MaxModelRequests(max_requests=self.max_requests)  # fresh per run
 
     async def wrap_node_run(
