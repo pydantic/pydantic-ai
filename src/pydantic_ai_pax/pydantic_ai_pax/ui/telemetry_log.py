@@ -1,7 +1,7 @@
 """Keep telemetry SDK and event loop log records out of the interactive terminal.
 
 Logfire and OpenTelemetry report export problems, such as a request to Logfire timing out, through `logging`, as
-`asyncio` reports a callback's unhandled error. With no handler configured, Python's last-resort handler writes them
+`asyncio` reports its warnings and errors, such as a loop callback's. With no handler configured, Python's last-resort handler writes them
 to stderr, over the editor. While the interactive session runs they go to small rotating files instead.
 """
 
