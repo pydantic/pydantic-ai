@@ -8264,14 +8264,17 @@ def chunk_with_usage(
 
 @pytest.mark.parametrize('omit_final_usage', [False, True])
 async def test_stream_with_continuous_usage_stats(allow_model_requests: None, omit_final_usage: bool):
-    """Continuous usage replaces earlier counts and survives a usage-less terminal chunk.
+    """Continuous usage replaces earlier cumulative counts and survives missing-usage chunks.
 
-    Each reported chunk contains cumulative usage, so the final usage follows the most recent
-    measurement. Omitting usage from the terminal chunk must preserve that preceding measurement.
+    The usage-less intermediate and optional terminal chunks must preserve the most recent cumulative usage.
     """
     final_chunk = chunk_with_usage([], finish_reason='stop', completion_tokens=15, prompt_tokens=10, total_tokens=25)
     if omit_final_usage:
         final_chunk.usage = None
+    intermediate_chunk = chunk_with_usage(
+        [ChoiceDelta(content=' more')], completion_tokens=15, prompt_tokens=10, total_tokens=25
+    )
+    intermediate_chunk.usage = None
     stream: list[chat.ChatCompletionChunk] = [
         chunk_with_usage(
             [ChoiceDelta(content='hello ', role='assistant')],
@@ -8281,6 +8284,7 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None, om
         ),
         chunk_with_usage([ChoiceDelta(content='world')], completion_tokens=10, prompt_tokens=10, total_tokens=20),
         chunk_with_usage([ChoiceDelta(content='!')], completion_tokens=15, prompt_tokens=10, total_tokens=25),
+        intermediate_chunk,
         final_chunk,
     ]
     mock_client = MockOpenAI.create_mock_stream(stream)
@@ -8294,12 +8298,12 @@ async def test_stream_with_continuous_usage_stats(allow_model_requests: None, om
         async for response in result.stream_response(debounce_by=None):
             usage_at_each_step.append(response.usage)
 
-        # Each step should have the cumulative usage from that chunk (not accumulated)
-        # The stream emits responses for each content chunk plus final
+        # Usage-bearing chunks replace earlier cumulative counts; usage-less chunks preserve the latest count.
         assert usage_at_each_step == snapshot(
             [
                 RequestUsage(input_tokens=10, output_tokens=5),
                 RequestUsage(input_tokens=10, output_tokens=10),
+                RequestUsage(input_tokens=10, output_tokens=15),
                 RequestUsage(input_tokens=10, output_tokens=15),
                 RequestUsage(input_tokens=10, output_tokens=15),
                 RequestUsage(input_tokens=10, output_tokens=15),

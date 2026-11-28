@@ -211,6 +211,31 @@ async def test_tool_call_args_sent_as_canonical_json_string(allow_model_requests
     assert sent == snapshot(['{"city":"Paris","days":2}', '{"city":"Paris","days":2}'])
 
 
+async def test_mistral_tool_call_invalid_args_are_serialized(allow_model_requests: None):
+    bad_args = '{"location": "Paris"'
+    history = [
+        ModelRequest(parts=[UserPromptPart('What is the weather in Paris?')]),
+        ModelResponse(parts=[ToolCallPart('get_weather', bad_args, tool_call_id='call_1')]),
+        ModelRequest(
+            parts=[
+                ToolReturnPart(
+                    'get_weather',
+                    'Please retry with valid arguments.',
+                    tool_call_id='call_1',
+                )
+            ]
+        ),
+    ]
+    mock_client = MockMistralAI.create_mock(completion_message(MistralAssistantMessage(content='OK')))
+    model = MistralModel('mistral-large-latest', provider=MistralProvider(mistral_client=mock_client))
+
+    result = await Agent(model).run(message_history=history)
+
+    assert result.output == 'OK'
+    assistant = cast(MockMistralAI, mock_client).chat_completion_kwargs[0]['messages'][1]
+    assert json.loads(assistant.tool_calls[0].function.arguments) == {'INVALID_JSON': bad_args}
+
+
 def completion_message(
     message: MistralAssistantMessage, *, usage: MistralUsageInfo | None = None, with_created: bool = True
 ) -> MistralChatCompletionResponse:
