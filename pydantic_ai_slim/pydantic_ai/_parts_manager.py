@@ -195,6 +195,15 @@ class ModelResponsePartsManager:
             if not isinstance(p, ToolCallPartDelta)
         ]
 
+    def get_part(self, index: int) -> ManagedPart | None:
+        """Return a single part by its index, materializing and restoring it if needed."""
+        if not (0 <= index < len(self._parts)):
+            return None
+        part = self._materialize_and_cache_part(index)
+        if self.special_token_restorer is not None and not isinstance(part, ToolCallPartDelta):
+            return self.special_token_restorer.restore_part_so_far(index, part)
+        return part
+
     def get_part_by_vendor_id(self, vendor_id: VendorId) -> ManagedPart | None:
         """Return a part by its vendor ID.
 

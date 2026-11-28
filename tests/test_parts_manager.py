@@ -1183,3 +1183,16 @@ def test_apply_event_preserves_stream_part_indexes():
     assert replay_manager.get_parts() == snapshot(
         [TextPart(content='hello world'), TextPart(content='goodbye everyone')]
     )
+
+
+def test_get_part_by_index():
+    manager = ModelResponsePartsManager(model_request_parameters=ModelRequestParameters())
+    assert manager.handle_tool_call_delta(vendor_part_id='tool', args='{"value":') is None
+    next(manager.handle_text_delta(vendor_part_id='text', content='hello '))
+    next(manager.handle_text_delta(vendor_part_id='text', content='world'))
+
+    assert isinstance(manager.get_part(0), ToolCallPartDelta)
+    assert manager.get_part(1) == snapshot(TextPart(content='hello world'))
+    assert manager.get_part(-1) is None
+    assert manager.get_part(2) is None
+

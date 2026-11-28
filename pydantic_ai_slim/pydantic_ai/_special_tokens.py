@@ -342,6 +342,7 @@ class StreamRestorer:
     restorers: dict[int, _StreamedTextRestorer | _StreamedArgsRestorer] = field(
         default_factory=dict[int, _StreamedTextRestorer | _StreamedArgsRestorer]
     )
+    held_parts: dict[int, None] = field(default_factory=dict[int, None])
     args_parts: set[int] = field(default_factory=set[int])
     tool_call_ids: dict[int, str] = field(default_factory=dict[int, str])
     """Each tool call's id, for the delta that sends its held arguments: UI adapters need it on every delta."""
@@ -356,29 +357,38 @@ class StreamRestorer:
     def _restore_start(self, event: PartStartEvent) -> PartStartEvent:
         part = event.part
         if isinstance(part, TextPart):
-            return replace(event, part=replace(part, content=self._text_restorer(event.index).feed(part.content)))
+            content = self._feed(event.index, self._text_restorer(event.index), part.content)
+            return replace(event, part=replace(part, content=content))
         if isinstance(part, ToolCallPart):
             self.tool_call_ids[event.index] = part.tool_call_id
             if isinstance(part.args, str):
-                return replace(event, part=replace(part, args=self._args_restorer(event.index).feed(part.args)))
+                args = self._feed(event.index, self._args_restorer(event.index), part.args)
+                return replace(event, part=replace(part, args=args))
             return replace(event, part=_restore_part(part))
         return event
 
     def _restore_delta(self, event: PartDeltaEvent) -> PartDeltaEvent:
         delta = event.delta
         if isinstance(delta, TextPartDelta):
-            return replace(
-                event, delta=replace(delta, content_delta=self._text_restorer(event.index).feed(delta.content_delta))
-            )
+            content_delta = self._feed(event.index, self._text_restorer(event.index), delta.content_delta)
+            return replace(event, delta=replace(delta, content_delta=content_delta))
         if isinstance(delta, ToolCallPartDelta):
             if delta.tool_call_id is not None:
                 self.tool_call_ids[event.index] = delta.tool_call_id
             if isinstance(delta.args_delta, str):
-                args_delta = self._args_restorer(event.index).feed(delta.args_delta)
+                args_delta = self._feed(event.index, self._args_restorer(event.index), delta.args_delta)
                 return replace(event, delta=replace(delta, args_delta=args_delta))
             if delta.args_delta is not None:
                 return replace(event, delta=replace(delta, args_delta=_restore_args(delta.args_delta)))
         return event
+
+    def _feed(self, index: int, restorer: _StreamedTextRestorer | _StreamedArgsRestorer, text: str) -> str:
+        out = restorer.feed(text)
+        if restorer.held:
+            self.held_parts[index] = None
+        else:
+            self.held_parts.pop(index, None)
+        return out
 
     def _text_restorer(self, index: int) -> _StreamedTextRestorer:
         restorer = self.restorers.get(index)
@@ -420,8 +430,9 @@ class StreamRestorer:
 
     def _flush(self, include: Callable[[int], bool]) -> list[PartDeltaEvent]:
         events: list[PartDeltaEvent] = []
-        for index, restorer in self.restorers.items():
-            if include(index) and (held := restorer.flush()):
+        for index in [i for i in self.held_parts if include(i)]:
+            self.held_parts.pop(index, None)
+            if held := self.restorers[index].flush():
                 delta = (
                     ToolCallPartDelta(args_delta=held, tool_call_id=self.tool_call_ids.get(index))
                     if index in self.args_parts

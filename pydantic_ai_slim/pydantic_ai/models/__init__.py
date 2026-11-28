@@ -3238,7 +3238,7 @@ class StreamedResponse(ABC):
                         return None
 
                     index = last_start_event.index
-                    part = self._parts_manager.get_parts()[index]
+                    part = self._parts_manager.get_part(index)
                     if not isinstance(part, TextPart | ThinkingPart | BaseToolCallPart):
                         # Parts other than these 3 don't have deltas, so don't need an end part.
                         return None

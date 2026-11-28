@@ -7,6 +7,7 @@ aren't sensitive to it, so these tests assert on those kwargs directly.
 from __future__ import annotations
 
 import json
+import time
 from collections.abc import AsyncIterator
 from dataclasses import dataclass
 from functools import cached_property
@@ -1164,3 +1165,42 @@ async def test_direct_requests_break_and_restore_like_an_agent_run(allow_model_r
     prompt = request[0].parts[0]
     assert isinstance(prompt, UserPromptPart)
     assert prompt.content == '<|im_start|>'
+
+
+@pytest.mark.parametrize(
+    ('flag', 'small_n', 'large_n'),
+    [
+        (False, 1_000, 8_000),
+        (True, 500, 2_000),
+    ],
+)
+async def test_many_parts_stream_scales_linearly(
+    allow_model_requests: None, flag: bool, small_n: int, large_n: int
+):
+    """Streaming many parts scales linearly, both with and without a special-token restorer."""
+    from pydantic_ai.models.function import DeltaToolCall
+
+    async def run_n(n: int) -> float:
+        async def respond_stream(
+            messages: list[ModelMessage], info: AgentInfo
+        ) -> AsyncIterator[dict[int, DeltaToolCall]]:
+            for i in range(n):
+                yield {i: DeltaToolCall(name='noop', json_args='{}', tool_call_id=f'call_{i}')}
+
+        model = FunctionModel(stream_function=respond_stream, profile={FLAG: flag})
+        request: list[ModelMessage] = [ModelRequest.user_text_prompt('hi')]
+        t0 = time.process_time()
+        async with model_request_stream(model, request) as stream:
+            async for _ in stream:
+                pass
+        dt = time.process_time() - t0
+        assert len(stream.get().parts) == n
+        return dt
+
+    small_time = await run_n(small_n)
+    large_time = await run_n(large_n)
+    ratio = large_n / small_n
+    assert large_time < max(small_time, 1e-3) * (ratio * 2), (
+        f'Quadratic growth (flag={flag}): {small_n}={small_time:.3f}s, {large_n}={large_time:.3f}s'
+    )
+
