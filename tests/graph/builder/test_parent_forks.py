@@ -5,7 +5,7 @@ import re
 import pytest
 
 from pydantic_graph.exceptions import GraphBuildingError
-from pydantic_graph.parent_forks import ParentForkFinder
+from pydantic_graph.parent_forks import ParentFork, ParentForkFinder
 
 from ..._inline_snapshot import snapshot
 
@@ -136,25 +136,26 @@ def test_parent_fork_no_forks():
     assert parent_fork is None
 
 
-def test_parent_fork_unreachable_join():
+@pytest.mark.parametrize(
+    ('edges', 'expected'),
+    [
+        pytest.param({'start': ['end'], 'F': ['A', 'B'], 'A': ['J'], 'B': ['J']}, None, id='fork-upstream'),
+        pytest.param({'start': ['end'], 'B': ['J'], 'J': ['B']}, None, id='cycle'),
+        pytest.param({'start': ['end'], 'B': ['J'], 'J': ['end']}, None, id='single-predecessor'),
+        pytest.param({'start': ['end'], 'F': ['J'], 'J': ['F']}, ParentFork('F', set()), id='cycle-through-fork'),
+    ],
+)
+def test_parent_fork_unreachable_join(edges: dict[str, list[str]], expected: ParentFork[str] | None):
     """Test parent fork identification when join is unreachable from start."""
     join_id = 'J'
-    nodes = {'start', 'F', 'A', 'B', 'J', 'end'}
+    nodes = set(edges).union(*edges.values())
     start_ids = {'start'}
     fork_ids = {'F'}
-    # J is not reachable from start
-    edges = {
-        'start': ['end'],
-        'F': ['A', 'B'],
-        'A': ['J'],
-        'B': ['J'],
-    }
 
     finder = ParentForkFinder(nodes, start_ids, fork_ids, edges)
     parent_fork = finder.find_parent_fork(join_id)
 
-    # Should return None or a parent fork with no intermediate nodes
-    assert parent_fork is None or len(parent_fork.intermediate_nodes) == 0
+    assert parent_fork == expected
 
 
 def test_parent_fork_self_loop():

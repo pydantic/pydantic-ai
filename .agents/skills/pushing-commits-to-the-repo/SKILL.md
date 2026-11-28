@@ -419,10 +419,16 @@ session reads the budget off the log; without it the cap silently resets.
 
    ```bash
    POLICY_BASE_DIR="$(mktemp -d)/policy-base"
-   git worktree add --detach "$POLICY_BASE_DIR" "$POLICY_BASE_SHA"
+   slimtree new --detach "$POLICY_BASE_SHA" --path "$POLICY_BASE_DIR"
    # ... run the gate ...
-   git worktree remove --force "$POLICY_BASE_DIR"
+   slimtree rm --force --no-archive "$POLICY_BASE_DIR"
    ```
+
+   Use [slimtree](https://pypi.org/project/slimtree/) 0.4.0 or later when it is installed: it checks
+   out the commit without a second copy of the files. slimtree is optional. Without it, or when
+   `slimtree new` fails, run `git worktree add --detach "$POLICY_BASE_DIR" "$POLICY_BASE_SHA"`, and
+   remove the policy base with `git worktree remove --force "$POLICY_BASE_DIR"`. Remove the policy
+   base with the tool that made it.
 
    Put it outside the candidate worktree. A path inside it dirties the tree the clean check below
    is about to inspect. Materialize it for every review, including one that only needs to read
