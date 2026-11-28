@@ -919,6 +919,35 @@ class TestMCPToolsetIntegration:
         await transport.close()
         assert limiter.running_count == 0
 
+    # The in-process server's sampling request goes through the API that MCP SDK v2 deprecates.
+    @pytest.mark.filterwarnings('ignore:The sampling capability is deprecated')
+    async def test_in_process_sampling_refuses_the_agents_limiter(self):
+        """An in-process connection carries the run that opened it, and sampling runs in that run.
+
+        The kept-alive stdio fallback never replaces it, so a sampling model that shares the agent's limiter is
+        refused here too.
+        """
+        server: FastMCP[None] = FastMCP('sampler')
+
+        @server.tool()
+        async def sample_text(ctx: Context) -> str:
+            message = mcp_types.SamplingMessage(role='user', content=mcp_types.TextContent(type='text', text='Say hi'))
+            # A legacy session's server-initiated sampling request, which the 2026-07-28 protocol deprecates.
+            await ctx.session.create_message([message], max_tokens=5, related_request_id=ctx.request_id)  # pyright: ignore[reportDeprecated]
+            return 'sampled'
+
+        limiter = ConcurrencyLimiter(1)
+        # Only a legacy session lets the server send a request in the middle of a tool call.
+        toolset = MCPToolset(make_legacy_client(server), tool_error_behavior='error')
+        toolset.set_sampling_model(ConcurrencyLimitedModel(TestModel(), limiter=limiter))
+        agent = Agent(TestModel(call_tools=['sample_text']), toolsets=[toolset], max_concurrency=limiter)
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            with pytest.raises(
+                ToolError, match='The agent and a `ConcurrencyLimitedModel` use the same concurrency limiter'
+            ):
+                await agent.run('Hello')
+        assert limiter.running_count == 0
+
     @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
     async def test_entered_connection_preserves_the_current_run_context(self, run_context: RunContext):
         """Connecting a kept-alive stdio transport without the run context gives the caller's back afterwards."""
