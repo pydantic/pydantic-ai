@@ -21,6 +21,7 @@
             - InstrumentationSettings
             - EventStreamHandler
             - AgentSpec
+            - ModelSpec
             - AgentModelSettings
             - AgentInstructions
             - UserPromptNode

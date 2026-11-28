@@ -6,6 +6,7 @@ from typing import TYPE_CHECKING, overload
 
 from pydantic_ai import ModelProfile
 from pydantic_ai._file_input import KNOWN_IMAGE_MEDIA_TYPES
+from pydantic_ai._utils import secret_value
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS, ComputerTool
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
@@ -278,6 +279,7 @@ class OpenAIProvider(_OpenAISDKProvider):
                 client to use. If provided, `base_url`, `api_key`, and `http_client` must be `None`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
+        api_key = secret_value(api_key)
         if api_key is None and 'OPENAI_API_KEY' not in os.environ and openai_client is None:
             if base_url is None and 'OPENAI_BASE_URL' not in os.environ:
                 # When talking to OpenAI directly, a missing key would otherwise surface as a raw

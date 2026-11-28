@@ -5,7 +5,10 @@ import re
 from collections.abc import Callable
 from typing import overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
@@ -137,7 +140,7 @@ class SnowflakeProvider(_OpenAISDKProvider):
         self,
         *,
         account: str | None = None,
-        token: str | None = None,
+        token: str | SecretStr | None = None,
         base_url: str | None = None,
         openai_client: None = None,
         http_client: _OpenAIHTTPClient | None = None,
@@ -147,7 +150,7 @@ class SnowflakeProvider(_OpenAISDKProvider):
         self,
         *,
         account: str | None = None,
-        token: str | None = None,
+        token: str | SecretStr | None = None,
         base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
@@ -168,6 +171,7 @@ class SnowflakeProvider(_OpenAISDKProvider):
                 `http_client` must be `None`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
+        token = secret_value(token)
         if openai_client is not None:
             assert account is None, 'Cannot provide both `openai_client` and `account`'
             assert token is None, 'Cannot provide both `openai_client` and `token`'

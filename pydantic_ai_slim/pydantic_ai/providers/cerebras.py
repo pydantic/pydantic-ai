@@ -4,7 +4,10 @@ import os
 from collections.abc import Callable
 from typing import overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles._special_tokens import special_token_route_profile
@@ -115,10 +118,12 @@ class CerebrasProvider(_OpenAISDKProvider):
     def __init__(self, *, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, base_url: str | None = None) -> None: ...
+    def __init__(self, *, api_key: str | SecretStr, base_url: str | None = None) -> None: ...
 
     @overload
-    def __init__(self, *, api_key: str, base_url: str | None = None, http_client: _OpenAIHTTPClient) -> None: ...
+    def __init__(
+        self, *, api_key: str | SecretStr, base_url: str | None = None, http_client: _OpenAIHTTPClient
+    ) -> None: ...
 
     @overload
     def __init__(self, *, base_url: str | None = None, http_client: _OpenAIHTTPClient) -> None: ...
@@ -129,7 +134,7 @@ class CerebrasProvider(_OpenAISDKProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
@@ -143,6 +148,7 @@ class CerebrasProvider(_OpenAISDKProvider):
             openai_client: An existing `AsyncOpenAI` client to use. If provided, `api_key`, `base_url` and `http_client` must be `None`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
+        api_key = secret_value(api_key)
         api_key = api_key or os.getenv('CEREBRAS_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(

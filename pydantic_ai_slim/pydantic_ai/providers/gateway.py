@@ -9,9 +9,11 @@ from collections.abc import Callable
 from typing import TYPE_CHECKING, Any, Literal, overload
 
 import httpx2
+from pydantic import SecretStr
 from typing_extensions import TypeVar
 
 from pydantic_ai._http import AsyncHTTPClient, create_async_httpx2_client
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 
@@ -38,7 +40,7 @@ def gateway_provider(
     /,
     *,
     route: str | None = None,
-    api_key: str | None = None,
+    api_key: str | SecretStr | None = None,
     base_url: str | None = None,
     http_client: AsyncHTTPClient | None = None,
 ) -> Provider[AsyncOpenAI]: ...
@@ -50,7 +52,7 @@ def gateway_provider(
     /,
     *,
     route: str | None = None,
-    api_key: str | None = None,
+    api_key: str | SecretStr | None = None,
     base_url: str | None = None,
     http_client: httpx.AsyncClient | None = None,
 ) -> Provider[AsyncGroq]: ...
@@ -62,7 +64,7 @@ def gateway_provider(
     /,
     *,
     route: str | None = None,
-    api_key: str | None = None,
+    api_key: str | SecretStr | None = None,
     base_url: str | None = None,
     http_client: httpx2.AsyncClient | None = None,
 ) -> Provider[AsyncAnthropicClient]: ...
@@ -74,7 +76,7 @@ def gateway_provider(
     /,
     *,
     route: str | None = None,
-    api_key: str | None = None,
+    api_key: str | SecretStr | None = None,
     base_url: str | None = None,
 ) -> Provider[BaseClient]: ...
 
@@ -85,7 +87,7 @@ def gateway_provider(
     /,
     *,
     route: str | None = None,
-    api_key: str | None = None,
+    api_key: str | SecretStr | None = None,
     base_url: str | None = None,
     http_client: AsyncHTTPClient | None = None,
 ) -> Provider[GoogleClient]: ...
@@ -97,7 +99,7 @@ def gateway_provider(
     /,
     *,
     route: str | None = None,
-    api_key: str | None = None,
+    api_key: str | SecretStr | None = None,
     base_url: str | None = None,
 ) -> Provider[Any]: ...
 
@@ -130,7 +132,7 @@ def gateway_provider(
     *,
     # Every provider
     route: str | None = None,
-    api_key: str | None = None,
+    api_key: str | SecretStr | None = None,
     base_url: str | None = None,
     # OpenAI, Groq, Anthropic & Gemini - Only Bedrock doesn't have an HTTPX client.
     http_client: AsyncHTTPClient | None = None,
@@ -148,6 +150,7 @@ def gateway_provider(
             region, e.g. `https://gateway-us.pydantic.dev/proxy`.
         http_client: The HTTP client to use for the Gateway.
     """
+    api_key = secret_value(api_key)
     api_key = api_key or os.getenv('PYDANTIC_AI_GATEWAY_API_KEY', os.getenv('PAIG_API_KEY'))
     if not api_key:
         raise UserError(

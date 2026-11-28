@@ -3,7 +3,10 @@ from __future__ import annotations as _annotations
 import os
 from typing import Literal, overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.deepseek import _DEEPSEEK_V4_PATTERN, deepseek_model_profile  # pyright: ignore[reportPrivateUsage]
@@ -124,7 +127,7 @@ class DeepSeekProvider(_OpenAISDKProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         base_url: str | None = None,
         openai_client: None = None,
         http_client: _OpenAIHTTPClient | None = None,
@@ -133,11 +136,12 @@ class DeepSeekProvider(_OpenAISDKProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         base_url: str | None = None,
         openai_client: AsyncOpenAI | None = None,
         http_client: _OpenAIHTTPClient | None = None,
     ) -> None:
+        api_key = secret_value(api_key)
         api_key = api_key or os.getenv('DEEPSEEK_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(

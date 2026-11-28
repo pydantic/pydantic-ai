@@ -3,7 +3,10 @@ from __future__ import annotations as _annotations
 import os
 from typing import Literal, cast
 
+from pydantic import SecretStr
+
 from pydantic_ai._http import AsyncHTTPClient
+from pydantic_ai._utils import secret_value
 
 try:
     from google.auth import credentials as google_auth_credentials
@@ -29,7 +32,7 @@ class GoogleCloudProvider(BaseGoogleProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         credentials: Credentials | None = None,
         project: str | None = None,
         location: GoogleCloudLocation | Literal['global', 'us', 'eu'] | str | None = None,
@@ -69,6 +72,7 @@ class GoogleCloudProvider(BaseGoogleProvider):
             retry_options: HTTP retry options for transient errors (429, 5xx, etc.).
                 See `google.genai.types.HttpRetryOptions` for available fields.
         """
+        api_key = secret_value(api_key)
         if client is not None:
             self._client = client
             return

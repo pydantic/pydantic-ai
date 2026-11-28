@@ -5,7 +5,10 @@ from collections.abc import Callable
 from types import MappingProxyType
 from typing import overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
+from pydantic_ai._utils import secret_value
 from pydantic_ai.profiles import merge_profile
 from pydantic_ai.profiles.anthropic import anthropic_model_profile
 from pydantic_ai.profiles.google import google_model_profile
@@ -206,7 +209,7 @@ class GitHubCopilotProvider(_OpenAISDKProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         base_url: str | None = None,
         integration_id: str | None = None,
         openai_client: None = None,
@@ -216,7 +219,7 @@ class GitHubCopilotProvider(_OpenAISDKProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         base_url: str | None = None,
         integration_id: str | None = None,
         openai_client: AsyncOpenAI | None = None,
@@ -243,6 +246,7 @@ class GitHubCopilotProvider(_OpenAISDKProvider):
                 be `None`.
             http_client: An existing `httpx2.AsyncClient` or legacy `httpx.AsyncClient` to use for making HTTP requests.
         """
+        api_key = secret_value(api_key)
         if openai_client is not None:
             assert api_key is None, 'Cannot provide both `openai_client` and `api_key`'
             assert base_url is None, 'Cannot provide both `openai_client` and `base_url`'

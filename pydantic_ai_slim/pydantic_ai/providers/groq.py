@@ -3,9 +3,12 @@ from __future__ import annotations as _annotations
 import os
 from typing import overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
 from pydantic_ai._http import AsyncHTTPClient
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformerWithOutputOverride
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import create_async_http_client
 from pydantic_ai.profiles import InlineDefsJsonSchemaTransformer, merge_profile
@@ -126,13 +129,17 @@ class GroqProvider(Provider[AsyncGroq]):
 
     @overload
     def __init__(
-        self, *, api_key: str | None = None, base_url: str | None = None, http_client: httpx.AsyncClient | None = None
+        self,
+        *,
+        api_key: str | SecretStr | None = None,
+        base_url: str | None = None,
+        http_client: httpx.AsyncClient | None = None,
     ) -> None: ...
 
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         base_url: str | None = None,
         groq_client: AsyncGroq | None = None,
         http_client: httpx.AsyncClient | None = None,
@@ -149,6 +156,7 @@ class GroqProvider(Provider[AsyncGroq]):
                 client to use. If provided, `api_key` and `http_client` must be `None`.
             http_client: An existing `AsyncClient` to use for making HTTP requests.
         """
+        api_key = secret_value(api_key)
         if groq_client is not None:
             assert http_client is None, 'Cannot provide both `groq_client` and `http_client`'
             assert api_key is None, 'Cannot provide both `groq_client` and `api_key`'

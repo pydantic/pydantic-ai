@@ -4,8 +4,11 @@ import os
 from datetime import timedelta
 from typing import Literal, overload
 
+from pydantic import SecretStr
+
 from pydantic_ai import ModelProfile
 from pydantic_ai._json_schema import JsonSchema, JsonSchemaTransformer
+from pydantic_ai._utils import secret_value
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.native_tools import SUPPORTED_NATIVE_TOOLS
 from pydantic_ai.profiles import merge_profile
@@ -466,7 +469,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         base_url: str | None = None,
         app_url: str | None = None,
         app_title: str | None = None,
@@ -477,7 +480,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
     def __init__(
         self,
         *,
-        api_key: str | None = None,
+        api_key: str | SecretStr | None = None,
         base_url: str | None = None,
         app_url: str | None = None,
         app_title: str | None = None,
@@ -503,6 +506,7 @@ class OpenRouterProvider(_OpenAISDKProvider):
             UserError: If no API key is available and no `openai_client` is
                 provided.
         """
+        api_key = secret_value(api_key)
         api_key = api_key or os.getenv('OPENROUTER_API_KEY')
         if not api_key and openai_client is None:
             raise UserError(
