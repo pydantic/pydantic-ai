@@ -2267,6 +2267,46 @@ async def test_history_processor_removes_message_after_resumed_request_excludes_
     assert not _user_request_present(result.new_messages())
 
 
+async def test_history_processor_removes_message_after_resumed_request_with_reinject_system_prompt_excludes_resumed_request():
+    """
+    When `ReinjectSystemPrompt` rebuilds the resumed request on step 1, a history processor that
+    removes a message after the resumed request on a later step must still leave the rebuilt
+    resumed request excluded from `new_messages()`.
+    """
+    call_count = 0
+
+    def model_function(messages: list[ModelMessage], _info: AgentInfo) -> ModelResponse:
+        nonlocal call_count
+        call_count += 1
+        if call_count == 1:
+            return ModelResponse(parts=[ToolCallPart(tool_name='my_tool', args={}, tool_call_id='tool_call_1')])
+        return ModelResponse(parts=[TextPart(content='done')])
+
+    def drop_tool_call_response(messages: list[ModelMessage]) -> list[ModelMessage]:
+        has_tool_return = any(
+            isinstance(m, ModelRequest) and any(isinstance(p, ToolReturnPart) for p in m.parts) for m in messages
+        )
+        if not has_tool_return:
+            return messages
+        first_response = next((m for m in messages if isinstance(m, ModelResponse)), None)
+        return [m for m in messages if m is not first_response]
+
+    agent = Agent(
+        model=FunctionModel(model_function, model_name='test'),
+        system_prompt='Server prompt',
+        capabilities=[ReinjectSystemPrompt(), ProcessHistory(drop_tool_call_response)],
+    )
+
+    @agent.tool
+    async def my_tool(_ctx: RunContext) -> str:
+        return 'tool result'
+
+    result = await agent.run(message_history=[ModelRequest(parts=[UserPromptPart(content='Original prompt')])])
+
+    assert result.new_messages() == result.all_messages()[1:]
+    assert not _user_request_present(result.new_messages())
+
+
 async def test_history_processor_insert_and_replace_resumed_request_excludes_resumed_request(
     function_model: FunctionModel, received_messages: list[ModelMessage]
 ):

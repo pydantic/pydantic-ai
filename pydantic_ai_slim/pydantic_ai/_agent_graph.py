@@ -4325,8 +4325,19 @@ class ModelRequestNode(AgentNode[DepsT, NodeRunEndT]):
                 # mutate the list: by object (identity/value, survives reordering and removal) and by
                 # position (survives an in-place rebuild that changes its fields). It's the last message the
                 # before-chain left, ahead of any `'asap'` content delivered after it.
-                ctx.deps.resumed_request = self.request
-                ctx.deps.resumed_request_index = persistent_messages_after_processing - 1
+                pinned_index = persistent_messages_after_processing - 1
+                resumed_request = self.request
+                if (
+                    0 <= pinned_index < len(ctx.state.message_history)
+                    and not any(m is resumed_request for m in ctx.state.message_history)
+                    and isinstance(candidate := ctx.state.message_history[pinned_index], _messages.ModelRequest)
+                ):
+                    # A capability or processor (e.g. `ReinjectSystemPrompt`) rebuilt the resumed
+                    # request in-place: track the rebuilt instance by identity so later-step
+                    # removals after it still exclude it.
+                    resumed_request = candidate
+                ctx.deps.resumed_request = resumed_request
+                ctx.deps.resumed_request_index = pinned_index
             elif ctx.deps.resumed_request_index is not None:
                 # Later steps (e.g. a tool-call loop) may prepend/truncate/rebuild messages ahead of the
                 # resumed request, shifting it. Translate the pinned index by the net count change; drop
