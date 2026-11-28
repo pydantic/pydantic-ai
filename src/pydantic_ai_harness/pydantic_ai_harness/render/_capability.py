@@ -4,10 +4,12 @@ from __future__ import annotations
 
 import functools
 import inspect
+from collections import Counter
 from collections.abc import Awaitable, Callable, Mapping
 from contextlib import AbstractContextManager
 from dataclasses import dataclass
 from typing import Any, ClassVar, Concatenate, Literal, ParamSpec, Protocol, TypeVar, overload
+from weakref import WeakKeyDictionary
 
 from pydantic_ai.agent import AbstractAgent, EventStreamHandler
 from pydantic_ai.capabilities.abstract import AbstractCapability, leaf_capabilities
@@ -20,6 +22,7 @@ from pydantic_ai.durable_exec import (
     RoleBasedOperationConfig,
     ToolsetCallToolId,
     ToolsetValidateToolArgumentsId,
+    conversation_id_from_run_id,
 )
 from pydantic_ai.exceptions import UserError
 from pydantic_ai.models import Model
@@ -47,6 +50,9 @@ from ._transports import RenderParameterTransports
 
 P = ParamSpec('P')
 R = TypeVar('R')
+
+_default_run_counts: WeakKeyDictionary[TaskContext, Counter[str]] = WeakKeyDictionary()
+"""Agent runs that drew a default `run_id`, per agent name, in each attempt of a task run."""
 
 ToolOptionsResolver = Callable[
     [DurableOperationId, object | None, str],
@@ -159,6 +165,19 @@ class RenderWorkflows(BaseDurabilityCapability[AgentDepsT]):
     @property
     def in_durable_context(self) -> bool:
         return self.current_task_context is not None
+
+    def get_default_run_id(self) -> str | None:
+        context = self.current_task_context
+        # A retried task run keeps its ID, so the run restarted by the retry gets the ID it had.
+        if context is None or (task_run_id := context.metadata.task_run_id) is None:
+            return None
+        counts = _default_run_counts.setdefault(context, Counter())
+        index = counts[self.name]
+        counts[self.name] += 1
+        return f'{task_run_id}:{self.name}:{index}'
+
+    def get_default_conversation_id(self, run_id: str) -> str | None:
+        return conversation_id_from_run_id(run_id) if self.in_durable_context else None
 
     def activate(self, context: TaskContext) -> AbstractContextManager[None]:
         """Activate a Render task context for an adapter or local test harness."""

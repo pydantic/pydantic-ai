@@ -140,6 +140,94 @@ async def test_agent_runs_inline_outside_render_task() -> None:
     assert render_workflows.in_durable_context is False
 
 
+class RetriedTaskContext(RecordingTaskContext):
+    """An attempt of one task run: Render gives each retry a new context with the same task run ID.
+
+    Each chained task runs under a context of its own, whose task run ID names the task.
+    """
+
+    def __init__(self, task_run_id: str = 'trn-entry') -> None:
+        super().__init__()
+        self.task_run_id = task_run_id
+
+    @property
+    def metadata(self) -> TaskRunMetadata:
+        return TaskRunMetadata(task_run_id=self.task_run_id, root_task_run_id='trn-entry')
+
+    async def run(self, task: TaskDefinition[P, R], *args: P.args, **kwargs: P.kwargs) -> R:
+        self.task_names.append(task.name)
+        return await RecordingTaskContext.run(RetriedTaskContext(f'trn-{task.name}'), task, *args, **kwargs)
+
+
+async def test_run_identity_is_stable_across_entry_task_retries() -> None:
+    seen: list[tuple[str | None, str | None]] = []
+    crash = [True]
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        if not any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+            return ModelResponse(parts=[ToolCallPart('probe')])
+        if crash:
+            crash.pop()
+            raise RuntimeError('crash')
+        return ModelResponse(parts=[TextPart('done')])
+
+    async def probe(ctx: RunContext[None]) -> str:
+        seen.append((ctx.run_id, ctx.conversation_id))
+        return 'probed'
+
+    runtime = RenderWorkflows[None](Workflows(), deps_type=type(None))
+    agent = Agent[None, str](
+        FunctionModel(model_fn), name='support', deps_type=type(None), tools=[probe], capabilities=[runtime]
+    )
+
+    async def attempt() -> list[tuple[str, str]]:
+        with runtime.activate(RetriedTaskContext()):
+            results = [await agent.run('go'), await agent.run('go')]
+        return [(result.run_id, result.conversation_id) for result in results]
+
+    with pytest.raises(RuntimeError, match='crash'):
+        await attempt()
+    run, other = await attempt()
+
+    # The retry restarts the run, so the tool runs again, under the same identity.
+    assert seen == [run, run, other]
+    assert run != other
+
+
+async def test_sub_agent_in_a_tool_task_takes_its_run_id_from_that_task_run() -> None:
+    app = Workflows()
+    sub_agent = Agent[None, str](
+        TestModel(), name='sub', deps_type=type(None), capabilities=[RenderWorkflows[None](app, deps_type=type(None))]
+    )
+    sub_run_ids: list[str] = []
+
+    async def delegate() -> str:
+        result = await sub_agent.run('hi')
+        sub_run_ids.append(result.run_id)
+        return result.output
+
+    runtime = RenderWorkflows[None](app, deps_type=type(None))
+    agent = Agent[None, str](
+        TestModel(call_tools=['delegate']),
+        name='support',
+        deps_type=type(None),
+        tools=[delegate],
+        capabilities=[runtime],
+    )
+
+    for _ in range(2):
+        with runtime.activate(RetriedTaskContext()):
+            await agent.run('go')
+
+    # The sub-agent takes its default from the tool task's own task run ID, which a retry of that task run keeps.
+    assert sub_run_ids == snapshot(
+        [
+            'trn-support__function_toolset__<agent>.call_tool:sub:0',
+            'trn-support__function_toolset__<agent>.call_tool:sub:0',
+        ]
+    )
+
+
 async def test_independent_tool_calls_fan_out_as_render_child_tasks() -> None:
     both_started = anyio.Event()
     started = 0

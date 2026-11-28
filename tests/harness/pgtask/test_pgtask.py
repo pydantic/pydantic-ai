@@ -40,7 +40,7 @@ from pydantic_ai.messages import (
     ToolReturnPart,
 )
 from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
-from pydantic_ai.run import AgentRunResultEvent
+from pydantic_ai.run import AgentRunResult, AgentRunResultEvent
 from pydantic_ai.tools import RunContext
 from pydantic_ai.toolsets import AbstractToolset, DynamicToolset, ExternalToolset, FunctionToolset
 from pydantic_ai_harness.pgtask import CheckpointDecodeError, PGTaskDurability
@@ -206,6 +206,71 @@ class TestReplay:
         assert outputs == ['ok', 'ok']
         assert counter['calls'] == 1
         assert list(await checkpoints(pgtask_db, task_id)) == [('crash__model.request', 0)]
+
+    async def test_run_identity_is_stable_across_attempts(self, pgtask_db: PGTaskDatabase) -> None:
+        seen: list[tuple[str | None, str | None]] = []
+        crash = [True]
+        toolset = FunctionToolset[object](id='tools')
+
+        @toolset.tool
+        def probe(ctx: RunContext[object]) -> str:
+            seen.append((ctx.run_id, ctx.conversation_id))
+            return 'probed'
+
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if not any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+                return ModelResponse(parts=[ToolCallPart('probe')])
+            if crash:
+                crash.pop()
+                raise RuntimeError('crash')
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        agent = Agent(
+            FunctionModel(fn, model_name='fn'), name='a', toolsets=[toolset], capabilities=[PGTaskDurability()]
+        )
+        results: list[AgentRunResult[str]] = []
+        others: list[AgentRunResult[str]] = []
+
+        async def body(attempt: int) -> None:
+            try:
+                results.append(await agent.run('hi'))
+            except RuntimeError:
+                assert attempt == 1
+            others.append(await agent.run('hi'))
+
+        await run_in_task(pgtask_db, body, attempts=2)
+
+        [result] = results
+        other, replayed_other = others
+        assert seen == [(result.run_id, result.conversation_id), (other.run_id, other.conversation_id)]
+        assert (replayed_other.run_id, replayed_other.conversation_id) == (other.run_id, other.conversation_id)
+        assert other.run_id != result.run_id
+
+    async def test_run_inside_a_step_does_not_shift_later_run_ids(self, pgtask_db: PGTaskDatabase) -> None:
+        # The sub-agent run inside the tool step doesn't happen again when the step replays.
+        sub_agent = Agent(_make_model(), name='sub', capabilities=[PGTaskDurability()])
+        toolset = FunctionToolset[object](id='tools')
+
+        @toolset.tool_plain
+        async def delegate() -> str:
+            return (await sub_agent.run('hi')).output
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('delegate')),
+            name='a',
+            toolsets=[toolset],
+            capabilities=[PGTaskDurability()],
+        )
+        run_ids: list[str] = []
+
+        async def body(attempt: int) -> None:
+            await agent.run('hi')
+            run_ids.append((await sub_agent.run('hi')).run_id)
+
+        await run_in_task(pgtask_db, body, attempts=2)
+
+        first, replayed = run_ids
+        assert replayed == first
 
     async def test_function_tool_runs_once(self, pgtask_db: PGTaskDatabase) -> None:
         tool_calls = {'calls': 0}

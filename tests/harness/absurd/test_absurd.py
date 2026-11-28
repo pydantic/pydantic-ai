@@ -223,6 +223,65 @@ class TestDurability:
         assert tool_calls['calls'] == 1
         assert replayed.output == first.output == 'done'
 
+    async def test_run_identity_is_stable_across_reentry(self, absurd: AsyncAbsurd) -> None:
+        seen: list[tuple[str | None, str | None]] = []
+        crash = [True]
+        toolset = FunctionToolset[object](id='tools')
+
+        @toolset.tool
+        def probe(ctx: RunContext[object]) -> str:
+            seen.append((ctx.run_id, ctx.conversation_id))
+            return 'probed'
+
+        def fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+            if not any(isinstance(p, ToolReturnPart) for m in messages for p in m.parts):
+                return ModelResponse(parts=[ToolCallPart('probe')])
+            if crash:
+                crash.pop()
+                raise RuntimeError('crash')
+            return ModelResponse(parts=[TextPart(content='done')])
+
+        agent = Agent(
+            FunctionModel(fn, model_name='fn'), name='a', toolsets=[toolset], capabilities=[AbsurdDurability()]
+        )
+
+        async with running_task_context(absurd) as ctx:
+            with pytest.raises(RuntimeError, match='crash'):
+                await agent.run('hi')
+            other = await agent.run('hi')
+        async with reenter_running_task(absurd, ctx.task_id):
+            result = await agent.run('hi')
+            replayed_other = await agent.run('hi')
+
+        assert seen == [(result.run_id, result.conversation_id), (other.run_id, other.conversation_id)]
+        assert (replayed_other.run_id, replayed_other.conversation_id) == (other.run_id, other.conversation_id)
+        assert other.run_id != result.run_id
+
+    async def test_run_inside_a_step_does_not_shift_later_run_ids(self, absurd: AsyncAbsurd) -> None:
+        # The sub-agent run inside the tool step doesn't happen again when the step replays.
+        sub_agent = Agent(_make_model(), name='sub', capabilities=[AbsurdDurability()])
+        toolset = FunctionToolset[object](id='tools')
+
+        @toolset.tool_plain
+        async def delegate() -> str:
+            return (await sub_agent.run('hi')).output
+
+        agent = Agent(
+            _tool_calling_model(ToolCallPart('delegate')),
+            name='a',
+            toolsets=[toolset],
+            capabilities=[AbsurdDurability()],
+        )
+
+        async with running_task_context(absurd) as ctx:
+            await agent.run('hi')
+            first = await sub_agent.run('hi')
+        async with reenter_running_task(absurd, ctx.task_id):
+            await agent.run('hi')
+            replayed = await sub_agent.run('hi')
+
+        assert replayed.run_id == first.run_id
+
     async def test_registered_model_selected_per_run(self, absurd: AsyncAbsurd) -> None:
         # The selected model checkpoints under its own id-scoped step name, and a replay serves it.
         primary = {'calls': 0}

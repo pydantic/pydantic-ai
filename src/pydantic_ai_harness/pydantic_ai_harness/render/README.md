@@ -218,6 +218,13 @@ Render retries are separate from Pydantic AI's `ModelRetry`, which asks the mode
 and from retries in the provider SDK. Account for all three when setting retry limits and timeouts; see the
 [Pydantic AI retry guide](https://pydantic.dev/docs/ai/core-concepts/retries/).
 
+A run started without `run_id=` gets a default built from the entry task run's ID, the agent's `name`, and how many
+runs that agent has started in the attempt so far, and its default `conversation_id` follows from it. A retry of the
+entry task run keeps its ID, so the restarted run gets the IDs the failed attempt had. Runs are numbered in the order
+they start, so pass `run_id=` to runs of one agent that start concurrently. A run inside a chained task run, such as a
+sub-agent called from a tool, takes its default from that task run's ID in the same way, so a retry of the chained task
+run gives it the same IDs. A run in a task that Render gives no task run ID gets a random ID.
+
 ## 7. Call the agent from Python
 
 Your application decides when to start a run of `support`. It can send every request or only selected background jobs,

@@ -27,6 +27,7 @@ class TaskSteps:
 
     task: Task
     occurrences: Counter[str]
+    run_counts: Counter[str]
 
     async def step(self, name: str, operation: Callable[[], Awaitable[StepT]]) -> StepT:
         # Step names are built from the agent, toolset, and tool names, which can hold characters
@@ -38,6 +39,12 @@ class TaskSteps:
         """Sleep durably, suspending the task until the wait is over, numbered like a step."""
         name, occurrence = self._occurrence(name)
         await self.task.sleep_for(name, seconds, occurrence=occurrence)
+
+    def next_run_id(self, agent_name: str) -> str:
+        """A `run_id` for the next run of `agent_name` in this task, numbered in encounter order like a step."""
+        index = self.run_counts[agent_name]
+        self.run_counts[agent_name] += 1
+        return f'{self.task.id}:{agent_name}:{index}'
 
     def _occurrence(self, name: str) -> tuple[str, int]:
         name = _UNSUPPORTED_STEP_NAME_CHAR.sub('_', name)
@@ -51,6 +58,7 @@ class TaskSteps:
 # siblings. pgtask makes one `Task` per attempt, so a retry starts from zero. A `Task` holds dicts and
 # so is unhashable, which rules out a `WeakKeyDictionary`; the entry is dropped when the task is.
 _occurrences: dict[int, Counter[str]] = {}
+_run_counts: dict[int, Counter[str]] = {}
 
 
 def current_task_steps() -> TaskSteps | None:
@@ -62,5 +70,7 @@ def current_task_steps() -> TaskSteps | None:
     occurrences = _occurrences.get(key)
     if occurrences is None:
         occurrences = _occurrences[key] = Counter[str]()
+        _run_counts[key] = Counter[str]()
         weakref.finalize(task, _occurrences.pop, key, None)
-    return TaskSteps(task, occurrences)
+        weakref.finalize(task, _run_counts.pop, key, None)
+    return TaskSteps(task, occurrences, _run_counts[key])

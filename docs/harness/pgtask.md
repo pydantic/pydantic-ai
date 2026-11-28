@@ -133,6 +133,12 @@ Postgres, and the reason not to rename an agent or toolset while its tasks are s
   `agent.run()` called twice, pgtask numbers them 0, 1, 2, and so on, in the order they happen.
   Finish one `agent.run()` before starting the next in the same task, so the numbers come out the
   same after a crash.
+- A run started without `run_id=` gets a default built from the task ID, the agent's `name`, and
+  how many runs that agent has started in the task so far, and its default `conversation_id` follows
+  from it, so after a crash each run gets the IDs it had before. Runs are numbered in the order they
+  start, like steps, so pass `run_id=` to runs of one agent that start at the same time. A run
+  started inside a step, such as a sub-agent called from a tool, gets a random ID, because the saved
+  step is used instead of running it again.
 - An async function tool with [`durable=False`](../durable_execution/overview.md#running-a-tool-outside-the-durable-unit) gets no
   step: it runs in the task on every attempt, so keep it deterministic and free of I/O.
 - A `DynamicToolset` built with `per_run_step=False` is resolved once per run and held for its
