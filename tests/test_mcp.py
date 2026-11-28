@@ -892,7 +892,8 @@ class TestMCPToolsetIntegration:
         """Sampling on a kept-alive stdio connection runs in the run that opened the session.
 
         A sampling model that shares the agent's limiter is then refused instead of waiting for the slot that run
-        holds, and a later run that reuses the transport is checked against its own limiter, not an earlier run's.
+        holds, and a later run that reuses the transport is checked against its own limiter, not an earlier run's,
+        which the toolset drops when that run's session closes.
         """
         transport = StdioTransport(command='python', args=['-m', 'tests.mcp_log_server'])
         limiter = ConcurrencyLimiter(1)
@@ -903,9 +904,17 @@ class TestMCPToolsetIntegration:
             TestModel(call_tools=['sample_text']), name='stdio_agent', toolsets=[toolset], max_concurrency=limiter
         )
         if second_run:
-            await Agent(TestModel(call_tools=[]), name='other_agent', toolsets=[toolset]).run('Hello')
+            other_agent = Agent(TestModel(call_tools=[]), name='other_agent', toolsets=[toolset])
+            await other_agent.run('Hello')
+            # Once its session closes, the toolset no longer holds that run, nor through it the agent.
+            other_agent_ref = weakref.ref(other_agent)
+            del other_agent
+            gc.collect()
+            assert other_agent_ref() is None
         with anyio.fail_after(READINESS_WAIT_TIMEOUT):
-            with pytest.raises(ToolError, match='same concurrency limiter'):
+            with pytest.raises(
+                ToolError, match='The agent and a `ConcurrencyLimitedModel` use the same concurrency limiter'
+            ):
                 await agent.run('Hello')
         await transport.close()
         assert limiter.running_count == 0

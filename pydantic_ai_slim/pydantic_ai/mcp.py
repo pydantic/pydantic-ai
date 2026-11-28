@@ -944,7 +944,7 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
     # with canned results) is an ordinary toolset rather than missing them.
     _client_source: MCPToolsetClient | None = None
     # The run a kept-alive stdio session was opened in, while that session is open. Its connection task runs
-    # without it (see `__aenter__`), so the sampling handler reads it from here instead.
+    # without it (see `_enter_client`), so the sampling handler reads it from here instead.
     _session_run_context: RunContext[object] | None = None
     _client_options: _ClientOptions | None = None
     _auth_func: MCPAuthFunc[AgentDepsT] | None = None
