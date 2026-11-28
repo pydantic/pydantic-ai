@@ -40,6 +40,7 @@ from pydantic_ai import (
     CapabilityEvent,
     CapabilityInstructionSource,
     CapabilityLoadDeltaPart,
+    CompactionPart,
     CustomEvent,
     ExternalToolset,
     FinalResultEvent,
@@ -74,6 +75,8 @@ from pydantic_ai.capabilities import (
     AbstractCapability,
     BatchModelRequests,
     Capability,
+    CompactionRequest,
+    CompactionResult,
     DynamicCapability,
     Hooks,
     Instrumentation,
@@ -107,6 +110,7 @@ from pydantic_ai.durable_exec._toolset import (
 from pydantic_ai.exceptions import (
     ApprovalRequired,
     CallDeferred,
+    ModelAPIError,
     ModelHTTPError,
     ModelRequestTimeout,
     ModelRetry,
@@ -114,6 +118,7 @@ from pydantic_ai.exceptions import (
     SuspendedResponseExpired,
     ToolFailed,
     UnexpectedModelBehavior,
+    UnsupportedSettingWarning,
     UsageLimitExceeded,
     UserError,
 )
@@ -563,6 +568,50 @@ async def test_prefect_agent_rejects_model_wrappers() -> None:
     )
     with pytest.raises(UserError, match='`PrefectAgent` does not support capabilities that wrap the model'):
         await agent.run('hello')
+
+
+@pytest.mark.parametrize('blockbuster_enabled', [False])
+@pytest.mark.parametrize('flow_retries', [0, 1], ids=['first-attempt', 'retried'])
+async def test_prefect_agent_compact_history_compacts_in_its_flow(blockbuster_enabled: bool, flow_retries: int) -> None:
+    """`PrefectAgent.compact_history()` runs through the wrapper's run flow and ends after compacting, also when retried.
+
+    Prefect retries a flow in the context it ran in, so the run claims the compaction-only flag only until it ends:
+    the retry's run is compaction-only too. Blockbuster is off as for the other tests that start a `PrefectAgent`
+    flow from async code: `@flow` inspects the decorated function's source file.
+    """
+    from prefect.settings import PREFECT_FLOWS_DEFAULT_RETRIES, temporary_settings
+
+    assert blockbuster_enabled is False
+    calls: list[str] = []
+
+    class Summarize(AbstractCapability[None]):
+        async def compact_history(self, ctx: RunContext[None], request: CompactionRequest) -> CompactionResult | None:
+            flow_run = FlowRunContext.get()
+            calls.append(f'compact in {flow_run.flow.name if flow_run is not None and flow_run.flow else None}')
+            if len(calls) <= flow_retries:
+                raise RuntimeError('compaction failed')
+            part = CompactionPart(content='a summary')
+            return CompactionResult(messages=[ModelRequest(parts=[part]), request.messages[-1]], part=part, handler='s')
+
+    def answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        calls.append('model request')  # pragma: no cover
+        return ModelResponse(parts=[TextPart('answered')])  # pragma: no cover
+
+    agent = PrefectAgent(  # pyright: ignore[reportDeprecated]
+        Agent(
+            FunctionModel(answer),
+            name='prefect_compact_history',
+            instructions='Be brief.',
+            deps_type=type(None),
+            capabilities=[Summarize()],
+        )
+    )
+    with temporary_settings({PREFECT_FLOWS_DEFAULT_RETRIES: flow_retries}):
+        result = await agent.compact_history(
+            [ModelRequest(parts=[UserPromptPart('Hello')]), ModelResponse(parts=[TextPart('Hello!')])]
+        )
+    assert calls == ['compact in prefect_compact_history Run'] * (flow_retries + 1)
+    assert result.all_messages() == [ModelRequest(parts=[CompactionPart(content='a summary')])]
 
 
 async def test_simple_agent_run_in_flow(allow_model_requests: None) -> None:
@@ -4815,6 +4864,30 @@ async def test_prefect_durability_runtime_registered_model() -> None:
 
     assert await run_by_key() == 'alt-response'
     assert await run_by_instance() == 'alt-response'
+
+
+class _IgnoresStopSequences(FunctionModel):
+    unsupported_settings = frozenset({'stop_sequences'})
+
+
+async def test_prefect_durability_fallback_on_unsupported_setting_warning() -> None:
+    """A model that would ignore a setting the request relies on is moved on from inside a Prefect flow too."""
+    agent = Agent(
+        _IgnoresStopSequences(_prefect_alt_model_fn, model_name='primary'),
+        name='durability_unsupported_setting_fallback',
+        model_settings={'stop_sequences': ['STOP']},
+        capabilities=[
+            ModelFallback('alt', fallback_on=(ModelAPIError, UnsupportedSettingWarning)),
+            PrefectDurability(models={'alt': _prefect_alt_model}),
+        ],
+    )
+
+    @flow
+    async def run_agent() -> tuple[str | None, list[str]]:
+        result = await agent.run('hello')
+        return result.response.model_id, [f'{a.model_name} {a.outcome}' for a in result.response.failed_attempts or []]
+
+    assert await run_agent() == ('alt', ['primary error'])
 
 
 class _BehaviorChangingWrapper(WrapperModel):

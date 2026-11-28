@@ -1,6 +1,7 @@
 from __future__ import annotations as _annotations
 
 import asyncio
+import json
 import warnings
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
@@ -29,7 +30,7 @@ from pydantic_ai import (
 )
 from pydantic_ai._utils import get_traceparent
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
-from pydantic_ai.capabilities import AbstractCapability, Hooks, WrapModelRequestHandler
+from pydantic_ai.capabilities import AbstractCapability, Hooks, ProcessHistory, WrapModelRequestHandler
 from pydantic_ai.capabilities.instrumentation import Instrumentation
 from pydantic_ai.conversation import Conversation
 from pydantic_ai.exceptions import (
@@ -51,7 +52,7 @@ from pydantic_ai.toolsets.abstract import ToolsetTool
 from pydantic_ai.toolsets.function import FunctionToolset
 from pydantic_ai.toolsets.wrapper import WrapperToolset
 from pydantic_ai.usage import RequestUsage
-from tests.function_model_prefix import INSTRUCTIONS_CHANGE_MID_RUN
+from tests.function_model_prefix import HOOK_REWRITES_REQUEST, INSTRUCTIONS_CHANGE_MID_RUN
 
 from ._inline_snapshot import snapshot
 from .conftest import IsDatetime, IsInt, IsStr, strip_logfire_metrics, try_import
@@ -5601,3 +5602,145 @@ def test_a_retry_past_the_budget_records_its_cause_alone(
     assert {key: value for key, value in tool_span.items() if '.retry.' in key} == {
         'pydantic_ai.tool.retry.cause': 'model_retry'
     }
+
+
+def _sends(messages: list[ModelMessage], prompt: str) -> bool:
+    """Whether the request being sent carries the user prompt `prompt`."""
+    return any(isinstance(part, UserPromptPart) and part.content == prompt for part in messages[-1].parts)
+
+
+def _answer(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+    # A provider rejects an empty request, as when the history repair drops every part of one.
+    if _sends(messages, 'fail') or not messages[-1].parts:
+        raise RuntimeError('the model failed')
+    if _sends(messages, 'call a tool'):
+        return ModelResponse(parts=[ToolCallPart('a_tool')])
+    if info.output_tools:
+        return ModelResponse(parts=[ToolCallPart(info.output_tools[0].name, {'response': 1})])
+    return ModelResponse(parts=[TextPart('an answer')])
+
+
+def a_tool() -> str:
+    return 'done'
+
+
+@dataclass(frozen=True)
+class RunSpanIndexCase:
+    id: str
+    prompts: tuple[str | None, ...]
+    """One run per prompt, each given the previous run's messages; the span checked is the last run's."""
+    expected_index: int | None
+    """`None` when the span leaves `pydantic_ai.new_message_index` out, which reads as 0."""
+    failed_run_tail: list[object] | None = None
+    """`pydantic_ai.all_messages` from the index on, for a last run that fails.
+
+    A last run that succeeds is checked against its `new_messages()` instead.
+    """
+    history: tuple[ModelMessage, ...] = ()
+    system_prompt: str | tuple[str, ...] = ()
+    output_type: type[str] | type[int] = str
+    capabilities: tuple[AbstractCapability[object], ...] = ()
+    marks: tuple[pytest.MarkDecorator, ...] = ()
+
+
+RUN_SPAN_INDEX_CASES = [
+    RunSpanIndexCase(
+        # The system prompt and the user prompt of the first request make two `all_messages` entries.
+        id='system-prompt-second-run',
+        prompts=('question 1', 'question 2'),
+        system_prompt='Be brief.',
+        expected_index=3,
+    ),
+    RunSpanIndexCase(
+        # Each run's prompt merges into the request that returned the previous run's output.
+        id='structured-output-third-run',
+        prompts=('question 1', 'question 2', 'question 3'),
+        output_type=int,
+        expected_index=5,
+    ),
+    RunSpanIndexCase(
+        # The processor drops the earlier run, so every message recorded is this run's.
+        id='history-processor-trims-earlier-runs',
+        prompts=('question 1', 'question 2'),
+        capabilities=(ProcessHistory(lambda messages: messages[-1:]),),
+        expected_index=None,
+        marks=(pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST),),
+    ),
+    RunSpanIndexCase(
+        id='resumed-without-prompt',
+        prompts=(None,),
+        history=(
+            ModelRequest(parts=[UserPromptPart('question 1')]),
+            ModelResponse(parts=[TextPart('an answer')]),
+            ModelRequest(parts=[UserPromptPart('question 2')]),
+        ),
+        expected_index=3,
+    ),
+    # A failed run keeps the index it had when it started, which can be off:
+    # https://github.com/pydantic/pydantic-ai/issues/14963. The two cases below pin failed runs where
+    # that index is right, which a fix there has to keep.
+    RunSpanIndexCase(
+        # The resumed request is the history the run was given, so the run added nothing.
+        id='resumed-without-prompt-model-fails',
+        prompts=(None,),
+        history=(
+            ModelRequest(parts=[UserPromptPart('question 1')]),
+            ModelResponse(parts=[TextPart('an answer')]),
+            ModelRequest(parts=[UserPromptPart('fail')]),
+        ),
+        expected_index=3,
+        failed_run_tail=[],
+    ),
+    RunSpanIndexCase(
+        # The processor drops the tool call this run added, the history repair then drops its orphaned
+        # tool return, and the model fails on the empty request: nothing the run added is recorded.
+        id='history-processor-drops-the-runs-tool-call-model-fails',
+        prompts=('call a tool',),
+        history=(
+            ModelRequest(parts=[UserPromptPart('question 1')]),
+            ModelResponse(parts=[TextPart('an answer')]),
+        ),
+        capabilities=(ProcessHistory(lambda messages: [*messages[:2], *messages[2:][-1:]]),),
+        expected_index=2,
+        failed_run_tail=[],
+        marks=(pytest.mark.moves_cache_prefix(reason=HOOK_REWRITES_REQUEST),),
+    ),
+]
+
+
+@pytest.mark.skipif(not logfire_installed, reason='logfire not installed')
+@pytest.mark.parametrize('case', [pytest.param(case, id=case.id, marks=case.marks) for case in RUN_SPAN_INDEX_CASES])
+def test_run_span_new_message_index(
+    case: RunSpanIndexCase, capfire: CaptureLogfire, get_logfire_summary: Callable[[], LogfireSummary]
+) -> None:
+    """`pydantic_ai.new_message_index` is where the run's own messages start in `pydantic_ai.all_messages`.
+
+    This is not a VCR test: it checks which attributes the run span carries, which a recorded provider
+    response wouldn't change.
+    """
+    settings = InstrumentationSettings()
+    agent = Agent(
+        FunctionModel(_answer),
+        system_prompt=case.system_prompt,
+        output_type=case.output_type,
+        tools=[a_tool],
+        capabilities=[*case.capabilities, Instrumentation(settings=settings)],
+    )
+    history = list(case.history)
+    *earlier_prompts, prompt = case.prompts
+    for earlier_prompt in earlier_prompts:
+        history = agent.run_sync(earlier_prompt, message_history=history).all_messages()
+    capfire.exporter.clear()
+
+    if case.failed_run_tail is None:
+        result = agent.run_sync(prompt, message_history=history)
+        expected_tail = settings.messages_to_otel_messages(result.new_messages())
+    else:
+        with pytest.raises(RuntimeError):
+            agent.run_sync(prompt, message_history=history)
+        expected_tail = case.failed_run_tail
+
+    run_span = get_logfire_summary().attributes[0]
+    index = run_span.get('pydantic_ai.new_message_index')
+    assert index == case.expected_index
+    assert json.loads(run_span['pydantic_ai.all_messages'])[index or 0 :] == expected_tail

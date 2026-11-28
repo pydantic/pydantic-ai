@@ -50,6 +50,7 @@ from pydantic_ai import (
 from pydantic_ai._framing import lookalike_note_announcement
 from pydantic_ai._instrumentation import model_request_parameters_attributes
 from pydantic_ai._run_context import with_tool_name_layer
+from pydantic_ai._unsupported_settings import raise_warnings, warn_unsupported_settings
 from pydantic_ai._warnings import PydanticAIDeprecationWarning
 from pydantic_ai.capabilities import (
     Capability,
@@ -73,6 +74,7 @@ from pydantic_ai.exceptions import (
     ModelServerError,
     ModelTimeoutError,
     RetryModelRequest,
+    UnsupportedSettingWarning,
     UserError,
 )
 from pydantic_ai.messages import (
@@ -106,7 +108,7 @@ from pydantic_ai.models.function import AgentInfo, FunctionModel
 from pydantic_ai.models.instrumented import InstrumentationSettings
 from pydantic_ai.models.test import TestModel
 from pydantic_ai.native_tools import AbstractNativeTool, MCPServerTool
-from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile
+from pydantic_ai.profiles import DEFAULT_PROFILE, ModelProfile, merge_profile
 from pydantic_ai.tools import ToolDefinition
 
 from ..._inline_snapshot import snapshot
@@ -250,10 +252,18 @@ with workflow.unsafe.imports_passed_through():
     )
 
 with try_import() as anthropic_imports_successful:
-    import anthropic
-
     from pydantic_ai.models.anthropic import AnthropicModel, AnthropicModelSettings
     from pydantic_ai.providers.anthropic import AnthropicProvider
+
+    class _NoInlineSystemAnthropicProvider(AnthropicProvider):
+        """A runtime provider whose profile has no inline system messages, unlike the one inferred from the model string."""
+
+        @staticmethod
+        def model_profile(model_name: str) -> ModelProfile | None:
+            return merge_profile(
+                AnthropicProvider.model_profile(model_name), ModelProfile(supports_inline_system_prompts=False)
+            )
+
 
 # `TemporalAgent` is deprecated in favor of `capabilities=[TemporalDurability(...)]`.
 # These tests exercise the wrapper-agent path on purpose; suppress the warning here
@@ -3306,14 +3316,10 @@ async def test_temporal_model_runtime_provider_prepares_messages_once(
 async def test_temporal_model_runtime_provider_reprepares_messages(
     monkeypatch: pytest.MonkeyPatch, stream: bool
 ) -> None:
-    """The activity applies the concrete transport profile before sending serialized history."""
-    foundry_client = anthropic.AsyncAnthropicFoundry(
-        resource='test-resource',
-        api_key='test-api-key',
-    )
+    """The activity applies the concrete provider's profile before sending serialized history."""
 
     def provider_factory(_ctx: RunContext[object], _provider_name: str) -> AnthropicProvider:
-        return AnthropicProvider(anthropic_client=foundry_client)
+        return _NoInlineSystemAnthropicProvider(api_key='test-api-key')
 
     async def event_stream_handler(
         _ctx: RunContext[object], _streamed_response: AsyncIterable[AgentStreamEvent]
@@ -3391,7 +3397,8 @@ async def test_temporal_model_runtime_provider_reprepares_messages(
     else:
         await ActivityEnvironment().run(temporal_model.request_activity, params, deps)
 
-    # Foundry serves no mid-conversation system messages, so the system prompt also says what `<system>` means.
+    # The provider's profile has no mid-conversation system messages, so the system prompt also says what `<system>`
+    # means.
     assert rendered_requests == snapshot(
         [
             {
@@ -3472,10 +3479,9 @@ def test_temporal_model_reprepare_applies_the_framing_announcement_setting(
 @pytest.mark.skipif(not anthropic_imports_successful(), reason='anthropic not installed')
 async def test_temporal_model_runtime_provider_reprepares_with_the_run_setting(monkeypatch: pytest.MonkeyPatch) -> None:
     """The activity's re-preparation applies the run's `framing_announcement`, which isn't serialized with the parameters."""
-    foundry_client = anthropic.AsyncAnthropicFoundry(resource='test-resource', api_key='test-api-key')
 
     def provider_factory(_ctx: RunContext[object], _provider_name: str) -> AnthropicProvider:
-        return AnthropicProvider(anthropic_client=foundry_client)
+        return _NoInlineSystemAnthropicProvider(api_key='test-api-key')
 
     temporal_model = TemporalModel(
         TestModel(),
@@ -3873,6 +3879,33 @@ def _crossed(error: ModelAPIError) -> BaseException:
         with rebuilt_model_errors():
             raise _activity_error(raised.value)
     return rebuilt.value
+
+
+def test_an_unsupported_setting_warning_raised_for_fallback_crosses_as_itself_unretried():
+    """The warning a model raises for a `fallback_on` that names it reaches the workflow as itself, never retried.
+
+    A unit test, as the `non_retryable` flag and the rebuilt error class aren't visible in a provider recording; the
+    end-to-end fallback is covered in `test_durability.py`.
+    """
+    with pytest.raises(ApplicationError) as raised:
+        with model_errors_as_application_errors(), raise_warnings():
+            warn_unsupported_settings('m', {'stop_sequences': ['x']}, {'stop_sequences'}, has_function_tools=False)
+    assert raised.value.non_retryable
+    with pytest.raises(UnsupportedSettingWarning, match="The `stop_sequences` setting is not supported by model 'm'"):
+        with rebuilt_model_errors():
+            raise _activity_error(raised.value)
+
+
+def test_an_unsupported_setting_warning_a_filter_raised_fails_the_activity_as_before():
+    """A warning a warnings filter turned into an error isn't translated: the activity fails, and retries, as before.
+
+    A unit test, as whether the activity translates an error isn't visible in a provider recording.
+    """
+    with warnings.catch_warnings():
+        warnings.simplefilter('error', UnsupportedSettingWarning)
+        with pytest.raises(UnsupportedSettingWarning):
+            with model_errors_as_application_errors():
+                warn_unsupported_settings('m', {'stop_sequences': ['x']}, {'stop_sequences'}, has_function_tools=False)
 
 
 def test_what_a_stream_produced_before_failing_crosses_with_its_error():

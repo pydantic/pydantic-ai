@@ -214,7 +214,7 @@ async def log_request(ctx: RunContext, request_context: ModelRequestContext) -> 
 agent = Agent('openai:gpt-5.2', name='hooks_agent', capabilities=[hooks])
 ```
 
-For a custom capability hook that performs I/O under Temporal, DBOS, or Prefect, mark a fixed method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names, so keep it stable even if the Python method is renamed. For dynamically contributed handlers, return them from `get_durable_operations()` and invoke a typed handle with `ctx.durable_operation(self, name, handler)`. Always set a stable capability `id`; without a durability capability both forms call the original async handler directly. Arguments and results must be serializable like durable tool inputs and outputs.
+For a custom capability hook that performs I/O under Temporal, DBOS, or Prefect, mark a fixed method with `@durable_operation(name='...')`. The required name becomes part of persisted durable-unit names, so keep it stable even if the Python method is renamed. Always set a stable capability `id`; without a durability capability the method calls the original async handler directly. Arguments and results must be serializable like durable tool inputs and outputs.
 
 ### Define Agent from YAML Spec
 
@@ -476,6 +476,7 @@ Load only the most relevant reference first. Read additional references only if 
 | Call the model directly, expose A2A, use durable execution, embeddings, image generation, evals, or third-party integrations | [Orchestration and Integrations](./references/ORCHESTRATION-AND-INTEGRATIONS.md) |
 | Compare abstractions, output modes, decorators, or model-string patterns | [Architecture and Decision Guide](./references/ARCHITECTURE.md) |
 | See how open source projects structure a large Pydantic AI system, or find a library that builds on Pydantic AI | [Built with Pydantic AI](https://pydantic.dev/docs/ai/overview/built-with/): each entry says what the project runs on Pydantic AI, grouped by kind of system |
+| Use Pydantic AI Harness capabilities (compaction strategies, spend limits, step persistence, sandboxes, sub-agents, memory, skills) | The `pydantic-ai-harness` skill, which ships with the `pydantic-ai-harness` package |
 | Follow an older link into `COMMON-TASKS.md` | [Task Reference Map](./references/COMMON-TASKS.md) |
 
 ## Architecture and Decisions

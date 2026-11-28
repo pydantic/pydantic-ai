@@ -7,9 +7,10 @@ import os
 import re
 import ssl
 import warnings
+import weakref
 from abc import ABC
 from collections.abc import AsyncGenerator, Awaitable, Callable, Mapping, Sequence
-from contextlib import AsyncExitStack, asynccontextmanager
+from contextlib import AsyncExitStack, asynccontextmanager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
 from typing import (
@@ -38,6 +39,7 @@ from pydantic_ai.tools import AgentDepsT, RunContext, ToolDefinition
 # extra admits both. We only use their shared interfaces, so these unions type them without
 # importing a family that the other generation's installs don't ship.
 from ._http import AsyncHTTPClient, HTTPAuth, HTTPTimeout
+from ._run_context import set_current_run_context
 from .direct import model_request
 from .toolsets.abstract import AbstractToolset, ToolsetTool
 
@@ -55,6 +57,7 @@ try:
         StdioTransport,
         StreamableHttpTransport,
     )
+    from fastmcp.client.transports.config import MCPConfigTransport
     from fastmcp.exceptions import ToolError
     from fastmcp.mcp_config import infer_transport_type_from_url
 except ImportError as _import_error:
@@ -1410,7 +1413,16 @@ class MCPToolset(AbstractToolset[AgentDepsT]):
                 # once initialization fully succeeds, so `_initialized` can't see stale data from a
                 # session that got torn down mid-setup.
                 async with AsyncExitStack() as exit_stack:
-                    await exit_stack.enter_async_context(self.client)
+                    transport = self.client.transport
+                    if isinstance(transport, MCPConfigTransport) and len(transport.config.mcpServers) == 1:
+                        transport = transport.transport
+                    # A kept-alive stdio transport starts a connection task that outlives this run, and
+                    # `asyncio.create_task` snapshots the current context into it: the run's
+                    # `RunContext` would pin the agent, toolset and transport until the server stops.
+                    # Connect it without the ambient run context; every other transport keeps it.
+                    keeps_connection = isinstance(transport, StdioTransport) and transport.keep_alive
+                    with set_current_run_context(None) if keeps_connection else nullcontext():
+                        await exit_stack.enter_async_context(self.client)
                     # A modern (sessionless) session has no `initialize` handshake, so server
                     # metadata comes from era-neutral client properties; older clients only populate
                     # `initialize_result`.
@@ -1969,15 +1981,21 @@ def _build_message_handler(toolset: MCPToolset[Any], user_handler: MessageHandle
 
     The toolset's own cache invalidation runs first, then the user-supplied handler (if any).
     """
+    # Hold the toolset weakly. FastMCP's stdio connection task keeps this handler alive while the
+    # server runs, so a strong reference would keep the toolset, its client and its transport alive
+    # too, and the transport's finalizer, which stops the server, would never run.
+    toolset_ref = weakref.ref(toolset)
 
     async def handler(message: Any) -> None:
-        notification = getattr(message, 'root', message)
-        if isinstance(notification, mcp_types.ToolListChangedNotification):
-            toolset._invalidate_tools_cache()  # pyright: ignore[reportPrivateUsage]
-        elif isinstance(notification, mcp_types.ResourceListChangedNotification):
-            toolset._invalidate_resources_cache()  # pyright: ignore[reportPrivateUsage]
-        elif isinstance(notification, mcp_types.PromptListChangedNotification):
-            toolset._invalidate_prompts_cache()  # pyright: ignore[reportPrivateUsage]
+        current_toolset = toolset_ref()
+        if current_toolset is not None:
+            notification = getattr(message, 'root', message)
+            if isinstance(notification, mcp_types.ToolListChangedNotification):
+                current_toolset._invalidate_tools_cache()  # pyright: ignore[reportPrivateUsage]
+            elif isinstance(notification, mcp_types.ResourceListChangedNotification):
+                current_toolset._invalidate_resources_cache()  # pyright: ignore[reportPrivateUsage]
+            elif isinstance(notification, mcp_types.PromptListChangedNotification):
+                current_toolset._invalidate_prompts_cache()  # pyright: ignore[reportPrivateUsage]
         if user_handler is not None:
             await user_handler(message)
 

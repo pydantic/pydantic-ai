@@ -1,0 +1,132 @@
+# description: Refreshes the checked-in snapshot of OpenRouter's model input modalities weekly, and queues a pull request that commits it when it changed.
+name: OpenRouter input modalities
+
+# `OpenRouterProvider.model_profile` sets a model's image, audio and video input flags from
+# `pydantic_ai/providers/_openrouter_input_modalities.py`, a snapshot of OpenRouter's model list. It is
+# checked in rather than fetched at run time, so profiles stay the same from run to run and resolving
+# one needs no network access. OpenRouter adds models every week, so this workflow regenerates the
+# snapshot with `scripts/update_openrouter_input_modalities.py` and, when it differs from the committed
+# one, force-pushes it to the `openrouter-input-modalities-snapshot` branch and opens one pull request
+# that changes only the snapshot. A later run replaces that branch, so one pull request is open at
+# most. It isn't set to auto-merge: the data comes from outside the repository, and a model whose
+# flags flip changes what is sent to it, so a maintainer reviews the diff.
+#
+# This follows `clai2-web-bundle.yml`: `main` takes changes only through the merge queue, so this opens
+# a pull request rather than pushing, with a `pydantic-docs` App installation token, because GitHub
+# starts no workflow runs for a pull request opened with GITHUB_TOKEN. The script reads data from the
+# network, so it runs in a job of its own with no credentials and hands the snapshot over as an artifact.
+
+on:
+  schedule:
+    # Weekly on Monday at 06:00 UTC.
+    - cron: '0 6 * * 1'
+  workflow_dispatch: {}
+
+permissions: {}
+
+concurrency:
+  group: openrouter-input-modalities
+  cancel-in-progress: true
+
+env:
+  UV_PYTHON: "3.12"
+  UV_FROZEN: "1"
+  SNAPSHOT: pydantic_ai_slim/pydantic_ai/providers/_openrouter_input_modalities.py
+
+jobs:
+  refresh:
+    name: regenerate the OpenRouter input modalities snapshot
+    if: github.repository == 'pydantic/pydantic-ai' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    outputs:
+      stale: ${{ steps.snapshot.outputs.stale }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: astral-sh/setup-uv@68559e99cc807c1eb7e9238fd43a15bba460eec2 # v10.3.3
+        with:
+          python-version: "3.12"
+          enable-cache: false
+
+      - name: Regenerate the snapshot
+        run: uv run --no-dev --package pydantic-ai-slim python scripts/update_openrouter_input_modalities.py
+
+      - name: Check whether the committed snapshot is current
+        id: snapshot
+        run: |
+          if git diff --quiet -- "$SNAPSHOT"; then
+            echo "The committed snapshot matches OpenRouter's model list."
+            echo "stale=false" >> "$GITHUB_OUTPUT"
+          else
+            git diff --stat -- "$SNAPSHOT"
+            echo "stale=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - if: steps.snapshot.outputs.stale == 'true'
+        uses: actions/upload-artifact@cf430e030ddbb5b0abf93d22962f4752f3646cd9 # v7.0.2
+        with:
+          name: openrouter-input-modalities
+          path: ${{ env.SNAPSHOT }}
+          if-no-files-found: error
+          retention-days: 1
+          # A rerun of the job uploads the same name again.
+          overwrite: true
+
+  pull-request:
+    name: queue the refreshed OpenRouter input modalities snapshot
+    needs: refresh
+    if: needs.refresh.outputs.stale == 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    permissions:
+      contents: read
+    env:
+      BRANCH: openrouter-input-modalities-snapshot
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - uses: actions/download-artifact@9000827ccba6bdab643e8b6fd33ac0654aef8333 # v8.0.2
+        with:
+          name: openrouter-input-modalities
+          path: pydantic_ai_slim/pydantic_ai/providers
+
+      - name: Generate app token
+        uses: actions/create-github-app-token@64ab729a6294000f5aa4a4bc0b73d1f32bc45510 # v3.3.0
+        id: app-token
+        with:
+          client-id: ${{ vars.DOCS_CLIENT_ID }}
+          # Only the pinned action reads it, in a job that runs no dependency code.
+          private-key: ${{ secrets.DOCS_APP_PRIVATE_KEY }} # zizmor: ignore[secrets-outside-env]
+          owner: pydantic
+          repositories: pydantic-ai
+          permission-contents: write
+          permission-pull-requests: write
+
+      - name: Push the refreshed snapshot and queue its pull request
+        env:
+          GH_TOKEN: ${{ steps.app-token.outputs.token }}
+          GH_REPO: ${{ github.repository }}
+        run: |
+          git add -- "$SNAPSHOT"
+          git -c user.name='github-actions[bot]' \
+            -c user.email='41898282+github-actions[bot]@users.noreply.github.com' \
+            commit --quiet --message "Refresh the OpenRouter input modalities snapshot"
+          git push --force "https://x-access-token:${GH_TOKEN}@github.com/${GH_REPO}.git" "HEAD:refs/heads/${BRANCH}"
+
+          number=$(gh pr list --head "$BRANCH" --state open --json number --jq '.[0].number // empty')
+          if [[ -z "$number" ]]; then
+            body=$(printf '%s\n' \
+              'Refreshes `pydantic_ai_slim/pydantic_ai/providers/_openrouter_input_modalities.py` from [OpenRouter'"'"'s model list](https://openrouter.ai/api/v1/models).' \
+              '' \
+              'Opened by the `OpenRouter input modalities` workflow, which replaces this branch with a new snapshot each week while it differs from `main`. Check the diff for models whose image, audio or video input flipped: the flags decide whether a file is sent to the model or replaced by a note.' \
+              '' \
+              'If a flag flipped for a model that `tests/profiles/test_resolution_matrix.py` pins, CI fails here until its inline snapshot is updated: `uv run pytest tests/profiles/test_resolution_matrix.py --inline-snapshot=fix`.')
+            gh pr create --base main --head "$BRANCH" --title 'Refresh the OpenRouter input modalities snapshot' --body "$body"
+          fi

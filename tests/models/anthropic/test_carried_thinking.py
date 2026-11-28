@@ -213,9 +213,9 @@ async def test_carried_thinking_accepted_on_bedrock_transport(
     """The synthesized turn is accepted on a transport other than the direct Claude API.
 
     `AnthropicModel` also serves `AsyncAnthropicBedrock`, `AsyncAnthropicVertex`, `AsyncAnthropicFoundry`
-    and `AsyncAnthropicBedrockMantle` clients, all of which now emit this turn. This file already carries
-    the scar of a transport claim inferred from a direct-API result rather than measured (see
-    `_INLINE_SYSTEM_PROMPT_UNSUPPORTED_CLIENTS`), so the one transport the credentials reach is recorded.
+    and `AsyncAnthropicBedrockMantle` clients, all of which now emit this turn. Transport support has been
+    inferred from docs rather than measured before (Foundry's mid-conversation system messages were excluded
+    that way), so the one transport the credentials reach is recorded.
     Vertex, Foundry and Mantle stay inferred from this and from `BedrockConverseModel`'s own coverage.
     """
     model = AnthropicModel(

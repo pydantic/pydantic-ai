@@ -11,6 +11,7 @@ from __future__ import annotations
 
 import asyncio
 import base64
+import gc
 import itertools
 import json
 import os
@@ -18,6 +19,7 @@ import re
 import subprocess
 import sys
 import warnings
+import weakref
 from collections.abc import Callable, Generator, Sequence
 from dataclasses import dataclass, replace
 from functools import partial
@@ -36,7 +38,7 @@ from opentelemetry import propagate
 from pydantic import BaseModel, ValidationError
 
 from pydantic_ai import Agent, ToolsetTool, models
-from pydantic_ai._run_context import RunContext
+from pydantic_ai._run_context import RunContext, get_current_run_context, set_current_run_context
 from pydantic_ai._utils import BaseExceptionGroup
 from pydantic_ai.capabilities import MCP, Capability
 from pydantic_ai.exceptions import ModelRetry, ToolFailed, UnexpectedModelBehavior, UserError
@@ -84,10 +86,12 @@ with try_import() as imports_successful:
     from fastmcp.client import Client
     from fastmcp.client.client import CallToolResult
     from fastmcp.client.transports import (
+        ClientTransport,
         SSETransport,
         StdioTransport,
         StreamableHttpTransport,
     )
+    from fastmcp.client.transports.config import MCPConfigTransport
     from fastmcp.exceptions import McpError, ToolError
     from fastmcp.prompts import Message
     from fastmcp.server.dependencies import get_http_request
@@ -783,6 +787,109 @@ class TestMCPToolsetIntegration:
             pass
         with pytest.raises(ValueError, match='called more times than'):
             await toolset.__aexit__(None, None, None)
+
+    @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+    @pytest.mark.parametrize('entered', [True, False], ids=['entered', 'plain'])
+    async def test_stdio_server_stops_once_agent_and_toolset_are_dropped(self, entered: bool):
+        """A stdio connection outlives its run while the toolset is held, and ends once the toolset is dropped.
+
+        FastMCP's `StdioTransport` keeps its server running between connections and stops it from its finalizer,
+        so the connection task that outlives the run must not keep the toolset, and with it the transport, alive:
+        not through the message handler, and, when a plain run opens the connection, not through that run's context.
+        """
+        tasks_before = asyncio.all_tasks()
+        toolset = MCPToolset(StdioTransport(command='python', args=['-m', 'tests.mcp_server']))
+        # A name skips the agent's name inference, which reads this frame's `f_locals`. Before Python 3.13, that
+        # read leaves a snapshot of the locals on the frame, which would still hold `toolset` after the `del` below.
+        agent = Agent(TestModel(call_tools=[]), name='stdio_agent', toolsets=[toolset])
+        if entered:
+            async with agent:
+                await agent.run('Hello')
+        else:
+            await agent.run('Hello')
+
+        # The connection tasks own the server process. They're still pending, so the next run can reuse the server.
+        connection_tasks = asyncio.all_tasks() - tasks_before
+        assert connection_tasks
+
+        toolset_ref = weakref.ref(toolset)
+        del agent, toolset
+        gc.collect()
+        assert toolset_ref() is None
+        # The transport's finalizer stops the server, and the connection tasks end once the process has exited.
+        with anyio.fail_after(READINESS_WAIT_TIMEOUT):
+            await asyncio.wait(connection_tasks)
+
+    @pytest.mark.subprocess(reason='connects to `tests.mcp_log_server` over stdio')
+    @pytest.mark.parametrize(
+        ('make_transport', 'tool_name', 'sees_the_run'),
+        [
+            pytest.param(
+                lambda: StdioTransport(command='python', args=['-m', 'tests.mcp_log_server']),
+                'log_text',
+                False,
+                id='stdio',
+            ),
+            pytest.param(
+                lambda: StdioTransport(command='python', args=['-m', 'tests.mcp_log_server'], keep_alive=False),
+                'log_text',
+                True,
+                id='stdio-not-kept-alive',
+            ),
+            pytest.param(
+                lambda: MCPConfigTransport(
+                    {'mcpServers': {'logger': {'command': 'python', 'args': ['-m', 'tests.mcp_log_server']}}}
+                ),
+                'log_text',
+                False,
+                id='single-server-config',
+            ),
+            pytest.param(
+                lambda: MCPConfigTransport(
+                    {
+                        'mcpServers': {
+                            'logger': {'command': 'python', 'args': ['-m', 'tests.mcp_log_server']},
+                            'other': {'command': 'python', 'args': ['-m', 'tests.mcp_log_server']},
+                        }
+                    }
+                ),
+                'logger_log_text',
+                True,
+                id='multi-server-config',
+                # A multi-server config runs an in-process FastMCP proxy, which forwards the server's log message
+                # through the logging API that MCP SDK v2 deprecates.
+                marks=pytest.mark.filterwarnings('ignore:The logging capability is deprecated'),
+            ),
+        ],
+    )
+    async def test_stdio_handlers_see_the_run_only_on_connections_that_end_with_it(
+        self, make_transport: Callable[[], ClientTransport], tool_name: str, sees_the_run: bool
+    ):
+        """Handlers on a kept-alive stdio connection see no current run, because that connection outlives the run.
+
+        Its connection task would otherwise hold the context of the plain run that opened it, and later runs' handlers
+        would see that stale run. Connections that close with the run keep seeing it.
+        """
+        seen: list[str | None] = []
+
+        async def log_handler(message: mcp_types.LoggingMessageNotificationParams) -> None:
+            run_context = get_current_run_context()
+            seen.append(None if run_context is None else run_context.run_id)
+
+        transport = make_transport()
+        toolset = MCPToolset(transport, log_handler=log_handler)
+        result = await Agent(TestModel(call_tools=[tool_name]), name='stdio_agent', toolsets=[toolset]).run('Hello')
+        await transport.close()
+        assert seen == [result.run_id if sees_the_run else None]
+
+    @pytest.mark.subprocess(reason='connects to `tests.mcp_server` over stdio')
+    async def test_entered_connection_preserves_the_current_run_context(self, run_context: RunContext):
+        """Connecting a kept-alive stdio transport without the run context gives the caller's back afterwards."""
+        transport = StdioTransport(command='python', args=['-m', 'tests.mcp_server'])
+        with set_current_run_context(run_context):
+            async with MCPToolset(transport):
+                assert get_current_run_context() is run_context
+        await transport.close()
 
     async def test_get_tools_caches_and_lists(self, fastmcp_server: FastMCP[None], run_context: RunContext):
         toolset = MCPToolset(fastmcp_server, include_instructions=True)
@@ -2042,6 +2149,34 @@ A later <pyai:context> element with the same id replaces the earlier one and sta
 
         toolset = MCPToolset(fastmcp_server)
         handler = _build_message_handler(toolset, user_handler=user_handler)
+        notification = wrap_server_notification(
+            mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
+        )
+        await handler(notification)
+        assert seen == [notification]
+
+    async def test_message_handler_forwards_to_user_handler_after_toolset_is_collected(
+        self, fastmcp_server: FastMCP[None]
+    ):
+        """The handler holds the toolset weakly and keeps forwarding messages once it is collected.
+
+        A unit test: a connection only outlives its toolset over stdio, where a notification arriving after the
+        toolset is collected can't be triggered on demand.
+        """
+        from pydantic_ai.mcp import _build_message_handler  # type: ignore[attr-defined]
+
+        seen: list[Any] = []
+
+        async def user_handler(message: Any) -> None:
+            seen.append(message)
+
+        toolset = MCPToolset(fastmcp_server)
+        handler = _build_message_handler(toolset, user_handler=user_handler)
+        toolset_ref = weakref.ref(toolset)
+        del toolset
+        gc.collect()
+        assert toolset_ref() is None
+
         notification = wrap_server_notification(
             mcp_types.ToolListChangedNotification(method='notifications/tools/list_changed')
         )

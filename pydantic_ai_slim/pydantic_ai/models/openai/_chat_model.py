@@ -47,6 +47,7 @@ from ..._thinking_part import render_replayed_thinking
 from ..._utils import (
     guard_tool_call_id as _guard_tool_call_id,
     has_yaml_structured_suffix as _has_yaml_structured_suffix,
+    is_str_dict as _is_str_dict,
     is_text_like_media_type as _is_text_like_media_type,
     now_utc as _now_utc,
     number_to_datetime,
@@ -87,7 +88,7 @@ from ...output import OutputObjectDefinition
 from ...profiles import ModelProfile, ModelProfileSpec, merge_profile
 from ...profiles.openai import OpenAIModelProfile, OpenAISystemPromptRole, validate_openai_profile
 from ...providers import Provider, infer_provider
-from ...settings import CacheSetting, ModelSettings
+from ...settings import CacheSetting, ModelSettings, ThinkingLevel
 from ...tools import ToolDefinition
 from .. import (
     Model,
@@ -406,6 +407,12 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if not _profile.get('openai_chat_supports_web_search', False):
             new_tools = _profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS) - {WebSearchTool}
             _profile = merge_profile(_profile, ModelProfile(supported_native_tools=new_tools))
+        if (provider := self.provider) is not None and (
+            provider.name == 'openai' or is_azure(provider.client, provider.name)
+        ):
+            # The OpenAI profile allows image output for models that generate images through the Responses API's image
+            # generation tool, which OpenAI's Chat Completions doesn't offer.
+            _profile = merge_profile(_profile, ModelProfile(supports_image_output=False))
         return cast(OpenAIModelProfile, _profile)
 
     def prepare_request(
@@ -469,7 +476,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
         if thinking is None:
             return OMIT
         if thinking is False and 'openai_chat_thinking_false_body' in self.profile:
-            # The profile's body fields stand in for `reasoning_effort`; see `_thinking_false_extra_body`.
+            # The profile's body fields stand in for `reasoning_effort`; see `_chat_extra_body`.
             return OMIT
         effort = resolve_openai_thinking_effort(
             thinking,
@@ -477,25 +484,6 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             supports_max=self.profile.get('openai_chat_supports_max_reasoning_effort', False),
         )
         return OMIT if effort is None else effort
-
-    def _thinking_false_extra_body(
-        self,
-        model_settings: OpenAIChatModelSettings,
-        model_request_parameters: ModelRequestParameters,
-    ) -> object | None:
-        """The request's `extra_body`, plus the profile's `openai_chat_thinking_false_body` fields for `thinking=False`.
-
-        Keys the caller set in `extra_body` win, and nothing is added when `openai_reasoning_effort` is set.
-        """
-        extra_body = model_settings.get('extra_body')
-        thinking_false_body = self.profile.get('openai_chat_thinking_false_body')
-        if (
-            thinking_false_body is None
-            or model_request_parameters.thinking is not False
-            or model_settings.get('openai_reasoning_effort')
-        ):
-            return extra_body
-        return {**thinking_false_body, **cast(dict[str, Any], extra_body or {})}
 
     @asynccontextmanager
     async def request_stream(
@@ -642,7 +630,7 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
                         'ChatPromptCacheOptions | Omit', model_settings.get('openai_prompt_cache_options', OMIT)
                     ),
                     extra_headers=extra_headers,
-                    extra_body=self._thinking_false_extra_body(model_settings, model_request_parameters),
+                    extra_body=_chat_extra_body(self.profile, model_settings, model_request_parameters.thinking),
                 )
             except APIStatusError as e:
                 # A status a retrying transport gave up on arrives as `httpx2.HTTPStatusError` instead, which isn't
@@ -1012,6 +1000,20 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
     def _settings_overriding_thinking(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
         # `_translate_thinking` sends an explicit effort instead of the one unified `thinking` maps to.
         return ('openai_reasoning_effort',) if model_settings.get('openai_reasoning_effort') else ()
+
+    def _settings_overriding_thinking_summary(self, model_settings: Mapping[str, object]) -> tuple[str, ...]:
+        # `_chat_extra_body` lets keys the request sets in `extra_body` win over the profile's fields that hide
+        # thinking for `thinking_summary=False`.
+        omit_thinking = self.profile.get('openai_chat_thinking_summary_false_body')
+        extra_body = model_settings.get('extra_body')
+        if (
+            model_settings.get('thinking_summary') is False
+            and omit_thinking
+            and _is_str_dict(extra_body)
+            and any(key in extra_body for key in omit_thinking)
+        ):
+            return ('extra_body',)
+        return ()
 
     def _overrides_unified_effort(self, model_settings: Mapping[str, object]) -> bool:
         return bool(self._settings_overriding_thinking(model_settings))
@@ -1659,3 +1661,26 @@ class OpenAIChatModel(Model[AsyncOpenAI]):
             text=self._format_inlined_text_file(text, media_type=media_type, identifier=identifier),
             type='text',
         )
+
+
+def _chat_extra_body(
+    profile: OpenAIModelProfile, model_settings: OpenAIChatModelSettings, thinking: ThinkingLevel | None
+) -> object:
+    """The request's `extra_body`, over the profile's body fields for `thinking=False` and `thinking_summary=False`.
+
+    Keys the request sets in `extra_body` win. The `thinking=False` fields are left out when `openai_reasoning_effort`
+    is set, since they stand in for it.
+    """
+    extra_body = model_settings.get('extra_body')
+    defaults: dict[str, Any] = {}
+    if thinking is False and not model_settings.get('openai_reasoning_effort'):
+        defaults.update(profile.get('openai_chat_thinking_false_body') or {})
+    if model_settings.get('thinking_summary') is False:
+        defaults.update(profile.get('openai_chat_thinking_summary_false_body') or {})
+    if not defaults:
+        return extra_body
+    if extra_body is None:
+        return defaults
+    if _is_str_dict(extra_body):
+        return {**defaults, **extra_body}
+    return extra_body

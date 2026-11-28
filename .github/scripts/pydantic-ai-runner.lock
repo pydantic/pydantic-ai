@@ -1225,6 +1225,7 @@ requires-dist = [
     { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'pylon'", editable = "../../pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'slack'", editable = "../../pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["mcp"], marker = "extra == 'stackone'", editable = "../../pydantic_ai_slim" },
+    { name = "pydantic-ai-slim", extras = ["prefect"], marker = "extra == 'prefect'", editable = "../../pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["spec"], marker = "extra == 'logfire'", editable = "../../pydantic_ai_slim" },
     { name = "pydantic-ai-slim", extras = ["temporal"], marker = "extra == 'temporal'", editable = "../../pydantic_ai_slim" },
     { name = "pydantic-handlebars", marker = "extra == 'logfire'", specifier = ">=0.2.1" },
@@ -1243,7 +1244,7 @@ requires-dist = [
     { name = "websockets", marker = "extra == 'cdp-browser'", specifier = ">=14.0" },
     { name = "youdotcom", marker = "extra == 'youdotcom'", specifier = ">=3.1.2,<3.2" },
 ]
-provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "azure-durable-task", "boxd", "boxlite", "browser-use", "cdp-browser", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "kubernetes", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "opensandbox", "ordinal", "pgtask", "pixeltable", "playwright", "posthog", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
+provides-extras = ["absurd", "acp", "anthropic", "aws-lambda", "azure-durable-task", "boxd", "boxlite", "browser-use", "cdp-browser", "cli", "code-mode", "codemode", "coder", "day-ai", "daytona", "dbos", "dynamic-workflow", "e2b", "exa", "github", "google-workspace", "grain", "ipython", "kubernetes", "linear", "logfire", "logfire-mcp", "modal", "mongodb", "notion", "opensandbox", "ordinal", "pgtask", "pixeltable", "playwright", "posthog", "prefect", "prompt-injection-defender", "prompt-injection-defender-ml", "pylon", "render", "repair-tool-arguments", "researcher", "skills", "slack", "smol", "sprites", "stackone", "temporal", "youdotcom"]
 
 [[package]]
 name = "pydantic-ai-slim"
@@ -1294,14 +1295,15 @@ requires-dist = [
     { name = "fastmcp-slim", extras = ["client"], marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0,<5" },
     { name = "fastmcp-tasks", marker = "extra == 'mcp-tasks'", specifier = ">=4.0.0,<5" },
     { name = "genai-prices", specifier = ">=0.2.4" },
-    { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.30.0,<3" },
-    { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.30.0,<3" },
+    { name = "google-genai", marker = "extra == 'google'", specifier = ">=2.34.0,<3" },
+    { name = "google-genai", marker = "extra == 'google-realtime'", specifier = ">=2.34.0,<3" },
     { name = "griffelib", specifier = ">=2.0" },
     { name = "groq", marker = "extra == 'groq'", specifier = ">=0.25.0,<2" },
     { name = "hf-xet", marker = "(platform_machine == 'AMD64' or platform_machine == 'aarch64' or platform_machine == 'amd64' or platform_machine == 'arm64' or platform_machine == 'x86_64') and extra == 'huggingface'", specifier = "<1.5.0" },
     { name = "httpx", marker = "extra == 'retries'", specifier = ">=0.27" },
     { name = "httpx2", specifier = ">=2.7" },
     { name = "huggingface-hub", marker = "extra == 'huggingface'", specifier = ">=1.3.4,<2.0.0" },
+    { name = "jsonschema", marker = "extra == 'jsonschema'", specifier = ">=4.18" },
     { name = "logfire", extras = ["httpx"], marker = "extra == 'logfire'", specifier = ">=4.39.0" },
     { name = "markdownify", marker = "extra == 'web-fetch'", specifier = ">=1.2" },
     { name = "mistralai", marker = "extra == 'mistral'", specifier = ">=3.1.0,<4" },
@@ -1352,7 +1354,7 @@ requires-dist = [
     { name = "xai-sdk", marker = "extra == 'xai'", specifier = ">=1.21.0,<2" },
     { name = "xai-sdk", marker = "extra == 'xai-realtime'", specifier = ">=1.21.0,<2" },
 ]
-provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
+provides-extras = ["ag-ui", "anthropic", "bedrock", "bedrock-mantle", "cerebras", "cli", "cohere", "crusoe", "dbos", "duckduckgo", "elevenlabs-agents-realtime", "elevenlabs-realtime", "evals", "exa", "google", "google-realtime", "groq", "huggingface", "jsonschema", "logfire", "mcp", "mcp-tasks", "mistral", "openai", "openai-realtime", "openrouter", "prefect", "realtime", "retries", "sentence-transformers", "snowflake", "spec", "tavily", "temporal", "typesafe", "ui", "voyageai", "web", "web-fetch", "xai", "xai-realtime", "zai"]
 
 [[package]]
 name = "pydantic-core"

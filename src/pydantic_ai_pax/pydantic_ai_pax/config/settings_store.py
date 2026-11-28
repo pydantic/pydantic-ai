@@ -29,6 +29,9 @@ _PLUGIN_NAMES = {'logfire': 'observability'}
 _STORED_PLUGIN_NAMES = {name: stored for stored, name in _PLUGIN_NAMES.items()}
 _CURRENT_PACKAGE = re.compile(r'^pydantic_ai_pax(?=[.:]|$)')
 """Factories are stored under `pydantic_clai2`, which older builds import too; `PluginSettings` renames it on read."""
+_LOGFIRE_FACTORY = re.compile(r'pydantic_(?:clai2|ai_pax)\.builtin_plugins\.logfire(?::\w+)?')
+_LOGFIRE_SERVICE_NAME = 'logfire-service-name'
+"""The `applied_migrations` row recording that a saved Logfire `service_name` left the old default."""
 
 
 def canonical_plugin_id(plugin_id: str) -> str:
@@ -147,6 +150,15 @@ class SettingsStore:
                 'CREATE TABLE IF NOT EXISTS workspace_trust (path TEXT PRIMARY KEY, trusted INTEGER NOT NULL)'
             )
             connection.execute('PRAGMA user_version = 1')
+            # Data migrations are recorded here, not by raising `user_version`: `config.db` is shared with older
+            # installs, which refuse to open any version but 0 and 1. Older builds never read this table.
+            connection.execute('CREATE TABLE IF NOT EXISTS applied_migrations (name TEXT PRIMARY KEY)')
+            connection.execute('BEGIN IMMEDIATE')
+            if not connection.execute(
+                'SELECT 1 FROM applied_migrations WHERE name = ?', (_LOGFIRE_SERVICE_NAME,)
+            ).fetchone():
+                _migrate_logfire_service_name(connection)
+                connection.execute('INSERT INTO applied_migrations VALUES (?)', (_LOGFIRE_SERVICE_NAME,))
 
     @contextmanager
     def _connect(self) -> Generator[sqlite3.Connection, None, None]:
@@ -528,6 +540,26 @@ class SettingsStore:
     def plugins_dir(self) -> Path:
         """Folder scanned for drop-in plugins, next to the settings database."""
         return self.path.parent / 'plugins'
+
+
+def _migrate_logfire_service_name(connection: sqlite3.Connection) -> None:
+    """Move a saved Logfire `service_name` off `pydantic-clai2`, the default before the rename.
+
+    The settings menu and project setup save every option, so the old default was saved by anyone who changed
+    any of them. Any other name was chosen and stays. An older Pax that saves the old default again afterwards
+    keeps it, as this runs once.
+    """
+    for plugin_id, declaration in connection.execute('SELECT id, declaration FROM plugins').fetchall():
+        saved = _saved_declaration(declaration)
+        factory, settings = saved.get('factory'), saved.get('settings')
+        if (
+            isinstance(factory, str)
+            and _LOGFIRE_FACTORY.fullmatch(factory)
+            and isinstance(settings, dict)
+            and settings.get('service_name') == 'pydantic-clai2'
+        ):
+            settings['service_name'] = 'pydantic-ai-pax'
+            connection.execute('UPDATE plugins SET declaration = ? WHERE id = ?', (setting_json(saved), plugin_id))
 
 
 def _saved_declaration(declaration: str) -> dict[str, JsonValue]:

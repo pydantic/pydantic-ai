@@ -49,20 +49,34 @@ def test_run_sync_replaces_closed_event_loop(closed_event_loop: asyncio.Abstract
 
 
 async def test_map_to_end_node_cancels_pending():
-    """Test that mapping directly to end_node cancels pending tasks"""
+    """Mapping directly to the end node ends the run with the first item to arrive, and cancels the items still running."""
     g = GraphBuilder(state_type=ExecutionState, output_type=int)
+
+    pending = [2, 3, 4, 5]
+    waiting: list[int] = []
+    cancelled: list[int] = []
+    all_pending_waiting = Event()
+    release = Event()
 
     @g.step
     async def generate(ctx: StepContext[ExecutionState, None, None]) -> list[int]:
-        return [1, 2, 3, 4, 5]
+        return [1, *pending]
 
     @g.step
     async def early_exit(ctx: StepContext[ExecutionState, None, int]) -> int:
-        # First item returns immediately
         if ctx.inputs == 1:
+            # Reach the end node only once every other item is waiting, so each one is still running then.
+            with fail_after(READINESS_WAIT_TIMEOUT):
+                await all_pending_waiting.wait()
             return ctx.inputs
-        # Others would take longer
-        await asyncio.sleep(1)
+        waiting.append(ctx.inputs)
+        if len(waiting) == len(pending):
+            all_pending_waiting.set()
+        try:
+            await release.wait()
+        except anyio.get_cancelled_exc_class():
+            cancelled.append(ctx.inputs)
+            raise
         return ctx.inputs  # pragma: no cover
 
     g.add(
@@ -72,9 +86,15 @@ async def test_map_to_end_node_cancels_pending():
     )
 
     graph = g.build()
-    result = await graph.run(state=ExecutionState())
-    # Should complete quickly with the first result
-    assert result in [1, 2, 3, 4, 5]
+    async with graph.iter(state=ExecutionState()) as run:
+        async for _ in run:
+            pass
+        # An item the end left running would wait for this forever, so leaving one running fails the asserts below
+        # instead of hanging the run's exit.
+        release.set()
+
+    assert run.output == 1
+    assert sorted(cancelled) == pending
 
 
 async def test_map_non_iterable_raises_error():

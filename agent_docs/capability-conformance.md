@@ -8,7 +8,7 @@ A capability is conformant when its entry in `CASES` (`tests/capability_cases.py
 
 Each area says what it requires and how the suite checks it. Contracts are `Contract(applies, exempt)` entries in `CONTRACTS`, run by `tests/harness/test_capability_contracts.py`; an exempt case must still break its contract, so fixing the capability fails the suite until the exemption is removed. Link an exemption that records a bug to the issue that tracks it.
 
-The contracts are numbered C0, C1, … in the order they land. C1–C5 are planned and work toward [#13118](https://github.com/pydantic/pydantic-ai/issues/13118): no capability content below `'operator'` reaches the model in system voice.
+The contracts are numbered C0, C1, … as this checklist assigns them, not in the order they land. C1–C5 are planned and work toward [#13118](https://github.com/pydantic/pydantic-ai/issues/13118): no capability content below `'operator'` reaches the model in system voice.
 
 ## Coverage
 
@@ -33,7 +33,8 @@ The contracts are numbered C0, C1, … in the order they land. C1–C5 are plann
 **How it's tested**
 
 - `tests/test_history_append_only.py` and `tests/harness/test_history_append_only.py` run every buildable case through a scripted conversation on each provider adapter. A capability that keeps state the conversation should change gets a `SCENARIOS` entry; a prefix move that is a bug goes in `KNOWN`, linked to its issue, and one that is documented behavior (compaction, a request-only tail) goes in `ALLOWED`, which pins how far it may move. A case whose `calls` rewrite history by design sets `moves_cache_prefix`.
-- `tests/test_capability_combine.py` and its Harness twin check each case's `combine` policy; `COMBINE_FIXED_POINT` checks that a configuration stated twice is stated once.
+- `DEFAULT_ID_MATCHES_COMBINE` checks every case's class, the unbuildable and private ones included: under `Combines` or `Narrows` it declares a default `id`, under `Anonymous`, `Collides` or `Rejected` none, and a new policy fails until it is classified: `test_a_default_id_matches_the_combine_policy`.
+- `tests/test_capability_combine.py` and its Harness twin check that each case combines the way its `combine` policy says; `COMBINE_FIXED_POINT` checks that a configuration stated twice is stated once.
 
 ## Voice and authority
 
@@ -41,6 +42,7 @@ The contracts are numbered C0, C1, … in the order they land. C1–C5 are plann
 
 - Every model-visible text a capability produces carries its source: a tool's output is `ToolResultSource`, another model's text `ModelSource`, a workspace file `WorkspaceSource`.
 - Below `'operator'`, it never renders as a system or developer message, and never authors a `ModelResponse`.
+- Text a capability reads from a source below `'operator'` (a workspace file, a skill, an MCP server's instructions or tool descriptions, a model-written sub-agent definition) never reaches the instructions, a system or user part, or a tool definition: only tool output, or a framed data part naming its source.
 - Authority only goes down: a part reaches the model with the lower of its source's and its kind's authority, never raised.
 - The attribution is the same on every route the content takes: a native tool call, Code Mode, IPython Code Mode, `ToolBridge`, `BackgroundTools`, a sub-agent, a durable engine, and a round trip through `ModelMessagesTypeAdapter` or a UI protocol.
 
@@ -54,6 +56,7 @@ The rules behind these are in [Message History & Prompt Caching](message-history
 - C3, role-site guard (planned): every site that builds a system or developer part is in an allowlist with its reason.
 - C4, transformation registry (planned): every function that returns `list[ModelMessage]` is registered, and sources survive each one.
 - C5, attribution on spans (planned): OpenTelemetry message parts keep each capability part's source.
+- C6, instruction sources: `test_instruction_source_authority.py`'s canary test puts a marker in each instruction source (`Skills`, `RepoContext`'s working-directory, ancestor and nested files, `Memory`, MCP server instructions and tool descriptions, `SubAgents` `create_agent` instructions) at `'none'` and at `'operator'`, and checks the marker appears only in tool output or framed data at `'none'` and where it does today at `'operator'`. A source that breaks this is a strict xfail linked to its fix (MCP: [#13117](https://github.com/pydantic/pydantic-ai/issues/13117); `SubAgents` `create_agent`: [#12433](https://github.com/pydantic/pydantic-ai/issues/12433)).
 
 ## Durable execution
 

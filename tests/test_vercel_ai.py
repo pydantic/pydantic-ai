@@ -120,6 +120,7 @@ from .conftest import (
     IsSameStr,
     IsStr,
     conversation_view,
+    history_with_server_system_prompts,
     iter_message_parts,
     legacy_retry_prompt_part,
     message,
@@ -137,7 +138,7 @@ with try_import() as starlette_import_successful:
     from starlette.requests import Request
     from starlette.responses import StreamingResponse
 
-    from pydantic_ai.ui import DEFAULT_ALLOWED_CONTENT_TYPES
+    from pydantic_ai.ui import DEFAULT_ALLOWED_CONTENT_TYPES, NativeEvent
     from pydantic_ai.ui.vercel_ai import VercelAIAdapter, VercelAIEventStream
     from pydantic_ai.ui.vercel_ai._utils import (
         dump_provider_metadata,
@@ -3916,6 +3917,121 @@ async def test_run_stream_error_closes_open_tool_call():
             'finish-step',
             'finish',
             '[DONE]',
+        ]
+    )
+
+
+async def _encode_restarted_part(events: AsyncIterator[NativeEvent]) -> list[dict[str, Any]]:
+    event_stream = VercelAIEventStream[None, str]()
+    return [
+        json.loads(event.removeprefix('data: '))
+        async for event in event_stream.encode_stream(event_stream.transform_stream(events))
+        if '[DONE]' not in event
+    ]
+
+
+async def test_restarted_part_ends_open_text():
+    """A republished `PartStartEvent` emits `text-end` for the open text part before the new `text-start`. #11734
+
+    A retried durable activity republishes the model events it already published, so the client sees the first
+    attempt's partial part as its own, ended part, followed by the retry's full part.
+    """
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo'))
+        yield PartStartEvent(index=0, part=TextPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=TextPartDelta(content_delta='lo, world'))
+        yield PartEndEvent(index=0, part=TextPart(content='Hello, world'))
+
+    chunks = await _encode_restarted_part(event_generator())
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'text-start', 'id': (first_id := IsSameStr())},
+            {'type': 'text-delta', 'delta': 'Hel', 'id': first_id},
+            {'type': 'text-delta', 'delta': 'lo', 'id': first_id},
+            {'type': 'text-end', 'id': first_id},
+            {'type': 'text-start', 'id': (second_id := IsSameStr())},
+            {'type': 'text-delta', 'delta': 'Hel', 'id': second_id},
+            {'type': 'text-delta', 'delta': 'lo, world', 'id': second_id},
+            {'type': 'text-end', 'id': second_id},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    )
+    assert len({c['id'] for c in chunks if 'id' in c}) == 2
+
+
+async def test_restarted_part_ends_open_thinking():
+    """A republished `PartStartEvent` emits `reasoning-end` for the open thinking part before the new one. #11734"""
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo'))
+        yield PartStartEvent(index=0, part=ThinkingPart(content='Hel'))
+        yield PartDeltaEvent(index=0, delta=ThinkingPartDelta(content_delta='lo, world'))
+        yield PartEndEvent(index=0, part=ThinkingPart(content='Hello, world'))
+
+    chunks = await _encode_restarted_part(event_generator())
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'reasoning-start', 'id': (first_id := IsSameStr())},
+            {'type': 'reasoning-delta', 'id': first_id, 'delta': 'Hel'},
+            {'type': 'reasoning-delta', 'id': first_id, 'delta': 'lo'},
+            {'type': 'reasoning-end', 'id': first_id},
+            {'type': 'reasoning-start', 'id': (second_id := IsSameStr())},
+            {'type': 'reasoning-delta', 'id': second_id, 'delta': 'Hel'},
+            {'type': 'reasoning-delta', 'id': second_id, 'delta': 'lo, world'},
+            {'type': 'reasoning-end', 'id': second_id},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
+        ]
+    )
+    assert len({c['id'] for c in chunks if 'id' in c}) == 2
+
+
+async def test_restarted_part_ends_open_tool_call():
+    """A republished `PartStartEvent` for a tool call restarts its input stream. #11734"""
+
+    def call_part(args: str) -> ToolCallPart:
+        return ToolCallPart(tool_name='get_time', args=args, tool_call_id='call_0')
+
+    async def event_generator():
+        yield PartStartEvent(index=0, part=call_part('{"tz": '))
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"U'))
+        yield PartStartEvent(index=0, part=call_part('{"tz": '))
+        yield PartDeltaEvent(index=0, delta=ToolCallPartDelta(tool_call_id='call_0', args_delta='"UTC"}'))
+        yield PartEndEvent(index=0, part=call_part('{"tz": "UTC"}'))
+        yield FunctionToolCallEvent(part=call_part('{"tz": "UTC"}'), args_valid=True)
+        yield FunctionToolResultEvent(part=ToolReturnPart(tool_name='get_time', tool_call_id='call_0', content='12:00'))
+
+    chunks = await _encode_restarted_part(event_generator())
+
+    assert chunks == snapshot(
+        [
+            {'type': 'start'},
+            {'type': 'start-step'},
+            {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'get_time'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"tz": '},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '"U'},
+            {'type': 'tool-input-start', 'toolCallId': 'call_0', 'toolName': 'get_time'},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '{"tz": '},
+            {'type': 'tool-input-delta', 'toolCallId': 'call_0', 'inputTextDelta': '"UTC"}'},
+            {
+                'type': 'tool-input-available',
+                'toolCallId': 'call_0',
+                'toolName': 'get_time',
+                'input': {'tz': 'UTC'},
+            },
+            {'type': 'tool-output-available', 'toolCallId': 'call_0', 'output': '12:00'},
+            {'type': 'finish-step'},
+            {'type': 'finish'},
         ]
     )
 
@@ -14168,6 +14284,64 @@ async def test_server_message_history_follow_up(client_sends: str):
 
     assert conversation_view(requests[-1]) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?'])
     assert conversation_view(stored) == snapshot(['user-prompt: hi', 'text: ok', 'user-prompt: and now?', 'text: ok'])
+
+
+@pytest.mark.parametrize('held', ['message_history', 'server message_history', 'conversation_store'])
+async def test_server_system_prompt_keeps_trusted_history_system_prompts(held: str):
+    """`manage_system_prompt='server'` replaces only the stale prompt opening the trusted history (#13768).
+
+    The server's other system prompts reach the model, and the client's is still stripped.
+    """
+    agent, requests, _ = server_history_agent(system_prompt='Server prompt')
+    stored = history_with_server_system_prompts()
+    client_prompt = UIMessage(id='s1', role='system', parts=[TextUIPart(text='Client prompt')])
+    run_input = SubmitMessage(id='chat', messages=[client_prompt, _AND_NOW])
+    message_history: list[ModelMessage] | None = stored
+    if held == 'conversation_store':
+        store = InMemoryConversationStore()
+        await store.save(Conversation(messages=stored, conversation_id='chat'))
+        adapter = VercelAIAdapter(agent, run_input, conversation_store=store)
+        message_history = None
+    elif held == 'server message_history':
+        adapter = VercelAIAdapter(agent, run_input, manage_message_history='server')
+    else:
+        adapter = VercelAIAdapter(agent, run_input)
+    results: list[AgentRunResult[Any]] = []
+
+    with pytest.warns(UserWarning, match='Parts carrying the system voice were stripped'):
+        async for _ in adapter.run_stream(message_history=message_history, on_complete=results.append):
+            pass
+
+    [result] = results
+    assert conversation_view(requests[-1]) == snapshot(
+        [
+            'system-prompt: Server prompt',
+            'user-prompt: where am I?',
+            'call loc-1',
+            'return loc-1: Paris',
+            'user-prompt: <system>Enqueued in an earlier run</system>',
+            'text: ok',
+            'user-prompt: <system>Server context</system>',
+            'user-prompt: hi',
+            'text: ok',
+            'user-prompt: and now?',
+        ]
+    )
+    assert conversation_view(result.all_messages()) == snapshot(
+        [
+            'system-prompt: Server prompt',
+            'user-prompt: where am I?',
+            'call loc-1',
+            'return loc-1: Paris',
+            'system-prompt: Enqueued in an earlier run',
+            'text: ok',
+            'system-prompt: Server context',
+            'user-prompt: hi',
+            'text: ok',
+            'user-prompt: and now?',
+            'text: ok',
+        ]
+    )
 
 
 @pytest.mark.skipif(not starlette_import_successful, reason='Starlette is not installed')

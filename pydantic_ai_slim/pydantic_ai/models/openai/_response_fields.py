@@ -142,22 +142,33 @@ def billed_web_searches(
             )
 
 
+def unmeasured_usage(web_search_requests: int) -> usage.RequestUsage:
+    """The usage of a response that reported none, with the web searches it billed."""
+    if web_search_requests:
+        return usage.RequestUsage(
+            unmeasured_requests=1,
+            web_searches=web_search_requests,
+            details={'web_search_requests': web_search_requests},
+        )
+    return usage.RequestUsage(unmeasured_requests=1)
+
+
 def map_usage(
     response: chat.ChatCompletion | ChatCompletionChunk | responses.Response | responses.CompactedResponse,
     provider: str,
     provider_url: str,
     model: str,
+    *,
+    bills_web_searches: bool = True,
 ) -> usage.RequestUsage:
+    """Map a response's usage.
+
+    `bills_web_searches=False` is for an endpoint that bills none of the native web searches in its response.
+    """
     response_usage = response.usage
-    web_search_requests = billed_web_searches(response)
+    web_search_requests = billed_web_searches(response) if bills_web_searches else 0
     if response_usage is None:
-        if web_search_requests:
-            return usage.RequestUsage(
-                unmeasured_requests=1,
-                web_searches=web_search_requests,
-                details={'web_search_requests': web_search_requests},
-            )
-        return usage.RequestUsage(unmeasured_requests=1)
+        return unmeasured_usage(web_search_requests)
 
     usage_data = response_usage.model_dump(exclude_none=True)
     details = {

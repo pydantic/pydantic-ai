@@ -1,8 +1,12 @@
-"""Wire-format utilities shared by the Google API adapters."""
+"""Utilities shared by the Google API adapters."""
+
+from __future__ import annotations
 
 import math
+from typing import TYPE_CHECKING
 
 from ..exceptions import UserError
+from ..native_tools import SUPPORTED_NATIVE_TOOLS, AbstractNativeTool
 from ..profiles import ModelProfile, merge_profile
 from ..profiles.google import (
     GOOGLE_THINKING_LEVEL_SCALE,
@@ -12,6 +16,9 @@ from ..profiles.google import (
 )
 from ..providers._model_deprecations import GEMINI_API_MODEL_DEPRECATIONS, GOOGLE_CLOUD_MODEL_DEPRECATIONS
 from ..settings import ThinkingEffort
+
+if TYPE_CHECKING:
+    from . import Model, ModelRequestParameters
 
 
 def character_index(text: str, byte_index: int) -> int | None:
@@ -141,3 +148,17 @@ def set_server_timeout(headers: dict[str, str], client_timeout_ms: int | None) -
         headers['X-Server-Timeout'] = headers.pop(caller_name)
     elif client_timeout_ms:
         headers['X-Server-Timeout'] = str(math.ceil(max(client_timeout_ms / 1000, _LONG_DECODE_TIMEOUT)))
+
+
+def rejects_native_tool(model: Model, params: ModelRequestParameters, tool_type: type[AbstractNativeTool]) -> bool:
+    """Whether `model`'s base validation will reject a `tool_type` native tool in `params` as unsupported.
+
+    It does for one the profile's `supported_native_tools` leaves out, that isn't `optional` and has no local fallback,
+    as `Model.prepare_request` decides. The Google models check this first, to name the other Google model instead.
+    """
+    if issubclass(tool_type, tuple(model.profile.get('supported_native_tools', SUPPORTED_NATIVE_TOOLS))):
+        return False
+    fallback_ids = {t.unless_native for t in params.function_tools if t.unless_native}
+    return any(
+        isinstance(t, tool_type) and not t.optional and t.unique_id not in fallback_ids for t in params.native_tools
+    )

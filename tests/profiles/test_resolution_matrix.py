@@ -953,6 +953,7 @@ def test_google_gemini_3_pro():
             'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
+            'thinking_enabled_by_default': True,
             'google_supports_tool_combination': True,
             'google_supports_server_side_tool_invocations': True,
             'google_supported_mime_types_in_tool_returns': (
@@ -993,6 +994,7 @@ def test_google_gemini_2_5_flash():
             'json_schema_transformer': GoogleJsonSchemaTransformer,
             'supports_video_input': True,
             'supports_thinking': True,
+            'thinking_enabled_by_default': True,
             'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': True,
@@ -1083,6 +1085,7 @@ def test_google_gemini_3_7_flash_thinking_levels():
             'google_supports_strict_tool_definition': True,
             'supports_video_input': True,
             'google_supports_tool_combination': True,
+            'thinking_enabled_by_default': True,
             'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
             'json_schema_transformer': GoogleJsonSchemaTransformer,
             'supports_json_object_output': True,
@@ -1636,6 +1639,65 @@ def test_bedrock_mistral_large():
             'json_schema_transformer': BedrockJsonSchemaTransformer,
             'bedrock_supports_strict_tool_definition': False,
             'bedrock_tool_result_colocatable_content': frozenset(),
+            'bedrock_supports_leading_assistant_message': False,
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document'}),
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_mistral_large_3():
+    profile = BedrockProvider.model_profile('mistral.mistral-large-3-675b-instruct')
+    assert _normalize(profile) == snapshot(
+        {
+            'tool_call_id_length': 9,
+            'supported_native_tools': frozenset(),
+            'bedrock_tool_result_format': 'json',
+            'bedrock_supports_stop_sequences': False,
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+            'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
+            'bedrock_supports_leading_assistant_message': True,
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document'}),
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_ministral_3():
+    profile = BedrockProvider.model_profile('mistral.ministral-3-8b-instruct')
+    assert _normalize(profile) == snapshot(
+        {
+            'tool_call_id_length': 9,
+            'supported_native_tools': frozenset(),
+            'bedrock_tool_result_format': 'json',
+            'bedrock_supports_stop_sequences': False,
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'supports_json_schema_output': True,
+            'bedrock_supports_strict_tool_definition': True,
+            'bedrock_tool_result_colocatable_content': frozenset({'image', 'text'}),
+            'bedrock_supports_leading_assistant_message': True,
+            'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document'}),
+            'supports_video_input': False,
+        }
+    )
+
+
+@pytest.mark.skipif(not bedrock_imports(), reason='bedrock not installed')
+def test_bedrock_mistral_pixtral_large():
+    profile = BedrockProvider.model_profile('us.mistral.pixtral-large-2502-v1:0')
+    assert _normalize(profile) == snapshot(
+        {
+            'tool_call_id_length': 9,
+            'supported_native_tools': frozenset(),
+            'bedrock_tool_result_format': 'json',
+            'json_schema_transformer': BedrockJsonSchemaTransformer,
+            'bedrock_supports_strict_tool_definition': False,
+            'bedrock_tool_result_colocatable_content': frozenset(),
+            'bedrock_supports_leading_assistant_message': False,
             'bedrock_supported_media_kinds_in_tool_returns': frozenset({'document'}),
             'supports_video_input': False,
         }
@@ -1966,7 +2028,8 @@ def test_bedrock_unknown_provider_returns_none():
 
 # =============================================================================
 # OpenRouter — cross-provider routing via the OpenAI-compat surface.
-# Three-layer merge: OpenAI transformer fallback / lab upstream / OpenRouter overrides.
+# Four-layer merge: OpenAI transformer fallback / lab upstream / OpenRouter model list's input modalities /
+# OpenRouter overrides.
 # =============================================================================
 
 
@@ -2029,6 +2092,8 @@ def test_openrouter_openai_gpt_5_4():
     assert _normalize(profile) == snapshot(
         {
             'supports_json_schema_output': True,
+            'supports_image_input': True,
+            'supports_audio_file_input': False,
             'supports_video_input': False,
             'supports_json_object_output': True,
             'supports_image_output': True,
@@ -2077,6 +2142,7 @@ def test_openrouter_google_gemini_3_pro():
             'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
+            'thinking_enabled_by_default': True,
             'google_supports_tool_combination': True,
             'google_supports_server_side_tool_invocations': True,
             'google_supported_mime_types_in_tool_returns': (
@@ -2124,7 +2190,7 @@ def test_openrouter_google_gemini_3_pro():
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
 def test_openrouter_google_gemini_3_8_flash_thinking_levels():
-    """Google via OpenRouter — the restricted level set survives the three-layer merge."""
+    """Google via OpenRouter — the restricted level set survives the layered merge."""
 
     profile = OpenRouterProvider.model_profile('google/gemini-3.8-flash')
     assert profile is not None
@@ -2141,8 +2207,11 @@ def test_openrouter_google_gemini_3_8_flash_thinking_levels():
             'google_supports_minimal_thinking_level': False,
             'google_supports_server_side_tool_invocations': True,
             'google_supports_strict_tool_definition': True,
+            'supports_image_input': True,
+            'supports_audio_file_input': True,
             'supports_video_input': True,
             'google_supports_tool_combination': True,
+            'thinking_enabled_by_default': True,
             'thinking_always_enabled': True,
             'google_thinking_levels': frozenset(('LOW', 'MEDIUM', 'HIGH')),
             'json_schema_transformer': _OpenRouterGoogleJsonSchemaTransformer,
@@ -2195,6 +2264,8 @@ def test_openrouter_x_ai_grok_4_7():
             'supported_image_media_types': frozenset(
                 {'image/jpeg', 'image/png', 'image/vnd.microsoft.icon', 'image/webp', 'image/x-icon'}
             ),
+            'supports_image_input': True,
+            'supports_audio_file_input': False,
             'supports_video_input': False,
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
@@ -2259,6 +2330,8 @@ def test_openrouter_zai_glm_5_3():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_image_input': False,
+            'supports_audio_file_input': False,
             'supports_video_input': False,
             'thinking_always_enabled': True,
             'openrouter_lowest_reasoning_effort': 'minimal',
@@ -2396,6 +2469,7 @@ def test_github_copilot_google_gemini_3_pro():
             'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
+            'thinking_enabled_by_default': True,
             'google_supports_tool_combination': True,
             'google_supports_server_side_tool_invocations': True,
             'google_supported_mime_types_in_tool_returns': (
@@ -2526,6 +2600,8 @@ def test_openrouter_deepseek():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': OpenAIJsonSchemaTransformer,
+            'supports_image_input': False,
+            'supports_audio_file_input': False,
             'supports_video_input': False,
             'supports_thinking': True,
             'openai_chat_thinking_field': 'reasoning',
@@ -2553,6 +2629,8 @@ def test_openrouter_meta_llama():
     assert _normalize(profile) == snapshot(
         {
             'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+            'supports_image_input': False,
+            'supports_audio_file_input': False,
             'supports_video_input': False,
             'openai_chat_thinking_field': 'reasoning',
             'openai_chat_send_back_thinking_parts': 'field',
@@ -3068,6 +3146,7 @@ def test_vllm_gpt_oss_hf_namespace():
             'openai_chat_supports_document_input': False,
             'openai_chat_supports_multiple_system_messages': False,
             'native_output_requires_schema_in_instructions': True,
+            'openai_chat_thinking_summary_false_body': {'include_reasoning': False},
             'may_tokenize_special_tokens_in_content': True,
         }
     )
@@ -3086,6 +3165,7 @@ def test_vllm_qwen_hf_namespace():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'native_output_requires_schema_in_instructions': True,
+            'openai_chat_thinking_summary_false_body': {'include_reasoning': False},
             'may_tokenize_special_tokens_in_content': True,
         }
     )
@@ -3112,7 +3192,8 @@ def test_compaction_on_demand_is_off_where_responses_compact_is_not_served():
 def test_vllm_gemma_video_is_up_to_the_model_class():
     """Gemma reads video, but neither OpenAI API has a video part, so the model class turns the flag off.
 
-    The provider profile keeps the family's answer; OpenRouter, which maps `video_url`, keeps it too.
+    The provider profile keeps the family's answer. OpenRouter maps `video_url`, but its model list has no video for
+    Gemma 3, and the list beats the family's profile on OpenRouter routes.
     """
     family = VLLMProvider.model_profile('google/gemma-3-27b-it')
     assert family is not None and family.get('supports_video_input') is True
@@ -3124,7 +3205,7 @@ def test_vllm_gemma_video_is_up_to_the_model_class():
         'chat': chat.profile.get('supports_video_input'),
         'responses': responses.profile.get('supports_video_input'),
         'openrouter': openrouter.profile.get('supports_video_input'),
-    } == snapshot({'chat': False, 'responses': False, 'openrouter': True})
+    } == snapshot({'chat': False, 'responses': False, 'openrouter': False})
 
 
 @pytest.mark.skipif(not openai_imports(), reason='openai not installed')
@@ -3138,6 +3219,7 @@ def test_vllm_unknown_falls_back_to_overlay_only():
             'supports_json_schema_output': True,
             'supports_json_object_output': True,
             'native_output_requires_schema_in_instructions': True,
+            'openai_chat_thinking_summary_false_body': {'include_reasoning': False},
             'may_tokenize_special_tokens_in_content': True,
         }
     )
@@ -3944,6 +4026,8 @@ def test_openai_compatible_qwen3_next():
         {
             'openrouter': {
                 'json_schema_transformer': InlineDefsJsonSchemaTransformer,
+                'supports_image_input': False,
+                'supports_audio_file_input': False,
                 'supports_video_input': False,
                 'ignore_streamed_leading_whitespace': True,
                 'needs_json_string_tool_returns': True,
@@ -4039,6 +4123,7 @@ def test_openai_compatible_qwen3_next():
                 'supports_json_schema_output': True,
                 'supports_json_object_output': True,
                 'native_output_requires_schema_in_instructions': True,
+                'openai_chat_thinking_summary_false_body': {'include_reasoning': False},
                 'may_tokenize_special_tokens_in_content': True,
             },
             'sambanova': {
@@ -4392,6 +4477,7 @@ def test_vercel_vertex_gemini():
             'supports_video_input': True,
             'supports_thinking': True,
             'thinking_always_enabled': True,
+            'thinking_enabled_by_default': True,
             'google_supports_tool_combination': True,
             'google_supports_server_side_tool_invocations': True,
             'google_supported_mime_types_in_tool_returns': (
@@ -4635,6 +4721,7 @@ def test_otari_gemini():
             'supports_tool_return_schema': True,
             'supports_video_input': True,
             'supports_thinking': True,
+            'thinking_enabled_by_default': True,
             'google_supports_thinking_level': False,
             'google_supports_strict_tool_definition': True,
             'google_web_search_billed_per_prompt': True,

@@ -40,6 +40,7 @@ from .exceptions import (
     CostCalculationFailedWarning,
     CostNotFoundWarning,
     DeprecatedModelWarning,
+    EnumDocstringsUnavailableWarning,
     FallbackExceptionGroup,
     IncompleteToolCall,
     MessageHistoryMutatedWarning,
@@ -62,6 +63,7 @@ from .exceptions import (
     ModelTimeoutError,
     ModelUnavailableError,
     OutputTokenLimitExceeded,
+    PartialRubricWarning,
     PydanticAIDeprecationWarning,
     RequestTimeoutSetting,
     RetryModelRequest,
@@ -245,7 +247,7 @@ from .profiles import (
     ModelProfile,
     ModelProfileSpec,
 )
-from .run import AgentRun, AgentRunResult, AgentRunResultEvent
+from .run import AgentRun, AgentRunResult, AgentRunResultEvent, CompactionRunResult
 from .settings import ModelSettings, ToolChoice, ToolOrOutput
 from .template import TemplateStr
 from .tools import (
@@ -351,6 +353,8 @@ __all__: tuple[str, ...] = (
     'RunTimedOut',
     'MessageHistoryMutatedWarning',
     'DeprecatedModelWarning',
+    'PartialRubricWarning',
+    'EnumDocstringsUnavailableWarning',
     'PydanticAIDeprecationWarning',
     'RetryModelRequest',
     'SkipModelRequest',
@@ -568,6 +572,7 @@ __all__: tuple[str, ...] = (
     'AgentRunEvents',
     'AgentRunResult',
     'AgentRunResultEvent',
+    'CompactionRunResult',
     'Conversation',
     'ConversationTypeAdapter',
 )
