@@ -750,6 +750,16 @@ async def test_a_lowered_container_that_writes_its_own_instructions_is_one_block
     ]
 
 
+def test_a_lowered_containers_authority_ignores_deferred_instruction_sources():
+    visible = Capability[None](id='visible', instructions='Visible note.').with_authority('user')
+    deferred = Capability[None](id='deferred', description='A deferred note.', defer_loading=True).with_authority(
+        'none'
+    )
+    container = _AuthoringCombined([visible, deferred]).with_authority('user')
+
+    assert container._effective_instruction_authority == 'user'  # pyright: ignore[reportPrivateUsage]
+
+
 @dataclass
 class _ReplacingWrapper(PrefixTools[None]):
     def get_instructions(self) -> str:
@@ -776,6 +786,25 @@ async def test_a_wrapper_that_replaces_its_lowered_childs_instructions_is_what_t
 
     assert received.instructions == ['Replaced.']
     assert statements(result.all_messages()) == []
+
+
+async def test_a_lowered_wrapper_that_replaces_its_childs_instructions_states_its_own_block():
+    received = Received()
+
+    def model_fn(messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        received.instructions.append(info.instructions)
+        return ModelResponse(parts=[TextPart('Done.')])
+
+    child = Capability[None](id='replaceable_child', instructions='Child note.').with_authority('none')
+    capability = _ReplacingWrapper(wrapped=CombinedCapability[None]([child]), prefix='n').with_authority('none')
+    result = await Agent(
+        FunctionModel(model_fn, profile=INLINE),
+        deps_type=type(None),
+        capabilities=[capability],
+    ).run('Hi')
+
+    assert received.instructions == [None]
+    assert [(delta.content, delta.authority) for delta in statements(result.all_messages())] == [('Replaced.', 'none')]
 
 
 async def test_an_operator_container_that_writes_its_own_instructions_warns_it_replaces_a_lowered_childs():

@@ -4348,6 +4348,22 @@ def test_a_wrappers_authority_ceiling_reaches_a_nested_capability_hook() -> None
     ]
 
 
+def test_lowering_a_wrapper_handles_a_wrapped_capability_that_keeps_its_instance() -> None:
+    """A custom `with_authority` may keep its instance while the wrapper itself is lowered."""
+
+    @dataclass
+    class KeepsInstance(AbstractCapability):
+        def with_authority(self, authority: Authority) -> KeepsInstance:
+            return self
+
+    child = KeepsInstance()
+    lowered = WrapperCapability(wrapped=child).with_authority('none')
+
+    assert lowered is not child
+    assert lowered.wrapped is child
+    assert lowered._effective_authority == 'none'  # pyright: ignore[reportPrivateUsage]
+
+
 async def test_dynamic_capability_contributes_toolset_function() -> None:
     """A resolved capability may contribute a toolset *function*; it's evaluated with the run context."""
     toolset = FunctionToolset()
