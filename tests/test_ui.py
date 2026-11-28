@@ -1618,6 +1618,48 @@ async def test_run_stream_native_metadata_forwarded():
     assert run_result_event.result.metadata == {'ui': 'native'}
 
 
+async def test_run_stream_infers_agent_name_from_caller_frame():
+    agent = Agent(model=TestModel(custom_output_text='name inference'))
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    named_adapter = DummyUIAdapter(agent, request)
+
+    events = [event async for event in named_adapter.run_stream()]
+
+    assert agent.name == 'agent'
+    assert events
+
+
+async def test_run_stream_native_infers_agent_name_from_caller_frame():
+    agent = Agent(model=TestModel(custom_output_text='native name inference'))
+    named_adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
+
+    events = [event async for event in named_adapter.run_stream_native()]
+
+    assert agent.name == 'agent'
+    assert events
+
+
+async def test_run_stream_explicit_name_not_overwritten():
+    agent = Agent(model=TestModel(custom_output_text='explicit name'), name='explicit')
+    request = DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')])
+    adapter = DummyUIAdapter(agent, request)
+
+    events = [event async for event in adapter.run_stream()]
+
+    assert agent.name == 'explicit'
+    assert events
+
+
+async def test_run_stream_native_explicit_name_not_overwritten():
+    agent = Agent(model=TestModel(custom_output_text='explicit native name'), name='explicit')
+    adapter = DummyUIAdapter(agent, DummyUIRunInput(messages=[ModelRequest.user_text_prompt('Hello')]))
+
+    events = [event async for event in adapter.run_stream_native()]
+
+    assert agent.name == 'explicit'
+    assert events
+
+
 async def test_adapter_dispatch_request(monkeypatch: pytest.MonkeyPatch):
     # The agent carries a capability that recognizes the ref: a `WorkspaceRef` no capability can
     # supply is a `UserError`, and this test is about the forwarding, not that failure.

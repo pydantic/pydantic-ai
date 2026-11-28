@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import inspect
 import re
 import warnings
 from abc import ABC, abstractmethod
@@ -1658,6 +1659,12 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
                 Use `capabilities=[NativeTool(...)]` to add provider-side native tools per request.
             workspace: Optional [workspace](../../workspace.md) for this run: a backend or `Workspace` to use as is, a `WorkspaceRef` to continue in, or `'new'` for a fresh one instead of the one in `message_history`.
         """
+        # `run_stream_events` infers the agent name against its own caller, which is this method
+        # instead of the user's adapter call site, so resolve the name here and stop the inner call
+        # from re-inferring.
+        if infer_name and self.agent.name is None:
+            self.agent._infer_name(inspect.currentframe())  # pyright: ignore[reportPrivateUsage]
+            infer_name = False
         if conversation_id is None:
             conversation_id = self.conversation_id
         self._check_conversation_store_run(message_history, conversation_id, usage)
@@ -1811,6 +1818,11 @@ class UIAdapter(ABC, Generic[RunInputT, MessageT, EventT, AgentDepsT, OutputData
             on_cancel: Optional callback function called when the agent run ends in first-party cancellation.
                 The callback receives the [`RunCancelled`][pydantic_ai.exceptions.RunCancelled] and can optionally yield additional protocol-specific events.
         """
+        # See `run_stream_native`: resolve the name against this method's caller and stop the inner
+        # calls from re-inferring against an adapter-internal frame.
+        if infer_name and self.agent.name is None:
+            self.agent._infer_name(inspect.currentframe())  # pyright: ignore[reportPrivateUsage]
+            infer_name = False
         return self.transform_stream(
             self.run_stream_native(
                 output_type=output_type,
