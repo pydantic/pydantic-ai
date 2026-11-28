@@ -1,0 +1,1089 @@
+"""Properties of saving a run's conversation to a `ConversationStore`, over drawn sequences of turns.
+
+Each example drives one `InMemoryConversationStore` conversation through a drawn list of `Turn`s. A turn takes the
+conversation from where the last one left it, from `load()` or from `load(limit=n)`, may append messages to it, runs
+an agent on it and saves what the run returned. A run can have a new prompt or none, call a tool or two, answer with
+an output tool, pause on a tool that needs approval and resume with `DeferredToolResults`, stream, run with a model
+setting or a dynamic system prompt, trim or summarize its history with `ProcessHistory` or rebuild its tool results
+as new requests, with copies of the messages it keeps or not, add messages from a hook with `ctx.enqueue(...)`,
+`ctx.messages.append(...)` or `ctx.messages.insert(0, ...)`, before the run, its first request or each request, and
+replace its history before the run with copies. Between the run and the save, the result can make a JSON round trip,
+and the user can edit the conversation on purpose: drop its last turn, or put a new message in place of one.
+
+The test only uses the public API, and keeps a reference of what the user meant: the head as it was before each save,
+the messages the user added, what the run made, in the order it made them, and what the model was sent. Every model
+response, prompt, tool result and summary has text of its own, so a message can be told apart by its content. After
+each save the head is loaded and checked:
+
+- S1, no silent loss: with no edit, every message the head had before the save is still on it, in order.
+- S2, no duplicates: no prompt, text, tool call, tool result or summary is on the head twice.
+- S3, unedited saves append: with no edit, the head before the save is the start of the head after it, and the
+  conversation has no more `branches` than before.
+- S4, round trip: the head ends with the messages of the conversation that was saved, and those before them, for a
+  conversation loaded as a window, are the ones the head had.
+- S5, every message is kept: with no edit, each message the user added, each response the model gave and each tool
+  result is on the head once, in the order they were made, and so is each message a hook added, in the order the
+  hooks added them, wherever the run put them next to the prompt.
+- S6, summaries: with no edit, each summary is on the head once, before the first message the model was sent after
+  it that the head didn't have before the run. A summary of messages the store has goes after them, as the
+  [persistence docs](../docs/persistence.md#using-a-conversation-store) say, so stored messages after a summary in
+  what the model was sent don't count.
+- S7, edits: after an edit at position i, the head ends with the edited messages, and the messages before i are the
+  ones it had.
+
+The turns leave out two things a user doesn't do: resuming a paused run from a window that doesn't hold the paused
+call, which the run rejects, and editing a tool call or its result rather than a prompt or a reply, which would leave
+the other one unanswered.
+
+The test pins the bugs these properties find in the library as it is. A property that fails for drawn turns is a
+known finding: `KNOWN_FINDINGS` takes what draws it out of the turns that property is checked on, and a strict
+expected failure on a minimal list of turns pins it, so a fix shows up as an XPASS, and its finding can then be
+removed. `test_each_property_can_fail` shows each checker can fail without them.
+
+`PROPERTY_SETTINGS` runs a derandomized batch of 50 examples per property. `STORE_PROPERTY_EXAMPLES=200` sets a longer,
+randomized run to look for new failures.
+"""
+
+from __future__ import annotations as _annotations
+
+import asyncio
+import collections
+import copy
+import dataclasses
+import itertools
+import json
+import os
+from collections.abc import AsyncIterator, Callable, Sequence
+from dataclasses import dataclass, field
+from typing import Any, Literal, get_args
+
+import pytest
+from hypothesis import HealthCheck, given, settings, strategies as st
+from pydantic import TypeAdapter
+
+from pydantic_ai import Agent, AgentRunResult, Conversation, RunContext
+from pydantic_ai.capabilities import AbstractCapability, ProcessHistory
+from pydantic_ai.conversation import ConversationTypeAdapter
+from pydantic_ai.conversation_store import InMemoryConversationStore
+from pydantic_ai.messages import (
+    CompactionPart,
+    ModelMessage,
+    ModelRequest,
+    ModelResponse,
+    TextPart,
+    ToolCallPart,
+    ToolReturnPart,
+    UserPromptPart,
+)
+from pydantic_ai.models import ModelRequestContext
+from pydantic_ai.models.function import AgentInfo, DeltaToolCall, DeltaToolCalls, FunctionModel
+from pydantic_ai.output import ToolOutput
+from pydantic_ai.settings import ModelSettings
+from pydantic_ai.tools import DeferredToolRequests, DeferredToolResults
+
+from .function_model_prefix import COMPACTION_REWRITES_HISTORY
+
+pytestmark = [
+    pytest.mark.moves_cache_prefix(reason=COMPACTION_REWRITES_HISTORY),
+    pytest.mark.filterwarnings(
+        'ignore:Do not use the `random` module inside strategies:hypothesis.errors.HypothesisDeprecationWarning'
+    ),
+]
+
+_long_run_examples = os.environ.get('STORE_PROPERTY_EXAMPLES')
+PROPERTY_SETTINGS = settings(
+    max_examples=int(_long_run_examples) if _long_run_examples else 50,
+    derandomize=_long_run_examples is None,
+    database=None,
+    deadline=None,
+    print_blob=_long_run_examples is not None,
+    suppress_health_check=[HealthCheck.too_slow],
+)
+
+Property = Literal['S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7']
+PROPERTIES: tuple[Property, ...] = ('S1', 'S2', 'S3', 'S4', 'S5', 'S6', 'S7')
+
+
+# --- turns -----------------------------------------------------------------------------------------------
+
+
+Source = Literal['carry', 'load', 'window']
+Appended = Literal['prompt', 'exchange']
+Mode = Literal['plain', 'tool', 'tools', 'output_tool', 'deferred']
+Trims = Literal['trim', 'summarize', 'elide']
+Hook = Literal[
+    'enqueue_before_run',
+    'enqueue_before_model_request',
+    'append_before_run',
+    'insert_before_run',
+    'append_before_model_request',
+    'append_and_enqueue_before_model_request',
+    'deepcopy_before_run',
+    'copy_last_before_run',
+]
+_COPYING_HOOKS = ('deepcopy_before_run', 'copy_last_before_run')
+RoundTrip = Literal['result', 'conversation']
+Edit = Literal['drop_last_turn', 'replace']
+
+
+@dataclass(frozen=True)
+class Turn:
+    """One request of a chat app: get the conversation, maybe add to it, run, maybe edit, save."""
+
+    source: Source = 'carry'
+    """Go on from the conversation the last save left, `load()` it, or `load(limit=window)` it."""
+    window: int = 2
+    appended: tuple[Appended, ...] = ()
+    """Messages appended before the run: a user prompt, or a prompt and a reply, as a UI that keeps history does."""
+    prompt: bool = True
+    """Run with a new prompt, or with none, going on from the last appended prompt."""
+    mode: Mode = 'plain'
+    """Answer at once, call a tool first, or two, answer with an output tool, or pause on a tool that needs approval
+    and resume in a second run."""
+    capability: Trims | None = None
+    """Trim or summarize the history, or replace each tool result before the last message with a new request."""
+    keep: int = 2
+    """How many of the last messages the capability keeps."""
+    copy_history: bool = False
+    """The capability returns deep copies of the messages it keeps, as one that redacts them does."""
+    hook: Hook | None = None
+    hook_every_step: bool = False
+    """A `before_model_request` hook adds its message before every request of the run, not only the first."""
+    system_prompt: bool = False
+    """Give the agent a dynamic system prompt, which the run rewrites on the first request each time."""
+    settings: bool = False
+    """Run with a model setting, so a run's request records the change from the last one without it."""
+    stream: bool = False
+    round_trip: RoundTrip | None = None
+    save_result: bool = True
+    """Save the run's result, or the `result.conversation` kept in a variable."""
+    edit: Edit | None = None
+    edit_at: int = 0
+    """Which prompt or reply `replace` replaces, modulo how many the conversation has."""
+
+    def __repr__(self) -> str:
+        changed = [
+            f'{f.name}={getattr(self, f.name)!r}'
+            for f in dataclasses.fields(self)
+            if getattr(self, f.name) != f.default
+        ]
+        return f'Turn({", ".join(changed)})'
+
+    def _repr_pretty_(self, printer: Any, cycle: bool) -> None:
+        """Hypothesis prints a failing example with this, so it shows only what the turn changes."""
+        printer.text(repr(self))
+
+
+def _one_of(kinds: Any, *, optional: bool = False) -> st.SearchStrategy[Any]:
+    return st.sampled_from([*([None] if optional else []), *get_args(kinds)])
+
+
+@st.composite
+def turns(draw: st.DrawFn) -> Turn:
+    appended: tuple[Appended, ...] = tuple(draw(st.lists(_one_of(Appended), max_size=3)))
+    mode: Mode = draw(_one_of(Mode))
+    capability: Trims | None = draw(_one_of(Trims, optional=True))
+    hook: Hook | None = draw(_one_of(Hook, optional=True))
+    return Turn(
+        source=draw(_one_of(Source)),
+        window=draw(st.integers(0, 6)),
+        appended=appended,
+        prompt=draw(st.booleans()) if appended and appended[-1] == 'prompt' else True,
+        mode=mode,
+        capability=capability,
+        keep=draw(st.integers(1, 4)),
+        copy_history=capability is not None and draw(st.booleans()),
+        hook=hook,
+        hook_every_step=hook is not None and hook.endswith('before_model_request') and draw(st.booleans()),
+        system_prompt=draw(st.booleans()),
+        settings=draw(st.booleans()),
+        stream=mode != 'deferred' and draw(st.booleans()),
+        round_trip=draw(_one_of(RoundTrip, optional=True)),
+        save_result=draw(st.booleans()),
+        edit=draw(st.one_of(st.none(), _one_of(Edit))),
+        edit_at=draw(st.integers(0, 20)),
+    )
+
+
+# --- what the user and the run made ----------------------------------------------------------------------
+
+PartKey = tuple[Any, ...]
+
+
+def part_key(part: Any) -> PartKey:
+    """A part by its content, leaving out what a run fills in, like timestamps and run ids."""
+    if isinstance(part, UserPromptPart):
+        return ('user', str(part.content))
+    if isinstance(part, TextPart):
+        return ('text', part.content)
+    if isinstance(part, ToolCallPart):
+        return ('call', part.tool_name, part.tool_call_id, json.dumps(part.args_as_dict(), sort_keys=True))
+    if isinstance(part, ToolReturnPart):
+        return ('return', part.tool_name, part.tool_call_id, str(part.content))
+    if isinstance(part, CompactionPart):
+        return ('summary', part.content)
+    return (part.part_kind, repr(getattr(part, 'content', None)))
+
+
+def message_key(message: ModelMessage) -> PartKey:
+    return (message.kind, tuple(part_key(part) for part in message.parts))
+
+
+_UNIQUE_KINDS = {'user', 'text', 'call', 'return', 'summary'}
+
+
+@dataclass
+class Made:
+    """Something the user or the run made, in the order they made it."""
+
+    kind: Literal['part', 'response', 'added', 'summary']
+    key: PartKey
+    """A part's key, a response's message key, the text a hook added, or a summary's text."""
+
+
+@dataclass
+class Record:
+    """What one example made, and what the model was sent, across its turns."""
+
+    counter: itertools.count[int] = field(default_factory=itertools.count)
+    made: list[Made] = field(default_factory=list[Made])
+    sent: list[list[ModelMessage]] = field(default_factory=list[list[ModelMessage]])
+
+    def next(self) -> int:
+        return next(self.counter)
+
+
+# --- the agent --------------------------------------------------------------------------------------------
+
+
+Step = Literal['lookup', 'approve', 'answer']
+_OUTPUT_TOOL = 'answer'
+
+
+@dataclass
+class Answer:
+    text: str
+
+
+_PLANS: dict[Mode, list[Step]] = {
+    'plain': [],
+    'tool': ['lookup'],
+    'tools': ['lookup', 'lookup'],
+    'output_tool': [_OUTPUT_TOOL],
+    'deferred': ['approve'],
+}
+
+
+@dataclass
+class Script:
+    """The model: answers each request with the next step of the turn's plan, then with text."""
+
+    record: Record
+    plan: list[Step] = field(default_factory=list[Step])
+
+    def _next(self) -> ModelResponse:
+        n = self.record.next()
+        step = self.plan.pop(0) if self.plan else None
+        if step is None:
+            response = ModelResponse(parts=[TextPart(f'reply {n}')])
+        elif step == _OUTPUT_TOOL:
+            response = ModelResponse(parts=[ToolCallPart(step, {'text': f'answer {n}'}, tool_call_id=f'call-{n}')])
+        else:
+            response = ModelResponse(parts=[ToolCallPart(step, {'n': n}, tool_call_id=f'call-{n}')])
+        self.record.made.append(Made('response', message_key(response)))
+        if step == _OUTPUT_TOOL:
+            self.record.made.append(Made('part', ('return', step, f'call-{n}', 'Final result processed.')))
+        return response
+
+    def respond(self, messages: list[ModelMessage], info: AgentInfo) -> ModelResponse:
+        self.record.sent.append(list(messages))
+        return self._next()
+
+    async def stream(self, messages: list[ModelMessage], info: AgentInfo) -> AsyncIterator[str | DeltaToolCalls]:
+        self.record.sent.append(list(messages))
+        response = self._next()
+        part = response.parts[0]
+        if isinstance(part, TextPart):
+            yield part.content
+        else:
+            assert isinstance(part, ToolCallPart)
+            yield {
+                0: DeltaToolCall(name=part.tool_name, json_args=part.args_as_json_str(), tool_call_id=part.tool_call_id)
+            }
+
+
+@dataclass
+class ChangesTheHistory(AbstractCapability[Any]):
+    """Adds a message of its own, with `ctx.enqueue(...)`, `ctx.messages.append(...)` or `ctx.messages.insert(0, ...)`, or one of each with `ctx.messages.append(...)` and `ctx.enqueue(...)`, before the run or a request, or replaces the messages before the run with copies: all of them, or the last one."""
+
+    how: str
+    record: Record
+    every_step: bool = False
+
+    def _add(self, ctx: RunContext[Any]) -> None:
+        for how in ('append', 'enqueue') if self.how.startswith('append_and_enqueue') else (self.how,):
+            text = f'<added {self.record.next()}>'
+            self.record.made.append(Made('added', (text,)))
+            message = ModelRequest(parts=[UserPromptPart(text)])
+            if how.startswith('enqueue'):
+                ctx.enqueue(message)
+            elif how.startswith('insert'):
+                ctx.messages.insert(0, message)
+            else:
+                ctx.messages.append(message)
+
+    async def before_run(self, ctx: RunContext[Any]) -> None:
+        if self.how == 'deepcopy_before_run':
+            ctx.messages[:] = copy.deepcopy(ctx.messages)
+        elif self.how == 'copy_last_before_run':
+            ctx.messages[-1:] = copy.deepcopy(ctx.messages[-1:])
+        elif self.how.endswith('before_run'):
+            self._add(ctx)
+
+    async def before_model_request(
+        self, ctx: RunContext[Any], request_context: ModelRequestContext
+    ) -> ModelRequestContext:
+        if self.how.endswith('before_model_request') and (self.every_step or ctx.run_step == 1):
+            self._add(ctx)
+        return request_context
+
+
+def _processor(turn: Turn, record: Record) -> Callable[[list[ModelMessage]], list[ModelMessage]]:
+    process = _processes(turn, record)
+    if turn.copy_history:
+        return lambda messages: copy.deepcopy(process(messages))
+    return process
+
+
+def _processes(turn: Turn, record: Record) -> Callable[[list[ModelMessage]], list[ModelMessage]]:
+    def trim(messages: list[ModelMessage]) -> list[ModelMessage]:
+        return messages[-turn.keep :]
+
+    def summarize(messages: list[ModelMessage]) -> list[ModelMessage]:
+        """Puts a summary in place of all but the last `keep` messages, as `docs/capabilities/compaction.md` says to store one."""
+        if len(messages) <= turn.keep:
+            return messages
+        text = f'summary {record.next()}'
+        record.made.append(Made('summary', (text,)))
+        return [ModelRequest(parts=[CompactionPart(content=text)]), *messages[-turn.keep :]]
+
+    def elide(messages: list[ModelMessage]) -> list[ModelMessage]:
+        """Puts a new request in place of each one with a tool result before the last message, with the results elided."""
+        return [
+            ModelRequest(
+                parts=[
+                    ToolReturnPart(part.tool_name, '[elided]', part.tool_call_id)
+                    if isinstance(part, ToolReturnPart)
+                    else part
+                    for part in message.parts
+                ]
+            )
+            if i < len(messages) - 1
+            and isinstance(message, ModelRequest)
+            and any(isinstance(part, ToolReturnPart) for part in message.parts)
+            else message
+            for i, message in enumerate(messages)
+        ]
+
+    return {'trim': trim, 'summarize': summarize, 'elide': elide}[turn.capability or 'trim']
+
+
+Output = Answer | str | DeferredToolRequests
+
+
+def _agent(turn: Turn, script: Script, record: Record) -> Agent[None, Output]:
+    capabilities: list[AbstractCapability[Any]] = []
+    if turn.capability is not None:
+        capabilities.append(ProcessHistory(_processor(turn, record)))
+    if turn.hook is not None:
+        capabilities.append(ChangesTheHistory(turn.hook, record, turn.hook_every_step))
+    agent: Agent[None, Output] = Agent(
+        FunctionModel(script.respond, stream_function=script.stream),
+        output_type=[ToolOutput(Answer, name=_OUTPUT_TOOL), str, DeferredToolRequests],
+        capabilities=capabilities,
+    )
+    if turn.system_prompt:
+
+        def system_prompt() -> str:
+            return f'system {record.next()}'
+
+        agent.system_prompt(dynamic=True)(system_prompt)
+
+    def lookup(ctx: RunContext[Any], n: int) -> str:
+        content = f'fact {n}'
+        record.made.append(Made('part', ('return', 'lookup', ctx.tool_call_id, content)))
+        return content
+
+    def approve(ctx: RunContext[Any], n: int) -> str:
+        content = f'approved {n}'
+        record.made.append(Made('part', ('return', 'approve', ctx.tool_call_id, content)))
+        return content
+
+    agent.tool(lookup)
+    agent.tool(requires_approval=True)(approve)
+    return agent
+
+
+# --- the driver -------------------------------------------------------------------------------------------
+
+_RESULT_ADAPTER: TypeAdapter[AgentRunResult[Output]] = TypeAdapter(AgentRunResult[Output])
+
+
+@dataclass
+class Session:
+    """The conversation as the app holds it between requests, and the reference: the head the store should have."""
+
+    store: InMemoryConversationStore = field(default_factory=InMemoryConversationStore)
+    conversation: Conversation | None = None
+    head: list[ModelMessage] = field(default_factory=list[ModelMessage])
+    """The head as the last save left it, once checked."""
+    offset: int = 0
+    """How many messages of `head` come before those of `conversation`, when it was loaded as a window."""
+
+
+def _flat(head: Sequence[ModelMessage]) -> list[tuple[int, int, PartKey]]:
+    return [(i, j, part_key(part)) for i, message in enumerate(head) for j, part in enumerate(message.parts)]
+
+
+def _is_subsequence(small: Sequence[ModelMessage], big: Sequence[ModelMessage]) -> bool:
+    it = iter(big)
+    return all(any(message == other for other in it) for message in small)
+
+
+@dataclass
+class Save:
+    """What a save is checked against."""
+
+    before: list[ModelMessage]
+    offset: int
+    saved: list[ModelMessage]
+    made: list[Made]
+    sent: list[list[ModelMessage]]
+    branches: int
+    edit_at: int | None
+    """Where the edit was, in the conversation's messages, or `None` with no edit."""
+
+
+def _no_silent_loss(save: Save, head: list[ModelMessage], branches: int) -> list[str]:
+    return [] if _is_subsequence(save.before, head) else ['a message stored before the save is gone or out of order']
+
+
+def _no_duplicates(save: Save, head: list[ModelMessage], branches: int) -> list[str]:
+    counts = collections.Counter(key for _, _, key in _flat(head) if key[0] in _UNIQUE_KINDS)
+    return [f'{key} is on the head {count} times' for key, count in counts.items() if count > 1]
+
+
+def _appends(save: Save, head: list[ModelMessage], branches: int) -> list[str]:
+    found: list[str] = []
+    if head[: len(save.before)] != save.before:
+        found.append('the head before the save is not the start of the head after it')
+    if branches > save.branches:
+        found.append(f'an unedited save added {branches - save.branches} branch(es)')
+    return found
+
+
+def _round_trip(save: Save, head: list[ModelMessage], branches: int) -> list[str]:
+    if head[save.offset :] != save.saved or head[: save.offset] != save.before[: save.offset]:
+        return ['the head is not the saved conversation after the messages before its window']
+    return []
+
+
+def _where(made: Made, head: list[ModelMessage]) -> list[tuple[int, int]]:
+    """Where on the head `made` is, by message and part."""
+    if made.kind == 'response':
+        return [(i, 0) for i, message in enumerate(head) if message_key(message) == made.key]
+    if made.kind == 'added':
+        return [(i, j) for i, j, key in _flat(head) if any(made.key[0] in str(value) for value in key[1:])]
+    return [(i, j) for i, j, key in _flat(head) if key == made.key]
+
+
+def _everything_kept(save: Save, head: list[ModelMessage], branches: int) -> list[str]:
+    found: list[str] = []
+    positions: list[tuple[int, int]] = []
+    added: list[tuple[int, int]] = []
+    for made in save.made:
+        if made.kind == 'summary':
+            continue
+        where = _where(made, head)
+        if len(where) != 1:
+            found.append(f'{made.key} is on the head {len(where)} times')
+        else:
+            # Where a hook's message goes next to the prompt is the run's to decide, but not their order.
+            (added if made.kind == 'added' else positions).append(where[0])
+    if positions != sorted(set(positions)) or added != sorted(set(added)):
+        found.append('what was made is not on the head in the order it was made')
+    return found
+
+
+def _summaries(save: Save, head: list[ModelMessage], branches: int) -> list[str]:
+    found: list[str] = []
+    flat = _flat(head)
+    stored = {key for _, _, key in _flat(save.before)}
+    for made in save.made:
+        if made.kind != 'summary':
+            continue
+        key = ('summary', made.key[0])
+        where = [i for i, _, k in flat if k == key]
+        if len(where) != 1:
+            found.append(f'{made.key[0]!r} is on the head {len(where)} times')
+            continue
+        sent = next(sent for sent in save.sent if any(key in map(part_key, m.parts) for m in sent))
+        at = next(i for i, m in enumerate(sent) if key in map(part_key, m.parts))
+        for later in sent[at + 1 :]:
+            new = [part_key(part) for part in later.parts if part_key(part) not in stored]
+            # The first message sent after the summary that the store didn't have. One that isn't on the head at all
+            # is S5's to report.
+            if found_at := [i for i, _, k in flat if k in new]:
+                if where[0] > min(found_at):
+                    found.append(f'{made.key[0]!r} is after {new[0]}, which the model was sent after it')
+                break
+    return found
+
+
+def _edits_kept(save: Save, head: list[ModelMessage], branches: int) -> list[str]:
+    assert save.edit_at is not None
+    found: list[str] = []
+    kept = save.offset + min(save.edit_at, len(save.before) - save.offset)
+    if head[save.offset :] != save.saved:
+        found.append('the head is not the edited conversation')
+    if head[:kept] != save.before[:kept]:
+        found.append('a message before the edit changed')
+    return found
+
+
+_CHECKS: dict[Property, tuple[Callable[[Save, list[ModelMessage], int], list[str]], bool | None]] = {
+    'S1': (_no_silent_loss, False),
+    'S2': (_no_duplicates, None),
+    'S3': (_appends, False),
+    'S4': (_round_trip, None),
+    'S5': (_everything_kept, False),
+    'S6': (_summaries, False),
+    'S7': (_edits_kept, True),
+}
+"""Each property's checker, and whether it checks only edited saves (`True`), only unedited ones (`False`), or all."""
+
+
+def violations(save: Save, head: list[ModelMessage], branches: int) -> list[tuple[Property, str]]:
+    """The properties the head loaded after `save` breaks."""
+    edited = save.edit_at is not None
+    return [
+        (checked, found)
+        for checked, (check, on_edited) in _CHECKS.items()
+        if on_edited is None or on_edited == edited
+        for found in check(save, head, branches)
+    ]
+
+
+def _edit(turn: Turn, conversation: Conversation, record: Record) -> int | None:
+    """Edit `conversation` on purpose, as `turn` says, and return where."""
+    messages = conversation.messages
+    if turn.edit is None or not messages:
+        return None
+    if turn.edit == 'drop_last_turn':
+        # A turn starts at a prompt that doesn't come between a tool call and its result, like a message a hook
+        # added before a paused run was resumed, so dropping it leaves no call unanswered.
+        at = max(
+            (
+                i
+                for i, m in enumerate(messages)
+                if isinstance(m, ModelRequest)
+                and any(isinstance(p, UserPromptPart) for p in m.parts)
+                and not (i and isinstance(previous := messages[i - 1], ModelResponse) and previous.tool_calls)
+            ),
+            default=len(messages) - 1,
+        )
+        del messages[at:]
+        return at
+    # A user edits a prompt or a reply, not a tool call or its result, which would leave the other unanswered.
+    editable = [i for i, m in enumerate(messages) if all(isinstance(p, (UserPromptPart, TextPart)) for p in m.parts)]
+    if not editable:
+        return None
+    at = editable[turn.edit_at % len(editable)]
+    text = f'edited {record.next()}'
+    if isinstance(messages[at], ModelRequest):
+        messages[at] = ModelRequest(parts=[UserPromptPart(text)])
+    else:
+        messages[at] = ModelResponse(parts=[TextPart(text)])
+    return at
+
+
+async def _save(
+    session: Session,
+    turn: Turn,
+    result: AgentRunResult[Any],
+    record: Record,
+    made_from: int,
+    sent_from: int,
+    edit: bool,
+) -> list[tuple[Property, str]]:
+    """Save `result` as `turn` says and check the head."""
+    if turn.round_trip == 'result':
+        result = _RESULT_ADAPTER.validate_json(_RESULT_ADAPTER.dump_json(result))
+    conversation = result.conversation
+    if turn.round_trip == 'conversation':
+        conversation = ConversationTypeAdapter.validate_json(ConversationTypeAdapter.dump_json(conversation))
+    edit_at = _edit(turn, conversation, record) if edit else None
+    record_before = await session.store.read_record('c')
+    save = Save(
+        before=session.head,
+        offset=session.offset,
+        saved=list(conversation.messages),
+        made=record.made[made_from:],
+        sent=record.sent[sent_from:],
+        branches=len(record_before.branches) if record_before else 0,
+        edit_at=edit_at,
+    )
+    if turn.save_result and edit_at is None and turn.round_trip != 'conversation':
+        await session.store.save(result)
+        session.conversation = result.conversation
+    else:
+        await session.store.save(conversation)
+        session.conversation = conversation
+    loaded = await session.store.load('c')
+    stored = await session.store.read_record('c')
+    assert loaded is not None and stored is not None
+    found = violations(save, loaded.messages, len(stored.branches))
+    session.head = loaded.messages
+    return found
+
+
+async def _turn(session: Session, turn: Turn, record: Record) -> list[tuple[Property, str]]:
+    store = session.store
+    if session.conversation is None:
+        conversation = Conversation(conversation_id='c')
+    elif turn.source == 'carry':
+        conversation = session.conversation
+    else:
+        loaded = await store.load('c', limit=turn.window if turn.source == 'window' else None)
+        assert loaded is not None
+        conversation = loaded
+        session.offset = len(session.head) - len(loaded.messages)
+
+    made_from, sent_from = len(record.made), len(record.sent)
+    for kind in turn.appended:
+        n = record.next()
+        request = ModelRequest(parts=[UserPromptPart(f'appended {n}')])
+        conversation.messages.append(request)
+        record.made.append(Made('part', part_key(request.parts[0])))
+        if kind == 'exchange':
+            response = ModelResponse(parts=[TextPart(f'appended reply {n}')])
+            conversation.messages.append(response)
+            record.made.append(Made('response', message_key(response)))
+    prompt: str | None = None
+    if turn.prompt:
+        prompt = f'prompt {record.next()}'
+        record.made.append(Made('part', ('user', prompt)))
+
+    script = Script(record, plan=list(_PLANS[turn.mode]))
+    agent = _agent(turn, script, record)
+    model_settings: ModelSettings | None = {'temperature': 0.5} if turn.settings else None
+    if turn.stream:
+        async with agent.run_stream(prompt, conversation=conversation, model_settings=model_settings) as stream:
+            await stream.get_output()
+        result = stream.result
+    else:
+        result = await agent.run(prompt, conversation=conversation, model_settings=model_settings)
+
+    if turn.mode != 'deferred':
+        return await _save(session, turn, result, record, made_from, sent_from, edit=True)
+
+    # Pause, save, then resume with the approval and save again.
+    assert isinstance(result.output, DeferredToolRequests), result.output
+    pending = result.output
+    found = await _save(
+        session, dataclasses.replace(turn, round_trip=None), result, record, made_from, sent_from, False
+    )
+    if found:
+        return found
+    if turn.source != 'carry':
+        # A window has to hold the paused call to resume it.
+        loaded = await store.load('c', limit=max(turn.window, 1) if turn.source == 'window' else None)
+        assert loaded is not None
+        session.conversation = loaded
+        session.offset = len(session.head) - len(loaded.messages)
+    assert session.conversation is not None
+    made_from, sent_from = len(record.made), len(record.sent)
+    results = DeferredToolResults(approvals={call.tool_call_id: True for call in pending.approvals})
+    result = await agent.run(
+        conversation=session.conversation, deferred_tool_results=results, model_settings=model_settings
+    )
+    return await _save(session, turn, result, record, made_from, sent_from, edit=True)
+
+
+def drive(steps: Sequence[Turn]) -> list[tuple[Property, str]]:
+    """Run `steps` on a new store and return what the first save that breaks a property breaks."""
+
+    async def run() -> list[tuple[Property, str]]:
+        session, record = Session(), Record()
+        for turn in steps:
+            found = await _turn(session, turn, record)
+            if found:
+                return found
+        return []
+
+    with asyncio.Runner() as runner:
+        return runner.run(run())
+
+
+_A = ModelRequest(parts=[UserPromptPart('a')])
+_B = ModelResponse(parts=[TextPart('b')])
+_C = ModelRequest(parts=[UserPromptPart('c')])
+
+
+def _save_of(**changes: Any) -> Save:
+    return dataclasses.replace(
+        Save(before=[_A, _B], offset=0, saved=[_A, _B], made=[], sent=[], branches=0, edit_at=None), **changes
+    )
+
+
+@pytest.mark.parametrize(
+    'checked,save,head,branches',
+    [
+        pytest.param('S1', _save_of(saved=[_A]), [_A], 0, id='S1'),
+        pytest.param('S2', _save_of(saved=[_A, _B, _A]), [_A, _B, _A], 0, id='S2'),
+        pytest.param('S3', _save_of(saved=[_A, _B, _C]), [_A, _B, _C], 1, id='S3'),
+        pytest.param('S4', _save_of(saved=[_A, _B, _C]), [_A, _B], 0, id='S4'),
+        pytest.param('S5', _save_of(made=[Made('part', part_key(_C.parts[0]))]), [_A, _B], 0, id='S5'),
+        pytest.param('S6', _save_of(made=[Made('summary', ('a summary',))]), [_A, _B], 0, id='S6'),
+        pytest.param('S7', _save_of(saved=[_C, _B], edit_at=0), [_A, _B], 0, id='S7'),
+    ],
+)
+def test_each_property_can_fail(checked: Property, save: Save, head: list[ModelMessage], branches: int):
+    """A property no head breaks checks nothing, so each has a head that breaks it."""
+    assert checked in {code for code, _ in violations(save, head, branches)}
+
+
+# --- known findings ---------------------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class KnownFinding:
+    id: str
+    fails: frozenset[Property]
+    leave_out: Callable[[Turn, Sequence[Turn]], Turn]
+    """The turn, after the earlier ones, without what can draw the finding, for the properties it fails."""
+    reproducers: tuple[tuple[Turn, ...], ...]
+    """Minimal lists of turns that break `fails`."""
+    reason: str
+
+
+def _requests_in_a_row(turn: Turn) -> bool:
+    """Whether the turn puts two requests in a row after the stored messages: appended ones, one a `before_run` hook
+    appended, or one and the new prompt."""
+    kinds = [
+        kind
+        for appended in turn.appended
+        for kind in (['request'] if appended == 'prompt' else ['request', 'response'])
+    ]
+    kinds += ['request'] if turn.hook == 'append_before_run' else []
+    kinds += ['request'] if turn.prompt else []
+    return any(a == b == 'request' for a, b in itertools.pairwise(kinds))
+
+
+def _stores_requests_in_a_row(turn: Turn) -> bool:
+    """Whether the turn can store two requests in a row: appended, enqueued or added by a hook, a summary, a tool
+    result and the copy a capability rebuilt, or an output tool's result and the next turn's prompt."""
+    return (
+        (turn.hook is not None and turn.hook not in _COPYING_HOOKS)
+        or turn.capability in ('summarize', 'elide')
+        or turn.mode == 'output_tool'
+        or _requests_in_a_row(turn)
+    )
+
+
+def _without_requests_in_a_row(turn: Turn, **changes: Any) -> Turn:
+    """The turn without what can store two requests in a row."""
+    if _stores_requests_in_a_row(turn):
+        changes |= {'hook': None, 'appended': (), 'prompt': True}
+        if turn.capability in ('summarize', 'elide'):
+            changes['capability'] = None
+        if turn.mode == 'output_tool':
+            changes['mode'] = 'tool'
+    return dataclasses.replace(turn, **changes)
+
+
+def _holds_a_window(turn: Turn, earlier: Sequence[Turn]) -> bool:
+    """Whether the turn goes on from a window: one it loads, or one an earlier turn loaded and it carries on from."""
+    source = next((t.source for t in reversed([*earlier, turn]) if t.source != 'carry'), 'carry')
+    return source == 'window'
+
+
+KNOWN_FINDINGS = [
+    KnownFinding(
+        'message-appended-before-run-is-lost',
+        frozenset({'S1', 'S2', 'S3', 'S4', 'S5'}),
+        # A paused turn's second run goes on from the stored messages too.
+        lambda turn, earlier: (
+            dataclasses.replace(turn, hook=None)
+            if turn.hook == 'append_before_run' and (earlier or turn.mode == 'deferred')
+            else turn
+        ),
+        (
+            (Turn(), Turn(hook='append_before_run')),
+            (Turn(mode='deferred', hook='append_before_run', round_trip='conversation', save_result=False),),
+            (
+                Turn(
+                    mode='deferred', capability='summarize', keep=1, hook='append_before_run', round_trip='conversation'
+                ),
+            ),
+        ),
+        'A message a `before_run` hook appends to a continued conversation with `ctx.messages.append(...)` is in '
+        '`result.conversation` but not saved: the save starts after the messages the run was given, and counts it '
+        'as one of them. A conversation that made a JSON round trip is compared with the stored history instead, '
+        'which it no longer starts with, so the save branches and can store the message twice.',
+    ),
+    KnownFinding(
+        'message-appended-in-a-trimmed-run-is-lost',
+        frozenset({'S5'}),
+        lambda turn, earlier: (
+            dataclasses.replace(turn, capability=None)
+            if turn.hook is not None and turn.hook.startswith('append') and turn.hook.endswith('before_model_request')
+            else turn
+        ),
+        (
+            (Turn(mode='tool', capability='trim', keep=1, hook='append_before_model_request'),),
+            (Turn(mode='tool', capability='trim', keep=1, copy_history=True, hook='append_before_model_request'),),
+        ),
+        'A message a `before_model_request` hook appends with `ctx.messages.append(...)` is not in '
+        '`result.conversation` when a capability trims it from the history in a later request.',
+    ),
+    KnownFinding(
+        'merging-unsaved-requests-branches',
+        frozenset({'S1', 'S2', 'S3'}),
+        # Only when the stored history can end in two requests in a row, or in one the run merges unsaved ones into.
+        lambda turn, earlier: (
+            dataclasses.replace(turn, appended=(), prompt=True, hook=None)
+            if _requests_in_a_row(turn) and any(map(_stores_requests_in_a_row, earlier))
+            else turn
+        ),
+        (
+            (Turn(appended=('prompt',)), Turn(source='load', appended=('prompt', 'prompt'), prompt=False)),
+            (Turn(mode='output_tool'), Turn(appended=('prompt',), prompt=False, hook='append_before_run')),
+            (Turn(mode='output_tool'), Turn(appended=('exchange', 'prompt', 'prompt'), prompt=False)),
+            (Turn(mode='output_tool'), Turn(appended=('exchange', 'prompt', 'exchange'))),
+        ),
+        'When the run merges unsaved requests in a row into one to send them, the save no longer finds them before '
+        'the messages it added and compares the whole history instead. With stored requests the run merged too, '
+        'it finds them changed and branches from there, and a stored output tool result the run merged the '
+        'unsaved requests into is stored again.',
+    ),
+    KnownFinding(
+        'summary-after-appended-messages',
+        frozenset({'S6'}),
+        # A summary that leaves only the last message is before every message added before the run that it keeps.
+        lambda turn, earlier: (
+            dataclasses.replace(turn, keep=1)
+            if turn.capability == 'summarize' and (turn.appended or turn.hook == 'append_before_run')
+            else turn
+        ),
+        (
+            (Turn(), Turn(appended=('prompt',), prompt=False, capability='summarize')),
+            (Turn(appended=('exchange',), capability='summarize'),),
+            (Turn(), Turn(capability='summarize', keep=3, hook='append_before_run', round_trip='conversation')),
+        ),
+        'A summary of stored messages is stored after the messages added before the run, like a prompt the run '
+        'goes on from, an exchange a UI sent or a message a `before_run` hook added, though the model was sent it '
+        'before them. The persistence docs describe this placement: after the messages the run was given.',
+    ),
+    KnownFinding(
+        'superseded-summary-is-lost',
+        frozenset({'S6'}),
+        # Only a run that makes more than one request can summarize its own summary.
+        lambda turn, earlier: (
+            dataclasses.replace(turn, mode='plain')
+            if turn.capability == 'summarize' and turn.mode in ('tool', 'tools')
+            else turn
+        ),
+        ((Turn(), Turn(mode='tool', capability='summarize')),),
+        'A summary the model was sent is not stored when a later request in the same run summarizes it away.',
+    ),
+    KnownFinding(
+        'message-inserted-before-stored-ones-is-not-saved',
+        frozenset({'S1', 'S2', 'S3', 'S4', 'S5'}),
+        # A paused turn's second run resumes from the stored messages too.
+        lambda turn, earlier: (
+            dataclasses.replace(turn, hook=None)
+            if turn.hook == 'insert_before_run' and (earlier or turn.mode == 'deferred')
+            else turn
+        ),
+        (
+            (Turn(), Turn(hook='insert_before_run')),
+            (Turn(), Turn(hook='insert_before_run', round_trip='conversation')),
+        ),
+        'A message a `before_run` hook puts before the stored messages with `ctx.messages.insert(0, ...)` is in '
+        '`result.conversation` but not saved, as a store only appends after what it has; saving that conversation '
+        'itself replaces the stored messages and records a branch.',
+    ),
+    KnownFinding(
+        'rewritten-system-prompt-is-not-saved',
+        frozenset({'S1', 'S2', 'S3', 'S4', 'S7'}),
+        # It rewrites the first stored request, so only a system prompt an earlier turn stored.
+        lambda turn, earlier: (
+            dataclasses.replace(turn, system_prompt=False) if any(t.system_prompt for t in earlier) else turn
+        ),
+        (
+            (Turn(system_prompt=True), Turn(system_prompt=True)),
+            (Turn(system_prompt=True), Turn(system_prompt=True, edit='drop_last_turn')),
+            (Turn(system_prompt=True), Turn(system_prompt=True, round_trip='conversation')),
+        ),
+        'A dynamic system prompt rewrites the first stored request in `result.conversation`, but a save of the '
+        'result keeps the stored messages as they are, so the head keeps the system prompt of the run that stored '
+        'it; saving that conversation itself replaces the stored messages from the first one and records a branch.',
+    ),
+    KnownFinding(
+        'rebuilt-stored-messages-are-stored-again',
+        frozenset({'S2', 'S5'}),
+        lambda turn, earlier: (
+            dataclasses.replace(turn, capability=None) if turn.capability == 'elide' and earlier else turn
+        ),
+        (
+            (Turn(mode='deferred'), Turn(mode='deferred', capability='elide')),
+            (Turn(mode='tool', capability='summarize', keep=1), Turn(capability='elide')),
+            (Turn(mode='tool'), Turn(capability='elide'), Turn(source='load', mode='tool', capability='elide')),
+        ),
+        'When a capability puts new requests in place of stored ones, like a tool result it elides, the save stores '
+        'the rebuilt copies after the stored messages, so a later run that rebuilds them again stores them again, '
+        'with the requests next to them, like a summary or a prompt.',
+    ),
+    KnownFinding(
+        'rebuilt-tool-result-comes-back-merged',
+        frozenset({'S4', 'S7'}),
+        lambda turn, earlier: dataclasses.replace(turn, capability=None) if turn.capability == 'elide' else turn,
+        ((Turn(mode='tools', capability='elide'), Turn()),),
+        'A tool result a capability rebuilt as a new request is stored after the result, so the next run, which '
+        'merges the two requests to send them, returns them merged.',
+    ),
+    KnownFinding(
+        'conversation-comes-back-cleaned',
+        frozenset({'S4', 'S7'}),
+        lambda turn, earlier: _without_requests_in_a_row(turn),
+        (
+            (Turn(appended=('prompt',)), Turn()),
+            (Turn(hook='enqueue_before_run'), Turn()),
+            (Turn(mode='output_tool'), Turn(mode='deferred')),
+            (Turn(mode='output_tool'), Turn(), Turn(capability='trim', keep=4)),
+        ),
+        'A run returns the stored messages it was given as it cleaned them to send, not as they were stored: two '
+        'requests in a row, like an appended prompt and the new one, a prompt and an enqueued message, or a summary '
+        'and a tool result, come back merged. The store keeps them as they were, so `load()` no longer equals the '
+        'conversation that was saved.',
+    ),
+    KnownFinding(
+        'window-starting-with-a-tool-result-comes-back-without-it',
+        frozenset({'S4', 'S7'}),
+        # Only a turn that stored a tool result can leave a window that starts with one.
+        lambda turn, earlier: (
+            dataclasses.replace(turn, source='load')
+            if turn.source == 'window' and any(t.mode != 'plain' for t in earlier)
+            else turn
+        ),
+        ((Turn(mode='tool'), Turn(source='window', window=2)),),
+        'A run given a window of the stored messages that starts with a tool result drops the result, as its call '
+        'is not in the window, so the conversation it returns no longer starts where the window did.',
+    ),
+    KnownFinding(
+        'dropped-turn-leaves-a-tool-result-that-comes-back-merged',
+        frozenset({'S4', 'S7'}),
+        # Only a turn with a tool result can be left ending in one.
+        lambda turn, earlier: (
+            dataclasses.replace(turn, edit=None) if turn.edit == 'drop_last_turn' and turn.mode != 'plain' else turn
+        ),
+        ((Turn(source='window', window=0, mode='deferred', edit='drop_last_turn'), Turn(), Turn()),),
+        'Dropping the last turn of a window that holds no prompt drops only the last reply, so the conversation ends '
+        'in a tool result, and the next run returns it merged with its prompt, as in `conversation-comes-back-cleaned`.',
+    ),
+    KnownFinding(
+        'merging-unsaved-requests-in-a-window-branches',
+        frozenset({'S1', 'S3'}),
+        lambda turn, earlier: (
+            dataclasses.replace(turn, appended=(), prompt=True, hook=None)
+            if _requests_in_a_row(turn) and _holds_a_window(turn, earlier)
+            else turn
+        ),
+        (
+            (Turn(), Turn(source='window', window=0, appended=('prompt', 'prompt'), prompt=False)),
+            (Turn(source='window', window=0, mode='deferred'), Turn(appended=('prompt', 'prompt'), prompt=False)),
+        ),
+        'When the run merges unsaved requests in a row into one to send them, the save compares the whole history '
+        'instead, and a window that holds too few of the stored messages to line up with them makes it branch.',
+    ),
+    KnownFinding(
+        'edit-after-merged-stored-requests-stores-a-prompt-twice',
+        frozenset({'S2', 'S7'}),
+        lambda turn, earlier: (
+            dataclasses.replace(turn, edit=None) if any(map(_stores_requests_in_a_row, [*earlier, turn])) else turn
+        ),
+        (
+            (Turn(appended=('prompt',)), Turn(edit='replace', edit_at=1)),
+            (Turn(appended=('prompt',)), Turn(edit='replace')),
+        ),
+        'After a run merged two stored requests in its conversation, an edit to that conversation is saved against '
+        'the stored requests as they were: editing a later reply keeps the first stored request and adds the merged '
+        'copy after it, so a prompt is on the head twice, and editing the merged request replaces only one of the two.',
+    ),
+]
+
+
+@pytest.mark.parametrize(
+    'finding,reproducer',
+    [
+        pytest.param(
+            finding,
+            reproducer,
+            id=f'{finding.id}-{index}',
+            marks=pytest.mark.xfail(strict=True, raises=AssertionError, reason=finding.reason),
+        )
+        for finding in KNOWN_FINDINGS
+        for index, reproducer in enumerate(finding.reproducers)
+    ],
+)
+def test_known_finding_is_still_present(finding: KnownFinding, reproducer: tuple[Turn, ...]):
+    assert [v for v in drive(reproducer) if v[0] in finding.fails] == []
+
+
+@pytest.mark.xfail(
+    strict=True,
+    raises=AssertionError,
+    reason='When a run drops the tool result a window starts with from the stored request that holds it, the save '
+    'no longer finds that request before the unsaved one, compares the whole history, and stores its prompt again.',
+)
+def test_known_finding_window_whose_stored_tail_the_run_repairs_stores_a_prompt_twice():
+    """Not drawn by the turns: the stored request holds an output tool's result and a prompt, and the window starts at it."""
+
+    async def run() -> list[str]:
+        store = InMemoryConversationStore()
+        stored = [
+            ModelRequest(parts=[UserPromptPart('p1')]),
+            ModelResponse(parts=[ToolCallPart(_OUTPUT_TOOL, {'text': 'a'}, tool_call_id='o1')]),
+            ModelRequest(parts=[ToolReturnPart(_OUTPUT_TOOL, 'Final result processed.', 'o1'), UserPromptPart('p2')]),
+        ]
+        await store.save(Conversation(conversation_id='c', messages=stored))
+        window = await store.load('c', limit=1)
+        assert window is not None
+        window.messages.append(ModelRequest(parts=[UserPromptPart('p3')]))
+        agent = Agent(FunctionModel(lambda messages, info: ModelResponse(parts=[TextPart('reply')])))
+        await store.save(await agent.run(conversation=window))
+        head = await store.load('c')
+        assert head is not None
+        return [
+            str(part.content) for message in head.messages for part in message.parts if isinstance(part, UserPromptPart)
+        ]
+
+    assert asyncio.run(run()) == ['p1', 'p2', 'p3']
+
+
+# --- properties -------------------------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize('checked', PROPERTIES)
+@PROPERTY_SETTINGS
+@given(data=st.data())
+def test_saving_keeps_what_the_user_meant(checked: Property, data: st.DataObject):
+    known = [finding.leave_out for finding in KNOWN_FINDINGS if checked in finding.fails]
+    steps: list[Turn] = []
+    for _ in range(data.draw(st.integers(1, 5), label='turn count')):
+        turn = data.draw(turns(), label='turn')
+        for leave_out in known:
+            turn = leave_out(turn, steps)
+        steps.append(turn)
+    assert [v for v in drive(steps) if v[0] == checked] == []
