@@ -352,7 +352,8 @@ class OpenAIModelProfile(ModelProfile, total=False):
     """Whether a streamed Chat Completions response must include a non-null `finish_reason`. Default: `False`.
 
     When enabled, reaching clean EOF before any chunk supplies a `finish_reason` raises
-    [`ModelAPIError`][pydantic_ai.exceptions.ModelAPIError], instead of treating the response as a `'stop'`.
+    [`ModelConnectionError`][pydantic_ai.exceptions.ModelConnectionError] with `phase='read'`, as a stream that was
+    cut off, instead of treating the response as a `'stop'`.
     This defaults to `False` because OpenAI-compatible APIs do not consistently guarantee the field."""
 
     openai_chat_streaming_repeats_usage_totals: bool
