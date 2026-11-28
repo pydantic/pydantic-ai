@@ -34,6 +34,7 @@ from pydantic_ai.workspaces import AuthorityWorkspace, LocalWorkspaceBackend, Wo
 from pydantic_ai_harness.coder import Coder
 from pydantic_ai_harness.file_system import FileSystem
 from pydantic_ai_harness.repo_context import RepoContext
+from pydantic_ai_harness.report_stale_files import ReportStaleFiles
 from pydantic_ai_harness.skills import SkillDefinition, Skills
 from pydantic_ai_harness.sub_agents import ModelOption, SubAgent, SubAgents, TaskControl
 from pydantic_ai_pax.builtin_plugins.coder_folders import edit_agent_folders, is_folder_name
@@ -75,6 +76,9 @@ DELEGATE_MODELS_FEATURE = 'coder-delegate-models'
 
 REVIEW_AGENT_FEATURE = 'coder-review-agent'
 """Builds without the Review specialist ignore its saved opt-in."""
+
+REPORT_STALE_FILES_FEATURE = 'coder-report-stale-files'
+"""Builds without stale-file notices ignore their saved opt-in."""
 
 
 class DelegateModel(BaseModel):
@@ -163,6 +167,10 @@ class CoderSettings(BaseModel):
     disabled_skills: list[str] = Field(
         default_factory=list,
         description='Skill names hidden from the model and from the /commands, in every project.',
+    )
+    report_stale_files: bool = Field(
+        default=False,
+        description='Tell the model when a file it read or wrote has since changed or been deleted, as by your edits.',
     )
 
     @field_validator('agent_folders', 'skill_folders')
@@ -300,6 +308,14 @@ class CoderSource(Generic[DepsT]):
                 choices=('true', 'false'),
                 allow_custom=False,
             ),
+            FieldRow(
+                key='report_stale_files',
+                label='Stale file notices',
+                description=CoderSettings.model_fields['report_stale_files'].description or '',
+                default='false',
+                choices=('true', 'false'),
+                allow_custom=False,
+            ),
         )
 
     def current(self, row: FieldRow) -> str:
@@ -308,6 +324,7 @@ class CoderSource(Generic[DepsT]):
             'unrestricted_filesystem': settings.unrestricted_filesystem,
             'sub_agents': settings.sub_agents,
             'review_agent': settings.review_agent,
+            'report_stale_files': settings.report_stale_files,
             'agent_folders': list[JsonValue](settings.agent_folders),
             'skill_folders': list[JsonValue](settings.skill_folders),
             'disabled_skills': list[JsonValue](settings.disabled_skills),
@@ -435,6 +452,7 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             'disabled_skills': [DISABLED_SKILLS_FEATURE],
             'delegate_models': [DELEGATE_MODELS_FEATURE],
             'review_agent': [REVIEW_AGENT_FEATURE],
+            'report_stale_files': [REPORT_STALE_FILES_FEATURE],
         }
         return cls(host, host.settings(CoderSettings, requires=requires))
 
@@ -498,6 +516,9 @@ class CoderPlugin(Plugin[CoderSettings, DepsT]):
             else None,
         )
         capabilities: list[AgentCapability[DepsT]] = [coder]
+        if settings.report_stale_files:
+            # One instance for the plugin's life, so a conversation's records outlast each run.
+            capabilities.append(ReportStaleFiles[DepsT]())
         if settings.sub_agents and custom_delegation:
             from pydantic_ai_pax.models.model_settings import ModelSettingsForm
 

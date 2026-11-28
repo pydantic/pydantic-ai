@@ -207,6 +207,32 @@ Pax's environment minus LLM provider API keys. To keep the file tools inside the
 launch directory, set **Unrestricted filesystem** to `false` in
 `/plugins configure coder`. Shell commands are not restricted either way.
 
+### Files you edit alongside the agent
+
+If you edit files while the agent works, set **Stale file notices** to `true` in
+`/plugins configure coder` (`report_stale_files`, off by default). The `coder` plugin
+then adds harness [`ReportStaleFiles`](../../../docs/harness/report-stale-files.md): Pax
+records each file the agent reads or writes with `read_file`, `write_file`, or
+`edit_file`, also when it calls them from code mode's `run_code`. Before each model
+request it checks those files again, and when one changed or was deleted since,
+it tells the model before that request:
+
+```text
+These files changed in the workspace after you last read or wrote them, so what you saw of them is out of date. Read them again before relying on them or editing them:
+- `src/config.py`
+```
+
+A changed file is named on every request until the agent reads it again; a deleted
+one is named once. Nothing is added while no recorded file changed. The notice is
+sent with its own request only, at its end, so the history before it stays in the
+prompt cache. Files the agent read with `shell`, or with `pathlib` inside `run_code`,
+are not recorded. In a [sandbox](#sandboxes-sandbox), the files checked are the
+sandbox's, and each check reads every recorded file there, a few round trips per
+file. In an untrusted folder, the notice reaches the model as the folder's data,
+not as your instructions. Records are kept in memory while Pax runs, so restarting
+Pax or reloading `coder` starts without them. The setting is tagged
+`coder-report-stale-files`, so an older Pax build ignores a saved value.
+
 ### Folder trust
 
 Pax treats every folder as untrusted until you say otherwise, as Claude Code does. The

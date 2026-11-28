@@ -41,6 +41,7 @@ from pydantic_ai.messages import (
     ModelRequest,
     ModelResponse,
     TextPart,
+    ToolCallPart,
     ToolReturnPart,
     UserPromptPart,
 )
@@ -104,6 +105,7 @@ from pydantic_ai_pax.plugins import (
 from pydantic_ai_pax.runtime.imported_history import imported_kind
 from pydantic_ai_pax.runtime.rewind import rewind_points
 from pydantic_ai_pax.runtime.session_runtime import SessionRuntime, create_shell
+from tests.function_model_prefix import REQUEST_SCOPED_PROMPT_DROPPED
 from tests.pax.dialog_script import Back, Pick, ScriptedDialogs, Type
 
 if TYPE_CHECKING:
@@ -883,6 +885,32 @@ async def test_runs_use_the_sandbox(checkout: Path, provider: FakeProvider) -> N
     result = await fork.prompt('in the background')
     assert working_dirs[-1] == str(provider.folder(WorkspaceRef(provider='fake', id='sbx-1')))
     assert result.response.workspace_ref == WorkspaceRef(provider='fake', id='sbx-1')
+
+
+@pytest.mark.moves_cache_prefix(reason=REQUEST_SCOPED_PROMPT_DROPPED)
+async def test_stale_file_notices_check_the_sandbox(checkout: Path, provider: FakeProvider) -> None:
+    """`coder`'s `report_stale_files` reads a sandboxed conversation's files in the sandbox, not the checkout."""
+    from tests.pax.test_coder_stale_files import coder_capabilities, notices, reads_then_answers
+
+    loaded = load(checkout)
+    agent = Agent(reads_then_answers(ToolCallPart('read_file', {'path': 'README.md'})), deps_type=type(None))
+    plugins = [*coder_capabilities(report_stale_files=True), *loaded.capabilities]
+    session = Session(agent, deps=None, plugins=plugins, workspace=checkout)
+    loaded.host.conversation = session
+    await plugin_of(loaded).command(['fake'])
+    await session.prompt('read the readme')
+    # An edit to the launch directory's copy is not the file the model read.
+    await anyio.Path(checkout / 'README.md').write_text('edited on the host\n')
+    await session.prompt('and now?')
+    readme = anyio.Path(provider.folder(WorkspaceRef(provider='fake', id='sbx-1'))) / 'README.md'
+    await readme.write_text('edited in the sandbox\n')
+    await session.prompt('and now?')
+    changed = (
+        'These files changed in the workspace after you last read or wrote them, so what you saw of them is out of '
+        'date. Read them again before relying on them or editing them:\n- `README.md`'
+    )
+    # The first exchange is the sandbox's own note; each prompt then reads and answers.
+    assert notices(session.messages) == [[], [], [], [], [], [changed], []]
 
 
 def sandboxed_shell(
