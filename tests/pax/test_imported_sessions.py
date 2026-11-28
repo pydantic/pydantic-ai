@@ -1,7 +1,6 @@
 """Claude Code and Codex sessions: reading their transcripts, listing them in `/resume`, and importing them."""
 
 import argparse
-import asyncio
 import contextlib
 import json
 import os
@@ -1569,21 +1568,16 @@ async def test_terminal_resume_of_an_import_pax_cannot_move_to(
 
 
 @pytest.mark.parametrize('source', ['claude', 'codex'])
-@pytest.mark.parametrize('mode', ['chat', 'prompt', 'web', 'relaunch'])
+@pytest.mark.parametrize('mode', ['chat', 'prompt', 'web'])
 def test_cli_resume_starts_in_the_imported_project(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch, source: ImportSource, mode: str
 ) -> None:
-    """`--resume-claude ID` and `--resume-codex ID` start in the session's directory, as `/update` restarting Pax does."""
+    """`--resume-claude ID` and `--resume-codex ID` start in the session's directory, with that project's file."""
     project, other, native_id = imported_project(tmp_path, source)
     monkeypatch.chdir(other)
-    flags = [f'--resume-{source}', native_id]
-    if mode == 'relaunch':
-        store = SqliteSessionStore(database=tmp_path / 'sessions.db')
-        copy = asyncio.run(save_import(store, find_import(source, native_id)))
-        launch = argparse.Namespace(web=False, agent=None, model=None, request_limit=None, database=None)
-        flags = cli.relaunch_argv(launch, executable='pax', session_id=copy)[1:]
     extra = {'prompt': ['-p', 'hi'], 'web': ['--web']}.get(mode, [])
-    monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'config.db'), *extra, *flags])
+    argv = ['pax', '--database', str(tmp_path / 'config.db'), *extra, f'--resume-{source}', native_id]
+    monkeypatch.setattr('sys.argv', argv)
     seen: list[tuple[Path, Path | None]] = []
 
     async def launched(*args: object, project: ProjectSettings, **kwargs: object) -> int:
@@ -1598,21 +1592,32 @@ def test_cli_resume_starts_in_the_imported_project(
     assert seen == [(project, project)]
 
 
-def test_cli_resume_of_a_pax_session_stays_here(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
-    other = tmp_path / 'other'
-    other.mkdir()
+@pytest.mark.parametrize('gone', [False, True])
+async def test_update_restarts_where_the_terminal_session_moved(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, gone: bool
+) -> None:
+    """After `/resume claude ID` and `/new`, `/update` restarts Pax in the project, unless that folder is gone."""
+    project, other, native_id = imported_project(tmp_path, 'claude')
     monkeypatch.chdir(other)
-    store = SqliteSessionStore(database=tmp_path / 'sessions.db')
-    saved = asyncio.run(store.save(summary=ConversationSummary(workspace=str(tmp_path)), messages=[]))
-    monkeypatch.setattr('sys.argv', ['pax', '--database', str(tmp_path / 'config.db'), '--resume', saved.id])
-    seen: list[Path] = []
+    shell = terminal_shell(tmp_path, other)
+    await shell.loader.load_all()
+    await shell.sessions.command(['claude', native_id])
+    await shell.session.clear()
+    shell.updates.relaunch = 'pax'
+    relaunch = shell.relaunch(web=None)
+    await shell.close('exit')
+    assert relaunch is not None and relaunch.workspace == str(project)
+    if gone:
+        shutil.rmtree(project)
+    started: list[Path] = []
 
-    async def launched(*args: object, **kwargs: object) -> None:
-        seen.append(await run_sync(Path.cwd))
+    def execv(path: str, argv: list[str]) -> None:
+        started.append(Path.cwd())
 
-    monkeypatch.setattr('pydantic_ai_pax.app.chat', launched)
-    cli.run()
-    assert seen == [other.resolve()]
+    monkeypatch.setattr(os, 'execv', execv)
+    launch = argparse.Namespace(web=False, agent=None, model=None, request_limit=None, database=None)
+    await run_sync(lambda: cli._relaunch(launch, relaunch, launched=None))  # pyright: ignore[reportPrivateUsage]
+    assert started == [other if gone else project]
 
 
 @pytest.mark.parametrize(

@@ -975,6 +975,8 @@ class SessionRuntime(Generic[DepsT, OutputT]):
             new_session_id=summary.id if not summary.revision and self.sessions.chosen else None,
             web=web,
             launch_plugins=sorted(self.process.plugins.launch),
+            # A terminal session moves into a resumed Claude Code or Codex session's directory, and stays there.
+            workspace=self.session.workspace if self.sessions.follow_imports is not None else None,
         )
 
     @property
