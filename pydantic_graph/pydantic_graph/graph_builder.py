@@ -2087,7 +2087,8 @@ def _collect_dominating_forks(
         A mapping from join IDs to their parent fork information
 
     Raises:
-        ValueError: If any join node lacks a dominating fork
+        GraphBuildingError: If any join node lacks a dominating fork, or a map's downstream join has a parent fork
+            that does not dominate the map
     """
     nodes = set(graph_nodes)
     start_ids: set[NodeID] = {StartNode.id}
@@ -2138,7 +2139,30 @@ Mermaid diagram:
 Join {join.id!r} in this graph has no dominating fork in this graph.""")
         dominating_forks[join.id] = dominating_fork
 
+    _validate_downstream_join_parent_forks(graph_nodes, finder, dominating_forks)
     return dominating_forks
+
+
+def _validate_downstream_join_parent_forks(
+    graph_nodes: dict[NodeID, AnyNode],
+    finder: ParentForkFinder[NodeID],
+    dominating_forks: dict[JoinID, ParentFork[NodeID]],
+) -> None:
+    """Check that the parent fork of each map's downstream join is on the map's fork stack when the map runs.
+
+    A map creates the state of its `downstream_join_id` join under the run of that join's parent fork, so the parent
+    fork must be the map itself or a fork that dominates it.
+    """
+    for node in graph_nodes.values():
+        if not isinstance(node, Fork) or node.downstream_join_id is None:
+            continue
+        parent_fork = dominating_forks.get(node.downstream_join_id)
+        if parent_fork is not None and not finder.dominates(parent_fork.fork_id, node.id):
+            raise GraphBuildingError(
+                f'Map {node.id!r} sets `downstream_join_id={node.downstream_join_id!r}`, but the parent fork of that'
+                f' join is {parent_fork.fork_id!r}, which is neither {node.id!r} nor a fork that dominates it.'
+                " Set the join's `parent_fork_id` to one of those forks, or remove `downstream_join_id`."
+            )
 
 
 def _add_path_edge(edges: dict[NodeID, list[NodeID]], path: Path, source_id: NodeID) -> None:

@@ -9,8 +9,11 @@ import anyio
 import pytest
 
 from pydantic_graph import GraphBuilder, StepContext
+from pydantic_graph.exceptions import GraphBuildingError
 from pydantic_graph.graph_builder import EndMarker
 from pydantic_graph.join import reduce_list_append
+
+from ..._inline_snapshot import snapshot
 
 
 @dataclass
@@ -290,6 +293,39 @@ async def test_parallel_maps_with_downstream_join_id():
     graph = g.build()
     result = await graph.run(state=CounterState())
     assert sorted(result) == [[1, 2], [3]]
+
+
+def test_downstream_join_id_with_parent_fork_below_map():
+    """A map's `downstream_join_id` cannot name a join whose parent fork is a map nested below it.
+
+    The outer map creates the join's state for its parent fork's run, and the nested map has no run yet at that point,
+    so `build()` rejects the graph instead of leaving the run to fail.
+    """
+    g = GraphBuilder(input_type=list[list[int]], output_type=list[list[int]])
+
+    @g.step
+    async def leaf(ctx: StepContext[None, None, int]) -> int:
+        return ctx.inputs  # pragma: no cover
+
+    inner = g.join(reduce_list_append, initial_factory=list[int], node_id='inner', preferred_parent_fork='closest')
+    outer = g.join(
+        reduce_list_append, initial_factory=list[list[int]], node_id='outer', preferred_parent_fork='closest'
+    )
+    g.add(
+        g.edge_from(g.start_node)
+        .map(fork_id='outer_map', downstream_join_id=outer.id)
+        .map(fork_id='inner_map')
+        .to(leaf),
+        g.edge_from(leaf).to(inner),
+        g.edge_from(inner).to(outer),
+        g.edge_from(outer).to(g.end_node),
+    )
+
+    with pytest.raises(GraphBuildingError) as exc_info:
+        g.build()
+    assert str(exc_info.value) == snapshot(
+        "Map 'outer_map' sets `downstream_join_id='outer'`, but the parent fork of that join is 'inner_map', which is neither 'outer_map' nor a fork that dominates it. Set the join's `parent_fork_id` to one of those forks, or remove `downstream_join_id`."
+    )
 
 
 async def test_nested_broadcasts():

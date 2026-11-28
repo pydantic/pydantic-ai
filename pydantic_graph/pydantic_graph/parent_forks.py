@@ -176,6 +176,18 @@ class ParentForkFinder(Generic[T]):
                     changed = True
         return dom
 
+    def dominates(self, dominator_id: T, node_id: T) -> bool:
+        """Check whether every path from a start node to a node passes through another node.
+
+        Args:
+            dominator_id: The node that may dominate `node_id`.
+            node_id: The node to check. A node dominates itself.
+
+        Returns:
+            True if `dominator_id` dominates `node_id`, False otherwise.
+        """
+        return dominator_id in self._dominators[node_id]
+
     def _immediate_dominator(self, node_id: T) -> T | None:
         """Find the immediate dominator of a node.
 
