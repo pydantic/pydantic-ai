@@ -6124,6 +6124,8 @@ def build_run_context(ctx: GraphRunContext[GraphAgentState, GraphAgentDeps[DepsT
         _output_submitter=_GraphOutputSubmitter(weakref.ref(ctx.state), weakref.ref(ctx.deps)),
         workspace=ctx.deps.workspace,
     )
+    if ctx.deps.validation_context is None:
+        return run_context
     validation_context = build_validation_context(ctx.deps.validation_context, run_context)
     # Only `validation_context` may be passed to `replace`: it shallow-copies, preserving the shared
     # identity of the mutable members passed by reference above — `loaded_capability_ids`,
